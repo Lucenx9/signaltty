@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Prefix = application resource base path: AdwApplication loads
+     style.css and adds icons/ to the icon theme. -->
+<gresources>
+  <gresource prefix="/dev/signaltty/gui">
+    <file>style.css</file>
+    <file>icons/scalable/actions/signaltty-split-right-symbolic.svg</file>
+    <file>icons/scalable/actions/signaltty-split-down-symbolic.svg</file>
+    <file>icons/scalable/actions/signaltty-unread-symbolic.svg</file>
+    <file>icons/scalable/actions/signaltty-input-symbolic.svg</file>
+    <file>icons/scalable/actions/signaltty-permission-symbolic.svg</file>
+    <file>icons/scalable/actions/signaltty-warning-symbolic.svg</file>
+    <file>icons/scalable/actions/signaltty-error-symbolic.svg</file>
+  </gresource>
+</gresources>

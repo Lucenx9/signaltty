@@ -5,16 +5,20 @@
 //! The UI talks to the actor via mpsc; the actor pushes UI events
 //! through a glib channel. Reconnects transparently and tells the UI
 //! to refetch.
+//!
+//! The session loop waits on UI requests and the event stream at once,
+//! so a call (a keystroke, a split) is served the moment it arrives —
+//! the UI thread blocks on replies, so any polling here is felt as
+//! input latency.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::UnixStream;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 use signaltty_proto::{Request, Response};
 
@@ -60,7 +64,7 @@ pub enum UiEvent {
 
 #[derive(Clone)]
 pub struct IpcHandle {
-    tx: mpsc::Sender<ActorRequest>,
+    tx: mpsc::UnboundedSender<ActorRequest>,
 }
 
 impl IpcHandle {
@@ -99,7 +103,7 @@ impl IpcHandle {
 }
 
 pub fn spawn(socket: PathBuf, ui: UiTx) -> IpcHandle {
-    let (tx, rx) = mpsc::channel::<ActorRequest>();
+    let (tx, rx) = mpsc::unbounded_channel::<ActorRequest>();
     std::thread::Builder::new()
         .name("signaltty-ipc".to_string())
         .spawn(move || {
@@ -114,7 +118,8 @@ pub fn spawn(socket: PathBuf, ui: UiTx) -> IpcHandle {
 }
 
 struct Conn {
-    reader: BufReader<tokio::net::unix::OwnedReadHalf>,
+    /// `next_line` is cancel-safe, so it can race UI requests.
+    lines: Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
     writer: tokio::net::unix::OwnedWriteHalf,
     next_id: u64,
 }
@@ -126,7 +131,7 @@ impl Conn {
             .map_err(|e| e.to_string())?;
         let (r, w) = stream.into_split();
         Ok(Conn {
-            reader: BufReader::new(r),
+            lines: BufReader::new(r).lines(),
             writer: w,
             next_id: 1,
         })
@@ -151,16 +156,11 @@ impl Conn {
     }
 
     async fn read_line(&mut self) -> Result<String, String> {
-        let mut buf = String::new();
-        let n = self
-            .reader
-            .read_line(&mut buf)
-            .await
-            .map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err("eof".to_string());
+        match self.lines.next_line().await {
+            Ok(Some(line)) => Ok(line),
+            Ok(None) => Err("eof".to_string()),
+            Err(e) => Err(e.to_string()),
         }
-        Ok(buf)
     }
 }
 
@@ -168,10 +168,10 @@ enum Pending {
     Attach(oneshot::Sender<Result<SnapshotReply, String>>),
 }
 
-async fn actor_main(socket: PathBuf, rx: mpsc::Receiver<ActorRequest>, ui: UiTx) {
+async fn actor_main(socket: PathBuf, mut rx: mpsc::UnboundedReceiver<ActorRequest>, ui: UiTx) {
     let mut attached: HashMap<String, (u16, u16)> = HashMap::new();
     loop {
-        if run_session(&socket, &rx, &ui, &mut attached).await {
+        if run_session(&socket, &mut rx, &ui, &mut attached).await {
             break; // actor handle dropped: shut down
         }
         let _ = ui.send(UiEvent::Disconnected);
@@ -179,14 +179,14 @@ async fn actor_main(socket: PathBuf, rx: mpsc::Receiver<ActorRequest>, ui: UiTx)
         loop {
             // Drain queued requests with a controlled error.
             match rx.try_recv() {
-                Err(mpsc::TryRecvError::Disconnected) => return,
-                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::error::TryRecvError::Disconnected) => return,
+                Err(mpsc::error::TryRecvError::Empty) => {}
                 Ok(req) => {
                     reply_gone(req);
                     continue;
                 }
             }
-            std::thread::sleep(Duration::from_secs(2));
+            tokio::time::sleep(Duration::from_secs(2)).await;
             if Conn::connect(&socket).await.is_ok() {
                 break;
             }
@@ -210,7 +210,7 @@ fn reply_gone(req: ActorRequest) {
 /// Run one connected session. Returns true to shut the actor down.
 async fn run_session(
     socket: &PathBuf,
-    rx: &mpsc::Receiver<ActorRequest>,
+    rx: &mut mpsc::UnboundedReceiver<ActorRequest>,
     ui: &UiTx,
     attached: &mut HashMap<String, (u16, u16)>,
 ) -> bool {
@@ -242,24 +242,25 @@ async fn run_session(
     }
     let mut pending: HashMap<String, Pending> = HashMap::new();
 
+    enum Next {
+        Request(Option<ActorRequest>),
+        Line(Result<String, String>),
+    }
     loop {
-        // Drain UI requests without blocking the event stream.
-        loop {
-            match rx.try_recv() {
-                Ok(req) => {
-                    if handle_request(req, &mut control, &mut sub, attached, &mut pending).await {
-                        return false; // eof
-                    }
+        let next = tokio::select! {
+            req = rx.recv() => Next::Request(req),
+            line = sub.read_line() => Next::Line(line),
+        };
+        let line = match next {
+            Next::Request(None) => return true, // handle dropped
+            Next::Request(Some(req)) => {
+                if handle_request(req, &mut control, &mut sub, attached, &mut pending).await {
+                    return false; // eof
                 }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => return true,
+                continue;
             }
-        }
-        // Read one sub line with a short timeout so requests stay prompt.
-        let line = match tokio::time::timeout(Duration::from_millis(50), sub.read_line()).await {
-            Ok(Ok(line)) => line,
-            Ok(Err(_)) => return false, // eof
-            Err(_) => continue,         // timeout: loop back to requests
+            Next::Line(Ok(line)) => line,
+            Next::Line(Err(_)) => return false, // eof
         };
         let v: Value = match serde_json::from_str(line.trim()) {
             Ok(v) => v,

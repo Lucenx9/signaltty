@@ -18,7 +18,10 @@ chrono.workspace = true
 tokio.workspace = true
 base64 = "0.22"
 gtk4 = { version = "0.11", features = ["v4_18"] }
-libadwaita = { version = "0.9", package = "libadwaita" }
+libadwaita = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 vte4 = "0.10"
 notify-rust = "4"
 clap = { version = "4", features = ["derive"] }
+
+[build-dependencies]
+glib-build-tools = "0.22"

@@ -66,6 +66,7 @@ trait TerminalBackend {
     fn send_input(&mut self, id: PaneId, data: &[u8]); // → server IPC
     fn resize(&mut self, id: PaneId, cols: u16, rows: u16);
     fn snapshot(&self, id: PaneId) -> String;          // plain-text screen
+    fn screen_state(&self, id: PaneId) -> Vec<u8>;     // replayable VT bytes
     fn configure(&mut self, opts: &TermOptions);       // font, theme, bell…
     fn destroy(&mut self, id: PaneId);
 }

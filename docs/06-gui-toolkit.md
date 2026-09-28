@@ -43,3 +43,40 @@ custom-GPU frontend stays possible without touching the server.
 Note: this machine currently lacks GTK4 system dev packages; GUI work
 is Phase 3-gated on installing `gtk4`, `libadwaita`, `vte-gtk4`
 headers. Phases 1–2 are toolkit-free by design.
+
+## Interface design
+
+Layout follows libadwaita idiom so the app behaves like its neighbours
+on GNOME and Plasma: `AdwOverlaySplitView` (sidebar collapses to an
+overlay below 760sp), `AdwTabView`/`AdwTabBar` (autohides with one
+tab), one primary menu, every command a `win.*` action with an
+accelerator. Colour comes only from libadwaita variables, so light,
+dark, the system accent and high contrast follow the desktop;
+terminals take the desktop monospace font and a matching palette.
+
+One status vocabulary, rendered identically on every surface
+(`crates/signaltty-gui/src/status.rs`, colours in `data/style.css`):
+
+| Axis | Sidebar row / pane header | Tab | Pane card |
+|---|---|---|---|
+| lifecycle `working` | spinner | tab spinner | — |
+| lifecycle `blocked`/`failed`/`done` | amber / red / green dot | — | — |
+| attention `unread` | accent dot | indicator icon | hairline accent ring |
+| attention `input`/`warning` | "Input"/"Warning" pill | icon + bar glow | amber ring |
+| attention `permission`/`error` | "Approval"/"Error" pill | icon + bar glow | ring + glow |
+
+Rules that keep it calm:
+
+- Widgets are reconciled in place (rows keyed by workspace id, tab
+  pages by tab id), never rebuilt on refresh, so selection and scroll
+  survive events and state changes can transition.
+- Rings are outer shadows: attention never changes layout, so it never
+  resizes a terminal.
+- Motion is limited to colour/opacity/shadow on persistent widgets,
+  150–200ms ease-out, plus crossfades on reveal. Nothing animates in
+  response to keyboard navigation; GTK disables all of it when the
+  desktop turns animations off.
+- In multi-pane tabs the focused card is outlined and the others'
+  status recedes; terminal text is never dimmed.
+- Icons the GUI depends on are bundled (`data/icons`), not assumed
+  from the icon theme.

@@ -1,24 +1,52 @@
-//! App shell: sidebar + notebook of tabs + split layouts of VTE panes.
-//! Pure client of the server API: refetches on events, renders state,
-//! forwards input. Closing this window never touches running sessions.
+//! App shell. Pure client of the server API: refetches on events,
+//! renders state, forwards input. Closing this window never touches
+//! running sessions.
+//!
+//! ```text
+//! AdwOverlaySplitView
+//! ├─ sidebar  AdwToolbarView: [+ Workspaces] / workspace rows
+//! └─ content  AdwToolbarView
+//!    ├─ header  [sidebar] workspace · path       [● 2] [tab+] [menu]
+//!    ├─ banner  (server connection lost)
+//!    ├─ AdwTabBar (autohides with one tab)
+//!    └─ AdwTabView → per tab: Bin.tab-page → Paned splits → pane cards
+//! ```
+//!
+//! Every command is a `win.*` action with an accelerator, reachable
+//! from the primary menu; widgets are reconciled in place so state
+//! changes animate instead of flashing.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
-use gtk4::glib;
 use gtk4::prelude::*;
+use gtk4::{gio, glib};
+use libadwaita as adw;
 use libadwaita::prelude::*;
 use serde_json::{json, Value};
 
-use signaltty_core::model::{Layout, Pane, SplitDir, Tab, Workspace};
+use signaltty_core::{Attention, Layout, Lifecycle, Pane, SplitDir, Tab, Workspace};
 
 use crate::actor::{IpcHandle, UiEvent, UiTx};
 use crate::notif::Notifier;
 use crate::sidebar::{self, Sidebar};
-use crate::terminal::{PaneCallbacks, PaneWidget};
-use crate::util::attention_css;
+use crate::status;
+use crate::terminal::{PaneAction, PaneCallbacks, PaneWidget};
+use crate::util::tilde;
+
+/// Window actions and their accelerators (Ctrl+Shift: plain Ctrl
+/// chords belong to the programs running in the terminals).
+const ACCELS: &[(&str, &str)] = &[
+    ("win.new-workspace", "<Control><Shift>n"),
+    ("win.new-tab", "<Control><Shift>t"),
+    ("win.split-right", "<Control><Shift>e"),
+    ("win.split-down", "<Control><Shift>o"),
+    ("win.close-pane", "<Control><Shift>w"),
+    ("win.next-attention", "<Control><Shift>j"),
+    ("win.toggle-sidebar", "F9"),
+];
 
 struct Model {
     workspaces: Vec<Workspace>,
@@ -27,18 +55,38 @@ struct Model {
     panes: HashMap<String, Pane>,
 }
 
+struct TabEntry {
+    page: adw::TabPage,
+    bin: adw::Bin,
+    layout_sig: String,
+}
+
+/// Header button: how many panes need you; click jumps to the next.
+struct AttentionButton {
+    revealer: gtk4::Revealer,
+    button: gtk4::Button,
+    dot: gtk4::Box,
+    count: gtk4::Label,
+}
+
 pub struct App {
-    window: libadwaita::ApplicationWindow,
-    toasts: libadwaita::ToastOverlay,
+    window: adw::ApplicationWindow,
+    toasts: adw::ToastOverlay,
+    banner: adw::Banner,
+    split_view: adw::OverlaySplitView,
+    title: adw::WindowTitle,
     sidebar: Sidebar,
-    notebook: gtk4::Notebook,
-    stack: gtk4::Stack,
+    tab_view: adw::TabView,
+    content: gtk4::Stack,
+    attention: AttentionButton,
     actor: IpcHandle,
     notifier: Notifier,
     model: RefCell<Model>,
     widgets: RefCell<HashMap<String, Rc<PaneWidget>>>,
-    pages: RefCell<HashMap<String, gtk4::Widget>>,
-    tab_layouts: RefCell<HashMap<String, String>>,
+    tabs: RefCell<HashMap<String, TabEntry>>,
+    /// Set while the GUI itself mutates the tab view, so selection
+    /// changes it causes are not mistaken for the user's choice.
+    reconciling: Cell<bool>,
     gui_tab: RefCell<Option<String>>,
     focused_pane: RefCell<Option<String>>,
     /// Fresh splits awaiting their first positioned allocation.
@@ -50,81 +98,153 @@ fn user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
 }
 
-fn att_rank(s: &str) -> u8 {
-    match s {
-        "error" => 5,
-        "permission_required" => 4,
-        "input_required" => 3,
-        "warning" => 2,
-        "unread" => 1,
-        _ => 0,
-    }
+fn primary_menu() -> gio::Menu {
+    let menu = gio::Menu::new();
+    let section = |items: &[(&str, &str)]| {
+        let s = gio::Menu::new();
+        for (label, action) in items {
+            s.append(Some(label), Some(action));
+        }
+        s
+    };
+    menu.append_section(
+        None,
+        &section(&[
+            ("New Workspace", "win.new-workspace"),
+            ("New Tab", "win.new-tab"),
+        ]),
+    );
+    menu.append_section(
+        None,
+        &section(&[
+            ("Split Right", "win.split-right"),
+            ("Split Down", "win.split-down"),
+            ("Close Pane", "win.close-pane"),
+        ]),
+    );
+    menu.append_section(
+        None,
+        &section(&[("Next Pane Needing Attention", "win.next-attention")]),
+    );
+    menu.append_section(None, &section(&[("About signaltty", "win.about")]));
+    menu
 }
 
 impl App {
-    pub fn new(app: &libadwaita::Application, actor: IpcHandle, ui_tx: UiTx) -> Rc<App> {
-        let window = libadwaita::ApplicationWindow::new(app);
+    pub fn new(application: &adw::Application, actor: IpcHandle, ui_tx: UiTx) -> Rc<App> {
+        let window = adw::ApplicationWindow::new(application);
         window.set_title(Some("signaltty"));
         window.set_default_size(1280, 800);
+        window.set_size_request(360, 400);
 
-        let header = libadwaita::HeaderBar::new();
-        let title = gtk4::Label::new(Some("signaltty"));
-        title.add_css_class("title");
-        header.set_title_widget(Some(&title));
-
-        let btn_new_ws = gtk4::Button::from_icon_name("list-add-symbolic");
-        btn_new_ws.set_tooltip_text(Some("New workspace"));
-        let btn_new_tab = gtk4::Button::from_icon_name("tab-new-symbolic");
-        btn_new_tab.set_tooltip_text(Some("New tab"));
-        header.pack_start(&btn_new_ws);
-        header.pack_start(&btn_new_tab);
-
-        let btn_split_h = gtk4::Button::from_icon_name("view-split-horizontal-symbolic");
-        btn_split_h.set_tooltip_text(Some("Split right"));
-        let btn_split_v = gtk4::Button::from_icon_name("view-split-vertical-symbolic");
-        btn_split_v.set_tooltip_text(Some("Split down"));
-        let btn_close = gtk4::Button::from_icon_name("window-close-symbolic");
-        btn_close.set_tooltip_text(Some("Close pane"));
-        let btn_next = gtk4::Button::from_icon_name("go-next-symbolic");
-        btn_next.set_tooltip_text(Some("Next unread"));
-        btn_next.add_css_class("suggested-action");
-        header.pack_end(&btn_next);
-        header.pack_end(&btn_close);
-        header.pack_end(&btn_split_v);
-        header.pack_end(&btn_split_h);
-
+        // ---- sidebar ----
         let sidebar = Sidebar::new();
-        let notebook = gtk4::Notebook::new();
-        notebook.set_scrollable(true);
-        notebook.set_hexpand(true);
-        let content = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        content.append(&sidebar.scrolled);
-        content.append(&notebook);
+        let sidebar_header = adw::HeaderBar::new();
+        sidebar_header.set_title_widget(Some(&adw::WindowTitle::new("Workspaces", "")));
+        let btn_new_ws = gtk4::Button::from_icon_name("list-add-symbolic");
+        btn_new_ws.set_tooltip_text(Some("New Workspace (Ctrl+Shift+N)"));
+        btn_new_ws.set_action_name(Some("win.new-workspace"));
+        sidebar_header.pack_start(&btn_new_ws);
+        let sidebar_page = adw::ToolbarView::new();
+        sidebar_page.add_top_bar(&sidebar_header);
+        sidebar_page.set_content(Some(&sidebar.widget));
 
-        let empty = libadwaita::StatusPage::new();
-        empty.set_title("No workspace open");
-        empty.set_description(Some("Create a workspace to start running agents."));
-        let empty_btn = gtk4::Button::with_label("New workspace");
-        empty_btn.add_css_class("suggested-action");
-        empty.set_child(Some(&empty_btn));
+        // ---- content header ----
+        let title = adw::WindowTitle::new("signaltty", "");
+        let header = adw::HeaderBar::new();
+        header.set_title_widget(Some(&title));
+        let btn_sidebar = gtk4::ToggleButton::new();
+        btn_sidebar.set_icon_name("sidebar-show-symbolic");
+        btn_sidebar.set_tooltip_text(Some("Toggle Sidebar (F9)"));
+        btn_sidebar.set_action_name(Some("win.toggle-sidebar"));
+        header.pack_start(&btn_sidebar);
+        let btn_menu = gtk4::MenuButton::new();
+        btn_menu.set_icon_name("open-menu-symbolic");
+        btn_menu.set_tooltip_text(Some("Main Menu"));
+        btn_menu.set_menu_model(Some(&primary_menu()));
+        btn_menu.set_primary(true);
+        header.pack_end(&btn_menu);
+        let btn_new_tab = gtk4::Button::from_icon_name("tab-new-symbolic");
+        btn_new_tab.set_tooltip_text(Some("New Tab (Ctrl+Shift+T)"));
+        btn_new_tab.set_action_name(Some("win.new-tab"));
+        header.pack_end(&btn_new_tab);
+        let attention = Self::attention_button();
+        header.pack_end(&attention.revealer);
 
-        let stack = gtk4::Stack::new();
-        stack.add_named(&content, Some("main"));
-        stack.add_named(&empty, Some("empty"));
+        let banner = adw::Banner::new("Lost connection to the session server — retrying…");
 
-        let toasts = libadwaita::ToastOverlay::new();
-        let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        root.append(&header);
-        root.append(&stack);
-        toasts.set_child(Some(&root));
+        // ---- tabs + empty states ----
+        let tab_view = adw::TabView::new();
+        let tab_bar = adw::TabBar::new();
+        tab_bar.set_view(Some(&tab_view));
+        tab_bar.set_autohide(true);
+
+        let no_workspace = adw::StatusPage::new();
+        no_workspace.set_icon_name(Some("utilities-terminal-symbolic"));
+        no_workspace.set_title("No Workspaces");
+        no_workspace.set_description(Some(
+            "A workspace groups the agents working on one project. \
+             They keep running when this window closes.",
+        ));
+        let btn_empty = gtk4::Button::with_label("New Workspace");
+        btn_empty.add_css_class("pill");
+        btn_empty.add_css_class("suggested-action");
+        btn_empty.set_halign(gtk4::Align::Center);
+        btn_empty.set_action_name(Some("win.new-workspace"));
+        no_workspace.set_child(Some(&btn_empty));
+
+        let no_tabs = adw::StatusPage::new();
+        no_tabs.set_icon_name(Some("tab-new-symbolic"));
+        no_tabs.set_title("No Tabs");
+        no_tabs.set_description(Some("Open a tab to start a terminal in this workspace."));
+        let btn_no_tabs = gtk4::Button::with_label("New Tab");
+        btn_no_tabs.add_css_class("pill");
+        btn_no_tabs.add_css_class("suggested-action");
+        btn_no_tabs.set_halign(gtk4::Align::Center);
+        btn_no_tabs.set_action_name(Some("win.new-tab"));
+        no_tabs.set_child(Some(&btn_no_tabs));
+
+        let content = gtk4::Stack::new();
+        content.set_transition_type(gtk4::StackTransitionType::Crossfade);
+        content.set_transition_duration(150);
+        content.add_named(&tab_view, Some("tabs"));
+        content.add_named(&no_tabs, Some("no-tabs"));
+        content.add_named(&no_workspace, Some("no-workspace"));
+
+        let content_page = adw::ToolbarView::new();
+        content_page.add_top_bar(&header);
+        content_page.add_top_bar(&banner);
+        content_page.add_top_bar(&tab_bar);
+        content_page.set_content(Some(&content));
+
+        let split_view = adw::OverlaySplitView::new();
+        split_view.set_sidebar(Some(&sidebar_page));
+        split_view.set_content(Some(&content_page));
+        split_view.set_min_sidebar_width(260.0);
+        split_view.set_max_sidebar_width(340.0);
+        split_view.set_sidebar_width_fraction(0.24);
+
+        // Narrow windows: the sidebar overlays instead of squeezing panes.
+        let narrow = adw::Breakpoint::new(
+            adw::BreakpointCondition::parse("max-width: 760sp").expect("breakpoint"),
+        );
+        narrow.add_setter(&split_view, "collapsed", Some(&true.to_value()));
+        window.add_breakpoint(narrow);
+
+        let toasts = adw::ToastOverlay::new();
+        toasts.set_child(Some(&split_view));
         window.set_content(Some(&toasts));
 
         let app = Rc::new(App {
             window,
             toasts,
+            banner,
+            split_view,
+            title,
             sidebar,
-            notebook,
-            stack,
+            tab_view,
+            content,
+            attention,
             actor,
             notifier: Notifier::new(ui_tx),
             model: RefCell::new(Model {
@@ -134,93 +254,160 @@ impl App {
                 panes: HashMap::new(),
             }),
             widgets: RefCell::new(HashMap::new()),
-            pages: RefCell::new(HashMap::new()),
-            tab_layouts: RefCell::new(HashMap::new()),
+            tabs: RefCell::new(HashMap::new()),
+            reconciling: Cell::new(false),
             gui_tab: RefCell::new(None),
             focused_pane: RefCell::new(None),
             splits: RefCell::new(Vec::new()),
             me: RefCell::new(Weak::new()),
         });
         app.me.replace(Rc::downgrade(&app));
+        app.install_actions(application);
+        app.connect_signals();
+        app
+    }
 
-        // Header actions.
-        let w = app.weak();
-        btn_new_ws.connect_clicked(move |_| {
-            if let Some(a) = w.upgrade() {
-                a.action_new_workspace();
-            }
-        });
-        let w = app.weak();
-        btn_new_tab.connect_clicked(move |_| {
-            if let Some(a) = w.upgrade() {
-                a.action_new_tab();
-            }
-        });
-        let w = app.weak();
-        btn_split_h.connect_clicked(move |_| {
-            if let Some(a) = w.upgrade() {
-                a.action_split("right");
-            }
-        });
-        let w = app.weak();
-        btn_split_v.connect_clicked(move |_| {
-            if let Some(a) = w.upgrade() {
-                a.action_split("down");
-            }
-        });
-        let w = app.weak();
-        btn_close.connect_clicked(move |_| {
-            if let Some(a) = w.upgrade() {
-                a.action_close_pane();
-            }
-        });
-        let w = app.weak();
-        btn_next.connect_clicked(move |_| {
-            if let Some(a) = w.upgrade() {
-                a.focus_next_unread();
-            }
-        });
-        let w = app.weak();
-        empty_btn.connect_clicked(move |_| {
-            if let Some(a) = w.upgrade() {
-                a.action_new_workspace();
-            }
-        });
+    fn attention_button() -> AttentionButton {
+        let dot = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        dot.add_css_class("status-dot");
+        dot.set_valign(gtk4::Align::Center);
+        let count = gtk4::Label::new(None);
+        count.add_css_class("numeric");
+        count.add_css_class("heading");
+        let inner = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        inner.append(&dot);
+        inner.append(&count);
+        let button = gtk4::Button::new();
+        button.set_child(Some(&inner));
+        button.add_css_class("flat");
+        button.add_css_class("attention-button");
+        button.set_action_name(Some("win.next-attention"));
+        let revealer = gtk4::Revealer::new();
+        revealer.set_transition_type(gtk4::RevealerTransitionType::Crossfade);
+        revealer.set_transition_duration(150);
+        revealer.set_child(Some(&button));
+        AttentionButton {
+            revealer,
+            button,
+            dot,
+            count,
+        }
+    }
+
+    fn install_actions(&self, application: &adw::Application) {
+        let add = |name: &str, f: fn(&App)| {
+            let action = gio::SimpleAction::new(name, None);
+            let w = self.weak();
+            action.connect_activate(move |_, _| {
+                if let Some(a) = w.upgrade() {
+                    f(&a);
+                }
+            });
+            self.window.add_action(&action);
+        };
+        add("new-workspace", App::action_new_workspace);
+        add("new-tab", App::action_new_tab);
+        add("split-right", |a| a.action_split(SplitDir::Right));
+        add("split-down", |a| a.action_split(SplitDir::Down));
+        add("close-pane", App::action_close_pane);
+        add("next-attention", App::focus_next_unread);
+        add("about", App::show_about);
+        self.window.add_action(&gio::PropertyAction::new(
+            "toggle-sidebar",
+            &self.split_view,
+            "show-sidebar",
+        ));
+        for (action, accel) in ACCELS {
+            application.set_accels_for_action(action, &[accel]);
+        }
+    }
+
+    fn connect_signals(&self) {
         // Sidebar selection (guard: programmatic re-select is a no-op).
-        let w = app.weak();
-        app.sidebar.set_on_select(move |ws_id| {
+        let w = self.weak();
+        self.sidebar.set_on_select(move |ws_id| {
             if let Some(a) = w.upgrade() {
                 let active = a.model.borrow().active_ws.clone();
                 if active.as_deref() != Some(ws_id.as_str()) {
                     a.show_workspace(&ws_id);
                 }
+                if a.split_view.is_collapsed() {
+                    a.split_view.set_show_sidebar(false);
+                }
             }
         });
-        // Track the GUI-visible tab so refresh never yanks selection back.
-        let w = app.weak();
-        app.notebook.connect_switch_page(move |_, page, _| {
-            if let Some(a) = w.upgrade() {
-                for (id, p) in a.pages.borrow().iter() {
-                    if p == page {
-                        *a.gui_tab.borrow_mut() = Some(id.clone());
-                        break;
-                    }
+        // Track the tab the user is looking at, so refreshes never yank
+        // selection back to the server's idea of the active tab.
+        let w = self.weak();
+        self.tab_view.connect_selected_page_notify(move |view| {
+            let Some(a) = w.upgrade() else { return };
+            if a.reconciling.get() {
+                return;
+            }
+            if let Some(page) = view.selected_page() {
+                if let Some(id) = a.tab_id_of(&page) {
+                    *a.gui_tab.borrow_mut() = Some(id);
                 }
+            }
+        });
+        // Closing a tab from the tab bar closes it on the server. Pages
+        // the reconciler removes are no longer in `tabs` by the time
+        // this runs, so they just close.
+        let w = self.weak();
+        self.tab_view.connect_close_page(move |view, page| {
+            let closed = w.upgrade().and_then(|a| {
+                let id = a.tab_id_of(page)?;
+                a.tabs.borrow_mut().remove(&id);
+                Some((a, id))
+            });
+            view.close_page_finish(page, true);
+            if let Some((a, id)) = closed {
+                if let Err(e) = a.actor.call("tab.close", json!({"tab_id": id})) {
+                    a.toast(&format!("Couldn't close the tab — {e}"));
+                }
+                a.refresh_later();
+            }
+            glib::Propagation::Stop
+        });
+        // Terminals follow the desktop's colour scheme and mono font.
+        let sm = adw::StyleManager::default();
+        let w = self.weak();
+        sm.connect_dark_notify(move |_| {
+            if let Some(a) = w.upgrade() {
+                a.restyle_terminals();
+            }
+        });
+        let w = self.weak();
+        sm.connect_monospace_font_name_notify(move |_| {
+            if let Some(a) = w.upgrade() {
+                a.restyle_terminals();
             }
         });
         // Size-sync tick: VTE sizes + fresh split positions. Cheap, and
         // quiet when nothing changed (gtk4 0.11: no size-allocate signal).
-        let w = app.weak();
-        glib::timeout_add_local(Duration::from_millis(250), move || {
-            if let Some(a) = w.upgrade() {
+        let w = self.weak();
+        glib::timeout_add_local(Duration::from_millis(250), move || match w.upgrade() {
+            Some(a) => {
                 a.sync_sizes();
                 glib::ControlFlow::Continue
-            } else {
-                glib::ControlFlow::Break
             }
+            None => glib::ControlFlow::Break,
         });
+        // Relative times in the sidebar age between events.
+        let w = self.weak();
+        glib::timeout_add_seconds_local(30, move || match w.upgrade() {
+            Some(a) => {
+                a.sidebar.refresh_times();
+                glib::ControlFlow::Continue
+            }
+            None => glib::ControlFlow::Break,
+        });
+    }
 
-        app
+    fn restyle_terminals(&self) {
+        for w in self.widgets.borrow().values() {
+            w.apply_style();
+        }
     }
 
     fn sync_sizes(&self) {
@@ -231,10 +418,9 @@ impl App {
             let Some(paned) = weak.upgrade() else {
                 return false;
             };
-            let (w, h) = (paned.width(), paned.height());
             let total = match paned.orientation() {
-                gtk4::Orientation::Vertical => h,
-                _ => w,
+                gtk4::Orientation::Vertical => paned.height(),
+                _ => paned.width(),
             };
             if total > 100 {
                 paned.set_position((total as f32 * ratio) as i32);
@@ -254,17 +440,26 @@ impl App {
     }
 
     fn toast(&self, msg: &str) {
-        self.toasts.add_toast(libadwaita::Toast::new(msg));
+        self.toasts.add_toast(adw::Toast::new(msg));
+    }
+
+    fn refresh_later(&self) {
+        let w = self.weak();
+        glib::idle_add_local_once(move || {
+            if let Some(a) = w.upgrade() {
+                a.refresh();
+            }
+        });
     }
 
     // ---- data ----
 
-    /// Full refetch: sidebar summaries + active workspace render.
+    /// Full refetch: sidebar summaries, attention count, active workspace.
     pub fn refresh(&self) {
         let list = match self.actor.call("workspace.list", json!({})) {
             Ok(v) => v,
             Err(e) => {
-                self.toast(&format!("server error: {e}"));
+                self.toast(&format!("Couldn't load workspaces — {e}"));
                 return;
             }
         };
@@ -273,23 +468,27 @@ impl App {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
         let mut items = Vec::new();
+        let mut needing = Vec::new();
         for ws in &workspaces {
             if let Ok(g) = self
                 .actor
                 .call("workspace.get", json!({"workspace_id": ws.id}))
             {
-                let tabs: Vec<Value> = g
-                    .get("tabs")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
-                let panes: Vec<Value> = g
+                let panes: Vec<Pane> = g
                     .get("panes")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
-                items.push(sidebar::summarize(&g["workspace"], &tabs, &panes));
+                needing.extend(
+                    panes
+                        .iter()
+                        .filter(|p| p.attention.needs_human())
+                        .map(|p| p.attention),
+                );
+                items.push(sidebar::summarize(ws, &panes));
             }
         }
         self.sidebar.update(&items);
+        self.update_attention_button(&needing);
         {
             let mut m = self.model.borrow_mut();
             m.workspaces = workspaces;
@@ -305,13 +504,29 @@ impl App {
         match active {
             Some(id) => self.show_workspace(&id),
             None => {
-                self.model.borrow_mut().tabs.clear();
-                self.model.borrow_mut().panes.clear();
-                self.clear_notebook();
-                self.prune_widgets(&HashSet::new());
-                self.stack.set_visible_child_name("empty");
+                {
+                    let mut m = self.model.borrow_mut();
+                    m.tabs.clear();
+                    m.panes.clear();
+                }
+                self.render_tabs();
+                self.title.set_title("signaltty");
+                self.title.set_subtitle("");
+                self.content.set_visible_child_name("no-workspace");
             }
         }
+    }
+
+    fn update_attention_button(&self, needing: &[Attention]) {
+        let b = &self.attention;
+        let worst = needing.iter().fold(Attention::None, |acc, a| acc.raise(*a));
+        b.count.set_text(&needing.len().to_string());
+        status::set_attention_class(&b.dot, worst);
+        b.button.set_tooltip_text(Some(&match needing.len() {
+            1 => "1 pane needs attention — jump to it (Ctrl+Shift+J)".to_string(),
+            n => format!("{n} panes need attention — jump to the next (Ctrl+Shift+J)"),
+        }));
+        b.revealer.set_reveal_child(!needing.is_empty());
     }
 
     /// Render one workspace: tabs + panes + widgets + sidebar selection.
@@ -322,10 +537,11 @@ impl App {
         {
             Ok(v) => v,
             Err(e) => {
-                self.toast(&format!("workspace.get failed: {e}"));
+                self.toast(&format!("Couldn't open the workspace — {e}"));
                 return;
             }
         };
+        let ws: Option<Workspace> = serde_json::from_value(g["workspace"].clone()).ok();
         let tabs: Vec<Tab> = g
             .get("tabs")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -334,31 +550,41 @@ impl App {
             .get("panes")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
+        if let Some(ws) = &ws {
+            self.title.set_title(&ws.name);
+            let place = tilde(&ws.cwd);
+            self.title.set_subtitle(&match &ws.git.branch {
+                Some(branch) => format!("{place} · {branch}"),
+                None => place,
+            });
+        }
+        let has_tabs = !tabs.is_empty();
         {
             let mut m = self.model.borrow_mut();
             m.active_ws = Some(ws_id.to_string());
             m.tabs = tabs;
             m.panes = panes.into_iter().map(|p| (p.id.clone(), p)).collect();
         }
-        self.stack.set_visible_child_name("main");
-        self.render_notebook();
+        self.render_tabs();
+        self.content
+            .set_visible_child_name(if has_tabs { "tabs" } else { "no-tabs" });
         self.sidebar.select(ws_id);
     }
 
     // ---- layout rendering ----
 
-    fn clear_notebook(&self) {
-        while self.notebook.n_pages() > 0 {
-            self.notebook.remove_page(Some(0));
-        }
-        self.pages.borrow_mut().clear();
-        self.tab_layouts.borrow_mut().clear();
-        *self.gui_tab.borrow_mut() = None;
+    fn tab_id_of(&self, page: &adw::TabPage) -> Option<String> {
+        self.tabs
+            .borrow()
+            .iter()
+            .find(|(_, e)| &e.page == page)
+            .map(|(id, _)| id.clone())
     }
 
-    /// Reconcile notebook pages with model tabs. Only rebuilds a tab's
-    /// widget tree when its layout actually changed (split drags survive).
-    fn render_notebook(&self) {
+    /// Reconcile tab pages with model tabs. A tab's widget tree is only
+    /// rebuilt when its layout changed (split drags survive refreshes);
+    /// titles and status are updated in place.
+    fn render_tabs(&self) {
         let (tabs, server_active) = {
             let m = self.model.borrow();
             let active = m
@@ -369,48 +595,7 @@ impl App {
             (m.tabs.clone(), active)
         };
         let ids: HashSet<String> = tabs.iter().map(|t| t.id.clone()).collect();
-        // Collect first: iterating a borrowed clone would hold the RefCell.
-        let stale: Vec<(String, gtk4::Widget)> = self
-            .pages
-            .borrow()
-            .iter()
-            .filter(|(id, _)| !ids.contains(*id))
-            .map(|(id, page)| (id.clone(), page.clone()))
-            .collect();
-        for (id, page) in &stale {
-            if let Some(n) = self.notebook.page_num(page) {
-                self.notebook.remove_page(Some(n));
-            }
-            self.pages.borrow_mut().remove(id);
-            self.tab_layouts.borrow_mut().remove(id);
-        }
-        for tab in &tabs {
-            let sig = serde_json::to_string(&tab.layout).unwrap_or_default();
-            let changed = self.tab_layouts.borrow().get(&tab.id) != Some(&sig);
-            if !self.pages.borrow().contains_key(&tab.id) {
-                let page = self.build_tab_page(tab);
-                let label = self.tab_label(tab);
-                self.notebook.append_page(&page, Some(&label));
-                self.pages.borrow_mut().insert(tab.id.clone(), page);
-                self.tab_layouts.borrow_mut().insert(tab.id.clone(), sig);
-            } else if changed {
-                let old = self.pages.borrow().get(&tab.id).cloned().unwrap();
-                let pos = self.notebook.page_num(&old);
-                let page = self.build_tab_page(tab);
-                let label = self.tab_label(tab);
-                if let Some(n) = pos {
-                    self.notebook.remove_page(Some(n));
-                    self.notebook.insert_page(&page, Some(&label), Some(n));
-                }
-                self.pages.borrow_mut().insert(tab.id.clone(), page);
-                self.tab_layouts.borrow_mut().insert(tab.id.clone(), sig);
-            } else if let Some(page) = self.pages.borrow().get(&tab.id).cloned() {
-                // Title/attention may change without layout change.
-                let label = self.tab_label(tab);
-                self.notebook.set_tab_label(&page, Some(&label));
-            }
-        }
-        // Selection: GUI tab wins; else server active; else first.
+        // Decide selection first: appends and removals move it.
         let pick = self
             .gui_tab
             .borrow()
@@ -418,15 +603,62 @@ impl App {
             .filter(|id| ids.contains(id))
             .or_else(|| server_active.filter(|id| ids.contains(id)))
             .or_else(|| tabs.first().map(|t| t.id.clone()));
-        *self.gui_tab.borrow_mut() = pick.clone();
-        if let Some(id) = pick {
-            if let Some(page) = self.pages.borrow().get(&id).cloned() {
-                if let Some(n) = self.notebook.page_num(&page) {
-                    self.notebook.set_current_page(Some(n));
-                }
-            }
+        self.reconciling.set(true);
+
+        let stale: Vec<(String, adw::TabPage)> = self
+            .tabs
+            .borrow()
+            .iter()
+            .filter(|(id, _)| !ids.contains(*id))
+            .map(|(id, e)| (id.clone(), e.page.clone()))
+            .collect();
+        for (id, page) in stale {
+            self.tabs.borrow_mut().remove(&id);
+            self.tab_view.close_page(&page);
         }
-        // Meta + GC.
+        for tab in &tabs {
+            let sig = serde_json::to_string(&tab.layout).unwrap_or_default();
+            let existing = self
+                .tabs
+                .borrow()
+                .get(&tab.id)
+                .map(|e| (e.page.clone(), e.bin.clone(), e.layout_sig != sig));
+            let page = match existing {
+                Some((page, bin, changed)) => {
+                    if changed {
+                        self.set_tab_layout(&bin, tab);
+                        if let Some(e) = self.tabs.borrow_mut().get_mut(&tab.id) {
+                            e.layout_sig = sig;
+                        }
+                    }
+                    page
+                }
+                None => {
+                    let bin = adw::Bin::new();
+                    bin.add_css_class("tab-page");
+                    self.set_tab_layout(&bin, tab);
+                    let page = self.tab_view.append(&bin);
+                    self.tabs.borrow_mut().insert(
+                        tab.id.clone(),
+                        TabEntry {
+                            page: page.clone(),
+                            bin,
+                            layout_sig: sig,
+                        },
+                    );
+                    page
+                }
+            };
+            self.decorate_page(&page, tab);
+        }
+        *self.gui_tab.borrow_mut() = pick.clone();
+        if let Some(page) = pick.and_then(|id| self.tabs.borrow().get(&id).map(|e| e.page.clone()))
+        {
+            self.tab_view.set_selected_page(&page);
+        }
+        self.reconciling.set(false);
+
+        // Pane meta + GC.
         {
             let m = self.model.borrow();
             for (id, w) in self.widgets.borrow().iter() {
@@ -439,14 +671,43 @@ impl App {
         self.prune_widgets(&live);
     }
 
-    fn build_tab_page(&self, tab: &Tab) -> gtk4::Widget {
-        match &tab.layout {
+    /// Tab title + roll-up status: spinner while an agent works, an
+    /// attention icon, and the tab bar's glow when it is off-screen.
+    fn decorate_page(&self, page: &adw::TabPage, tab: &Tab) {
+        let m = self.model.borrow();
+        let panes: Vec<&Pane> = tab
+            .layout
+            .as_ref()
+            .map(|l| l.panes())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|id| m.panes.get(id))
+            .collect();
+        let attention = status::worst_attention(panes.iter().copied());
+        page.set_title(&tab.title);
+        page.set_loading(panes.iter().any(|p| p.lifecycle == Lifecycle::Working));
+        page.set_indicator_icon(
+            status::attention_icon(attention)
+                .map(gio::ThemedIcon::new)
+                .as_ref(),
+        );
+        page.set_indicator_tooltip(status::attention_tooltip(attention));
+        page.set_needs_attention(attention.severity() >= Attention::InputRequired.severity());
+    }
+
+    fn set_tab_layout(&self, bin: &adw::Bin, tab: &Tab) {
+        // Drop the old tree first so reused pane cards are free to move.
+        bin.set_child(None::<&gtk4::Widget>);
+        let child: gtk4::Widget = match &tab.layout {
             None => {
-                let page = libadwaita::StatusPage::new();
-                page.set_title("Empty tab");
-                page.set_description(Some("Spawn a terminal to get started."));
-                let btn = gtk4::Button::with_label("New terminal");
+                let page = adw::StatusPage::new();
+                page.add_css_class("compact");
+                page.set_title("Empty Tab");
+                page.set_description(Some("Start a terminal to get going."));
+                let btn = gtk4::Button::with_label("New Terminal");
+                btn.add_css_class("pill");
                 btn.add_css_class("suggested-action");
+                btn.set_halign(gtk4::Align::Center);
                 let w = self.weak();
                 let tab_id = tab.id.clone();
                 btn.connect_clicked(move |_| {
@@ -458,12 +719,22 @@ impl App {
                 page.upcast()
             }
             Some(layout) => self.build_layout(layout),
+        };
+        if matches!(tab.layout, Some(Layout::Split { .. })) {
+            bin.add_css_class("split");
+        } else {
+            bin.remove_css_class("split");
         }
+        bin.set_child(Some(&child));
     }
 
     fn build_layout(&self, layout: &Layout) -> gtk4::Widget {
         match layout {
-            Layout::Pane { pane_id } => self.widget_for(pane_id).frame.clone().upcast(),
+            Layout::Pane { pane_id } => {
+                let root = self.widget_for(pane_id).root.clone();
+                unparent(root.upcast_ref());
+                root.upcast()
+            }
             Layout::Split {
                 dir,
                 ratio,
@@ -501,9 +772,9 @@ impl App {
                         a.on_pane_focused(id);
                     }
                 }),
-                on_resume: Box::new(move |id| {
+                on_action: Box::new(move |id, action| {
                     if let Some(a) = w2.upgrade() {
-                        a.resume_pane(id);
+                        a.on_pane_action(id, action);
                     }
                 }),
             },
@@ -511,6 +782,7 @@ impl App {
         if let Some(p) = self.model.borrow().panes.get(pane_id) {
             widget.update_meta(p);
         }
+        widget.set_focused(self.focused_pane.borrow().as_deref() == Some(pane_id));
         self.widgets
             .borrow_mut()
             .insert(pane_id.to_string(), Rc::clone(&widget));
@@ -543,45 +815,6 @@ impl App {
         }
     }
 
-    fn tab_label(&self, tab: &Tab) -> gtk4::Widget {
-        let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        let m = self.model.borrow();
-        let mut worst = "none";
-        if let Some(l) = &tab.layout {
-            for pid in l.panes() {
-                if let Some(p) = m.panes.get(&pid) {
-                    let a = p.attention.as_str();
-                    if att_rank(a) > att_rank(worst) {
-                        worst = a;
-                    }
-                }
-            }
-        }
-        drop(m);
-        let dot = gtk4::Label::new(Some("●"));
-        dot.add_css_class("attention-dot");
-        let css = attention_css(worst);
-        if !css.is_empty() {
-            dot.add_css_class(css);
-        } else {
-            dot.set_opacity(0.15);
-        }
-        let label = gtk4::Label::new(Some(&tab.title));
-        let close = gtk4::Button::from_icon_name("window-close-symbolic");
-        close.add_css_class("flat");
-        let w = self.weak();
-        let tab_id = tab.id.clone();
-        close.connect_clicked(move |_| {
-            if let Some(a) = w.upgrade() {
-                a.action_close_tab(&tab_id);
-            }
-        });
-        hbox.append(&dot);
-        hbox.append(&label);
-        hbox.append(&close);
-        hbox.upcast()
-    }
-
     // ---- events ----
 
     pub fn on_event(&self, ev: UiEvent) {
@@ -596,11 +829,12 @@ impl App {
                 self.focus_pane(&id);
             }
             UiEvent::Reconnected => {
-                self.toast("reconnected to server");
+                self.banner.set_revealed(false);
+                self.toast("Reconnected");
                 self.refresh();
             }
             UiEvent::Disconnected => {
-                self.toast("server connection lost — retrying");
+                self.banner.set_revealed(true);
             }
             UiEvent::ServerEvent { name, payload, .. } => {
                 self.maybe_notify(&name, &payload);
@@ -648,7 +882,23 @@ impl App {
     }
 
     fn on_pane_focused(&self, pane_id: &str) {
-        *self.focused_pane.borrow_mut() = Some(pane_id.to_string());
+        let prev = self.focused_pane.replace(Some(pane_id.to_string()));
+        let widgets = self.widgets.borrow();
+        if let Some(w) = prev.as_deref().and_then(|id| widgets.get(id)) {
+            w.set_focused(false);
+        }
+        if let Some(w) = widgets.get(pane_id) {
+            w.set_focused(true);
+        }
+    }
+
+    fn on_pane_action(&self, pane_id: &str, action: PaneAction) {
+        match action {
+            PaneAction::SplitRight => self.split_pane(pane_id, SplitDir::Right),
+            PaneAction::SplitDown => self.split_pane(pane_id, SplitDir::Down),
+            PaneAction::Close => self.close_pane(pane_id),
+            PaneAction::Resume => self.resume_pane(pane_id),
+        }
     }
 
     // ---- focus navigation ----
@@ -666,23 +916,36 @@ impl App {
             self.show_workspace(&pane.workspace_id);
         }
         *self.gui_tab.borrow_mut() = Some(pane.tab_id.clone());
-        if let Some(page) = self.pages.borrow().get(&pane.tab_id).cloned() {
-            if let Some(n) = self.notebook.page_num(&page) {
-                self.notebook.set_current_page(Some(n));
-            }
+        let page = self.tabs.borrow().get(&pane.tab_id).map(|e| e.page.clone());
+        if let Some(page) = page {
+            self.tab_view.set_selected_page(&page);
         }
-        if let Some(w) = self.widgets.borrow().get(pane_id) {
+        let widget = self.widgets.borrow().get(pane_id).cloned();
+        if let Some(w) = widget {
             w.focus();
         }
+    }
+
+    /// Focus a pane created by the last action once its widget exists.
+    fn focus_created(&self, result: &Value) {
+        let Some(id) = result["pane"]["id"].as_str().map(str::to_string) else {
+            return;
+        };
+        let w = self.weak();
+        glib::idle_add_local_once(move || {
+            if let Some(a) = w.upgrade() {
+                a.focus_pane(&id);
+            }
+        });
     }
 
     fn focus_next_unread(&self) {
         match self.actor.call("focus.next_unread", json!({})) {
             Ok(v) => match v.get("pane_id").and_then(|p| p.as_str()) {
                 Some(id) => self.focus_pane(id),
-                None => self.toast("No unread panes"),
+                None => self.toast("Nothing needs your attention"),
             },
-            Err(e) => self.toast(&format!("focus.next_unread failed: {e}")),
+            Err(e) => self.toast(&format!("Couldn't find the next pane — {e}")),
         }
     }
 
@@ -722,21 +985,24 @@ impl App {
                 .unwrap_or_default()
                 .to_string(),
             Err(e) => {
-                self.toast(&format!("workspace.create failed: {e}"));
+                self.toast(&format!("Couldn't create the workspace — {e}"));
                 return;
             }
         };
         if ws_id.is_empty() {
-            self.toast("workspace.create returned no id");
+            self.toast("Couldn't create the workspace");
             return;
         }
         // No active tab yet: pane.spawn auto-creates the "agents" tab.
-        if let Err(e) = self.actor.call(
+        match self.actor.call(
             "pane.spawn",
             json!({"workspace_id": ws_id, "argv": [user_shell()]}),
         ) {
-            self.toast(&format!("pane.spawn failed: {e}"));
-            return;
+            Ok(v) => self.focus_created(&v),
+            Err(e) => {
+                self.toast(&format!("Couldn't start a terminal — {e}"));
+                return;
+            }
         }
         self.refresh();
         self.show_workspace(&ws_id);
@@ -753,68 +1019,94 @@ impl App {
         {
             Ok(v) => v["tab"]["id"].as_str().unwrap_or_default().to_string(),
             Err(e) => {
-                self.toast(&format!("tab.create failed: {e}"));
+                self.toast(&format!("Couldn't open a tab — {e}"));
                 return;
             }
         };
-        if let Err(e) = self.actor.call(
-            "pane.spawn",
-            json!({"workspace_id": ws, "tab_id": tab_id, "argv": [user_shell()]}),
-        ) {
-            self.toast(&format!("pane.spawn failed: {e}"));
-        }
-        self.refresh();
+        *self.gui_tab.borrow_mut() = Some(tab_id.clone());
+        self.spawn_shell_in_tab(&tab_id);
     }
 
     fn spawn_shell_in_tab(&self, tab_id: &str) {
         let Some(ws) = self.active_ws_id() else {
             return;
         };
-        if let Err(e) = self.actor.call(
+        match self.actor.call(
             "pane.spawn",
             json!({"workspace_id": ws, "tab_id": tab_id, "argv": [user_shell()]}),
         ) {
-            self.toast(&format!("pane.spawn failed: {e}"));
+            Ok(v) => self.focus_created(&v),
+            Err(e) => self.toast(&format!("Couldn't start a terminal — {e}")),
         }
         self.refresh();
     }
 
-    fn action_split(&self, direction: &str) {
-        let Some(pane_id) = self.current_pane_id() else {
-            self.toast("No pane to split");
-            return;
+    fn action_split(&self, dir: SplitDir) {
+        match self.current_pane_id() {
+            Some(id) => self.split_pane(&id, dir),
+            None => self.toast("No pane to split"),
+        }
+    }
+
+    fn split_pane(&self, pane_id: &str, dir: SplitDir) {
+        let direction = match dir {
+            SplitDir::Right => "right",
+            SplitDir::Down => "down",
         };
-        if let Err(e) = self.actor.call(
+        match self.actor.call(
             "pane.split",
             json!({"pane_id": pane_id, "direction": direction}),
         ) {
-            self.toast(&format!("pane.split failed: {e}"));
+            Ok(v) => self.focus_created(&v),
+            Err(e) => self.toast(&format!("Couldn't split the pane — {e}")),
         }
         self.refresh();
     }
 
     fn action_close_pane(&self) {
-        let Some(pane_id) = self.current_pane_id() else {
-            self.toast("No pane to close");
-            return;
-        };
-        if let Err(e) = self.actor.call("pane.close", json!({"pane_id": pane_id})) {
-            self.toast(&format!("pane.close failed: {e}"));
+        match self.current_pane_id() {
+            Some(id) => self.close_pane(&id),
+            None => self.toast("No pane to close"),
         }
-        self.refresh();
     }
 
-    fn action_close_tab(&self, tab_id: &str) {
-        if let Err(e) = self.actor.call("tab.close", json!({"tab_id": tab_id})) {
-            self.toast(&format!("tab.close failed: {e}"));
+    fn close_pane(&self, pane_id: &str) {
+        if let Err(e) = self.actor.call("pane.close", json!({"pane_id": pane_id})) {
+            self.toast(&format!("Couldn't close the pane — {e}"));
         }
         self.refresh();
     }
 
     fn resume_pane(&self, pane_id: &str) {
         if let Err(e) = self.actor.call("pane.resume", json!({"pane_id": pane_id})) {
-            self.toast(&format!("pane.resume failed: {e}"));
+            self.toast(&format!("Couldn't resume the session — {e}"));
         }
         self.refresh();
+    }
+
+    fn show_about(&self) {
+        let about = adw::AboutDialog::builder()
+            .application_name("signaltty")
+            .application_icon("utilities-terminal-symbolic")
+            .version(env!("CARGO_PKG_VERSION"))
+            .comments("A native workspace for parallel AI coding agents.")
+            .build();
+        about.present(Some(&self.window));
+    }
+}
+
+/// Detach a reused pane card from wherever the previous layout put it.
+fn unparent(widget: &gtk4::Widget) {
+    let Some(parent) = widget.parent() else {
+        return;
+    };
+    if let Some(paned) = parent.downcast_ref::<gtk4::Paned>() {
+        if paned.start_child().as_ref() == Some(widget) {
+            paned.set_start_child(None::<&gtk4::Widget>);
+        } else {
+            paned.set_end_child(None::<&gtk4::Widget>);
+        }
+    } else if let Some(bin) = parent.downcast_ref::<adw::Bin>() {
+        bin.set_child(None::<&gtk4::Widget>);
     }
 }

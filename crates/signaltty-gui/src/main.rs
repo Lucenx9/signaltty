@@ -5,6 +5,7 @@ mod actor;
 mod app;
 mod notif;
 mod sidebar;
+mod status;
 mod terminal;
 mod util;
 
@@ -30,6 +31,10 @@ fn socket_arg() -> (Option<std::path::PathBuf>, Vec<String>) {
 }
 
 fn main() {
+    // Before the Application exists: AdwApplication loads style.css and
+    // the bundled icons from this resource path.
+    gtk4::gio::resources_register_include!("signaltty-gui.gresource")
+        .expect("register bundled resources");
     let (socket_arg, gtk_args) = socket_arg();
     let socket = socket_arg.unwrap_or_else(signaltty_core::paths::socket_path);
     let application = libadwaita::Application::new(
@@ -37,15 +42,6 @@ fn main() {
         gtk4::gio::ApplicationFlags::FLAGS_NONE,
     );
     application.connect_activate(move |application| {
-        let provider = gtk4::CssProvider::new();
-        provider.load_from_string(crate::util::CSS);
-        if let Some(display) = gtk4::gdk::Display::default() {
-            gtk4::style_context_add_provider_for_display(
-                &display,
-                &provider,
-                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
-        }
         let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel();
         let actor = actor::spawn(socket.clone(), ui_tx.clone());
         let gui = app::App::new(application, actor, ui_tx);

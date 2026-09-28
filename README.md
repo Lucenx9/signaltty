@@ -41,7 +41,19 @@ signaltty-gui ───── GTK4/libadwaita GUI: sidebar, tabs, splits,
 ```
 
 GUI system deps: `libgtk-4-dev libadwaita-1-dev
-libvte-2.91-gtk4-dev` (GUI crate only; server/CLI build without them).
+libvte-2.91-gtk4-dev` (libadwaita ≥ 1.7; GUI crate only; server/CLI
+build without them).
+
+GUI shortcuts (Ctrl+Shift, so plain Ctrl chords reach the terminal):
+
+| Keys | Action |
+|---|---|
+| Ctrl+Shift+N / Ctrl+Shift+T | new workspace / new tab |
+| Ctrl+Shift+E / Ctrl+Shift+O | split right / split down |
+| Ctrl+Shift+W | close pane |
+| Ctrl+Shift+J | jump to the next pane that needs you |
+| Alt+1…9, Ctrl+PgUp/PgDn | switch tabs |
+| F9 / F10 | toggle sidebar / main menu |
 
 Server → Workspace → Tab → Pane. Lifecycle (unknown/working/blocked/
 done/idle/failed/exited) and attention (none/unread/input_required/

@@ -61,7 +61,7 @@ monotonic server counter; clients can `subscribe {from_seq}` to replay.
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
 | `pane.signal` | `{pane_id, signal, group?}` | `{sent}` |
 | `pane.read` | `{pane_id, mode: "screen"\|"tail", lines?, strip_ansi?}` | `{text, truncated}` |
-| `pane.attach` | `{pane_id, cols?, rows?, mark_seen?}` | `{snapshot_b64, size, live, ...}` then `pty.data` stream (`mark_seen` default true; GUIs pass false and clear on focus) |
+| `pane.attach` | `{pane_id, cols?, rows?, mark_seen?}` | `{snapshot_b64, size, live, ...}` then `pty.data` stream; the snapshot is replayable VT state (contents, colours, cursor, modes) (`mark_seen` default true; GUIs pass false and clear on focus) |
 | `pane.detach` | `{pane_id}` | `{detached}` (also implicit on disconnect) |
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
 | `pane.resume` | `{pane_id}` | `{pane}` (spawns adapter resume argv; errors unless restored+resumable) |

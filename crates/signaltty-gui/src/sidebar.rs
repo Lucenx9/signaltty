@@ -1,52 +1,195 @@
-//! Vertical workspace sidebar: project/agent/doing/needs-me at a
-//! glance. Rows show name, agent kinds, worst lifecycle, attention dot,
-//! branch, latest message, and time since activity.
+//! Workspace sidebar: what each project's agents are doing and whether
+//! one needs you, at a glance. Rows are keyed by workspace id and
+//! updated in place — refreshes never rebuild them, so selection,
+//! scroll position and status transitions survive every server event.
+//!
+//! Row anatomy (Mail-style, fixed three lines):
+//!
+//! ```text
+//!  ◌  api-server                     2m     lifecycle · name · time
+//!     Bash(cargo test -p api)   Approval    latest message · attention
+//!     main · claude                         branch/dir · agents
+//! ```
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use chrono::{DateTime, Utc};
 use gtk4::prelude::*;
 
-use crate::util::{attention_css, time_ago};
+use signaltty_core::{AgentKind, Attention, Lifecycle, Pane, Workspace};
+
+use crate::status::{self, AttentionBadge, LifecycleIndicator};
+use crate::util::{tilde, time_ago};
 
 pub struct WsSummary {
     pub id: String,
     pub name: String,
-    pub agents: String,
-    pub lifecycle: String,
-    pub attention: String,
-    pub branch: String,
+    pub lifecycle: Lifecycle,
+    pub attention: Attention,
+    /// Latest explicit message, else a lifecycle description.
     pub message: String,
-    pub ago: String,
+    /// "branch · agents" (directory when not a git repo).
+    pub meta: String,
+    pub last_activity: Option<DateTime<Utc>>,
 }
 
-type SelectCallback = std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn(String)>>>>;
+/// Roll a workspace's panes up into one sidebar row (docs/03).
+pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
+    let lifecycle = status::worst_lifecycle(panes);
+    let attention = status::worst_attention(panes);
+    let message = panes
+        .iter()
+        .filter(|p| p.last_message.as_deref().is_some_and(|m| !m.is_empty()))
+        .max_by_key(|p| p.last_activity_at)
+        .and_then(|p| p.last_message.clone())
+        .unwrap_or_else(|| status::lifecycle_label(lifecycle).to_string());
+    let mut agents: Vec<&str> = panes
+        .iter()
+        .filter_map(|p| agent_name(p.agent.kind))
+        .collect();
+    agents.sort_unstable();
+    agents.dedup();
+    let place = ws.git.branch.clone().unwrap_or_else(|| tilde(&ws.cwd));
+    let meta = if agents.is_empty() {
+        place
+    } else {
+        format!("{place} · {}", agents.join(", "))
+    };
+    WsSummary {
+        id: ws.id.clone(),
+        name: ws.name.clone(),
+        lifecycle,
+        attention,
+        message,
+        meta,
+        last_activity: panes.iter().map(|p| p.last_activity_at).max(),
+    }
+}
+
+/// Display name for real agents; shells and unknown commands have none.
+pub fn agent_name(kind: AgentKind) -> Option<&'static str> {
+    match kind {
+        AgentKind::Claude => Some("Claude"),
+        AgentKind::Codex => Some("Codex"),
+        AgentKind::Opencode => Some("opencode"),
+        AgentKind::Cursor => Some("Cursor"),
+        AgentKind::Generic | AgentKind::None => None,
+    }
+}
+
+struct Row {
+    id: String,
+    row: gtk4::ListBoxRow,
+    name: gtk4::Label,
+    time: gtk4::Label,
+    message: gtk4::Label,
+    meta: gtk4::Label,
+    lifecycle: LifecycleIndicator,
+    badge: AttentionBadge,
+    last_activity: Option<DateTime<Utc>>,
+}
+
+impl Row {
+    fn new(id: &str) -> Row {
+        let label = |classes: &[&str]| {
+            let l = gtk4::Label::new(None);
+            l.set_xalign(0.0);
+            l.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            for c in classes {
+                l.add_css_class(c);
+            }
+            l
+        };
+        let name = label(&["workspace-name"]);
+        name.set_hexpand(true);
+        let message = label(&["workspace-message"]);
+        message.set_hexpand(true);
+        let meta = label(&["caption", "dimmed"]);
+        let time = gtk4::Label::new(None);
+        time.add_css_class("caption");
+        time.add_css_class("numeric");
+        time.add_css_class("dimmed");
+        time.set_halign(gtk4::Align::End);
+        let lifecycle = LifecycleIndicator::new();
+        let badge = AttentionBadge::new();
+        badge.widget.set_halign(gtk4::Align::End);
+
+        let grid = gtk4::Grid::new();
+        grid.set_column_spacing(10);
+        grid.set_row_spacing(2);
+        grid.add_css_class("workspace-row");
+        grid.attach(&lifecycle.widget, 0, 0, 1, 1);
+        grid.attach(&name, 1, 0, 1, 1);
+        grid.attach(&time, 2, 0, 1, 1);
+        grid.attach(&message, 1, 1, 1, 1);
+        grid.attach(&badge.widget, 2, 1, 1, 1);
+        grid.attach(&meta, 1, 2, 2, 1);
+
+        let row = gtk4::ListBoxRow::new();
+        row.set_widget_name(id);
+        row.set_child(Some(&grid));
+        Row {
+            id: id.to_string(),
+            row,
+            name,
+            time,
+            message,
+            meta,
+            lifecycle,
+            badge,
+            last_activity: None,
+        }
+    }
+
+    fn update(&mut self, s: &WsSummary) {
+        self.name.set_text(&s.name);
+        self.message.set_text(&s.message);
+        self.message.set_tooltip_text(Some(&s.message));
+        self.meta.set_text(&s.meta);
+        self.lifecycle.set(s.lifecycle);
+        self.badge.set(s.attention);
+        self.last_activity = s.last_activity;
+        self.refresh_time();
+    }
+
+    fn refresh_time(&self) {
+        self.time
+            .set_text(&self.last_activity.map(time_ago).unwrap_or_default());
+    }
+}
+
+type SelectCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
 
 pub struct Sidebar {
-    pub scrolled: gtk4::ScrolledWindow,
+    pub widget: gtk4::ScrolledWindow,
     list: gtk4::ListBox,
+    rows: RefCell<Vec<Row>>,
     on_select: SelectCallback,
 }
 
 impl Sidebar {
     pub fn new() -> Sidebar {
         let list = gtk4::ListBox::new();
+        list.add_css_class("navigation-sidebar");
         list.set_selection_mode(gtk4::SelectionMode::Single);
-        let on_select: SelectCallback = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let on_select: SelectCallback = Rc::new(RefCell::new(None));
         {
-            let on_select = std::rc::Rc::clone(&on_select);
+            let on_select = Rc::clone(&on_select);
             list.connect_row_selected(move |_, row| {
-                if let Some(row) = row {
-                    if let Some(cb) = on_select.borrow().as_ref() {
-                        cb(row.widget_name().to_string());
-                    }
+                if let (Some(row), Some(cb)) = (row, on_select.borrow().as_ref()) {
+                    cb(row.widget_name().to_string());
                 }
             });
         }
-        let scrolled = gtk4::ScrolledWindow::new();
-        scrolled.set_child(Some(&list));
-        scrolled.set_min_content_width(264);
-        scrolled.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+        let widget = gtk4::ScrolledWindow::new();
+        widget.set_child(Some(&list));
+        widget.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+        widget.set_vexpand(true);
         Sidebar {
-            scrolled,
+            widget,
             list,
+            rows: RefCell::new(Vec::new()),
             on_select,
         }
     }
@@ -55,173 +198,48 @@ impl Sidebar {
         *self.on_select.borrow_mut() = Some(Box::new(cb));
     }
 
+    /// Reconcile rows with `items` (server order), updating in place.
     pub fn update(&self, items: &[WsSummary]) {
-        while let Some(child) = self.list.first_child() {
-            self.list.remove(&child);
+        let mut rows = self.rows.borrow_mut();
+        rows.retain(|r| {
+            let keep = items.iter().any(|s| s.id == r.id);
+            if !keep {
+                self.list.remove(&r.row);
+            }
+            keep
+        });
+        for (i, item) in items.iter().enumerate() {
+            match rows.iter().position(|r| r.id == item.id) {
+                Some(pos) if pos == i => rows[i].update(item),
+                Some(pos) => {
+                    let mut row = rows.remove(pos);
+                    self.list.remove(&row.row);
+                    self.list.insert(&row.row, i as i32);
+                    row.update(item);
+                    rows.insert(i, row);
+                }
+                None => {
+                    let mut row = Row::new(&item.id);
+                    row.update(item);
+                    self.list.insert(&row.row, i as i32);
+                    rows.insert(i, row);
+                }
+            }
         }
-        for item in items {
-            self.list.append(&Self::row(item));
+    }
+
+    /// Re-render relative times ("now" → "2m") between server events.
+    pub fn refresh_times(&self) {
+        for r in self.rows.borrow().iter() {
+            r.refresh_time();
         }
     }
 
     pub fn select(&self, ws_id: &str) {
-        let mut child = self.list.first_child();
-        while let Some(c) = child {
-            if c.widget_name() == ws_id {
-                if let Some(row) = c.downcast_ref::<gtk4::ListBoxRow>() {
-                    self.list.select_row(Some(row));
-                }
-                return;
-            }
-            child = c.next_sibling();
-        }
-    }
-
-    fn row(item: &WsSummary) -> gtk4::ListBoxRow {
-        let row = gtk4::ListBoxRow::new();
-        row.set_widget_name(&item.id);
-        let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
-        vbox.set_margin_top(6);
-        vbox.set_margin_bottom(6);
-        vbox.set_margin_start(8);
-        vbox.set_margin_end(8);
-
-        let top = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        let name = gtk4::Label::new(Some(&item.name));
-        name.set_xalign(0.0);
-        name.set_hexpand(true);
-        name.add_css_class("heading");
-        let dot = gtk4::Label::new(Some("●"));
-        dot.add_css_class("attention-dot");
-        let css = attention_css(&item.attention);
-        if !css.is_empty() {
-            dot.add_css_class(css);
-        } else {
-            dot.set_opacity(0.15);
-        }
-        top.append(&name);
-        top.append(&dot);
-
-        let mid = gtk4::Label::new(Some(&format!(
-            "{} · {} · {}",
-            item.agents, item.lifecycle, item.branch
-        )));
-        mid.set_xalign(0.0);
-        mid.add_css_class("dim");
-        mid.add_css_class("caption");
-
-        let bottom = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        let msg = gtk4::Label::new(Some(&item.message));
-        msg.set_xalign(0.0);
-        msg.set_hexpand(true);
-        msg.set_max_width_chars(32);
-        msg.set_wrap(true);
-        msg.set_wrap_mode(gtk4::pango::WrapMode::Char);
-        msg.add_css_class("caption");
-        let ago = gtk4::Label::new(Some(&item.ago));
-        ago.add_css_class("dim");
-        ago.add_css_class("caption");
-        bottom.append(&msg);
-        bottom.append(&ago);
-
-        vbox.append(&top);
-        vbox.append(&mid);
-        vbox.append(&bottom);
-        row.set_child(Some(&vbox));
-        row
-    }
-}
-
-/// Build a sidebar summary from a `workspace.get` result value.
-pub fn summarize(
-    ws: &serde_json::Value,
-    tabs: &[serde_json::Value],
-    panes: &[serde_json::Value],
-) -> WsSummary {
-    use std::collections::BTreeSet;
-    let mut agents = BTreeSet::new();
-    let mut worst_lc = ("unknown", 0u8);
-    let mut worst_att = ("none", 0u8);
-    let mut message = String::new();
-    let mut latest = String::new();
-    // Severity ranks mirror the core model.
-    let lc_rank = |s: &str| match s {
-        "blocked" => 5,
-        "failed" => 4,
-        "working" => 3,
-        "done" => 2,
-        "idle" => 1,
-        _ => 0,
-    };
-    let att_rank = |s: &str| match s {
-        "error" => 5,
-        "permission_required" => 4,
-        "input_required" => 3,
-        "warning" => 2,
-        "unread" => 1,
-        _ => 0,
-    };
-    for p in panes {
-        if let Some(kind) = p
-            .get("agent")
-            .and_then(|a| a.get("kind"))
-            .and_then(|k| k.as_str())
-        {
-            if kind != "none" && kind != "generic" {
-                agents.insert(kind.to_string());
+        if let Some(r) = self.rows.borrow().iter().find(|r| r.id == ws_id) {
+            if !r.row.is_selected() {
+                self.list.select_row(Some(&r.row));
             }
         }
-        let lc = p
-            .get("lifecycle")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        if lc_rank(lc) > worst_lc.1 {
-            worst_lc = (lc, lc_rank(lc));
-        }
-        let att = p
-            .get("attention")
-            .and_then(|v| v.as_str())
-            .unwrap_or("none");
-        if att_rank(att) > worst_att.1 {
-            worst_att = (att, att_rank(att));
-        }
-        if message.is_empty() {
-            if let Some(m) = p.get("last_message").and_then(|v| v.as_str()) {
-                message = m.to_string();
-            }
-        }
-        if let Some(ts) = p.get("last_activity_at").and_then(|v| v.as_str()) {
-            if ts > latest.as_str() {
-                latest = ts.to_string();
-            }
-        }
-    }
-    let _ = tabs;
-    WsSummary {
-        id: ws
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?")
-            .to_string(),
-        name: ws
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?")
-            .to_string(),
-        agents: if agents.is_empty() {
-            "shell".to_string()
-        } else {
-            agents.into_iter().collect::<Vec<_>>().join("+")
-        },
-        lifecycle: worst_lc.0.to_string(),
-        attention: worst_att.0.to_string(),
-        branch: ws
-            .get("git")
-            .and_then(|g| g.get("branch"))
-            .and_then(|b| b.as_str())
-            .unwrap_or("-")
-            .to_string(),
-        message,
-        ago: time_ago(&latest),
     }
 }

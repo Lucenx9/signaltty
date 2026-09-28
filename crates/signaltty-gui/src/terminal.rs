@@ -1,30 +1,53 @@
-//! One pane: VTE terminal (fed externally from the server stream —
-//! the PTY lives in the server, never here) inside an attention-ring
-//! frame, with a compact status header.
+//! One pane: a card holding a status header and a VTE terminal fed
+//! externally from the server stream (the PTY lives in the server,
+//! never here).
+//!
+//! ```text
+//! ╭──────────────────────────────────────────────────────────────╮
+//! │ ◌ claude  Working               Approval   ⫿ ⊟ ×   [Resume] │
+//! │ terminal …                                                   │
+//! ╰──────────────────────────────────────────────────────────────╯
+//! ```
+//!
+//! Attention is a ring around the card (an outer shadow, so it never
+//! resizes the terminal); focus marks the card in multi-pane tabs.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
 use serde_json::json;
-use vte4::TerminalExt;
+use vte4::prelude::*;
 
-use signaltty_core::model::{LiveState, Pane};
+use signaltty_core::{Lifecycle, LiveState, Pane};
 
 use crate::actor::IpcHandle;
-use crate::util::attention_css;
+use crate::sidebar::agent_name;
+use crate::status::{self, AttentionBadge, LifecycleIndicator};
+
+#[derive(Debug, Clone, Copy)]
+pub enum PaneAction {
+    SplitRight,
+    SplitDown,
+    Close,
+    Resume,
+}
+
+type ActionCallback = Box<dyn Fn(&str, PaneAction)>;
 
 pub struct PaneCallbacks {
     pub on_focus: Box<dyn Fn(&str)>,
-    pub on_resume: Box<dyn Fn(&str)>,
+    pub on_action: ActionCallback,
 }
 
 pub struct PaneWidget {
-    pub frame: gtk4::Frame,
+    pub root: gtk4::Box,
     term: vte4::Terminal,
-    title_label: gtk4::Label,
-    meta_label: gtk4::Label,
-    resume_button: gtk4::Button,
+    lifecycle: LifecycleIndicator,
+    title: gtk4::Label,
+    subtitle: gtk4::Label,
+    badge: AttentionBadge,
+    resume: gtk4::Button,
     pane_id: String,
     actor: IpcHandle,
     live: Cell<bool>,
@@ -33,50 +56,108 @@ pub struct PaneWidget {
 
 impl PaneWidget {
     pub fn new(pane_id: &str, actor: IpcHandle, cb: PaneCallbacks) -> Rc<PaneWidget> {
-        let frame = gtk4::Frame::new(None);
-        frame.add_css_class("pane-frame");
-        let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        root.add_css_class("pane");
+        root.set_overflow(gtk4::Overflow::Hidden);
 
-        let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        header.set_margin_start(6);
-        header.set_margin_end(6);
-        let title_label = gtk4::Label::new(None);
-        title_label.set_xalign(0.0);
-        title_label.add_css_class("pane-title");
-        let meta_label = gtk4::Label::new(None);
-        meta_label.add_css_class("pane-title");
-        meta_label.add_css_class("dim");
-        let spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        let resume_button = gtk4::Button::with_label("Resume");
-        resume_button.set_visible(false);
-        resume_button.add_css_class("suggested-action");
-        header.append(&title_label);
-        header.append(&meta_label);
-        header.append(&spacer);
-        header.append(&resume_button);
+        let lifecycle = LifecycleIndicator::new();
+        let title = gtk4::Label::new(None);
+        title.add_css_class("pane-title");
+        title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        let subtitle = gtk4::Label::new(None);
+        subtitle.add_css_class("pane-subtitle");
+        subtitle.add_css_class("dimmed");
+        subtitle.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        subtitle.set_xalign(0.0);
+        subtitle.set_hexpand(true);
+        let badge = AttentionBadge::new();
+
+        let on_action = Rc::new(cb.on_action);
+        let action_button = |icon: &str, tooltip: &str, action: PaneAction| {
+            let b = gtk4::Button::from_icon_name(icon);
+            b.add_css_class("flat");
+            b.add_css_class("circular");
+            b.set_tooltip_text(Some(tooltip));
+            b.set_focus_on_click(false);
+            let on_action = Rc::clone(&on_action);
+            let pid = pane_id.to_string();
+            b.connect_clicked(move |_| on_action(&pid, action));
+            b
+        };
+        let actions = gtk4::Box::new(gtk4::Orientation::Horizontal, 2);
+        actions.add_css_class("pane-actions");
+        actions.append(&action_button(
+            "signaltty-split-right-symbolic",
+            "Split Right (Ctrl+Shift+E)",
+            PaneAction::SplitRight,
+        ));
+        actions.append(&action_button(
+            "signaltty-split-down-symbolic",
+            "Split Down (Ctrl+Shift+O)",
+            PaneAction::SplitDown,
+        ));
+        actions.append(&action_button(
+            "window-close-symbolic",
+            "Close Pane (Ctrl+Shift+W)",
+            PaneAction::Close,
+        ));
+        let resume = gtk4::Button::with_label("Resume");
+        resume.add_css_class("suggested-action");
+        resume.add_css_class("resume-button");
+        resume.set_valign(gtk4::Align::Center);
+        resume.set_tooltip_text(Some("Restart this agent's session where it left off"));
+        resume.set_visible(false);
+        {
+            let on_action = Rc::clone(&on_action);
+            let pid = pane_id.to_string();
+            resume.connect_clicked(move |_| on_action(&pid, PaneAction::Resume));
+        }
+
+        // Status (recedes on unfocused panes) | actions (on hover/focus).
+        let info = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        info.add_css_class("pane-info");
+        info.set_hexpand(true);
+        info.append(&lifecycle.widget);
+        info.append(&title);
+        info.append(&subtitle);
+        info.append(&badge.widget);
+        let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        header.add_css_class("pane-header");
+        header.append(&info);
+        header.append(&resume);
+        header.append(&actions);
 
         let term = vte4::Terminal::new();
         term.set_scrollback_lines(5000);
         term.set_allow_hyperlink(true);
+        term.set_bold_is_bright(false);
+        // The card paints the background (and the padding around the
+        // grid), so terminals always match the surrounding theme.
+        term.set_clear_background(false);
         term.set_vexpand(true);
         term.set_hexpand(true);
+        let scroller = gtk4::ScrolledWindow::new();
+        scroller.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+        scroller.set_child(Some(&term));
+        scroller.set_vexpand(true);
 
-        vbox.append(&header);
-        vbox.append(&term);
-        frame.set_child(Some(&vbox));
+        root.append(&header);
+        root.append(&scroller);
 
         let w = Rc::new(PaneWidget {
-            frame,
+            root,
             term,
-            title_label,
-            meta_label,
-            resume_button,
+            lifecycle,
+            title,
+            subtitle,
+            badge,
+            resume,
             pane_id: pane_id.to_string(),
             actor,
             live: Cell::new(true),
             last_size: Cell::new((80, 24)),
         });
+        w.apply_style();
 
         // Input: VTE translates keys to bytes; forward to the server PTY.
         {
@@ -110,14 +191,17 @@ impl PaneWidget {
                 }
             });
         }
-        // Resume button for restored tombstones.
+        // Clicking the header focuses the pane too.
         {
-            let pid = pane_id.to_string();
-            let on_resume = cb.on_resume;
-            w.resume_button.connect_clicked(move |_| on_resume(&pid));
+            let click = gtk4::GestureClick::new();
+            let term = w.term.clone();
+            click.connect_pressed(move |_, _, _, _| {
+                term.grab_focus();
+            });
+            header.add_controller(click);
         }
 
-        // Attach + initial snapshot.
+        // Attach + initial snapshot (replayable VT bytes).
         match w.actor.attach(pane_id, 80, 24) {
             Ok(snap) => {
                 w.term.reset(true, true);
@@ -127,10 +211,31 @@ impl PaneWidget {
             }
             Err(e) => {
                 w.term
-                    .feed(format!("\r\n[attach failed: {e}]\r\n").as_bytes());
+                    .feed(format!("\r\n\x1b[2mCouldn't attach: {e}\x1b[0m\r\n").as_bytes());
             }
         }
         w
+    }
+
+    /// Font + palette from the desktop; re-run when either changes.
+    pub fn apply_style(&self) {
+        let sm = libadwaita::StyleManager::default();
+        let name = sm.monospace_font_name();
+        let font = gtk4::pango::FontDescription::from_string(if name.is_empty() {
+            "Monospace 11"
+        } else {
+            name.as_str()
+        });
+        self.term.set_font(Some(&font));
+        let scheme = if sm.is_dark() { &DARK } else { &LIGHT };
+        let rgba = |hex: &str| gtk4::gdk::RGBA::parse(hex).expect("palette colour");
+        let palette: Vec<gtk4::gdk::RGBA> = PALETTE.iter().map(|c| rgba(c)).collect();
+        let palette: Vec<&gtk4::gdk::RGBA> = palette.iter().collect();
+        self.term.set_colors(
+            Some(&rgba(scheme.foreground)),
+            Some(&rgba(scheme.background)),
+            &palette,
+        );
     }
 
     pub fn feed(&self, data: &[u8]) {
@@ -139,6 +244,15 @@ impl PaneWidget {
 
     pub fn focus(&self) {
         self.term.grab_focus();
+    }
+
+    /// Mark this pane as the target of pane actions.
+    pub fn set_focused(&self, focused: bool) {
+        if focused {
+            self.root.add_css_class("focused");
+        } else {
+            self.root.remove_css_class("focused");
+        }
     }
 
     pub fn detach(&self) {
@@ -164,30 +278,63 @@ impl PaneWidget {
 
     /// Refresh header + ring from fresh pane state.
     pub fn update_meta(&self, pane: &Pane) {
-        self.title_label.set_text(&pane.title);
-        let agent = format!("{:?}", pane.agent.kind).to_lowercase();
-        self.meta_label
-            .set_text(&format!("{} · {}", agent, pane.lifecycle.as_str()));
-        for cls in [
-            "attention-unread",
-            "attention-input",
-            "attention-permission",
-            "attention-warning",
-            "attention-error",
-        ] {
-            self.frame.remove_css_class(cls);
-        }
-        let css = attention_css(pane.attention.as_str());
-        if !css.is_empty() {
-            self.frame.add_css_class(css);
-        }
         let live = matches!(pane.live, LiveState::Live);
+        self.title.set_text(&pane.title);
+        self.title.set_tooltip_text(Some(&pane.cwd));
+        let mut context: Vec<String> = Vec::new();
+        if let Some(agent) = agent_name(pane.agent.kind) {
+            if !agent.eq_ignore_ascii_case(pane.title.trim()) {
+                context.push(agent.to_string());
+            }
+        }
+        match pane.live {
+            LiveState::Exited { code: Some(code) } if code != 0 => {
+                context.push(format!("Exited ({code})"))
+            }
+            LiveState::Exited { .. } => context.push("Exited".to_string()),
+            LiveState::Live if pane.lifecycle != Lifecycle::Unknown => {
+                context.push(status::lifecycle_label(pane.lifecycle).to_string())
+            }
+            LiveState::Live => {}
+        }
+        self.subtitle.set_text(&context.join(" · "));
+        self.lifecycle.set(if live {
+            pane.lifecycle
+        } else {
+            Lifecycle::Exited
+        });
+        self.badge.set(pane.attention);
+        status::set_attention_class(&self.root, pane.attention);
+
         let was_live = self.live.replace(live);
         if was_live && !live {
-            self.term.feed(b"\r\n[process exited]\r\n");
+            self.term.feed(b"\r\n\x1b[2m[process exited]\x1b[0m\r\n");
         }
         // Resume affordance for restored/resumable tombstones.
-        let resumable = !live && pane.agent.resume_argv.is_some();
-        self.resume_button.set_visible(resumable);
+        self.resume
+            .set_visible(!live && pane.agent.resume_argv.is_some());
     }
 }
+
+struct Scheme {
+    foreground: &'static str,
+    /// Matches libadwaita's view background; used for reverse video
+    /// (the card itself paints the default background).
+    background: &'static str,
+}
+
+const LIGHT: Scheme = Scheme {
+    foreground: "#241f31",
+    background: "#ffffff",
+};
+
+const DARK: Scheme = Scheme {
+    foreground: "#deddda",
+    background: "#1d1d20",
+};
+
+/// GNOME palette (as in Console/Ptyxis): legible on both schemes.
+const PALETTE: [&str; 16] = [
+    "#241f31", "#c01c28", "#2ec27e", "#f5c211", "#1e78e4", "#9841bb", "#0ab9dc", "#c0bfbc",
+    "#5e5c64", "#ed333b", "#57e389", "#f8e45c", "#51a1ff", "#c061cb", "#4fd2fd", "#f6f5f4",
+];

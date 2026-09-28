@@ -801,7 +801,7 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
             .cloned()
             .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?
     };
-    let snapshot = ctx.ptys.terms().lock().unwrap().snapshot(&id);
+    let snapshot = ctx.ptys.terms().lock().unwrap().screen_state(&id);
     // Attach marks seen only when the client passes mark_seen (CLI
     // interactive attach = explicit focus). Multi-pane GUIs pass false
     // and clear per-pane on focus instead — visibility alone must not
@@ -834,7 +834,7 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
     effect.attach.push(id.clone());
     Ok((
         json!({
-            "snapshot_b64": base64::engine::general_purpose::STANDARD.encode(snapshot.as_bytes()),
+            "snapshot_b64": base64::engine::general_purpose::STANDARD.encode(&snapshot),
             "size": pane.pty_size,
             "live": pane.live,
             "restore_state": pane.restore_state,

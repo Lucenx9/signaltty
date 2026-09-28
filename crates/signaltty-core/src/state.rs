@@ -54,6 +54,19 @@ impl Lifecycle {
             Lifecycle::Exited => "agent.exited",
         }
     }
+
+    /// Rank for "worst lifecycle" roll-ups (sidebar, tabs):
+    /// blocked > failed > working > done > idle > unknown/exited.
+    pub fn urgency(self) -> u8 {
+        match self {
+            Lifecycle::Blocked => 5,
+            Lifecycle::Failed => 4,
+            Lifecycle::Working => 3,
+            Lifecycle::Done => 2,
+            Lifecycle::Idle => 1,
+            Lifecycle::Unknown | Lifecycle::Exited => 0,
+        }
+    }
 }
 
 /// Whether the human needs to look. Severity order:

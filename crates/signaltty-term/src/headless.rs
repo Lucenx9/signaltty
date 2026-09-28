@@ -71,8 +71,9 @@ impl Surface {
         if self.cols == cols && self.rows == rows {
             return;
         }
-        // vt100 has no reflow: restart the screen model, keep scrollback.
-        self.parser = vt100::Parser::new(rows, cols, 0);
+        // No reflow: vt100 truncates/pads rows in place, so the visible
+        // screen survives (TUIs redraw on SIGWINCH anyway).
+        self.parser.set_size(rows, cols);
         self.cols = cols;
         self.rows = rows;
     }
@@ -163,6 +164,13 @@ impl TerminalBackend for HeadlessBackend {
             .unwrap_or_default()
     }
 
+    fn screen_state(&self, id: &str) -> Vec<u8> {
+        self.surfaces
+            .get(id)
+            .map(|s| s.parser.screen().state_formatted())
+            .unwrap_or_default()
+    }
+
     fn configure(&mut self, _opts: &TermOptions) {}
 
     fn destroy(&mut self, id: &str) {
@@ -182,6 +190,34 @@ mod tests {
         assert!(b.snapshot("p").contains("hello"));
         let tail = b.tail("p", 10, false).unwrap();
         assert_eq!(tail, vec!["hello".to_string(), "world".to_string()]);
+    }
+
+    #[test]
+    fn screen_state_replays_colours_and_line_starts() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"\x1b[31mred\x1b[0m\r\nnext\r\n");
+        let state = b.screen_state("p");
+        // Replaying into a fresh screen reproduces it exactly.
+        let mut replay = vt100::Parser::new(24, 80, 0);
+        replay.process(&state);
+        assert_eq!(replay.screen().contents(), b.snapshot("p"));
+        assert_eq!(
+            replay.screen().cell(0, 0).unwrap().fgcolor(),
+            vt100::Color::Idx(1)
+        );
+        assert_eq!(replay.screen().cell(1, 0).unwrap().contents(), "n");
+    }
+
+    #[test]
+    fn resize_keeps_the_visible_screen() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"still here\r\n");
+        b.resize("p", 120, 40);
+        assert!(b.snapshot("p").contains("still here"));
+        b.resize("p", 40, 10);
+        assert!(b.snapshot("p").contains("still here"));
     }
 
     #[test]
