@@ -1,0 +1,81 @@
+//! XDG paths. Socket lives under $XDG_RUNTIME_DIR (0700 dir, 0600
+//! socket); snapshots under $XDG_STATE_HOME.
+
+use std::path::PathBuf;
+
+pub fn runtime_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+        PathBuf::from(dir).join("signaltty")
+    } else {
+        // Fallback for environments without XDG_RUNTIME_DIR.
+        PathBuf::from(format!("/tmp/signaltty-{}", current_uid()))
+    }
+}
+
+fn current_uid() -> u32 {
+    if let Ok(uid) = std::env::var("UID") {
+        if let Ok(n) = uid.parse() {
+            return n;
+        }
+    }
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+pub fn socket_path() -> PathBuf {
+    std::env::var("SIGNALTTY_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| runtime_dir().join("signaltty.sock"))
+}
+
+pub fn state_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_STATE_HOME") {
+        PathBuf::from(dir).join("signaltty")
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".local/state/signaltty")
+    } else {
+        PathBuf::from("/tmp/signaltty-state")
+    }
+}
+
+pub fn snapshot_path() -> PathBuf {
+    state_dir().join("snapshot.json")
+}
+
+pub fn history_dir() -> PathBuf {
+    state_dir().join("history")
+}
+
+pub fn config_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+        PathBuf::from(dir).join("signaltty")
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".config/signaltty")
+    } else {
+        PathBuf::from("/tmp/signaltty-config")
+    }
+}
+
+/// Directory scanned for plugin packages (`<name>/plugin.toml`).
+pub fn plugin_dir() -> PathBuf {
+    std::env::var("SIGNALTTY_PLUGIN_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| config_dir().join("plugins"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn socket_env_override_wins() {
+        std::env::set_var("SIGNALTTY_SOCKET", "/tmp/test-signaltty.sock");
+        assert_eq!(socket_path(), PathBuf::from("/tmp/test-signaltty.sock"));
+        std::env::remove_var("SIGNALTTY_SOCKET");
+    }
+}

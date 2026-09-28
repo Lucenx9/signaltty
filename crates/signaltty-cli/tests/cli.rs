@@ -1,0 +1,300 @@
+//! CLI end-to-end tests: real `signaltty` binary against a hermetic
+//! server. Verifies JSON output and opaque-id returns (§15, §23).
+
+use std::process::Command;
+
+use signaltty_testkit::{bin_path, TestServer};
+use serde_json::Value;
+
+fn cli(socket: &std::path::Path, args: &[&str]) -> (bool, String) {
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(socket)
+        .args(args)
+        .output()
+        .expect("run signaltty");
+    let text = String::from_utf8(out.stdout).unwrap();
+    (out.status.success(), text)
+}
+
+fn cli_json(socket: &std::path::Path, args: &[&str]) -> Value {
+    let mut full = vec!["--json"];
+    full.extend(args.iter());
+    let (ok, text) = cli(socket, &full);
+    assert!(ok, "cli failed: {text}");
+    serde_json::from_str(text.trim()).expect("valid JSON")
+}
+
+#[tokio::test]
+async fn cli_status_and_new_json() {
+    let srv = TestServer::start().await;
+    let st = cli_json(&srv.socket, &["status"]);
+    assert_eq!(st["protocol"], "signaltty/1");
+    assert!(st["version"].is_string());
+
+    let new = cli_json(&srv.socket, &["new", "--cwd", "/tmp", "--", "echo", "hi"]);
+    let ws = new["workspace_id"].as_str().unwrap().to_string();
+    let pane = new["pane_id"].as_str().unwrap().to_string();
+    assert!(ws.starts_with("ws_"), "{ws}");
+    assert!(pane.starts_with("pane_"), "{pane}");
+
+    // Read eventually shows output.
+    let start = std::time::Instant::now();
+    loop {
+        let r = cli_json(&srv.socket, &["pane", "read", &pane]);
+        if r["text"].as_str().unwrap_or("").contains("hi") {
+            break;
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    // Split, notify, wait, focus.
+    let sp = cli_json(&srv.socket, &["pane", "split", &pane, "--", "sleep", "30"]);
+    assert!(sp["pane"]["id"].as_str().unwrap().starts_with("pane_"));
+    let n = cli_json(
+        &srv.socket,
+        &["notify", "--pane", &pane, "--title", "t", "--body", "b"],
+    );
+    assert!(n["notification"]["id"]
+        .as_str()
+        .unwrap()
+        .starts_with("notif_"));
+    let f = cli_json(&srv.socket, &["focus", "next-unread"]);
+    assert_eq!(f["pane_id"], pane);
+    let (ok, _) = cli(&srv.socket, &["pane", "mark-seen", &pane]);
+    assert!(ok);
+    let w = cli_json(
+        &srv.socket,
+        &["wait", "--pane", &pane, "--until", "seen", "--timeout", "5"],
+    );
+    assert_eq!(w["satisfied"], true);
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_hook_event_and_resume() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let srv = TestServer::start().await;
+    let new = cli_json(&srv.socket, &["new", "--cwd", "/tmp", "--", "sleep", "30"]);
+    let pane = new["pane_id"].as_str().unwrap().to_string();
+
+    // hook-event with piped payload JSON, like a real shim.
+    let mut child = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args([
+            "--json",
+            "hook-event",
+            "--agent",
+            "codex",
+            "--event",
+            "Stop",
+            "--pane",
+            &pane,
+            "--payload-stdin",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(br#"{"session_id": "cli-sess-1"}"#)
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["lifecycle"], "done");
+    assert_eq!(v["attention"], "unread");
+    let g = cli_json(&srv.socket, &["pane", "get", &pane]);
+    assert_eq!(g["pane"]["agent"]["agent_session_id"], "cli-sess-1");
+    assert_eq!(
+        g["pane"]["agent"]["resume_argv"],
+        serde_json::json!(["codex", "resume", "cli-sess-1"])
+    );
+    // Non-JSON hook-event keeps stdout silent (codex Stop parses stdout).
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args([
+            "hook-event",
+            "--agent",
+            "codex",
+            "--event",
+            "Stop",
+            "--pane",
+            &pane,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8(out.stderr).unwrap().contains("accepted"));
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_integration_install_uninstall() {
+    let home = std::env::temp_dir().join(format!(
+        "signaltty-home-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos()
+    ));
+    std::fs::create_dir_all(&home).unwrap();
+    let home_s = home.to_string_lossy().to_string();
+
+    // Pre-existing user content must survive install + uninstall.
+    let claude_settings = home.join(".claude/settings.json");
+    std::fs::create_dir_all(claude_settings.parent().unwrap()).unwrap();
+    std::fs::write(
+        &claude_settings,
+        r#"{"model": "opus", "hooks": {"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "my-own-hook"}]}]}}"#,
+    )
+    .unwrap();
+
+    let bin = bin_path("signaltty");
+    let run = |args: &[&str]| {
+        Command::new(&bin)
+            .args(args)
+            .env_remove("XDG_CONFIG_HOME")
+            .output()
+            .expect("run signaltty")
+    };
+    // Install claude + codex + cursor + opencode.
+    for agent in ["claude", "codex", "cursor", "opencode"] {
+        let out = run(&["integration", "install", agent, "--home", &home_s]);
+        assert!(
+            out.status.success(),
+            "{agent}: {}",
+            String::from_utf8(out.stderr).unwrap()
+        );
+    }
+    // Idempotent reinstall.
+    let out = run(&["integration", "install", "claude", "--home", &home_s]);
+    assert!(out.status.success());
+
+    let status = run(&["--json", "integration", "status", "--home", &home_s]);
+    let v: Value = serde_json::from_slice(&status.stdout).unwrap();
+    for agent in ["claude", "codex", "cursor", "opencode"] {
+        assert_eq!(v[agent]["installed"], true, "{agent}");
+    }
+    // User content preserved alongside our entries.
+    let settings: Value =
+        serde_json::from_str(&std::fs::read_to_string(&claude_settings).unwrap()).unwrap();
+    assert_eq!(settings["model"], "opus");
+    let stop = settings["hooks"]["Stop"].as_array().unwrap();
+    assert_eq!(stop.len(), 2);
+    assert!(serde_json::to_string(stop).unwrap().contains("my-own-hook"));
+    assert!(serde_json::to_string(stop)
+        .unwrap()
+        .contains("signaltty hook-event"));
+    // Codex + cursor files created with valid JSON.
+    for rel in [".codex/hooks.json", ".cursor/hooks.json"] {
+        let text = std::fs::read_to_string(home.join(rel)).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert!(v.get("hooks").is_some(), "{rel}");
+    }
+    assert!(home.join(".config/opencode/plugins/signaltty.js").is_file());
+
+    // Uninstall removes only our entries.
+    for agent in ["claude", "codex", "cursor", "opencode"] {
+        let out = run(&["integration", "uninstall", agent, "--home", &home_s]);
+        assert!(out.status.success(), "{agent}");
+    }
+    let settings: Value =
+        serde_json::from_str(&std::fs::read_to_string(&claude_settings).unwrap()).unwrap();
+    let stop = settings["hooks"]["Stop"].as_array().unwrap();
+    assert_eq!(stop.len(), 1);
+    assert!(serde_json::to_string(stop).unwrap().contains("my-own-hook"));
+    assert!(!home.join(".config/opencode/plugins/signaltty.js").exists());
+    let status = run(&["--json", "integration", "status", "--home", &home_s]);
+    let v: Value = serde_json::from_slice(&status.stdout).unwrap();
+    for agent in ["claude", "codex", "cursor", "opencode"] {
+        assert_eq!(v[agent]["installed"], false, "{agent}");
+    }
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn cli_human_output_and_errors() {
+    let srv = TestServer::start().await;
+    let (ok, text) = cli(&srv.socket, &["status"]);
+    assert!(ok);
+    assert!(text.contains("workspaces"), "{text}");
+    // Unknown pane → nonzero exit + message on stderr.
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args(["pane", "get", "pane_nope"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("NO_SUCH_PANE"), "{err}");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_plugin_list_run_json() {
+    // Plugin dir served to the server AND the local `plugin run`.
+    let base = std::env::temp_dir().join(format!(
+        "signaltty-plugcli-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos()
+    ));
+    let plugdir = base.join("plugins");
+    let sub = plugdir.join("greeter");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(
+        sub.join("plugin.toml"),
+        "[plugin]\nname = \"greeter\"\nversion = \"1.0\"\n\n\
+         [[command]]\nname = \"say-hi\"\nrun = [\"./hi.sh\"]\n",
+    )
+    .unwrap();
+    std::fs::write(sub.join("hi.sh"), "#!/bin/sh\necho hi-from-plugin \"$@\"\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(sub.join("hi.sh"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+    }
+    let srv = TestServer::start_with_plugin_dir(Some(&plugdir)).await;
+
+    let list = cli_json(&srv.socket, &["plugin", "list"]);
+    assert_eq!(list["plugins"][0]["name"], "greeter");
+    assert_eq!(list["plugins"][0]["commands"][0]["name"], "say-hi");
+
+    // `plugin run` resolves the same dir via env and inherits socket.
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args(["plugin", "run", "greeter", "say-hi", "--", "bob"])
+        .env("SIGNALTTY_PLUGIN_DIR", &plugdir)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("hi-from-plugin bob"), "{text}");
+
+    // Unknown plugin/command → nonzero exit.
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args(["plugin", "run", "greeter", "nope"])
+        .env("SIGNALTTY_PLUGIN_DIR", &plugdir)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    srv.shutdown().await;
+    std::fs::remove_dir_all(&base).ok();
+}

@@ -1,0 +1,144 @@
+# 07 — Agent Integration Strategy
+
+Layered detection, highest-signal first. Explicit signals always
+override heuristics. Unknown apps remain fully working terminals.
+
+## Priority stack
+
+1. **Native integration** — agent exposes state over a local API the
+   adapter can poll/subscribe (rare today; e.g. OpenCode `serve` HTTP,
+   Codex `app-server`). Best-effort where officially documented.
+2. **Agent hooks / semantic events** — the primary mechanism for
+   Phase 2. Small shims installed into each agent's hook system call
+   `signaltty hook-event --agent <kind> --event <name> --pane $SIGNALTTY_PANE`
+   (pane id injected via env at spawn) with the hook JSON on stdin.
+3. **Standard terminal notifications** — OSC 9 (iTerm2/ConEmu),
+   OSC 99 (Kitty), OSC 777 (rxvt/Ghostty/WezTerm) scanned from the PTY
+   byte stream server-side. Any CLI/script can emit them; zero config.
+4. **Foreground process info** — `/proc`: argv, cwd, child tree, CPU.
+   Identifies *which* agent runs (`codex`, `claude`, `opencode`,
+   `cursor-agent`/`agent`) and whether it is forked/busy.
+5. **Terminal state** — title (`OSC 0/1/2`), BEL, cursor, alt-screen.
+   Cheap, no parsing of natural language.
+6. **Output heuristics** — last resort only (spinners, prompt shapes).
+   Never the architecture's foundation; gated behind "no semantic
+   signal for N seconds".
+
+## Adapter interface
+
+```rust
+trait AgentAdapter: Send + Sync {
+    /// Does this adapter own the pane's foreground process?
+    fn identify(&self, proc: &ProcessInfo) -> bool;
+    /// Map a semantic event / poll snapshot to lifecycle + attention.
+    fn lifecycle_state(&self, ev: &AdapterEvent) -> LifecycleDecision;
+    /// Native session id, if the agent reports one.
+    fn session_identity(&self, ev: &AdapterEvent) -> Option<String>;
+    /// Map hook payload / OSC / exit to a notification (or none).
+    fn notification_event(&self, ev: &AdapterEvent) -> Option<NotificationDraft>;
+    /// Official resume argv for a persisted session id, if supported.
+    fn resume_capability(&self, session_id: &str) -> Option<ResumeCommand>;
+    /// Static metadata: kind, display name, hook install recipe.
+    fn metadata(&self) -> AdapterMetadata;
+}
+```
+
+Adapters: `CodexAdapter`, `ClaudeCodeAdapter`, `OpenCodeAdapter`,
+`CursorAdapter`, `GenericTerminalAdapter` (process + title + BEL only).
+
+## Per-agent integration (verified Sept 2026, local CLIs)
+
+### Codex CLI (`codex`)
+
+- Resume: `codex resume [SESSION_ID]`, `codex resume --last`;
+  non-interactive `codex exec resume <id|--last>`; `codex queue`,
+  `codex fork`, `codex archive`. Session ids are UUIDs/names.
+- Hooks: `~/.codex/hooks.json` / `[hooks]` in `config.toml`; events
+  include `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+  `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`,
+  `SubagentStop`. Payload on stdin carries `session_id`,
+  `transcript_path`, `cwd`, `hook_event_name`, `turn_id`.
+  No `Notification` event — use `notify = ["signaltty","hook-event",…]`
+  (fires on `agent-turn-complete`) plus `tui.notifications` → BEL.
+- Session env: `CODEX_THREAD_ID` equals Stop payload `session_id`.
+- Shim: `notify` entry + hook commands calling `signaltty hook-event
+  --agent codex`. Lifecycle: `UserPromptSubmit`→working,
+  `PermissionRequest`→blocked+permission_required, `Stop`→done+unread.
+- Verified against codex 0.157.1 (Sept 2026): hooks are trust-gated —
+  new/changed entries sit at "review required" until the user picks
+  "Trust all and continue" in an interactive session (hash recorded
+  under `[hooks.state]` in config.toml); `codex exec` cannot grant
+  trust, but `codex exec --dangerously-bypass-hook-trust` fires hooks
+  (SessionStart/UserPromptSubmit/Stop/SessionEnd all observed). Hook
+  timeouts clamp to 3s — our installer uses 3. The `Stop` hook
+  REQUIRES stdout to be empty or JSON on exit 0 (plain text fails the
+  hook), so `signaltty hook-event` prints human feedback to stderr and
+  keeps stdout silent unless `--json`.
+
+### Claude Code (`claude`)
+
+- Resume: `claude --resume [id]`, `-c/--continue`, `--session-id <uuid>`
+  for pinned new sessions; `--settings <file>` for hook injection;
+  `-p/--print` non-interactive; `claude attach/logs/stop/rm/agents`.
+- Hooks: settings JSON (`~/.claude/settings.json`, project/local,
+  `--settings`); events `SessionStart`, `UserPromptSubmit`,
+  `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStop`, `Notification`
+  (`idle_prompt`), `PreCompact`. Payload `session_id` equals
+  `$CLAUDE_CODE_SESSION_ID`; survives `-p --resume`.
+- Shim: settings snippet installed by `signaltty integration install
+  claude` (user-scoped, non-destructive merge). `Notification` →
+  attention directly; `Stop` → done+unread.
+
+### OpenCode (`opencode`)
+
+- Resume: `opencode --session <id>` / `-s`, `--continue` / `-c`;
+  headless `opencode run --session <id>`; `opencode serve` + HTTP API;
+  `opencode attach`, `opencode session`, `opencode export`.
+- Hooks: JS/TS plugin system (`~/.config/opencode/plugins`,
+  25+ events): `session.created/updated/idle/status`,
+  `command.execute.before`, `event`, `config`. Plugins receive
+  `properties.sessionID` and can shell out.
+- Shim: a small plugin file calling `signaltty hook-event --agent
+  opencode`. `session.status busy/idle` → working/done; idle →
+  done+unread. `serve` API is the future native-integration path.
+
+### Cursor Agent (`cursor-agent` / `agent` alias)
+
+- Resume: `--resume [chatId]` (picker when bare), `--continue`;
+  `--print --output-format json|stream-json` headless; `--model`,
+  `--mode plan|ask`.
+- Hooks: `~/.cursor/hooks.json`; `sessionStart` includes a stable
+  `session_id` mappable to the CLI pid (must reject Desktop-origin
+  events via process ancestry check).
+- Shim: `hooks.json` entry + reporter script. Screen/title fallback
+  aligned with Codex (session-only pattern, no output regex).
+
+## Session identity & resume (see also [09](09-persistence.md))
+
+- Identity arrives via hook payload/env only — never scraped from
+  terminal text while a better channel exists. Exception: resumed
+  sessions may fire no `SessionStart` (observed: `muse resume` emits
+  only prompt/Stop); the server therefore also accepts
+  `signaltty report-session --pane <id> --session <sid>` and keeps the
+  last known id across respawns in the same pane.
+- `resume_capability()` returns the official argv (table above). The
+  server persists it but never auto-runs it: restore offers
+  one-click/keypress resume per pane (LIVE/RESTORED/RESUMABLE/EXITED).
+
+## Hook attribution (pane routing)
+
+`hook-event` resolves its pane in two steps: explicit `pane_id`
+(shims read `$SIGNALTTY_PANE`, injected by the server at spawn), else
+process-ancestry fallback — the CLI sends its pid as `client_pid` and
+the server walks `/proc` parents to the deepest live pane child. The
+fallback survives sandboxed agents that strip hook env, and safely
+ignores foreign hooks (Cursor Desktop shares `hooks.json` but its
+processes are never our descendants → accepted, classified nothing).
+
+## Fallback behavior
+
+No hooks installed, unknown binary, or adapter disabled → pane works
+as a plain terminal with `GenericTerminalAdapter`: title tracking,
+BEL → `unread`, exit code → `done`/`failed`, OSC notifications still
+honored. Zero-configuration agents (raw `claude` with no hooks) still
+get OSC + title + exit semantics.

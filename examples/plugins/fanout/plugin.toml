@@ -1,0 +1,9 @@
+[plugin]
+name = "fanout"
+version = "0.1.0"
+description = "Spawn one pane per command for parallel agent runs."
+
+[[command]]
+name = "spawn"
+description = "usage: signaltty plugin run fanout spawn -- '<cmd1>' '<cmd2>' ..."
+run = ["./fanout.sh"]

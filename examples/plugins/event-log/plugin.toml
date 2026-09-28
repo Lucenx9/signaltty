@@ -1,0 +1,11 @@
+[plugin]
+name = "event-log"
+version = "0.1.0"
+description = "Append every server event (except pty.data) to a log file."
+
+[[hook]]
+events = ["*"]
+command = ["./log.sh"]
+
+[hook.env]
+EVENT_LOG = "/tmp/signaltty-events.log"

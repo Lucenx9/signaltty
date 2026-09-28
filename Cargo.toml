@@ -1,0 +1,36 @@
+[workspace]
+members = [
+    "crates/signaltty-core",
+    "crates/signaltty-proto",
+    "crates/signaltty-term",
+    "crates/signaltty-agent",
+    "crates/signaltty-server",
+    "crates/signaltty-plugin",
+    "crates/signaltty-cli",
+    "crates/signaltty-gui",
+    "crates/signaltty-testkit",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+signaltty-core = { path = "crates/signaltty-core" }
+signaltty-proto = { path = "crates/signaltty-proto" }
+signaltty-term = { path = "crates/signaltty-term" }
+signaltty-agent = { path = "crates/signaltty-agent" }
+signaltty-plugin = { path = "crates/signaltty-plugin" }
+signaltty-testkit = { path = "crates/signaltty-testkit" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

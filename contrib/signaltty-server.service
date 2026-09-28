@@ -1,0 +1,16 @@
+[Unit]
+Description=signaltty session server (owns PTYs, agent sessions, state)
+Documentation=https://github.com/example/signaltty
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/signaltty-server
+Restart=on-failure
+RestartSec=2
+# Snapshot is written on SIGTERM; give it time to flush.
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target
