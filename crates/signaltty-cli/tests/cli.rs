@@ -138,6 +138,81 @@ async fn cli_hook_event_and_resume() {
 }
 
 #[tokio::test]
+async fn cli_decision_answer_flow() {
+    let srv = TestServer::start().await;
+    let new = cli_json(&srv.socket, &["new", "--cwd", "/tmp", "--", "cat"]);
+    let pane = new["pane_id"].as_str().unwrap().to_string();
+    // The fixture child is `cat`, so hint the pane as codex (the channel owner).
+    // `new` spawns a plain shell pane; re-hinting is not supported, so drive
+    // the flow through hook-event + decision.answer against the recorded kind:
+    // plain panes are read-only, which the CLI must surface, not fake.
+    let (ok, text) = cli(
+        &srv.socket,
+        &[
+            "hook-event",
+            "--agent",
+            "codex",
+            "--event",
+            "PermissionRequest",
+            "--pane",
+            &pane,
+            "--decision",
+            r#"{"id":"d1","prompt":"Allow?","options":[{"id":"once","label":"Once"}]}"#,
+        ],
+    );
+    assert!(ok, "{text}");
+    let g = cli_json(&srv.socket, &["pane", "get", &pane]);
+    assert_eq!(g["pane"]["pending_decision"]["id"], "d1");
+    // Human `pane get` prints the prompt plus one line per option.
+    let (ok, text) = cli(&srv.socket, &["pane", "get", &pane]);
+    assert!(ok, "{text}");
+    assert!(text.contains("Allow?"), "{text}");
+    assert!(text.contains("once — Once"), "{text}");
+    // Invalid decision JSON surfaces at the CLI seam, before any socket call.
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args([
+            "hook-event",
+            "--agent",
+            "codex",
+            "--event",
+            "Stop",
+            "--decision",
+            "{",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("invalid decision JSON"), "{err}");
+    // This pane runs `cat` (generic kind): answering refuses loudly
+    // instead of guessing a channel, and the schema lists the method.
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args([
+            "decision",
+            "answer",
+            "--pane",
+            &pane,
+            "--decision",
+            "d1",
+            "--option",
+            "once",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("no answer channel"), "{err}");
+    let (_, schema) = cli(&srv.socket, &["schema"]);
+    assert!(schema.contains("decision.answer"), "{schema}");
+    assert!(schema.contains("NO_SUCH_DECISION"), "{schema}");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn cli_integration_install_uninstall() {
     let home = std::env::temp_dir().join(format!(
         "signaltty-home-{}-{}",

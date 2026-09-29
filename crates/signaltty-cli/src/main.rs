@@ -99,6 +99,15 @@ enum Command {
         title: Option<String>,
         #[arg(long, value_parser = ["info", "warning", "error"])]
         severity: Option<String>,
+        /// Structured decision request as JSON
+        /// (`{"id","prompt","options":[{"id","label"}]}`).
+        #[arg(long)]
+        decision: Option<String>,
+    },
+    /// Answer a pending structured decision (directive 2).
+    Decision {
+        #[command(subcommand)]
+        op: DecisionOp,
     },
     /// Manage agent hook integrations.
     Integration {
@@ -217,6 +226,19 @@ enum PaneOp {
     /// Resume a restored pane via its adapter's official resume command.
     Resume {
         id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DecisionOp {
+    /// Answer with one of the decision's options.
+    Answer {
+        #[arg(long)]
+        pane: String,
+        #[arg(long)]
+        decision: String,
+        #[arg(long)]
+        option: String,
     },
 }
 
@@ -498,6 +520,7 @@ async fn run(args: Args) -> Result<(), CliError> {
             message,
             title,
             severity,
+            decision,
         } => {
             let pane = pane.or_else(|| std::env::var("SIGNALTTY_PANE").ok());
             let mut c = Client::connect(&socket).await?;
@@ -528,6 +551,11 @@ async fn run(args: Args) -> Result<(), CliError> {
             }
             if let Some(s) = severity {
                 p["severity"] = json!(s);
+            }
+            if let Some(d) = decision {
+                let v: Value = serde_json::from_str(&d)
+                    .map_err(|e| CliError::Usage(format!("invalid decision JSON: {e}")))?;
+                p["decision"] = v;
             }
             let r = c.call("hook-event", p).await?;
             if json {
@@ -573,6 +601,30 @@ async fn run(args: Args) -> Result<(), CliError> {
                 integration::status(&home, &[], json)
             }
         },
+        Command::Decision { op } => {
+            let mut c = Client::connect(&socket).await?;
+            match op {
+                DecisionOp::Answer {
+                    pane,
+                    decision,
+                    option,
+                } => {
+                    let r = c
+                        .call(
+                            "decision.answer",
+                            json!({"pane_id": pane, "decision_id": decision, "option_id": option}),
+                        )
+                        .await?;
+                    let human = if r["answered"].as_bool().unwrap_or(false) {
+                        format!("answered {decision} with {option}")
+                    } else {
+                        format!("decision {decision} already gone")
+                    };
+                    emit(json, &r, human);
+                    Ok(())
+                }
+            }
+        }
         Command::Wait {
             pane,
             until,
@@ -749,7 +801,7 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                 PaneOp::Get { id } => {
                     let r = c.call("pane.get", json!({"pane_id": id})).await?;
                     let p = &r["pane"];
-                    let human = format!(
+                    let mut human = format!(
                         "{} {} live={:?} lifecycle={} attention={}",
                         p["id"].as_str().unwrap_or("?"),
                         p["title"].as_str().unwrap_or("?"),
@@ -757,6 +809,25 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                         p["lifecycle"].as_str().unwrap_or("?"),
                         p["attention"].as_str().unwrap_or("?"),
                     );
+                    // Structured decision requests print as data (directive 2):
+                    // prompt plus one line per option, never prose buttons.
+                    if let Some(d) = p.get("pending_decision") {
+                        human.push_str(&format!(
+                            "\ndecision {}: {}",
+                            d["id"].as_str().unwrap_or("?"),
+                            d["prompt"].as_str().unwrap_or("?"),
+                        ));
+                        for o in d["options"].as_array().cloned().unwrap_or_default() {
+                            human.push_str(&format!(
+                                "\n  {} — {}",
+                                o["id"].as_str().unwrap_or("?"),
+                                o["label"].as_str().unwrap_or("?"),
+                            ));
+                        }
+                        if !d["answerable"].as_bool().unwrap_or(true) {
+                            human.push_str("\n  (read-only: answer in the terminal)");
+                        }
+                    }
                     emit(json, &r, human);
                     Ok(())
                 }
