@@ -209,12 +209,16 @@ mod tests {
         let events = log.read_since(0, 100);
         let seqs: Vec<u64> = events.iter().map(|e| e.seq).collect();
         assert!(!seqs.is_empty());
-        assert_eq!(seqs, {
-            let mut s = seqs.clone();
-            s.sort_unstable();
-            s.dedup();
-            s
-        }, "ordered, no dupes");
+        assert_eq!(
+            seqs,
+            {
+                let mut s = seqs.clone();
+                s.sort_unstable();
+                s.dedup();
+                s
+            },
+            "ordered, no dupes"
+        );
         assert_eq!(*seqs.last().unwrap(), 20);
         assert!(log.read_since(20, 100).is_empty());
         std::fs::remove_dir_all(&d).ok();

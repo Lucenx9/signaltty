@@ -132,6 +132,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::WORKSPACE_RENAME => h_workspace_rename(ctx, &req.params),
         method::WORKSPACE_CLOSE => h_workspace_close(ctx, &req.params),
         method::WORKSPACE_REFRESH_GIT => h_workspace_refresh_git(ctx, &req.params),
+        method::WORKSPACE_DIFF => h_workspace_diff(ctx, &req.params),
         method::TAB_CREATE => h_tab_create(ctx, &req.params),
         method::TAB_CLOSE => h_tab_close(ctx, &req.params),
         method::TAB_SET_LAYOUT => h_tab_set_layout(ctx, &req.params),
@@ -422,6 +423,30 @@ fn h_workspace_refresh_git(ctx: &Ctx, params: &Value) -> Handler {
     }
     ctx.mark_persist();
     Ok((json!({"workspace": ws}), ConnEffect::default()))
+}
+
+/// Worktree-vs-HEAD diff as data (t3code `+N −N` language). On demand
+/// only; a non-repo is `BAD_PARAMS`, never an empty lie.
+fn h_workspace_diff(ctx: &Ctx, params: &Value) -> Handler {
+    let raw = decode::<params::WorkspaceId>(params)?.workspace_id;
+    let (id, cwd) = {
+        let s = ctx.store.read().unwrap();
+        let id = resolve_workspace(&s, &raw)
+            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?;
+        let cwd = s.workspaces.get(&id).unwrap().cwd.clone();
+        (id, cwd)
+    };
+    match crate::git::git_diff(&cwd) {
+        Some(diff) => Ok((
+            json!({
+                "workspace_id": id, "branch": diff.branch,
+                "files": diff.files, "dirs": diff.dirs,
+                "added": diff.added, "removed": diff.removed,
+            }),
+            ConnEffect::default(),
+        )),
+        None => Err(bad_params(format!("not a git repo: {cwd}"))),
+    }
 }
 
 // ---- tabs ----

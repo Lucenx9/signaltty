@@ -823,6 +823,81 @@ async fn audit_replays_across_restart() {
 }
 
 #[tokio::test]
+async fn workspace_diff_reports_numstat_and_rejects_non_repo() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-intdiff-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+    };
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "t@t"]);
+    run(&["config", "user.name", "t"]);
+    run(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "base"]);
+    std::fs::write(dir.join("a.txt"), "1\n2\n").unwrap();
+    std::fs::write(dir.join("new.txt"), "u\n").unwrap();
+
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let w = c
+        .call(
+            "workspace.create",
+            json!({"name": "diff ws", "cwd": dir.to_str().unwrap()}),
+        )
+        .await
+        .unwrap();
+    // Handle-or-id resolves for diff too.
+    let d = c
+        .call("workspace.diff", json!({"workspace_id": "diff-ws"}))
+        .await
+        .unwrap();
+    assert_eq!(d["workspace_id"], w["workspace"]["id"]);
+    let files = d["files"].as_array().unwrap();
+    let a = files.iter().find(|f| f["path"] == "a.txt").unwrap();
+    assert_eq!(
+        (a["added"].as_u64(), a["removed"].as_u64()),
+        (Some(1), Some(0))
+    );
+    let new = files.iter().find(|f| f["path"] == "new.txt").unwrap();
+    assert_eq!(new["untracked"], true);
+    assert_eq!(d["added"], 1);
+    // Non-repo workspace is a loud error, never an empty lie (a sibling
+    // dir, so no parent `.git` is ever discovered).
+    let bare = dir.with_extension("bare");
+    std::fs::create_dir_all(&bare).unwrap();
+    let w2 = c
+        .call("workspace.create", json!({"cwd": bare.to_str().unwrap()}))
+        .await
+        .unwrap();
+    let err = c
+        .call(
+            "workspace.diff",
+            json!({"workspace_id": w2["workspace"]["id"]}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("BAD_PARAMS"), "{err}");
+    srv.shutdown().await;
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&bare).ok();
+}
+
+#[tokio::test]
 async fn hook_event_drives_codex_lifecycle() {
     let srv = TestServer::start().await;
     let mut c = srv.client().await;

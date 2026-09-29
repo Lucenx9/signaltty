@@ -111,6 +111,7 @@ pub mod method {
     pub const WORKSPACE_RENAME: &str = "workspace.rename";
     pub const WORKSPACE_CLOSE: &str = "workspace.close";
     pub const WORKSPACE_REFRESH_GIT: &str = "workspace.refresh_git";
+    pub const WORKSPACE_DIFF: &str = "workspace.diff";
     pub const TAB_CREATE: &str = "tab.create";
     pub const TAB_CLOSE: &str = "tab.close";
     pub const TAB_SET_LAYOUT: &str = "tab.set_layout";
@@ -150,6 +151,7 @@ pub mod method {
         WORKSPACE_RENAME,
         WORKSPACE_CLOSE,
         WORKSPACE_REFRESH_GIT,
+        WORKSPACE_DIFF,
         TAB_CREATE,
         TAB_CLOSE,
         TAB_SET_LAYOUT,
@@ -306,7 +308,7 @@ mod tests {
             assert!(!name.is_empty());
         }
         for (list, len) in [
-            (method::ALL, 34usize),
+            (method::ALL, 35usize),
             (event::ALL, 28usize),
             (code::ALL, 15usize),
         ] {
