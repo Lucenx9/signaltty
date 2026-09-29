@@ -301,7 +301,7 @@ impl Hooks {
 
 fn report(agent: &str, file: PathBuf, changed: bool, installing: bool) -> Report {
     Report { agent: agent.into(), file, changed,
-        notice: (agent == "codex" && installing && changed).then(|| "Codex: review and trust the Signaltty hooks in /hooks before status events can arrive.".into()) }
+        notice: (agent == "codex" && installing && changed).then(|| "Codex: review and trust the Signaltty hooks in /hooks before status events can arrive. In an ordinary shell, launch codex --no-daemon so hooks belong to this terminal.".into()) }
 }
 
 fn parse(path: &Path, text: &str) -> Result<Value, Error> {

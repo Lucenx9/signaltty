@@ -1063,7 +1063,7 @@ fn codex_fixture(dir: &std::path::Path) -> std::path::PathBuf {
     let path = dir.join("codex");
     std::fs::write(
         &path,
-        "#!/bin/sh\ncase \"$1\" in\n--version) echo fixture-codex ;;\nresume) printf 'fixture-resume:%s\\n' \"$2\"; read line ;;\n*) exit 1 ;;\nesac\n",
+        "#!/bin/sh\nif [ \"$1\" = --no-daemon ]; then echo fixture-local-runtime; shift; fi\ncase \"$1\" in\n--version) echo fixture-codex ;;\nresume) printf 'fixture-resume:%s\\n' \"$2\"; read line ;;\n*) exit 1 ;;\nesac\n",
     )
     .unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1194,6 +1194,13 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
         &mut c,
         &pane,
         "fixture-resume:bogus-id",
+        Duration::from_secs(5),
+    )
+    .await;
+    wait_for_text(
+        &mut c,
+        &pane,
+        "fixture-local-runtime",
         Duration::from_secs(5),
     )
     .await;
@@ -2151,4 +2158,170 @@ async fn explicit_launch_config_root_and_disabled_mode_are_respected() {
     assert_eq!(alternate["integration"]["status"], "disabled");
     assert!(!srv.integration_home.join(".claude/settings.json").exists());
     srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn codex_local_runtime_routes_installed_hooks_to_each_pane() {
+    use std::os::unix::fs::PermissionsExt;
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (ws, stale) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let codex = srv.socket.parent().unwrap().join("codex");
+    std::fs::write(&codex, r#"#!/usr/bin/env python3
+import json, os, pathlib, subprocess, sys
+if sys.argv[1:] == ['--no-daemon', '--version']:
+    print('codex 0.159.1'); sys.exit(0)
+hooks = json.loads((pathlib.Path(os.environ['SIGNALTTY_INTEGRATION_HOME']) / '.codex/hooks.json').read_text())['hooks']
+env = os.environ.copy()
+if '--no-daemon' not in sys.argv[1:]:
+    env['SIGNALTTY_PANE'] = os.environ['CODEX_TEST_STALE_PANE']
+print('runtime-ready', flush=True)
+for line in sys.stdin:
+    event = line.strip()
+    for group in hooks.get(event, []):
+        for hook in group['hooks']:
+            subprocess.run(hook['command'], shell=True, input=b'{"session_id":"fixture-local"}', env=env, check=True)
+    print('delivered:' + event, flush=True)
+"#).unwrap();
+    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let tab = c
+        .call("tab.create", json!({"workspace_id":ws}))
+        .await
+        .unwrap();
+    let first = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id":ws,"tab_id":tab["tab"]["id"],"argv":[codex],
+        "env":{"CODEX_TEST_STALE_PANE":stale}}),
+        )
+        .await
+        .unwrap();
+    let first = first["pane"]["id"].as_str().unwrap().to_owned();
+    let second = c
+        .call(
+            "pane.split",
+            json!({"pane_id":first,"direction":"right","argv":[codex],
+        "env":{"CODEX_TEST_STALE_PANE":stale}}),
+        )
+        .await
+        .unwrap();
+    let second = second["pane"]["id"].as_str().unwrap().to_owned();
+    let hooks = std::fs::read(srv.integration_home.join(".codex/hooks.json")).unwrap();
+    for (pane, event, state) in [
+        (&first, "UserPromptSubmit", "working"),
+        (&second, "Stop", "done"),
+    ] {
+        wait_for_text(&mut c, pane, "runtime-ready", Duration::from_secs(5)).await;
+        c.call(
+            "pane.input",
+            json!({"pane_id":pane,"data_b64":base64_encode(&format!("{event}\n"))}),
+        )
+        .await
+        .unwrap();
+        wait_for_text(
+            &mut c,
+            pane,
+            &format!("delivered:{event}"),
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(
+            c.call("pane.get", json!({"pane_id":pane})).await.unwrap()["pane"]["lifecycle"],
+            state
+        );
+    }
+    assert_eq!(
+        c.call("pane.get", json!({"pane_id":first})).await.unwrap()["pane"]["lifecycle"],
+        "working"
+    );
+    assert_eq!(
+        c.call("pane.get", json!({"pane_id":stale})).await.unwrap()["pane"]["lifecycle"],
+        "unknown"
+    );
+    assert_eq!(
+        hooks,
+        std::fs::read(srv.integration_home.join(".codex/hooks.json")).unwrap()
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn codex_unsupported_or_hanging_probe_keeps_original_launch_with_notice() {
+    use std::os::unix::fs::PermissionsExt;
+    for (probe, bad_config) in [
+        ("exit 2", false),
+        ("sleep 30 & echo $! > probe-child.pid; wait", false),
+        ("exit 2", true),
+    ] {
+        let srv = TestServer::start().await;
+        let codex = srv.socket.parent().unwrap().join("codex");
+        if bad_config {
+            let config = srv.integration_home.join(".codex/hooks.json");
+            std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+            std::fs::write(config, "broken-config").unwrap();
+        }
+        std::fs::write(&codex, format!("#!/bin/sh\nif [ \"$1\" = --no-daemon ] && [ \"$2\" = --version ]; then {probe}; fi\nprintf 'fallback-ready:%s\\n' \"$*\"\nread line\n")).unwrap();
+        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut c = srv.client().await;
+        let ws = c
+            .call(
+                "workspace.create",
+                json!({"cwd":srv.socket.parent().unwrap()}),
+            )
+            .await
+            .unwrap();
+        let started = std::time::Instant::now();
+        let launch = c
+            .call(
+                "pane.spawn",
+                json!({"workspace_id":ws["workspace"]["id"],"argv":[codex,"--model","exec"]}),
+            )
+            .await
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(
+            launch["integration"]["status"],
+            if bad_config { "error" } else { "disabled" }
+        );
+        assert!(launch["integration"]["notice"]
+            .as_str()
+            .unwrap()
+            .contains("--no-daemon"));
+        let pane = launch["pane"]["id"].as_str().unwrap();
+        wait_for_text(
+            &mut c,
+            pane,
+            "fallback-ready:--model exec",
+            Duration::from_secs(3),
+        )
+        .await;
+        assert_eq!(launch["pane"]["argv"], json!([codex, "--model", "exec"]));
+        let pid_file = srv.socket.parent().unwrap().join("probe-child.pid");
+        let child_stopped = if pid_file.exists() {
+            let pid = std::fs::read_to_string(&pid_file).unwrap();
+            let path = format!("/proc/{}/stat", pid.trim());
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            std::fs::read_to_string(path)
+                .map(|stat| stat.split_whitespace().nth(2) == Some("Z"))
+                .unwrap_or(true)
+        } else {
+            true
+        };
+        if !child_stopped {
+            let pid: i32 = std::fs::read_to_string(&pid_file)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
+        srv.shutdown().await;
+        assert!(
+            child_stopped,
+            "timed-out version wrapper left its child running"
+        );
+    }
 }

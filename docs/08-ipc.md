@@ -102,7 +102,11 @@ rotated or the server restarted — replays merge file + ring deduped by
 launches. Status is `configured`, `disabled`, or `error`. Configuration precedes
 process execution; a setup error does not prevent launch. Clients show `notice`
 when present. `configured` is not proof of provider trust or event delivery.
-Ordinary shell/arbitrary launches have no integration result.
+Direct interactive local Codex execution adds native `--no-daemon` when a bounded
+version probe confirms support; persisted argv remains unchanged. Unsupported
+clients and explicit remote endpoints retain their command and return a disabled
+integration notice (ADR-0014). Ordinary shell/arbitrary launches have no integration
+result; manually typed Codex needs `--no-daemon`.
 
 `pane.spawn` rejects an explicit tab from another workspace with `BAD_PARAMS`.
 A failed process launch leaves no automatic tab or pane. Ownership validation,

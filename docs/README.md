@@ -32,4 +32,5 @@ Docs index:
 - [App verification, 2026-09-29](qa/2026-09-29.md)
 - [Native UI refinement verification, 2026-09-29–30](qa/ui-2026-09-29.md)
 - [Automatic hook configuration verification, 2026-09-30](qa/automatic-hooks-2026-09-30.md)
+- [Codex pane runtime verification, 2026-09-30](qa/codex-pane-runtime-2026-09-30.md)
 - [ADRs](adr/)

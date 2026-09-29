@@ -2,6 +2,7 @@
 
 pub mod attrib;
 pub mod audit;
+mod codex;
 pub mod config;
 pub mod git;
 pub mod params;

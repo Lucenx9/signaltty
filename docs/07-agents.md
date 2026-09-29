@@ -75,6 +75,19 @@ Adapters: `CodexAdapter`, `ClaudeCodeAdapter`, `OpenCodeAdapter`,
   hook), so `signaltty hook-event` prints human feedback to stderr and
   keeps stdout silent unless `--json`.
 
+- Codex 0.159.1 can reuse a detached shared daemon that retains a previous
+  terminal's `SIGNALTTY_PANE` / socket. Hooks run with the daemon environment,
+  causing `hook exited with code 1` (`NO_SUCH_PANE`) or updating another pane.
+  Direct managed local interactive launches, split and resume use native
+  `--no-daemon` when supported (bounded version probe); original stored argv,
+  config/auth/trust and hook commands remain unchanged. Unsupported clients or
+  explicit remote sessions retain their command with an integration notice.
+  Exec/utility commands are unchanged. See [ADR-0014](adr/0014-codex-pane-runtime.md).
+  When typing Codex in an ordinary shell, use `codex --no-daemon`. To recover an
+  existing session, exit the TUI and run `codex --no-daemon resume --last` in the
+  same pane. Already-running clients keep their backend until restarted;
+  Signaltty does not stop the shared daemon or bypass hook trust.
+
 ### Claude Code (`claude`)
 
 - Resume: `claude --resume [id]`, `-c/--continue`, `--session-id <uuid>`

@@ -143,7 +143,17 @@ impl PtyManager {
         if req.argv.is_empty() {
             return Err("argv must not be empty".to_string());
         }
-        let integration = self.prepare_integration(&req);
+        let mut integration = self.prepare_integration(&req);
+        let (argv, runtime_notice) = crate::codex::prepare(&req.argv, &req.cwd);
+        if let Some(notice) = runtime_notice {
+            if integration.is_object() {
+                let previous = integration["notice"].as_str().unwrap_or("");
+                integration["notice"] = serde_json::json!(format!("{notice} {previous}").trim());
+                if integration["status"] != "error" {
+                    integration["status"] = serde_json::json!("disabled");
+                }
+            }
+        }
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySizeRaw {
@@ -154,9 +164,9 @@ impl PtyManager {
             })
             .map_err(|e| format!("openpty failed: {e:#}"))?;
 
-        let mut cmd = CommandBuilder::new(&req.argv[0]);
-        if req.argv.len() > 1 {
-            cmd.args(&req.argv[1..]);
+        let mut cmd = CommandBuilder::new(&argv[0]);
+        if argv.len() > 1 {
+            cmd.args(&argv[1..]);
         }
         cmd.cwd(&req.cwd);
         // Filtered environment: server env minus blocklist, plus
