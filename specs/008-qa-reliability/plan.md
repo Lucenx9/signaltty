@@ -15,3 +15,9 @@ No GTK/OS dependencies in core. No new agent/provider calls. Preserve persistent
 ## Verification
 
 First reproduce at the owning seam: integration IPC tests for server invariants, fake socket actor tests for timeouts/snapshot ordering, pure status tests and display regression tests. Re-run the original QA script, stalled GTK action and reconnect relay probes, activation count and restored status. Capture light/dark GUI evidence. Run build, workspace tests, explicit display tests, clippy, fmt and refresh benchmark. Review final diff before commits and direct push to main.
+
+Remote CI uncovered two existing integration tests that launched an installed
+Codex CLI. Replace those processes with temporary executable fixtures; use the
+existing agent-manifest resume override for the resume fixture. Builtin hook
+tests retain the assertion for the official `codex resume <session>` command.
+This keeps PTY spawn/detection/resume coverage independent of provider installs.

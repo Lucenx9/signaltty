@@ -1057,16 +1057,30 @@ async fn hook_event_claude_notification_and_cursor_stop() {
     srv.shutdown().await;
 }
 
+fn codex_fixture(dir: &std::path::Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir).unwrap();
+    let path = dir.join("codex");
+    std::fs::write(
+        &path,
+        "#!/bin/sh\ncase \"$1\" in\n--version) echo fixture-codex ;;\nresume) printf 'fixture-resume:%s\\n' \"$2\"; read line ;;\n*) exit 1 ;;\nesac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
 #[tokio::test]
 async fn spawn_detects_agent_kind() {
     let srv = TestServer::start().await;
+    let codex = codex_fixture(srv.socket.parent().unwrap());
     let mut c = srv.client().await;
     let w = c
         .call("workspace.create", json!({"cwd": "/tmp"}))
         .await
         .unwrap();
     let ws = w["workspace"]["id"].as_str().unwrap();
-    // Real agent binary (fast, exits): kind detected from argv.
+    // Fixture basename drives the same detection as an installed agent.
     let t = c
         .call("tab.create", json!({"workspace_id": ws, "title": "t"}))
         .await
@@ -1075,7 +1089,7 @@ async fn spawn_detects_agent_kind() {
     let p = c
         .call(
             "pane.spawn",
-            json!({"workspace_id": ws, "tab_id": tab, "argv": ["codex", "--version"]}),
+            json!({"workspace_id": ws, "tab_id": tab, "argv": [codex, "--version"]}),
         )
         .await
         .unwrap();
@@ -1108,10 +1122,19 @@ async fn spawn_detects_agent_kind() {
 
 #[tokio::test]
 async fn report_session_builds_resume_and_pane_resume_spawns() {
-    let srv = TestServer::start().await;
+    let agents = plugin_test_dir("codex-resume");
+    let codex = codex_fixture(&agents);
+    write_manifest(
+        &agents,
+        "codex.toml",
+        &format!(
+            "[agent]\nkind = \"codex\"\n[session]\nresume = [{}, \"resume\", \"{{session_id}}\"]\n",
+            json!(codex)
+        ),
+    );
+    let srv = TestServer::start_with_dirs(None, Some(&agents)).await;
     let mut c = srv.client().await;
-    // Fast-exiting real agent process.
-    let (_ws, pane) = new_pane(&mut c, vec!["codex", "--version"]).await;
+    let (_ws, pane) = new_pane(&mut c, vec![codex.to_str().unwrap(), "--version"]).await;
     c.call(
         "wait",
         json!({"pane_id": pane, "until": "exited", "timeout_s": 15}),
@@ -1127,11 +1150,9 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
         .unwrap();
     assert_eq!(
         r["pane"]["agent"]["resume_argv"],
-        json!(["codex", "resume", "bogus-id"])
+        json!([codex, "resume", "bogus-id"])
     );
-    // One-key resume spawns the official command. A bogus id under a
-    // real PTY launches codex interactively (it hangs waiting on the
-    // user), so assert it is alive and speaking, then terminate it.
+    // Resume launches the fixture with the reported session, on a real PTY.
     let r = c
         .call("pane.resume", json!({"pane_id": pane}))
         .await
@@ -1139,7 +1160,13 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
     assert_eq!(r["pane"]["live"]["state"], "live");
     assert_eq!(r["pane"]["restore_state"], "LIVE");
     assert_eq!(r["pane"]["title"], "codex");
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_for_text(
+        &mut c,
+        &pane,
+        "fixture-resume:bogus-id",
+        Duration::from_secs(5),
+    )
+    .await;
     let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
     assert_eq!(p["pane"]["live"]["state"], "live");
     c.call("pane.close", json!({"pane_id": pane}))
@@ -1153,6 +1180,7 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
         .unwrap_err();
     assert!(err.contains("already live"), "{err}");
     srv.shutdown().await;
+    std::fs::remove_dir_all(agents).unwrap();
 }
 
 #[tokio::test]
