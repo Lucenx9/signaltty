@@ -1659,6 +1659,7 @@ dependencies = [
  "serde",
  "serde_json",
  "signaltty-core",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -1670,6 +1671,7 @@ dependencies = [
  "crossterm",
  "serde",
  "serde_json",
+ "signaltty-agent",
  "signaltty-core",
  "signaltty-plugin",
  "signaltty-proto",
