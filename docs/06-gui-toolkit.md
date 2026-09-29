@@ -136,7 +136,18 @@ there is pending work. Each batch reads each affected workspace once.
 Sidebar summaries, the attention count and active tabs share the cached
 `workspace.get` result; selecting a workspace does not fetch it again.
 Initial load, reconnection and workspace creation/deletion read the full
-list. Individual IPC calls still wait synchronously for the actor.
+list. IPC replies are awaited on GTK's local executor, with no blocking
+main-thread receive. A refresh uses an owned cache copy behind a serial
+async lock, so no RefCell borrow crosses an await. Invalidations arriving
+in flight form the next batch. Socket operations and requests have three-second
+deadlines; uncertain mutations are reported and never automatically replayed.
+
+Attach is enqueue-only. Initial and reconnect VT snapshots replace the existing
+terminal screen through the same UI FIFO as live bytes. A cumulative output
+offset suppresses bytes already covered by the snapshot, including queued
+output from before attachment. Repeated application activation presents the
+existing window. Current lifecycle presentation derives from process live state;
+restored historical working state cannot animate a stopped process.
 
 Events route by `workspace_id`, nested `workspace.id`, `pane.workspace_id`,
 `tab.workspace_id`, or `notification.workspace_id`. Cached pane/tab indexes

@@ -238,7 +238,7 @@ impl PaneWidget {
                     return;
                 }
                 use base64::Engine;
-                let _ = w.actor.call(
+                w.send(
                     "pane.input",
                     json!({
                         "pane_id": w.pane_id,
@@ -254,9 +254,7 @@ impl PaneWidget {
             let term = w.term.clone();
             term.connect_has_focus_notify(move |term| {
                 if term.has_focus() {
-                    let _ = w
-                        .actor
-                        .call("pane.mark_seen", json!({"pane_id": w.pane_id}));
+                    w.send("pane.mark_seen", json!({"pane_id": w.pane_id}));
                     on_focus(&w.pane_id);
                 }
             });
@@ -271,19 +269,8 @@ impl PaneWidget {
             header.add_controller(click);
         }
 
-        // Attach + initial snapshot (replayable VT bytes).
-        match w.actor.attach(pane_id, 80, 24) {
-            Ok(snap) => {
-                w.term.reset(true, true);
-                if !snap.snapshot.is_empty() {
-                    w.term.feed(&snap.snapshot);
-                }
-            }
-            Err(e) => {
-                w.term
-                    .feed(format!("\r\n\x1b[2mCouldn't attach: {e}\x1b[0m\r\n").as_bytes());
-            }
-        }
+        // Snapshots and live bytes arrive through the same ordered UI queue.
+        w.actor.attach(pane_id, 80, 24);
         w
     }
 
@@ -306,6 +293,18 @@ impl PaneWidget {
             Some(&rgba(scheme.background)),
             &palette,
         );
+    }
+
+    fn send(&self, method: &'static str, params: serde_json::Value) {
+        let actor = self.actor.clone();
+        gtk4::glib::spawn_future_local(async move {
+            let _ = actor.call(method, params).await;
+        });
+    }
+
+    pub fn replace_screen(&self, data: &[u8]) {
+        self.term.reset(true, true);
+        self.term.feed(data);
     }
 
     pub fn feed(&self, data: &[u8]) {
@@ -339,7 +338,7 @@ impl PaneWidget {
         }
         self.last_size.set((cols, rows));
         if self.live.get() {
-            let _ = self.actor.call(
+            self.send(
                 "pane.resize",
                 json!({"pane_id": self.pane_id, "cols": cols, "rows": rows}),
             );

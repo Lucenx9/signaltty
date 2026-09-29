@@ -1,5 +1,5 @@
 use super::*;
-use crate::actor::{ActorRequest, SnapshotReply};
+use crate::actor::ActorRequest;
 use crate::refresh::tests::fixture;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,7 @@ fn emit(app: &App, name: &str, payload: Value) {
 
 fn drain_refresh(app: &App) {
     let deadline = Instant::now() + Duration::from_secs(2);
-    while app.refresh_scheduled.get() {
+    while app.refresh_scheduled.get() || app.pending_actions.get() > 0 {
         assert!(
             Instant::now() < deadline,
             "refresh starved on GTK main loop"
@@ -56,13 +56,14 @@ fn button_with_tooltip(widget: &gtk4::Widget, tooltip: &str) -> Option<gtk4::But
     None
 }
 
-fn respond(dialog: &adw::AlertDialog, response: &str) {
+fn respond(app: &App, dialog: &adw::AlertDialog, response: &str) {
     dialog.emit_by_name_with_details::<()>(
         "response",
         glib::Quark::from_str(response),
         &[&response],
     );
     dialog.close();
+    drain_refresh(app);
     while glib::MainContext::default().iteration(false) {}
 }
 
@@ -89,6 +90,7 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
                     method,
                     params,
                     reply,
+                    ..
                 } => {
                     if method == "test.stop" {
                         let _ = reply.send(Ok(Value::Null));
@@ -118,11 +120,7 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
                     };
                     let _ = reply.send(result);
                 }
-                ActorRequest::Attach { reply, .. } => {
-                    let _ = reply.send(Ok(SnapshotReply {
-                        snapshot: Vec::new(),
-                    }));
-                }
+                ActorRequest::Attach { .. } => {}
                 ActorRequest::Detach { .. } => {}
             }
         }
@@ -131,6 +129,7 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
     let app = App::new(&application, actor, ui);
     app.window.present();
     app.refresh();
+    drain_refresh(&app);
     assert_sidebar(&app, &["a", "b"], "a");
     calls.lock().unwrap().clear();
 
@@ -140,7 +139,7 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
     let dialog = app.close_ws_dialog.borrow().clone().expect("confirmation");
     assert!(dialog.heading().unwrap().contains('b'));
     assert_eq!(app.active_ws_id().as_deref(), Some("a"));
-    respond(&dialog, "cancel");
+    respond(&app, &dialog, "cancel");
     assert!(calls.lock().unwrap().is_empty());
     assert_sidebar(&app, &["a", "b"], "a");
 
@@ -149,7 +148,7 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
     state.lock().unwrap().remove("b");
     close_b.emit_clicked();
     let dialog = app.close_ws_dialog.borrow().clone().expect("confirmation");
-    respond(&dialog, "close");
+    respond(&app, &dialog, "close");
     assert_eq!(
         calls.lock().unwrap()[0],
         ("workspace.close".into(), json!({"workspace_id": "b"}))
@@ -162,7 +161,7 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
     let dialog = app.close_ws_dialog.borrow().clone().expect("confirmation");
     close_b.emit_clicked();
     assert_eq!(app.close_ws_dialog.borrow().as_ref(), Some(&dialog));
-    respond(&dialog, "close");
+    respond(&app, &dialog, "close");
     assert_eq!(
         calls.lock().unwrap()[0],
         ("workspace.close".into(), json!({"workspace_id": "b"}))
@@ -180,7 +179,7 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
         .borrow()
         .clone()
         .expect("menu confirmation");
-    respond(&dialog, "close");
+    respond(&app, &dialog, "close");
     assert_eq!(
         calls.lock().unwrap()[0],
         ("workspace.close".into(), json!({"workspace_id": "a"}))
@@ -192,7 +191,9 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
         Some("no-workspace")
     );
 
-    app.actor.call("test.stop", json!({})).unwrap();
+    glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
     app.window.destroy();
     drop(app);
     worker.join().unwrap();
@@ -250,6 +251,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
                     method,
                     params,
                     reply,
+                    ..
                 } => {
                     if method == "test.stop" {
                         let _ = reply.send(Ok(Value::Null));
@@ -277,11 +279,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
                     };
                     let _ = reply.send(result);
                 }
-                ActorRequest::Attach { reply, .. } => {
-                    let _ = reply.send(Ok(SnapshotReply {
-                        snapshot: Vec::new(),
-                    }));
-                }
+                ActorRequest::Attach { .. } => {}
                 ActorRequest::Detach { .. } => {}
             }
         }
@@ -289,6 +287,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     let (ui, _events) = tokio::sync::mpsc::unbounded_channel();
     let app = App::new(&application, actor, ui);
     app.refresh();
+    drain_refresh(&app);
     assert_eq!(
         calls.lock().unwrap().len(),
         3,
@@ -362,14 +361,16 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
         "attention.updated",
         json!({"pane_id": "pane_b", "attention": "permission_required"}),
     );
-    assert_eq!(
-        *calls.lock().unwrap(),
-        vec![
-            ("pane.get".into(), json!({"pane_id": "pane_b"})),
-            ("pane.get".into(), json!({"pane_id": "pane_b"})),
-        ]
-    );
     drain_refresh(&app);
+    assert_eq!(
+        calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "pane.get")
+            .count(),
+        2
+    );
     assert_eq!(calls.lock().unwrap().len(), 3);
     assert_eq!(app.tab_view.selected_page(), Some(selected.clone()));
     calls.lock().unwrap().clear();
@@ -468,8 +469,223 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     assert_eq!(calls.lock().unwrap().len(), 1);
     assert_sidebar(&app, &["a", "c"], "a");
 
-    app.actor.call("test.stop", json!({})).unwrap();
+    glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
     app.window.destroy();
     drop(app);
     worker.join().unwrap();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn stalled_action_keeps_the_gtk_main_loop_responsive() {
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call { method, reply, .. } = request {
+                let result = match method.as_str() {
+                    "workspace.list" => Ok(json!({"workspaces": [fixture("a")["workspace"]]})),
+                    "workspace.get" => Ok(fixture("a")),
+                    "tab.create" => {
+                        std::thread::sleep(Duration::from_millis(250));
+                        Err("simulated stalled reply".into())
+                    }
+                    "test.stop" => {
+                        let _ = reply.send(Ok(Value::Null));
+                        break;
+                    }
+                    _ => Ok(json!({})),
+                };
+                let _ = reply.send(result);
+            }
+        }
+    });
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.refresh();
+    drain_refresh(&app);
+    let started = Instant::now();
+    app.window.lookup_action("new-tab").unwrap().activate(None);
+    let activation_time = started.elapsed();
+    // An idle probe runs while tab.create is still awaiting its delayed reply.
+    let responsive = Rc::new(Cell::new(false));
+    let probe = responsive.clone();
+    glib::idle_add_local_once(move || probe.set(true));
+    while !responsive.get() {
+        glib::MainContext::default().iteration(true);
+    }
+    assert!(started.elapsed() < Duration::from_millis(100));
+    drain_refresh(&app);
+    glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
+    app.window.destroy();
+    worker.join().unwrap();
+    assert!(
+        activation_time < Duration::from_millis(100),
+        "GTK action blocked for {activation_time:?}"
+    );
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn events_received_during_refresh_are_applied_in_the_next_batch() {
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let (waiting, held) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let mut reads = 0;
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call { method, reply, .. } = request {
+                let result = match method.as_str() {
+                    "workspace.list" => json!({"workspaces": [fixture("a")["workspace"]]}),
+                    "workspace.get" => {
+                        reads += 1;
+                        let mut snapshot = fixture("a");
+                        snapshot["panes"][0]["last_message"] = json!(if reads == 1 {
+                            "old message"
+                        } else {
+                            "new message"
+                        });
+                        if reads == 1 {
+                            waiting.send(()).unwrap();
+                            resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                        }
+                        snapshot
+                    }
+                    "test.stop" => {
+                        let _ = reply.send(Ok(json!({"reads": reads})));
+                        break;
+                    }
+                    _ => json!({}),
+                };
+                let _ = reply.send(Ok(result));
+            }
+        }
+    });
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.refresh();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while held.try_recv().is_err() {
+        assert!(Instant::now() < deadline);
+        glib::MainContext::default().iteration(false);
+        std::thread::yield_now();
+    }
+    // The cache can be borrowed while its remote read awaits, and this
+    // invalidation must survive application of the first stale snapshot.
+    emit(
+        &app,
+        "pane.updated",
+        json!({"workspace_id": "a", "pane_id": "pane_a"}),
+    );
+    release.send(()).unwrap();
+    drain_refresh(&app);
+    assert!(has_label(app.sidebar.widget.upcast_ref(), "new message"));
+    let result = glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
+    assert_eq!(result["reads"], 2);
+    app.window.destroy();
+    worker.join().unwrap();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn delayed_new_tab_keeps_the_workspace_selected_after_the_action() {
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let (waiting, held) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded = calls.clone();
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call {
+                method,
+                params,
+                reply,
+                ..
+            } = request
+            {
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push((method.clone(), params.clone()));
+                let result = match method.as_str() {
+                    "workspace.list" => Ok(json!({"workspaces": [
+                        fixture("a")["workspace"], fixture("b")["workspace"]
+                    ]})),
+                    "workspace.get" => Ok(fixture(params["workspace_id"].as_str().unwrap())),
+                    "tab.create" => {
+                        waiting.send(()).unwrap();
+                        resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                        Ok(json!({"tab": {"id": "tab_new_a"}}))
+                    }
+                    "pane.spawn" => Err("simulated spawn failure".into()),
+                    "test.stop" => {
+                        let _ = reply.send(Ok(Value::Null));
+                        break;
+                    }
+                    _ => Ok(json!({})),
+                };
+                let _ = reply.send(result);
+            }
+        }
+    });
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.refresh();
+    drain_refresh(&app);
+    app.show_workspace("a");
+    app.window.lookup_action("new-tab").unwrap().activate(None);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while held.try_recv().is_err() {
+        assert!(Instant::now() < deadline);
+        glib::MainContext::default().iteration(false);
+        std::thread::yield_now();
+    }
+    app.show_workspace("b");
+    assert_eq!(app.current_pane_id().as_deref(), Some("pane_b"));
+    release.send(()).unwrap();
+    drain_refresh(&app);
+    let active = app.active_ws_id();
+    let selected_tab = app.gui_tab.borrow().clone();
+    let current_pane = app.current_pane_id();
+    glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
+    app.window.destroy();
+    worker.join().unwrap();
+
+    let calls = calls.lock().unwrap();
+    let created = calls
+        .iter()
+        .find(|(method, _)| method == "tab.create")
+        .unwrap();
+    assert_eq!(created.1["workspace_id"], "a");
+    let spawned = calls
+        .iter()
+        .find(|(method, _)| method == "pane.spawn")
+        .unwrap();
+    assert_eq!(spawned.1["workspace_id"], "a");
+    assert_eq!(spawned.1["tab_id"], "tab_new_a");
+    assert_eq!(active.as_deref(), Some("b"));
+    assert_eq!(selected_tab.as_deref(), Some("tab_b"));
+    assert_eq!(current_pane.as_deref(), Some("pane_b"));
 }

@@ -14,7 +14,7 @@ pub struct Snapshot {
     pub panes: Vec<Pane>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct WorkspaceCache {
     pub workspaces: Vec<Workspace>,
     pub snapshots: HashMap<String, Snapshot>,
@@ -138,14 +138,18 @@ impl WorkspaceCache {
 
     /// Returns successful workspace replacements and errors. Failed reads keep
     /// the last good snapshot; only an authoritative list removes workspaces.
-    pub fn refresh(
+    pub async fn refresh<F, Fut>(
         &mut self,
         mut pending: PendingRefresh,
-        mut call: impl FnMut(&str, Value) -> Result<Value, String>,
-    ) -> (HashSet<String>, Vec<String>) {
+        mut call: F,
+    ) -> (HashSet<String>, Vec<String>)
+    where
+        F: FnMut(&'static str, Value) -> Fut,
+        Fut: std::future::Future<Output = Result<Value, String>>,
+    {
         let mut errors = Vec::new();
         if pending.full {
-            let list = call("workspace.list", json!({})).and_then(|v| {
+            let list = call("workspace.list", json!({})).await.and_then(|v| {
                 serde_json::from_value::<Vec<Workspace>>(v["workspaces"].clone())
                     .map_err(|e| e.to_string())
             });
@@ -166,7 +170,7 @@ impl WorkspaceCache {
             self.workspaces = list;
         } else {
             for id in pending.unknown_panes {
-                if let Ok(v) = call("pane.get", json!({"pane_id": id})) {
+                if let Ok(v) = call("pane.get", json!({"pane_id": id})).await {
                     if let Some(ws) = v["pane"]["workspace_id"].as_str() {
                         pending.workspaces.insert(ws.to_string());
                     }
@@ -176,6 +180,7 @@ impl WorkspaceCache {
         let mut changed = HashSet::new();
         for id in pending.workspaces {
             let snapshot = call("workspace.get", json!({"workspace_id": id}))
+                .await
                 .and_then(|v| serde_json::from_value::<Snapshot>(v).map_err(|e| e.to_string()));
             match snapshot {
                 Ok(snapshot) => {
@@ -212,6 +217,19 @@ pub(crate) mod tests {
         })
     }
 
+    fn refresh_cache(
+        cache: &mut WorkspaceCache,
+        pending: PendingRefresh,
+        mut call: impl FnMut(&str, Value) -> Result<Value, String>,
+    ) -> (HashSet<String>, Vec<String>) {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(cache.refresh(pending, |method, params| {
+                std::future::ready(call(method, params))
+            }))
+    }
+
     fn cache() -> WorkspaceCache {
         let mut cache = WorkspaceCache::default();
         for id in ["a", "b"] {
@@ -228,7 +246,7 @@ pub(crate) mod tests {
             pending.on_event(&cache, event::AGENT_WORKING, &json!({"pane_id": "pane_b"}));
         }
         let mut calls = Vec::new();
-        let (changed, errors) = cache.refresh(pending, |method, params| {
+        let (changed, errors) = refresh_cache(&mut cache, pending, |method, params| {
             calls.push((method.to_string(), params));
             let mut snapshot = fixture("b");
             snapshot["panes"][0]["lifecycle"] = json!("working");
@@ -309,7 +327,7 @@ pub(crate) mod tests {
             );
         }
         let mut calls = Vec::new();
-        cache.refresh(pending, |method, params| {
+        refresh_cache(&mut cache, pending, |method, params| {
             calls.push(method.to_string());
             Ok(if method == "pane.get" {
                 json!({"pane": {"workspace_id": "b"}})
@@ -328,7 +346,7 @@ pub(crate) mod tests {
             pending.on_event(&cache, event::AGENT_WORKING, &json!({"pane_id": "unknown"}));
             pending.on_event(&cache, event, &json!({}));
             let mut calls = Vec::new();
-            cache.refresh(pending, |method, _| {
+            refresh_cache(&mut cache, pending, |method, _| {
                 calls.push(method.to_string());
                 Ok(if method == "workspace.list" {
                     json!({"workspaces": [fixture("a")["workspace"]]})
@@ -355,7 +373,7 @@ pub(crate) mod tests {
         );
         pending.on_event(&cache, event::TAB_CLOSED, &json!({"tab_id": "new"}));
         pending.on_event(&cache, event::PANE_CLOSED, &json!({"pane_id": "pane_b"}));
-        cache.refresh(pending, |method, params| {
+        refresh_cache(&mut cache, pending, |method, params| {
             assert_eq!(method, "workspace.get");
             assert_eq!(params, json!({"workspace_id": "b"}));
             let mut snapshot = fixture("b");
@@ -371,12 +389,13 @@ pub(crate) mod tests {
     #[test]
     fn failed_reads_preserve_cached_state_and_retry_on_next_event() {
         let mut cache = cache();
-        let (_, errors) = cache.refresh(PendingRefresh::full(), |_, _| Err("eof".into()));
+        let (_, errors) =
+            refresh_cache(&mut cache, PendingRefresh::full(), |_, _| Err("eof".into()));
         assert_eq!(errors, ["eof"]);
         assert_eq!(cache.workspaces.len(), 2);
         let mut pending = PendingRefresh::default();
         pending.on_event(&cache, event::PANE_UPDATED, &json!({"pane_id": "pane_b"}));
-        let (_, errors) = cache.refresh(pending, |_, _| Err("eof".into()));
+        let (_, errors) = refresh_cache(&mut cache, pending, |_, _| Err("eof".into()));
         assert_eq!(errors, ["eof"]);
         assert_eq!(cache.snapshots.len(), 2);
         let mut pending = PendingRefresh::default();

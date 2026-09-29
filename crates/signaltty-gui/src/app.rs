@@ -80,12 +80,16 @@ pub struct App {
     model: RefCell<Model>,
     pending_refresh: RefCell<PendingRefresh>,
     refresh_scheduled: Cell<bool>,
+    refresh_lock: tokio::sync::Mutex<()>,
+    #[cfg(test)]
+    pending_actions: Cell<usize>,
     widgets: RefCell<HashMap<String, Rc<PaneWidget>>>,
     tabs: RefCell<HashMap<String, TabEntry>>,
     /// Set while the GUI itself mutates the tab view, so selection
     /// changes it causes are not mistaken for the user's choice.
     reconciling: Cell<bool>,
     gui_tab: RefCell<Option<String>>,
+    navigation: Cell<u64>,
     focused_pane: RefCell<Option<String>>,
     /// Divider state machine (ratios, drags, echo suppression);
     /// widgets live separately in `paned_widgets`.
@@ -229,10 +233,14 @@ impl App {
             }),
             pending_refresh: RefCell::new(PendingRefresh::default()),
             refresh_scheduled: Cell::new(false),
+            refresh_lock: tokio::sync::Mutex::new(()),
+            #[cfg(test)]
+            pending_actions: Cell::new(0),
             widgets: RefCell::new(HashMap::new()),
             tabs: RefCell::new(HashMap::new()),
             reconciling: Cell::new(false),
             gui_tab: RefCell::new(None),
+            navigation: Cell::new(0),
             focused_pane: RefCell::new(None),
             dividers: crate::dividers::Dividers::new(),
             paned_widgets: RefCell::new(HashMap::new()),
@@ -339,6 +347,9 @@ impl App {
             }
             if let Some(page) = view.selected_page() {
                 if let Some(id) = a.tab_id_of(&page) {
+                    if a.gui_tab.borrow().as_deref() != Some(id.as_str()) {
+                        a.navigate();
+                    }
                     *a.gui_tab.borrow_mut() = Some(id);
                 }
             }
@@ -355,10 +366,12 @@ impl App {
             });
             view.close_page_finish(page, true);
             if let Some((a, id)) = closed {
-                if let Err(e) = a.actor.call("tab.close", json!({"tab_id": id})) {
-                    a.toast(&format!("Couldn't close the tab — {e}"));
-                }
-                a.refresh_later();
+                a.run(move |app| async move {
+                    if let Err(e) = app.actor.call("tab.close", json!({"tab_id": id})).await {
+                        app.toast(&format!("Couldn't close the tab — {e}"));
+                    }
+                    app.refresh_later();
+                });
             }
             glib::Propagation::Stop
         });
@@ -413,7 +426,7 @@ impl App {
     /// One sizing pass: snapshot live dividers (pruning dead widget
     /// refs), ask the divider module what to do, and execute its
     /// commands with no borrows held (moves notify synchronously,
-    /// sends block the UI thread).
+    /// sends complete asynchronously).
     fn sync_paneds(&self) {
         let mut live = Vec::new();
         self.paned_widgets.borrow_mut().retain(|key, weak| {
@@ -461,11 +474,21 @@ impl App {
     /// Persist a rested drag, reporting the outcome back to the divider
     /// module (echoed ratio, or staleness for a failed send).
     fn send_ratio(&self, tab_id: &str, path: &[bool], ratio: f32) {
+        let tab_id = tab_id.to_string();
+        let path = path.to_vec();
+        self.run(move |app| async move { app.send_ratio_async(&tab_id, &path, ratio).await });
+    }
+
+    async fn send_ratio_async(&self, tab_id: &str, path: &[bool], ratio: f32) {
         let ipath: Vec<u8> = path.iter().map(|b| u8::from(*b)).collect();
-        match self.actor.call(
-            "tab.set_ratio",
-            json!({"tab_id": tab_id, "path": ipath, "ratio": ratio}),
-        ) {
+        match self
+            .actor
+            .call(
+                "tab.set_ratio",
+                json!({"tab_id": tab_id, "path": ipath, "ratio": ratio}),
+            )
+            .await
+        {
             Ok(v) => {
                 let confirmed = v
                     .get("tab")
@@ -507,6 +530,31 @@ impl App {
             .retain(|key, _| key.0 != tab_id);
     }
 
+    fn run<F>(&self, task: impl FnOnce(Rc<App>) -> F + 'static)
+    where
+        F: std::future::Future<Output = ()> + 'static,
+    {
+        if let Some(app) = self.weak().upgrade() {
+            #[cfg(test)]
+            app.pending_actions.set(app.pending_actions.get() + 1);
+            glib::spawn_future_local(async move {
+                #[cfg(test)]
+                let tracked = app.clone();
+                task(app).await;
+                #[cfg(test)]
+                tracked
+                    .pending_actions
+                    .set(tracked.pending_actions.get() - 1);
+            });
+        }
+    }
+
+    fn navigate(&self) -> u64 {
+        let next = self.navigation.get().wrapping_add(1);
+        self.navigation.set(next);
+        next
+    }
+
     fn weak(&self) -> Weak<App> {
         self.me.borrow().clone()
     }
@@ -536,8 +584,11 @@ impl App {
         glib::timeout_add_local_once(Duration::from_millis(16), move || {
             if let Some(a) = w.upgrade() {
                 let pending = a.pending_refresh.take();
-                a.apply_refresh(pending);
-                a.refresh_scheduled.set(false);
+                a.run(move |app| async move {
+                    app.apply_refresh(pending).await;
+                    app.refresh_scheduled.set(false);
+                    app.schedule_refresh();
+                });
             }
         });
     }
@@ -546,32 +597,41 @@ impl App {
 
     /// Initial load, reconnect, or workspace creation/deletion only.
     pub fn refresh(&self) {
-        self.apply_refresh(PendingRefresh::full());
+        self.pending_refresh.borrow_mut().full = true;
+        self.schedule_refresh();
     }
 
-    fn refresh_workspace(&self, id: &str) {
+    async fn refresh_workspace_async(&self, id: &str) {
         let mut pending = PendingRefresh::default();
         pending.workspaces.insert(id.to_string());
-        self.apply_refresh(pending);
+        self.apply_refresh(pending).await;
     }
 
-    fn refresh_pane_workspace(&self, pane_id: &str) {
+    async fn refresh_pane_workspace_async(&self, pane_id: &str) {
         let mut pending = PendingRefresh::default();
         pending.on_event(
             &self.model.borrow().cache,
             "pane.updated",
             &json!({"pane_id": pane_id}),
         );
-        self.apply_refresh(pending);
+        self.apply_refresh(pending).await;
     }
 
-    fn apply_refresh(&self, pending: PendingRefresh) {
+    async fn refresh_async(&self) {
+        self.apply_refresh(PendingRefresh::full()).await;
+    }
+
+    async fn apply_refresh(&self, pending: PendingRefresh) {
+        let _serial = self.refresh_lock.lock().await;
         let full = pending.full;
-        let (changed, errors) = self
-            .model
-            .borrow_mut()
-            .cache
-            .refresh(pending, |method, params| self.actor.call(method, params));
+        let mut cache = self.model.borrow().cache.clone();
+        let (changed, errors) = cache
+            .refresh(pending, |method, params| {
+                let actor = self.actor.clone();
+                async move { actor.call(method, params).await }
+            })
+            .await;
+        self.model.borrow_mut().cache = cache;
         for error in errors {
             self.toast(&format!("Couldn't load workspaces — {error}"));
         }
@@ -629,7 +689,7 @@ impl App {
         self.sidebar.update(items);
         self.update_attention_button(&needing);
         match active {
-            Some(id) if full || changed.contains(&id) => self.show_workspace(&id),
+            Some(id) if full || changed.contains(&id) => self.show_workspace_internal(&id, false),
             Some(_) => {}
             None => {
                 {
@@ -680,9 +740,16 @@ impl App {
 
     /// Render one workspace: tabs + panes + widgets + sidebar selection.
     pub fn show_workspace(&self, ws_id: &str) {
+        self.show_workspace_internal(ws_id, true);
+    }
+
+    fn show_workspace_internal(&self, ws_id: &str, user_navigation: bool) {
         let snapshot = self.model.borrow().cache.snapshots.get(ws_id).cloned();
         let Some(snapshot) = snapshot else { return };
         let ws = snapshot.workspace;
+        if user_navigation && self.active_ws_id().as_deref() != Some(ws_id) {
+            self.navigate();
+        }
         self.title.set_title(&self.display_title(&ws));
         let place = tilde(&ws.cwd);
         self.title.set_subtitle(&match &ws.git.branch {
@@ -1019,6 +1086,11 @@ impl App {
 
     pub fn on_event(&self, ev: UiEvent) {
         match ev {
+            UiEvent::PtySnapshot { pane_id, data } => {
+                if let Some(w) = self.widgets.borrow().get(&pane_id) {
+                    w.replace_screen(&data);
+                }
+            }
             UiEvent::PtyData { pane_id, data } => {
                 if let Some(w) = self.widgets.borrow().get(&pane_id) {
                     w.feed(&data);
@@ -1029,15 +1101,16 @@ impl App {
                 self.focus_pane(&id);
             }
             UiEvent::MarkSeen(id) => {
-                // Notification action: clear attention in place, no focus
-                // yank. Reuses the explicit per-pane interaction path.
-                if self
-                    .actor
-                    .call("pane.mark_seen", json!({"pane_id": id}))
-                    .is_ok()
-                {
-                    self.refresh_pane_workspace(&id);
-                }
+                self.run(move |app| async move {
+                    if app
+                        .actor
+                        .call("pane.mark_seen", json!({"pane_id": id}))
+                        .await
+                        .is_ok()
+                    {
+                        app.refresh_pane_workspace_async(&id).await;
+                    }
+                });
             }
             UiEvent::Reconnected => {
                 self.banner.set_revealed(false);
@@ -1065,6 +1138,12 @@ impl App {
     /// `notification.created` always precedes its attention raise, so
     /// notifying on both would double-notify.
     fn maybe_notify(&self, name: &str, payload: &Value) {
+        let name = name.to_string();
+        let payload = payload.clone();
+        self.run(move |app| async move { app.maybe_notify_async(&name, &payload).await });
+    }
+
+    async fn maybe_notify_async(&self, name: &str, payload: &Value) {
         if name != "attention.created" && name != "attention.updated" {
             return;
         }
@@ -1082,7 +1161,11 @@ impl App {
         if self.is_pane_visible(pane_id) {
             return;
         }
-        let (title, msg) = match self.actor.call("pane.get", json!({"pane_id": pane_id})) {
+        let (title, msg) = match self
+            .actor
+            .call("pane.get", json!({"pane_id": pane_id}))
+            .await
+        {
             Ok(v) => {
                 let p = &v["pane"];
                 (
@@ -1092,7 +1175,9 @@ impl App {
             }
             Err(_) => ("signaltty".to_string(), att.to_string()),
         };
-        self.notifier.notify_attention(&title, &msg, pane_id);
+        if !self.is_pane_visible(pane_id) {
+            self.notifier.notify_attention(&title, &msg, pane_id);
+        }
     }
 
     fn is_pane_visible(&self, pane_id: &str) -> bool {
@@ -1101,6 +1186,9 @@ impl App {
 
     fn on_pane_focused(&self, pane_id: &str) {
         let prev = self.focused_pane.replace(Some(pane_id.to_string()));
+        if prev.as_deref() != Some(pane_id) {
+            self.navigate();
+        }
         let widgets = self.widgets.borrow();
         if let Some(w) = prev.as_deref().and_then(|id| widgets.get(id)) {
             w.set_focused(false);
@@ -1126,24 +1214,48 @@ impl App {
     /// Deliver a decision pick; the bar clears on the resulting
     /// `decision.answered` event (or the toast explains a stale bar).
     fn answer_decision(&self, pane_id: &str, decision_id: &str, option_id: &str) {
-        if let Err(e) = self.actor.call(
-            "decision.answer",
-            json!({"pane_id": pane_id, "decision_id": decision_id, "option_id": option_id}),
-        ) {
+        let pane_id = pane_id.to_string();
+        let decision_id = decision_id.to_string();
+        let option_id = option_id.to_string();
+        self.run(move |app| async move {
+            app.answer_decision_async(&pane_id, &decision_id, &option_id)
+                .await
+        });
+    }
+
+    async fn answer_decision_async(&self, pane_id: &str, decision_id: &str, option_id: &str) {
+        if let Err(e) = self
+            .actor
+            .call(
+                "decision.answer",
+                json!({"pane_id": pane_id, "decision_id": decision_id, "option_id": option_id}),
+            )
+            .await
+        {
             self.toast(&format!("Couldn't answer — {e}"));
         }
-        self.refresh_pane_workspace(pane_id);
+        self.refresh_pane_workspace_async(pane_id).await;
     }
 
     // ---- focus navigation ----
 
     pub fn focus_pane(&self, pane_id: &str) {
+        let pane_id = pane_id.to_string();
+        let navigation = self.navigate();
+        self.run(move |app| async move { app.focus_pane_async(&pane_id, navigation).await });
+    }
+
+    async fn focus_pane_async(&self, pane_id: &str, navigation: u64) {
         let pane: Option<Pane> = self
             .actor
             .call("pane.get", json!({"pane_id": pane_id}))
+            .await
             .ok()
             .and_then(|v| serde_json::from_value(v["pane"].clone()).ok());
         let Some(pane) = pane else { return };
+        if self.navigation.get() != navigation {
+            return;
+        }
         // Notification clicks can beat the next refresh batch.
         let known = self
             .model
@@ -1153,12 +1265,15 @@ impl App {
             .get(&pane.workspace_id)
             .is_some_and(|s| s.panes.iter().any(|p| p.id == pane_id));
         if !known {
-            self.refresh_workspace(&pane.workspace_id);
+            self.refresh_workspace_async(&pane.workspace_id).await;
+        }
+        if self.navigation.get() != navigation {
+            return;
         }
         // Bind first: an if-condition borrow would live into the body.
         let same_ws = self.model.borrow().active_ws.as_deref() == Some(pane.workspace_id.as_str());
         if !same_ws {
-            self.show_workspace(&pane.workspace_id);
+            self.show_workspace_internal(&pane.workspace_id, false);
         }
         *self.gui_tab.borrow_mut() = Some(pane.tab_id.clone());
         let page = self.tabs.borrow().get(&pane.tab_id).map(|e| e.page.clone());
@@ -1172,22 +1287,26 @@ impl App {
     }
 
     /// Focus a pane created by the last action once its widget exists.
-    fn focus_created(&self, result: &Value) {
+    fn focus_created(&self, result: &Value, navigation: u64) {
         let Some(id) = result["pane"]["id"].as_str().map(str::to_string) else {
             return;
         };
-        let w = self.weak();
-        glib::idle_add_local_once(move || {
-            if let Some(a) = w.upgrade() {
-                a.focus_pane(&id);
+        self.run(move |app| async move {
+            if app.navigation.get() == navigation {
+                app.focus_pane_async(&id, navigation).await;
             }
         });
     }
 
     fn focus_next_unread(&self) {
-        match self.actor.call("focus.next_unread", json!({})) {
+        let navigation = self.navigate();
+        self.run(move |app| async move { app.focus_next_unread_async(navigation).await });
+    }
+
+    async fn focus_next_unread_async(&self, navigation: u64) {
+        match self.actor.call("focus.next_unread", json!({})).await {
             Ok(v) => match v.get("pane_id").and_then(|p| p.as_str()) {
-                Some(id) => self.focus_pane(id),
+                Some(id) => self.focus_pane_async(id, navigation).await,
                 None => self.toast("Nothing needs your attention"),
             },
             Err(e) => self.toast(&format!("Couldn't find the next pane — {e}")),
@@ -1291,11 +1410,17 @@ impl App {
     }
 
     fn close_workspace(&self, id: &str) {
+        let id = id.to_string();
+        self.run(move |app| async move { app.close_workspace_async(&id).await });
+    }
+
+    async fn close_workspace_async(&self, id: &str) {
         match self
             .actor
             .call("workspace.close", json!({"workspace_id": id}))
+            .await
         {
-            Ok(_) => self.refresh(),
+            Ok(_) => self.refresh_async().await,
             Err(e) => self.toast(&format!("Couldn't close the workspace — {e}")),
         }
     }
@@ -1313,9 +1438,27 @@ impl App {
     /// `signaltty new` over IPC: create the workspace, spawn the first
     /// pane in it, show it and focus the new terminal.
     fn create_workspace(&self, name: &str, cwd: &str, argv: &[String]) {
+        let name = name.to_string();
+        let cwd = cwd.to_string();
+        let argv = argv.to_vec();
+        let navigation = self.navigate();
+        self.run(move |app| async move {
+            app.create_workspace_async(&name, &cwd, &argv, navigation)
+                .await
+        });
+    }
+
+    async fn create_workspace_async(
+        &self,
+        name: &str,
+        cwd: &str,
+        argv: &[String],
+        navigation: u64,
+    ) {
         let ws_id = match self
             .actor
             .call("workspace.create", json!({"name": name, "cwd": cwd}))
+            .await
         {
             Ok(v) => v["workspace"]["id"]
                 .as_str()
@@ -1334,15 +1477,18 @@ impl App {
         match self
             .actor
             .call("pane.spawn", json!({"workspace_id": ws_id, "argv": argv}))
+            .await
         {
-            Ok(v) => self.focus_created(&v),
+            Ok(v) => self.focus_created(&v, navigation),
             Err(e) => {
                 self.toast(&format!("Couldn't start a terminal — {e}"));
                 return;
             }
         }
-        self.refresh();
-        self.show_workspace(&ws_id);
+        self.refresh_async().await;
+        if self.navigation.get() == navigation {
+            self.show_workspace_internal(&ws_id, false);
+        }
     }
 
     fn action_new_tab(&self) {
@@ -1350,9 +1496,15 @@ impl App {
             self.action_new_workspace();
             return;
         };
+        let navigation = self.navigate();
+        self.run(move |app| async move { app.action_new_tab_async(&ws, navigation).await });
+    }
+
+    async fn action_new_tab_async(&self, ws: &str, navigation: u64) {
         let tab_id = match self
             .actor
             .call("tab.create", json!({"workspace_id": ws, "title": "shell"}))
+            .await
         {
             Ok(v) => v["tab"]["id"].as_str().unwrap_or_default().to_string(),
             Err(e) => {
@@ -1360,22 +1512,36 @@ impl App {
                 return;
             }
         };
-        *self.gui_tab.borrow_mut() = Some(tab_id.clone());
-        self.spawn_shell_in_tab(&tab_id);
+        if self.navigation.get() == navigation {
+            *self.gui_tab.borrow_mut() = Some(tab_id.clone());
+        }
+        self.spawn_shell_in_tab_async(ws, &tab_id, navigation).await;
     }
 
     fn spawn_shell_in_tab(&self, tab_id: &str) {
+        let tab_id = tab_id.to_string();
         let Some(ws) = self.active_ws_id() else {
             return;
         };
-        match self.actor.call(
-            "pane.spawn",
-            json!({"workspace_id": ws, "tab_id": tab_id, "argv": [user_shell()]}),
-        ) {
-            Ok(v) => self.focus_created(&v),
+        let navigation = self.navigate();
+        self.run(
+            move |app| async move { app.spawn_shell_in_tab_async(&ws, &tab_id, navigation).await },
+        );
+    }
+
+    async fn spawn_shell_in_tab_async(&self, ws: &str, tab_id: &str, navigation: u64) {
+        match self
+            .actor
+            .call(
+                "pane.spawn",
+                json!({"workspace_id": ws, "tab_id": tab_id, "argv": [user_shell()]}),
+            )
+            .await
+        {
+            Ok(v) => self.focus_created(&v, navigation),
             Err(e) => self.toast(&format!("Couldn't start a terminal — {e}")),
         }
-        self.refresh_workspace(&ws);
+        self.refresh_workspace_async(ws).await;
     }
 
     fn action_split(&self, dir: SplitDir) {
@@ -1386,18 +1552,28 @@ impl App {
     }
 
     fn split_pane(&self, pane_id: &str, dir: SplitDir) {
+        let pane_id = pane_id.to_string();
+        let navigation = self.navigate();
+        self.run(move |app| async move { app.split_pane_async(&pane_id, dir, navigation).await });
+    }
+
+    async fn split_pane_async(&self, pane_id: &str, dir: SplitDir, navigation: u64) {
         let direction = match dir {
             SplitDir::Right => "right",
             SplitDir::Down => "down",
         };
-        match self.actor.call(
-            "pane.split",
-            json!({"pane_id": pane_id, "direction": direction}),
-        ) {
-            Ok(v) => self.focus_created(&v),
+        match self
+            .actor
+            .call(
+                "pane.split",
+                json!({"pane_id": pane_id, "direction": direction}),
+            )
+            .await
+        {
+            Ok(v) => self.focus_created(&v, navigation),
             Err(e) => self.toast(&format!("Couldn't split the pane — {e}")),
         }
-        self.refresh_pane_workspace(pane_id);
+        self.refresh_pane_workspace_async(pane_id).await;
     }
 
     fn action_close_pane(&self) {
@@ -1408,17 +1584,35 @@ impl App {
     }
 
     fn close_pane(&self, pane_id: &str) {
-        if let Err(e) = self.actor.call("pane.close", json!({"pane_id": pane_id})) {
+        let pane_id = pane_id.to_string();
+        self.run(move |app| async move { app.close_pane_async(&pane_id).await });
+    }
+
+    async fn close_pane_async(&self, pane_id: &str) {
+        if let Err(e) = self
+            .actor
+            .call("pane.close", json!({"pane_id": pane_id}))
+            .await
+        {
             self.toast(&format!("Couldn't close the pane — {e}"));
         }
-        self.refresh_pane_workspace(pane_id);
+        self.refresh_pane_workspace_async(pane_id).await;
     }
 
     fn resume_pane(&self, pane_id: &str) {
-        if let Err(e) = self.actor.call("pane.resume", json!({"pane_id": pane_id})) {
+        let pane_id = pane_id.to_string();
+        self.run(move |app| async move { app.resume_pane_async(&pane_id).await });
+    }
+
+    async fn resume_pane_async(&self, pane_id: &str) {
+        if let Err(e) = self
+            .actor
+            .call("pane.resume", json!({"pane_id": pane_id}))
+            .await
+        {
             self.toast(&format!("Couldn't resume the session — {e}"));
         }
-        self.refresh_pane_workspace(pane_id);
+        self.refresh_pane_workspace_async(pane_id).await;
     }
 
     fn show_about(&self) {
