@@ -47,11 +47,13 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
         .max_by_key(|p| p.last_activity_at)
         .and_then(|p| p.last_message.clone());
     // The longest-running pane in the rolled-up state speaks for the
-    // workspace: "Working for 12m…" beats a sibling's 1m.
+    // workspace: "Working for 12m…" beats a sibling's 1m. Untimed
+    // panes (pre-timing snapshots) sort last — `None` would
+    // otherwise win `min_by_key` and hide a timed sibling.
     let lead = panes
         .iter()
         .filter(|p| p.lifecycle == lifecycle)
-        .min_by_key(|p| p.lifecycle_since);
+        .min_by_key(|p| (p.lifecycle_since.is_none(), p.lifecycle_since));
     let mut agents: Vec<&str> = panes
         .iter()
         .filter_map(|p| agent_name(p.agent.kind))
@@ -299,6 +301,7 @@ impl Sidebar {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use signaltty_core::PtySize;
 
     fn summary(
         name: &str,
@@ -385,5 +388,65 @@ mod tests {
         assert_eq!(s.headline(now), "Worked for 2m");
         s.message = Some("Bash(cargo test)".into());
         assert_eq!(s.headline(now), "Bash(cargo test)");
+    }
+
+    fn workspace() -> Workspace {
+        let now = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        Workspace {
+            id: "ws".into(),
+            name: "ws".into(),
+            cwd: "/tmp".into(),
+            git: Default::default(),
+            tabs: vec![],
+            active_tab_id: None,
+            auto_resume: false,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn pane(lifecycle: Lifecycle, since: Option<DateTime<Utc>>) -> Pane {
+        let now = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let mut p = Pane::new(
+            "ws".into(),
+            "tab".into(),
+            "/tmp".into(),
+            vec!["sh".into()],
+            PtySize::default(),
+            now,
+        );
+        p.lifecycle = lifecycle;
+        p.lifecycle_since = since;
+        p
+    }
+
+    #[test]
+    fn lead_pane_is_the_longest_running_of_the_rolled_up_state() {
+        let t0 = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let ago = |m| Some(t0 - chrono::Duration::minutes(m));
+        let panes = vec![
+            pane(Lifecycle::Working, ago(1)),
+            pane(Lifecycle::Working, ago(12)),
+            pane(Lifecycle::Idle, ago(60)),
+        ];
+        let s = summarize(&workspace(), &panes);
+        assert_eq!(s.lifecycle, Lifecycle::Working);
+        assert_eq!(s.lifecycle_since, ago(12));
+        assert_eq!(s.headline(t0), "Working for 12m…");
+    }
+
+    #[test]
+    fn untimed_legacy_pane_never_shadows_a_timed_sibling() {
+        let t0 = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let panes = vec![
+            pane(Lifecycle::Working, None),
+            pane(Lifecycle::Working, Some(t0 - chrono::Duration::minutes(12))),
+        ];
+        let s = summarize(&workspace(), &panes);
+        assert_eq!(
+            s.headline(t0),
+            "Working for 12m…",
+            "`None` timing must sort last, not win `min_by_key`"
+        );
     }
 }
