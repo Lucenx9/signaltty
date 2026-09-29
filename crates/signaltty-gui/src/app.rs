@@ -27,7 +27,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use serde_json::{json, Value};
 
-use signaltty_core::{Attention, Layout, Lifecycle, Pane, SplitDir, Tab};
+use signaltty_core::{Attention, Layout, Lifecycle, Pane, SplitDir, Tab, Workspace};
 
 use crate::actor::{IpcHandle, UiEvent, UiTx};
 use crate::notif::Notifier;
@@ -596,6 +596,32 @@ impl App {
                     );
                 }
             }
+            // Same-name workspaces are indistinguishable rows: show the
+            // unique handle on each of them, nowhere else.
+            let duplicated: std::collections::HashSet<String> = {
+                let mut counts: std::collections::HashMap<&str, usize> =
+                    std::collections::HashMap::new();
+                for item in &items {
+                    *counts.entry(item.name.as_str()).or_default() += 1;
+                }
+                counts
+                    .into_iter()
+                    .filter(|(_, n)| *n > 1)
+                    .map(|(name, _)| name.to_string())
+                    .collect()
+            };
+            if !duplicated.is_empty() {
+                for item in &mut items {
+                    if duplicated.contains(&item.name) {
+                        item.disambiguator = m
+                            .cache
+                            .snapshots
+                            .get(&item.id)
+                            .map(|s| s.workspace.handle.clone())
+                            .filter(|h| !h.is_empty());
+                    }
+                }
+            }
             (items, needing, m.active_ws.clone())
         };
         let mut items = items;
@@ -632,12 +658,32 @@ impl App {
         b.revealer.set_reveal_child(!needing.is_empty());
     }
 
+    /// The header title, disambiguated like the sidebar row when sibling
+    /// workspaces share the name.
+    fn display_title(&self, ws: &Workspace) -> String {
+        let duplicated = self
+            .model
+            .borrow()
+            .cache
+            .workspaces
+            .iter()
+            .filter(|w| w.name == ws.name)
+            .take(2)
+            .count()
+            > 1;
+        if duplicated && !ws.handle.is_empty() {
+            format!("{} · {}", ws.name, ws.handle)
+        } else {
+            ws.name.clone()
+        }
+    }
+
     /// Render one workspace: tabs + panes + widgets + sidebar selection.
     pub fn show_workspace(&self, ws_id: &str) {
         let snapshot = self.model.borrow().cache.snapshots.get(ws_id).cloned();
         let Some(snapshot) = snapshot else { return };
         let ws = snapshot.workspace;
-        self.title.set_title(&ws.name);
+        self.title.set_title(&self.display_title(&ws));
         let place = tilde(&ws.cwd);
         self.title.set_subtitle(&match &ws.git.branch {
             Some(branch) => format!("{place} · {branch}"),

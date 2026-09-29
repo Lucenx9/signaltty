@@ -29,6 +29,10 @@ use crate::util::{tilde, time_ago};
 pub struct WsSummary {
     pub id: String,
     pub name: String,
+    /// Shown as `name · handle` only when sibling workspaces share the
+    /// name (handles are unique by construction); `None` keeps rows quiet.
+    pub disambiguator: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub lifecycle: Lifecycle,
     pub attention: Attention,
     /// Latest explicit message; the headline falls back to run state.
@@ -69,6 +73,8 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
     WsSummary {
         id: ws.id.clone(),
         name: ws.name.clone(),
+        disambiguator: None,
+        created_at: ws.created_at,
         lifecycle,
         attention,
         message,
@@ -99,16 +105,20 @@ impl WsSummary {
 }
 
 /// Priority order for the sidebar (docs/14 §1): attention severity,
-/// then lifecycle rank (blocked → done → working → idle), then
-/// recency, then name so full ties stay deterministic across
-/// refreshes instead of jittering.
+/// then lifecycle rank (blocked → done → working → idle), then workspace
+/// age (newer first), then name. Deliberately NOT last-activity: activity
+/// timestamps change on every agent event, so a recency tiebreak reorders
+/// rows under the pointer constantly — clicks land on the wrong row and
+/// the top row never looks settled (spec 001 amendment, 2026-09-29).
+/// Fresh output still floats via `unread` severity; recency remains
+/// visible as the relative time in the status slot.
 pub fn sort_summaries(items: &mut [WsSummary]) {
     items.sort_by(|a, b| {
         b.attention
             .severity()
             .cmp(&a.attention.severity())
             .then(b.lifecycle.sidebar_rank().cmp(&a.lifecycle.sidebar_rank()))
-            .then(b.last_activity.cmp(&a.last_activity))
+            .then(b.created_at.cmp(&a.created_at))
             .then(a.name.cmp(&b.name))
     });
 }
@@ -233,7 +243,12 @@ impl Row {
         } else {
             self.row.remove_css_class(NEEDS_YOU);
         }
-        self.name.set_text(&s.name);
+        // Same-name workspaces are otherwise indistinguishable rows;
+        // the unique handle tells them apart (spec 001 amendment).
+        match &s.disambiguator {
+            Some(handle) => self.name.set_text(&format!("{} · {handle}", s.name)),
+            None => self.name.set_text(&s.name),
+        }
         self.place.set_text(&s.place);
         self.place.set_tooltip_text(Some(&s.place));
         self.agents.set_text(&s.agents);
@@ -342,10 +357,15 @@ impl Sidebar {
     }
 
     /// Reconcile rows with `items` (priority order), updating in
-    /// place. Moves remove + re-insert rows; GTK keeps the selection
-    /// on the moved row, so selection follows the workspace, not the
-    /// row index (covered by the display test's order assertions).
+    /// place. Moves remove + re-insert rows, which drops GTK's selection
+    /// on the moved row — so snapshot the selected workspace and restore
+    /// it after: the highlight tracks the workspace, not the row index.
+    /// The echo is harmless (`on_select` skips the already-active one).
     pub fn update(&self, items: Vec<WsSummary>) {
+        let selected = self
+            .list
+            .selected_row()
+            .map(|r| r.widget_name().to_string());
         let mut rows = self.rows.borrow_mut();
         rows.retain(|r| {
             let keep = items.iter().any(|s| s.id == r.id);
@@ -370,6 +390,12 @@ impl Sidebar {
                     self.list.insert(&row.row, i as i32);
                     rows.insert(i, row);
                 }
+            }
+        }
+        drop(rows);
+        if let Some(id) = selected {
+            if self.rows.borrow().iter().any(|r| r.id == id) {
+                self.select(&id);
             }
         }
         // Section membership can change without a move.
@@ -407,6 +433,8 @@ mod tests {
         WsSummary {
             id: name.to_string(),
             name: name.to_string(),
+            disambiguator: None,
+            created_at: Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
             lifecycle,
             attention,
             message: None,
@@ -477,23 +505,47 @@ mod tests {
     }
 
     #[test]
-    fn recency_then_name_break_ties_deterministically() {
-        let mut items = vec![
-            summary("b-old", Lifecycle::Idle, Attention::None, Some(30)),
-            summary("a-new", Lifecycle::Idle, Attention::None, Some(1)),
-            summary("c-new", Lifecycle::Idle, Attention::None, Some(1)),
-            summary("d-never", Lifecycle::Idle, Attention::None, None),
-        ];
+    fn creation_then_name_break_ties_deterministically() {
+        let t0 = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let at = |name: &str, created_mins_ago: i64| WsSummary {
+            created_at: t0 - chrono::Duration::minutes(created_mins_ago),
+            ..summary(name, Lifecycle::Idle, Attention::None, Some(1))
+        };
+        // Newer workspaces first; names break created ties.
+        let mut items = vec![at("b-old", 30), at("a-new", 1), at("c-new", 1)];
         sort_summaries(&mut items);
-        assert_eq!(names(&items), ["a-new", "c-new", "b-old", "d-never"]);
-        let mut again = vec![
-            summary("d-never", Lifecycle::Idle, Attention::None, None),
-            summary("c-new", Lifecycle::Idle, Attention::None, Some(1)),
-            summary("b-old", Lifecycle::Idle, Attention::None, Some(30)),
-            summary("a-new", Lifecycle::Idle, Attention::None, Some(1)),
-        ];
+        assert_eq!(names(&items), ["a-new", "c-new", "b-old"]);
+        let mut again = vec![at("b-old", 30), at("c-new", 1), at("a-new", 1)];
         sort_summaries(&mut again);
         assert_eq!(names(&again), names(&items), "order input-independent");
+    }
+
+    #[test]
+    fn order_survives_activity_churn() {
+        // Regression test for rows flapping under the pointer: agent events
+        // rewrite last_activity constantly, and the order must not follow —
+        // severity and rank float urgent work instead.
+        let t0 = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let at = |name: &str, created_mins_ago: i64, active_mins_ago: i64| WsSummary {
+            created_at: t0 - chrono::Duration::minutes(created_mins_ago),
+            ..summary(
+                name,
+                Lifecycle::Working,
+                Attention::None,
+                Some(active_mins_ago),
+            )
+        };
+        let mut items = vec![at("a", 60, 50), at("b", 30, 1)];
+        sort_summaries(&mut items);
+        assert_eq!(names(&items), ["b", "a"]);
+        // Fresh tool events on `a` (activity now) must not move it.
+        let mut churned = vec![at("a", 60, 0), at("b", 30, 1)];
+        sort_summaries(&mut churned);
+        assert_eq!(
+            names(&churned),
+            ["b", "a"],
+            "activity churn must not reorder"
+        );
     }
 
     #[test]

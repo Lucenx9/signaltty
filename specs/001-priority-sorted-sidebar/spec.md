@@ -28,9 +28,10 @@ order; the approval-waiting workspace renders first. Fully testable by
 
 1. **Given** workspaces A (idle), B (working), C (permission_required),
    **When** the sidebar renders, **Then** the order is C, B, A.
-2. **Given** two workspaces with equal attention and lifecycle,
+2. ~~**Given** two workspaces with equal attention and lifecycle,
    **When** the sidebar renders, **Then** the one with the most recent
-   activity is first; a further tie breaks by workspace name (stable).
+   activity is first~~ — SUPERSEDED by the 2026-09-29 amendment below:
+   ties break by workspace age (newer first), then name.
 3. **Given** a workspace whose attention clears,
    **When** the next refresh applies, **Then** it sinks to its new
    priority position without losing the current selection.
@@ -74,7 +75,9 @@ lifecycle variant.
 
 - **FR-001**: The sidebar MUST list workspaces ordered by descending
   attention severity (`Attention::severity`), then descending lifecycle
-  sidebar rank, then descending `last_activity_at`, then ascending name.
+  sidebar rank, then descending workspace age (`created_at`, newer
+  first), then ascending name. (Amended 2026-09-29: `last_activity_at`
+  removed — see amendment.)
 - **FR-002**: Lifecycle sidebar rank MUST be blocked > failed > done >
   working > idle > unknown/exited (directive 1 order, with failed
   slotted next to blocked as it also needs triage).
@@ -89,7 +92,30 @@ lifecycle variant.
 
 - **WsSummary**: existing sidebar row model (`id, name, lifecycle,
   attention, message, meta, last_activity`) — sorting key source, no
-  shape change.
+  shape change. (Amended 2026-09-29: gains `created_at` for the stable
+  tiebreak and `disambiguator` for same-name rows — see amendment.)
+
+## Amendment 2026-09-29: stable order + disambiguated rows
+
+Field report (two live "simone" workspaces, both Running): rows with
+identical text swapped positions on every agent event and the clicked
+workspace never looked settled. Root causes:
+
+1. The `last_activity_at` tiebreak rewrites the order on every hook
+   event, notification, and lifecycle transition. Rows reorder under
+   the pointer: clicks land on the wrong row and GTK drops the
+   selection on every remove+insert move. Fresh output already floats
+   via `unread` severity, so the tiebreak's information value never
+   justified its interaction cost. Replaced by workspace age (newer
+   first): stable forever, still recent-ish.
+2. Same-name workspaces render byte-identical rows (name · headline ·
+   place). Rows now render `name · handle` — and the header title too —
+   whenever sibling names collide; handles are unique by construction.
+   Quiet otherwise (Linear-grade restraint).
+3. `Sidebar::update` snapshots the selected workspace and restores it
+   after reconciliation, since GTK does not preserve selection across
+   remove+insert moves and the refresh path only re-selects when the
+   active workspace is in the changed set.
 
 ## Success Criteria *(mandatory)*
 
