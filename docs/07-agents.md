@@ -135,6 +135,42 @@ fallback survives sandboxed agents that strip hook env, and safely
 ignores foreign hooks (Cursor Desktop shares `hooks.json` but its
 processes are never our descendants → accepted, classified nothing).
 
+## Detection overlays: manifests (data, not code)
+
+`$XDG_CONFIG_HOME/signaltty/agents/*.toml` (`SIGNALTTY_AGENTS_DIR`
+override, `--agents-dir` on the server) extend one existing adapter kind
+without recompiling — wrapper binaries, post-churn hook maps, custom
+session keys. Loaded once at startup; malformed files are logged and
+skipped, never fatal. `signaltty integration status` lists them.
+
+```toml
+[agent]
+kind = "codex"              # required: an existing AgentKind
+# display_name = "…"        # optional override
+# binaries = ["codex-wrap"] # merged with the builtin list
+
+[session]
+# key = "thread_id"         # payload session-key override
+# resume = ["codex", "resume", "{session_id}"]
+
+[lifecycle.SomeFutureHook]    # any hook; unmapped hooks fall through
+# lifecycle = "working"
+# attention = "unread"
+# message = "…"
+```
+
+Each field falls through to the builtin adapter independently when
+absent. `kind` must stay inside the typed taxonomy — a genuinely new
+agent still needs a Rust adapter. See ADR-0009.
+
+## Live process refresh (layer 4)
+
+Spawn argv is only the first word. Every 10s the server re-reads each
+live pane's deepest shell-transparent descendant (`/proc`: basename +
+cwd): generic panes promote to the detected kind (never demote), and
+`pane.cwd` follows `/proc/<pid>/cwd`. One `pane.updated` per changed
+pane; silence otherwise (no event spam, no snapshot churn).
+
 ## Fallback behavior
 
 No hooks installed, unknown binary, or adapter disabled → pane works
