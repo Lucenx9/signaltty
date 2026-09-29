@@ -703,6 +703,17 @@ impl App {
             .filter(|(id, _)| !ids.contains(*id))
             .map(|(id, e)| (id.clone(), e.page.clone()))
             .collect();
+        // Bulk page replacement (workspace switch) must not animate:
+        // closing the selected page slides to a neighbor, then selecting
+        // the new page slides again — terminals smear through both (the
+        // ghost glyphs on switch). Mutate + select while hidden so a single
+        // paint shows the final state. Same-workspace refreshes (page set
+        // unchanged) skip the wrap: nothing would animate anyway.
+        let bulk =
+            !stale.is_empty() || tabs.iter().any(|t| !self.tabs.borrow().contains_key(&t.id));
+        if bulk {
+            self.tab_view.set_visible(false);
+        }
         for (id, page) in stale {
             self.tabs.borrow_mut().remove(&id);
             self.drop_paneds(&id);
@@ -748,6 +759,9 @@ impl App {
         if let Some(page) = pick.and_then(|id| self.tabs.borrow().get(&id).map(|e| e.page.clone()))
         {
             self.tab_view.set_selected_page(&page);
+        }
+        if bulk {
+            self.tab_view.set_visible(true);
         }
         self.reconciling.set(false);
 

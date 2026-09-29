@@ -89,6 +89,11 @@ Rules that keep it calm:
   150–200ms ease-out, plus crossfades on reveal. Nothing animates in
   response to keyboard navigation; GTK disables all of it when the
   desktop turns animations off.
+- Workspace switches never animate pages: bulk tab replacement (close
+  cascade + select) runs with the tab view hidden so one paint shows
+  the final state. `AdwTabView` slides on programmatic selection and
+  terminals smear through it — context jumps stay instant, tab browsing
+  inside a workspace keeps the native slide.
 - In multi-pane tabs the focused card is outlined and the others'
   status recedes; terminal text is never dimmed.
 - Icons the GUI depends on are bundled (`data/icons`), not assumed

@@ -46,7 +46,7 @@ impl Notifier {
                     .name("signaltty-notif".to_string())
                     .spawn(move || {
                         handle.wait_for_action(|action| {
-                            if let Some(ev) = action_event(&action, &pane_id) {
+                            if let Some(ev) = action_event(action, &pane_id) {
                                 let _ = ui.send(ev);
                             }
                         });
@@ -72,6 +72,6 @@ mod tests {
             Some(UiEvent::FocusPane(_))
         ));
         assert!(matches!(action_event("mark-read", "p"), Some(UiEvent::MarkSeen(p)) if p == "p"));
-        assert_eq!(action_event("snooze", "p").is_none(), true);
+        assert!(action_event("snooze", "p").is_none());
     }
 }
