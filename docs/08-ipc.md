@@ -82,7 +82,19 @@ clients can `subscribe {from_seq}` to replay.
 
 `until`: `blocked | done | idle | failed | exited | seen | attention_cleared`.
 Glob subscriptions: `*`, `agent.*`, `pane.*`, `workspace.*`, `tab.*`,
-`attention.*`, `notification.*`, `git.*`, `pty.*`.
+`attention.*`, `notification.*`, `decision.*`, `git.*`, `pty.*`.
+
+Every `workspace_id` param accepts a workspace id **or its handle**: ids
+match first, then handles (namespaces are disjoint — handles never contain
+`_`). Handles are immutable slugs derived at create (`My API!!` →
+`my-api`, collisions → `my-api-2`); renames change only the name.
+
+Every broadcast event except `pty.data` appends to
+`$XDG_STATE_HOME/signaltty/audit.jsonl` (`{seq, event, payload, at}`;
+rotation keeps one `.1` predecessor, 8 MiB cap each). `subscribe
+{from_seq}` backfills from the file when the in-memory ring (1024) has
+rotated or the server restarted — replays merge file + ring deduped by
+`seq` (cap 4096).
 
 `tab.set_ratio` moves one divider: `path` holds 0 (first) / 1
 (second) choices from the tab root (`[]` = root) and must resolve to
