@@ -1,6 +1,6 @@
 # Codex pane runtime isolation
 
-Status: Implemented; local verification complete, publication pending. Bug reported 2026-09-30: `hook exited with code 1`.
+Status: Complete. Main implementation 1a2d5ce published; CI 36647316905 passed. Bug reported 2026-09-30: `hook exited with code 1`.
 
 ## Problem
 Codex 0.159.1 shares a detached app-server whose environment retains the pane

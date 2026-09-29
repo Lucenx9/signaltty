@@ -40,5 +40,8 @@ is proved by installed-command PTY fixtures and runtime isolation by the pinned
 upstream startup implementation. No model prompt was submitted and no hook-trust
 bypass was used. Invalid pane reporting remains strict.
 
-Publication: pending main push/CI. Runtime binaries rebuilt, but the existing
-user server was left running to preserve live sessions.
+Publication: implementation [1a2d5ce](https://github.com/Lucenx9/signaltty/commit/1a2d5cee8268d26767bba665ddfdc0804dd8ae8c)
+pushed to main; [CI 36647316905](https://github.com/Lucenx9/signaltty/actions/runs/36647316905)
+passed. Runtime binaries rebuilt, but the existing user server was left running
+to preserve live sessions. The automatic launch policy takes effect when that
+server is next started; manual --no-daemon works with the current server too.

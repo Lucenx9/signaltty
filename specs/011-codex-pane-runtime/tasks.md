@@ -4,5 +4,5 @@
   apply native local-runtime policy and verify independent semantic states.
 - [x] T2 (blocked by T1): verify arguments, older/timeout capability handling,
   split/resume and unchanged user hooks; document manual-shell recovery.
-- [ ] T3 (blocked by T2): independent standards/spec review, full workspace gates,
+- [x] T3 (blocked by T2): independent standards/spec review, full workspace gates,
   push main and verify CI.
