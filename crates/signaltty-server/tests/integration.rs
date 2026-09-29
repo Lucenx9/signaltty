@@ -1485,3 +1485,264 @@ async fn schema_lists_every_dispatched_method() {
     }
     srv.shutdown().await;
 }
+
+
+#[tokio::test]
+async fn spawn_rejects_a_tab_in_another_workspace() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let a = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let b = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let tab = c
+        .call("tab.create", json!({"workspace_id": b["workspace"]["id"]}))
+        .await
+        .unwrap();
+    let err = c.call("pane.spawn", json!({"workspace_id": a["workspace"]["id"], "tab_id": tab["tab"]["id"], "argv": ["sleep", "30"]})).await.unwrap_err();
+    assert!(err.contains("BAD_PARAMS"), "{err}");
+    assert_eq!(
+        c.call("server.status", json!({})).await.unwrap()["live_panes"],
+        0
+    );
+    srv.shutdown().await;
+}
+
+
+#[tokio::test]
+async fn failed_spawn_does_not_create_an_automatic_tab() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let ws = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap()["workspace"]["id"]
+        .clone();
+    let before = c
+        .call("workspace.get", json!({"workspace_id": ws}))
+        .await
+        .unwrap();
+    let err = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws, "argv": ["/nonexistent/signaltty-test-command"]}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("SPAWN_FAILED"), "{err}");
+    let after = c
+        .call("workspace.get", json!({"workspace_id": ws}))
+        .await
+        .unwrap();
+    assert_eq!(after, before);
+    assert_eq!(
+        c.call("server.status", json!({})).await.unwrap()["live_panes"],
+        0
+    );
+    srv.shutdown().await;
+}
+
+
+#[tokio::test]
+async fn layout_replacement_cannot_hide_owned_panes() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    c.call(
+        "pane.split",
+        json!({"pane_id": pane, "direction": "right", "argv": ["sleep", "30"]}),
+    )
+    .await
+    .unwrap();
+    let before = c
+        .call("workspace.get", json!({"workspace_id": ws}))
+        .await
+        .unwrap();
+    let tab = before["tabs"][0]["id"].clone();
+    let err = c
+        .call(
+            "tab.set_layout",
+            json!({"tab_id": tab, "layout": {"type": "pane", "pane_id": pane}}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("BAD_PARAMS"), "{err}");
+    assert_eq!(
+        c.call("workspace.get", json!({"workspace_id": ws}))
+            .await
+            .unwrap()["tabs"],
+        before["tabs"]
+    );
+    c.call("workspace.close", json!({"workspace_id": ws}))
+        .await
+        .unwrap();
+    assert_eq!(
+        c.call("server.status", json!({})).await.unwrap()["live_panes"],
+        0
+    );
+    srv.shutdown().await;
+}
+
+
+#[tokio::test]
+async fn layout_rejects_duplicate_panes_and_clamps_ratios() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let tab = c
+        .call("workspace.get", json!({"workspace_id": ws}))
+        .await
+        .unwrap()["tabs"][0]["id"]
+        .clone();
+    let duplicate = json!({"type": "split", "dir": "right", "ratio": 0.5, "first": {"type": "pane", "pane_id": pane}, "second": {"type": "pane", "pane_id": pane}});
+    let err = c
+        .call(
+            "tab.set_layout",
+            json!({"tab_id": tab, "layout": duplicate}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("BAD_PARAMS"), "{err}");
+    let sibling = c
+        .call(
+            "pane.split",
+            json!({"pane_id": pane, "direction": "right", "argv": ["sleep", "30"]}),
+        )
+        .await
+        .unwrap()["pane"]["id"]
+        .clone();
+    let layout = json!({"type": "split", "dir": "right", "ratio": 3.0, "first": {"type": "pane", "pane_id": pane}, "second": {"type": "pane", "pane_id": sibling}});
+    let result = c
+        .call("tab.set_layout", json!({"tab_id": tab, "layout": layout}))
+        .await
+        .unwrap();
+    assert!((result["tab"]["layout"]["ratio"].as_f64().unwrap() - 0.95).abs() < 1e-6);
+    srv.shutdown().await;
+}
+
+
+#[tokio::test]
+async fn concurrent_spawn_and_close_do_not_leave_a_live_pane() {
+    let srv = TestServer::start().await;
+    let mut spawning = srv.client().await;
+    let mut closing = srv.client().await;
+    for _ in 0..12 {
+        let ws = spawning
+            .call("workspace.create", json!({"cwd": "/tmp"}))
+            .await
+            .unwrap()["workspace"]["id"]
+            .clone();
+        let (spawned, closed) = tokio::join!(
+            spawning.call(
+                "pane.spawn",
+                json!({"workspace_id": ws, "argv": ["sleep", "30"]})
+            ),
+            closing.call("workspace.close", json!({"workspace_id": ws})),
+        );
+        closed.unwrap();
+        if let Err(error) = spawned {
+            assert!(error.contains("NO_SUCH_WORKSPACE"), "{error}");
+        }
+        assert_eq!(
+            closing.call("server.status", json!({})).await.unwrap()["live_panes"],
+            0
+        );
+    }
+    srv.shutdown().await;
+}
+
+
+#[tokio::test]
+async fn closing_restored_legacy_layout_cleans_hidden_owned_panes() {
+    for close_workspace in [false, true] {
+        let mut srv = TestServer::start().await;
+        let mut c = srv.client().await;
+        let (ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        let tab = c
+            .call("workspace.get", json!({"workspace_id": ws}))
+            .await
+            .unwrap()["tabs"][0]["id"]
+            .clone();
+        c.call("server.shutdown", json!({"force": true}))
+            .await
+            .unwrap();
+        drop(c);
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let path = srv.state_dir.join("snapshot.json");
+        let mut snapshot: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        snapshot["tabs"][0]["layout"] = serde_json::Value::Null;
+        std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        srv.restart().await;
+        let mut c = srv.client().await;
+        assert!(c.call("pane.get", json!({"pane_id": pane})).await.is_ok());
+        if close_workspace {
+            c.call("workspace.close", json!({"workspace_id": ws}))
+                .await
+                .unwrap();
+        } else {
+            c.call("tab.close", json!({"tab_id": tab})).await.unwrap();
+        }
+        let error = c
+            .call("pane.get", json!({"pane_id": pane}))
+            .await
+            .unwrap_err();
+        assert!(error.contains("NO_SUCH_PANE"), "{error}");
+        srv.shutdown().await;
+    }
+}
+
+
+#[tokio::test]
+async fn simultaneous_resume_requests_launch_only_one_child() {
+    let agents = plugin_test_dir("resume-race");
+    write_manifest(
+        &agents,
+        "resume.toml",
+        r#"
+[agent]
+kind = "codex"
+binaries = ["sh"]
+[session]
+resume = ["sh", "-c", "read line"]
+"#,
+    );
+    let srv = TestServer::start_with_dirs(None, Some(&agents)).await;
+    let mut a = srv.client().await;
+    let mut b = srv.client().await;
+    for _ in 0..8 {
+        let (_ws, pane) = new_pane(&mut a, vec!["sh", "-c", "exit 0"]).await;
+        a.call(
+            "wait",
+            json!({"pane_id": pane, "until": "exited", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+        a.call(
+            "report-session",
+            json!({"pane_id": pane, "agent": "codex", "agent_session_id": "fixture"}),
+        )
+        .await
+        .unwrap();
+        let (first, second) = tokio::join!(
+            a.call("pane.resume", json!({"pane_id": pane})),
+            b.call("pane.resume", json!({"pane_id": pane})),
+        );
+        assert_ne!(
+            first.is_ok(),
+            second.is_ok(),
+            "exactly one resume must succeed: {first:?}, {second:?}"
+        );
+        let error = first.err().or_else(|| second.err()).unwrap();
+        assert!(error.contains("already live"), "{error}");
+        a.call("pane.close", json!({"pane_id": pane}))
+            .await
+            .unwrap();
+    }
+    srv.shutdown().await;
+    std::fs::remove_dir_all(agents).ok();
+}

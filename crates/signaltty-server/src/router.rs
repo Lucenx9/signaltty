@@ -381,13 +381,28 @@ fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
             .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?
     };
     let mut s = ctx.store.write().unwrap();
-    let ws = s.workspaces.remove(&id).unwrap();
-    for tab_id in ws.tabs {
-        if let Some(tab) = s.tabs.remove(&tab_id) {
-            let panes = tab.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
-            for p in panes {
-                close_pane_locked(ctx, &mut s, &p, signal.as_deref());
-            }
+    let ws = s
+        .workspaces
+        .remove(&id)
+        .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), id.clone()))?;
+    let panes: Vec<_> = s
+        .panes
+        .values()
+        .filter(|pane| pane.workspace_id == id)
+        .map(|pane| pane.id.clone())
+        .collect();
+    for pane_id in panes {
+        close_pane_locked(ctx, &mut s, &pane_id, signal.as_deref());
+    }
+    let mut tabs: std::collections::HashSet<_> = ws.tabs.into_iter().collect();
+    tabs.extend(
+        s.tabs
+            .values()
+            .filter(|tab| tab.workspace_id == id)
+            .map(|tab| tab.id.clone()),
+    );
+    for tab_id in tabs {
+        if s.tabs.remove(&tab_id).is_some() {
             let ev = s.emit(event::TAB_CLOSED, json!({"tab_id": tab_id}));
             let _ = ctx.bcast.send(ev);
         }
@@ -493,7 +508,12 @@ fn h_tab_close(ctx: &Ctx, params: &Value) -> Handler {
         .tabs
         .remove(&id)
         .ok_or_else(|| (code::NO_SUCH_TAB.to_string(), id.clone()))?;
-    let panes = tab.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
+    let panes: Vec<_> = s
+        .panes
+        .values()
+        .filter(|pane| pane.tab_id == id)
+        .map(|pane| pane.id.clone())
+        .collect();
     for p in panes {
         close_pane_locked(ctx, &mut s, &p, signal.as_deref());
     }
@@ -514,7 +534,10 @@ fn h_tab_close(ctx: &Ctx, params: &Value) -> Handler {
 fn h_tab_set_layout(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::TabSetLayout = decode(params)?;
     let id = p.tab_id;
-    let layout = p.layout;
+    let mut layout = p.layout;
+    layout
+        .validate_and_normalize()
+        .map_err(|e| bad_params(e.to_string()))?;
     // All panes in the layout must exist and belong to this tab.
     let mut s = ctx.store.write().unwrap();
     for p in layout.panes() {
@@ -522,6 +545,18 @@ fn h_tab_set_layout(ctx: &Ctx, params: &Value) -> Handler {
             Some(pane) if pane.tab_id == id => {}
             _ => return Err(bad_params(format!("layout references foreign pane {p}"))),
         }
+    }
+    let owned: std::collections::HashSet<_> = s
+        .panes
+        .values()
+        .filter(|pane| pane.tab_id == id)
+        .map(|pane| pane.id.clone())
+        .collect();
+    let referenced: std::collections::HashSet<_> = layout.panes().into_iter().collect();
+    if referenced != owned {
+        return Err(bad_params(
+            "layout must contain every pane owned by the tab",
+        ));
     }
     let tab = s
         .tabs
@@ -592,63 +627,42 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
         None => ctx.detect_kind(&argv),
     };
 
-    // Resolve tab: explicit, active, or auto-create "agents".
+    // Hold ownership stable until the process and its pane are published.
+    // Pump/reaper threads release their PTY locks before acquiring Store.
     let now = Utc::now();
-    let (tab_id, cwd) = {
-        let mut s = ctx.store.write().unwrap();
-        let (ws_cwd, ws_active) = {
-            let ws = s
-                .workspaces
-                .get(&ws_id)
-                .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), ws_id.clone()))?;
-            (ws.cwd.clone(), ws.active_tab_id.clone())
-        };
-        let cwd = p.cwd.clone().unwrap_or(ws_cwd);
-        if !std::path::Path::new(&cwd).is_dir() {
-            return Err(bad_params(format!("cwd is not a directory: {cwd}")));
+    let mut s = ctx.store.write().unwrap();
+    let ws = s
+        .workspaces
+        .get(&ws_id)
+        .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), ws_id.clone()))?;
+    let cwd = p.cwd.unwrap_or_else(|| ws.cwd.clone());
+    if !std::path::Path::new(&cwd).is_dir() {
+        return Err(bad_params(format!("cwd is not a directory: {cwd}")));
+    }
+    let existing_tab = p.tab_id.or_else(|| ws.active_tab_id.clone());
+    let staged_tab = if existing_tab.is_none() {
+        Some(Tab {
+            id: new_tab_id(),
+            workspace_id: ws_id.clone(),
+            title: "agents".to_string(),
+            layout: None,
+            active_pane_id: None,
+            created_at: now,
+        })
+    } else {
+        None
+    };
+    let tab_id = existing_tab.unwrap_or_else(|| staged_tab.as_ref().unwrap().id.clone());
+    if let Some(tab) = s.tabs.get(&tab_id) {
+        if tab.workspace_id != ws_id {
+            return Err(bad_params("tab belongs to another workspace"));
         }
-        let tab_id = match p.tab_id.clone() {
-            Some(t) => {
-                if !s.tabs.contains_key(&t) {
-                    return Err((code::NO_SUCH_TAB.to_string(), t));
-                }
-                t
-            }
-            None => match ws_active {
-                Some(t) => t,
-                None => {
-                    let tab = Tab {
-                        id: new_tab_id(),
-                        workspace_id: ws_id.clone(),
-                        title: "agents".to_string(),
-                        layout: None,
-                        active_pane_id: None,
-                        created_at: now,
-                    };
-                    let tid = tab.id.clone();
-                    s.tabs.insert(tid.clone(), tab.clone());
-                    if let Some(ws) = s.workspaces.get_mut(&ws_id) {
-                        ws.tabs.push(tid.clone());
-                        ws.active_tab_id = Some(tid.clone());
-                    }
-                    let ev = s.emit(event::TAB_CREATED, json!({"tab": tab}));
-                    let _ = ctx.bcast.send(ev);
-                    tid
-                }
-            },
-        };
-        // Tab must be empty (splits go through pane.split).
-        let occupied = s
-            .tabs
-            .get(&tab_id)
-            .map(|t| t.layout.is_some())
-            .unwrap_or(false);
-        if occupied {
+        if tab.layout.is_some() {
             return Err(bad_params("tab already has panes; use pane.split"));
         }
-        (tab_id, cwd)
-    };
-
+    } else if staged_tab.is_none() {
+        return Err((code::NO_SUCH_TAB.to_string(), tab_id));
+    }
     let mut pane = Pane::new(
         ws_id.clone(),
         tab_id.clone(),
@@ -658,26 +672,33 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
         now,
     );
     pane.agent.kind = kind;
-    if let Err(e) = ctx.ptys.spawn(SpawnRequest {
-        pane_id: pane.id.clone(),
-        cwd,
-        argv,
-        env,
-        size,
-        socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
-    }) {
-        return Err((code::SPAWN_FAILED.to_string(), e));
-    }
-    {
-        let mut s = ctx.store.write().unwrap();
-        s.panes.insert(pane.id.clone(), pane.clone());
-        let tab = s.tabs.get_mut(&tab_id).unwrap();
-        tab.layout = Some(signaltty_core::model::Layout::Pane {
+    ctx.ptys
+        .spawn(SpawnRequest {
             pane_id: pane.id.clone(),
-        });
-        tab.active_pane_id = Some(pane.id.clone());
+            cwd,
+            argv,
+            env,
+            size,
+            socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
+        })
+        .map_err(|e| (code::SPAWN_FAILED.to_string(), e))?;
+    if let Some(tab) = staged_tab {
+        let ws = s.workspaces.get_mut(&ws_id).unwrap();
+        ws.tabs.push(tab_id.clone());
+        ws.active_tab_id = Some(tab_id.clone());
+        s.tabs.insert(tab_id.clone(), tab.clone());
+        let ev = s.emit(event::TAB_CREATED, json!({"tab": tab}));
+        let _ = ctx.bcast.send(ev);
     }
-    ctx.emit(event::PANE_CREATED, json!({"pane": pane}));
+    s.panes.insert(pane.id.clone(), pane.clone());
+    let tab = s.tabs.get_mut(&tab_id).unwrap();
+    tab.layout = Some(signaltty_core::model::Layout::Pane {
+        pane_id: pane.id.clone(),
+    });
+    tab.active_pane_id = Some(pane.id.clone());
+    let ev = s.emit(event::PANE_CREATED, json!({"pane": pane}));
+    let _ = ctx.bcast.send(ev);
+    drop(s);
     ctx.mark_persist();
     Ok((pane_result(&pane), ConnEffect::default()))
 }
@@ -694,19 +715,25 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
         .as_ref()
         .map(|d| d.split_dir())
         .unwrap_or(SplitDir::Right);
-    let (ws_id, tab_id, cwd, size) = {
-        let s = ctx.store.read().unwrap();
-        let p = s
-            .panes
-            .get(&pane_id)
-            .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), pane_id.clone()))?;
-        (
-            p.workspace_id.clone(),
-            p.tab_id.clone(),
-            ps.cwd.clone().unwrap_or_else(|| p.cwd.clone()),
-            p.pty_size,
-        )
-    };
+    let mut s = ctx.store.write().unwrap();
+    let p = s
+        .panes
+        .get(&pane_id)
+        .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), pane_id.clone()))?;
+    let (ws_id, tab_id, cwd, size) = (
+        p.workspace_id.clone(),
+        p.tab_id.clone(),
+        ps.cwd.clone().unwrap_or_else(|| p.cwd.clone()),
+        p.pty_size,
+    );
+    if !s
+        .tabs
+        .get(&tab_id)
+        .and_then(|tab| tab.layout.as_ref())
+        .is_some_and(|layout| layout.panes().contains(&pane_id))
+    {
+        return Err(bad_params("pane is not in its tab layout"));
+    }
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(bad_params(format!("cwd is not a directory: {cwd}")));
     }
@@ -727,7 +754,6 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
         return Err((code::SPAWN_FAILED.to_string(), e));
     }
     {
-        let mut s = ctx.store.write().unwrap();
         s.panes.insert(pane.id.clone(), pane.clone());
         let tab_snapshot = {
             let tab = s.tabs.get_mut(&tab_id).unwrap();
@@ -747,7 +773,9 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
         let ev = s.emit(event::TAB_UPDATED, json!({"tab": tab_snapshot}));
         let _ = ctx.bcast.send(ev);
     }
-    ctx.emit(event::PANE_CREATED, json!({"pane": pane}));
+    let ev = s.emit(event::PANE_CREATED, json!({"pane": pane}));
+    let _ = ctx.bcast.send(ev);
+    drop(s);
     ctx.mark_persist();
     Ok((pane_result(&pane), ConnEffect::default()))
 }
@@ -963,8 +991,9 @@ fn h_pane_close(ctx: &Ctx, params: &Value) -> Handler {
 /// explicitly invokes it per pane.
 fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
     let id = decode::<params::PaneId>(params)?.pane_id;
+    // Retain ownership and prevent concurrent resume until publication.
+    let mut s = ctx.store.write().unwrap();
     let (cwd, size, argv) = {
-        let s = ctx.store.read().unwrap();
         let pane = s
             .panes
             .get(&id)
@@ -990,7 +1019,6 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
         return Err((code::SPAWN_FAILED.to_string(), e));
     }
     let (pane, transition) = {
-        let mut s = ctx.store.write().unwrap();
         {
             let pane = s.panes.get_mut(&id).unwrap();
             pane.live = LiveState::Live;
@@ -1004,7 +1032,9 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
     if let Some(ev) = transition {
         let _ = ctx.bcast.send(ev);
     }
-    ctx.emit(event::PANE_CREATED, json!({"pane": pane, "resumed": true}));
+    let ev = s.emit(event::PANE_CREATED, json!({"pane": pane, "resumed": true}));
+    let _ = ctx.bcast.send(ev);
+    drop(s);
     ctx.mark_persist();
     Ok((pane_result(&pane), ConnEffect::default()))
 }

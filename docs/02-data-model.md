@@ -54,7 +54,15 @@ Layout is a binary tree:
 enum Layout { Pane(PaneId), Split { dir: H|V, ratio: f32, first: Box<Layout>, second: Box<Layout> } }
 ```
 
-The GUI renders this tree; the server only stores it. Splitting a pane
+The GUI renders this tree; the server validates and stores it. Each tab
+layout must contain every pane owned by that tab exactly once. Whole-layout
+updates arrange panes; deleting a pane requires `pane.close`. Ratios must be
+finite and normalize to 0.05–0.95, matching individual divider updates.
+Pane and tab workspace ownership must agree. Closing a tab or workspace
+cleans every pane it owns, including panes hidden by legacy layouts.
+Automatic tabs become visible only after their first process spawns.
+
+Splitting a pane
 replaces a `Pane` leaf with a `Split`, then rebalances the run: every
 visual sibling in the same direction gets an equal share, so repeated
 splits divide a tab into thirds, quarters, and so on instead of
