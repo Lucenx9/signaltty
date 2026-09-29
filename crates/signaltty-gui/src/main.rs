@@ -47,6 +47,10 @@ fn main() {
         gtk4::gio::ApplicationFlags::FLAGS_NONE,
     );
     application.connect_activate(move |application| {
+        if let Some(window) = application.active_window() {
+            window.present();
+            return;
+        }
         let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel();
         let actor = actor::spawn(socket.clone(), ui_tx.clone());
         let gui = app::App::new(application, actor, ui_tx);
