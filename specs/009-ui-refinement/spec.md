@@ -2,7 +2,7 @@
 
 **Feature Branch**: `main`
 **Created**: 2026-09-29
-**Status**: Implemented and verified locally
+**Status**: Delivered to main; native verification and remote CI passed
 **Input**: Refine the UI using animate, apple-design, emil-design-eng and relevant design skills, then push the changes.
 
 ## User Scenarios & Testing

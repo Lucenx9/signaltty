@@ -30,3 +30,23 @@ concrete regression for duplicate submission/focus loss before inclusion.
 The before screenshot already shows the approval competing with choices and
 forcing uneven split allocation. Native allocation, option text and activation
 checks decide whether the proposed shape is viable before cosmetic acceptance.
+
+## Standards review
+
+Pass. The implementation follows native GTK ownership, scoped accessibility
+styling and persistent terminal reconciliation. No remaining documented violation
+or material structural concern was found.
+
+## Spec review
+
+Pass. FR-001–FR-008 are covered by source changes and recorded native evidence.
+The 320px result applies to the tested long-question/choice fixture; no universal
+claim is made about arbitrary amounts of approval content.
+
+## Motion review
+
+Approve after correction. The first reduced-motion override lost to active-state
+selector specificity. Final active-state overrides remove the rendered scale,
+proved by a regression that failed with the old CSS and passes with the fix.
+Pointer feedback remains 120ms at scale 0.97, keyboard focus is immediate, and
+native tab-view interaction remains toolkit-owned.

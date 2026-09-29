@@ -12,5 +12,10 @@
     "motion_old_css": "render test fails with residual scale",
     "motion_fixed": "pointer scale present, reduced and keyboard scale absent"
   },
-  "source_commit": "d2de1ef"
+  "source_commit": "d2de1ef",
+  "remote_ci": {
+    "commit": "8aa5f84",
+    "url": "https://github.com/Lucenx9/signaltty/actions/runs/36637589874",
+    "conclusion": "success"
+  }
 }

@@ -7,4 +7,4 @@
 - [x] T005 Make frequent navigation immediate and honor native motion/contrast preferences; verify feedback. Blocked by T002.
 - [x] T006 Verify deterministic native light/dark/narrow/contrast/font scenes and reliability probes. Blocked by T003–T005.
 - [x] T007 Review code/motion, run required gates and update presentation docs/verification instructions. Blocked by T006.
-- [ ] T008 Commit by concern, push main and verify remote checks. Blocked by T007.
+- [x] T008 Commit by concern, push main and verify remote checks. Blocked by T007.
