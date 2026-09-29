@@ -4,6 +4,7 @@
 mod actor;
 mod app;
 mod metrics;
+mod new_workspace;
 mod notif;
 mod refresh;
 mod sidebar;

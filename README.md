@@ -48,7 +48,7 @@ GUI shortcuts (Ctrl+Shift, so plain Ctrl chords reach the terminal):
 
 | Keys | Action |
 |---|---|
-| Ctrl+Shift+N / Ctrl+Shift+T | new workspace / new tab |
+| Ctrl+Shift+N / Ctrl+Shift+T | new workspace (folder · name · agent) / new tab |
 | Ctrl+Shift+E / Ctrl+Shift+O | split right / split down |
 | Ctrl+Shift+W | close pane |
 | Ctrl+Shift+J | jump to the next pane that needs you |

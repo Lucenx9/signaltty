@@ -98,10 +98,13 @@ pub struct App {
     focused_pane: RefCell<Option<String>>,
     /// Fresh splits awaiting their first positioned allocation.
     splits: RefCell<Vec<(glib::WeakRef<gtk4::Paned>, f32)>>,
+    /// The New Workspace dialog is single-instance: repeats of the
+    /// action (or its accelerator) while it is open are ignored.
+    new_ws_open: Cell<bool>,
     me: RefCell<Weak<App>>,
 }
 
-fn user_shell() -> String {
+pub(crate) fn user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
 }
 
@@ -268,6 +271,7 @@ impl App {
             gui_tab: RefCell::new(None),
             focused_pane: RefCell::new(None),
             splits: RefCell::new(Vec::new()),
+            new_ws_open: Cell::new(false),
             me: RefCell::new(Weak::new()),
         });
         app.me.replace(Rc::downgrade(&app));
@@ -1013,10 +1017,48 @@ impl App {
         })
     }
 
+    /// Open the New Workspace dialog (Ctrl+Shift+N, the sidebar "+"
+    /// and the empty state all land here). Creation itself happens in
+    /// `create_workspace` once the user confirms.
     fn action_new_workspace(&self) {
+        if self.new_ws_open.replace(true) {
+            return;
+        }
+        let active_cwd = self.active_ws_cwd();
+        let w = self.weak();
+        let w2 = self.weak();
+        crate::new_workspace::show_dialog(
+            &self.window,
+            active_cwd.as_deref(),
+            move |req| {
+                if let Some(a) = w.upgrade() {
+                    a.create_workspace(&req.name, &req.cwd, &req.argv);
+                }
+            },
+            move || {
+                if let Some(a) = w2.upgrade() {
+                    a.new_ws_open.set(false);
+                }
+            },
+        );
+    }
+
+    fn active_ws_cwd(&self) -> Option<String> {
+        let m = self.model.borrow();
+        let id = m.active_ws.as_ref()?;
+        m.cache
+            .workspaces
+            .iter()
+            .find(|ws| &ws.id == id)
+            .map(|ws| ws.cwd.clone())
+    }
+
+    /// `signaltty new` over IPC: create the workspace, spawn the first
+    /// pane in it, show it and focus the new terminal.
+    fn create_workspace(&self, name: &str, cwd: &str, argv: &[String]) {
         let ws_id = match self
             .actor
-            .call("workspace.create", json!({"name": "workspace"}))
+            .call("workspace.create", json!({"name": name, "cwd": cwd}))
         {
             Ok(v) => v["workspace"]["id"]
                 .as_str()
@@ -1034,7 +1076,7 @@ impl App {
         // No active tab yet: pane.spawn auto-creates the "agents" tab.
         match self.actor.call(
             "pane.spawn",
-            json!({"workspace_id": ws_id, "argv": [user_shell()]}),
+            json!({"workspace_id": ws_id, "argv": argv}),
         ) {
             Ok(v) => self.focus_created(&v),
             Err(e) => {

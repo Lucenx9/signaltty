@@ -81,6 +81,20 @@ Rules that keep it calm:
 - Icons the GUI depends on are bundled (`data/icons`), not assumed
   from the icon theme.
 
+Starting an agent in a project — the central action — goes through
+the New Workspace dialog (`crates/signaltty-gui/src/new_workspace.rs`,
+`AdwAlertDialog` with `AdwActionRow`/`AdwEntryRow`/`AdwComboRow`):
+folder (via `GtkFileDialog`, defaulting to the active workspace's
+folder or home), name (prefilled from the folder, editable) and
+first command (Shell plus every agent whose binary is on `PATH`,
+binaries taken from the adapter registry, plus a custom command
+field). Enter confirms, Esc cancels, Create is suggested. Confirming
+runs `workspace.create` + `pane.spawn` like `signaltty new`, shows
+the workspace and focuses the new pane. The dialog is single
+instance and shared by Ctrl+Shift+N, the sidebar "+" and the empty
+state; the custom field toggles with plain visibility so nothing
+animates on keyboard navigation.
+
 ## Event refresh and measurement
 
 The GUI merges workspace invalidations into one batch every 16 ms while
@@ -135,5 +149,6 @@ the separate notification lookups. It requires a display and runs explicitly:
 
 ```sh
 dbus-run-session -- cargo test -p signaltty-gui event_batches -- --ignored --test-threads=1
+dbus-run-session -- cargo test -p signaltty-gui dialog_confirm -- --ignored --test-threads=1
 cargo clippy -p signaltty-gui --all-targets -- -D warnings
 ```

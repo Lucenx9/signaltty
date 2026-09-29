@@ -1702,6 +1702,7 @@ dependencies = [
  "notify-rust",
  "serde",
  "serde_json",
+ "signaltty-agent",
  "signaltty-core",
  "signaltty-proto",
  "tokio",
