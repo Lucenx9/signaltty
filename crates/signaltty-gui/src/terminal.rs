@@ -9,8 +9,9 @@
 //! ╰──────────────────────────────────────────────────────────────╯
 //! ```
 //!
-//! Attention is a ring around the card (an outer shadow, so it never
-//! resizes the terminal); focus marks the card in multi-pane tabs.
+//! Attention is a ring inside the card's edge (an inset shadow, so it
+//! never resizes the terminal and a split can't clip it); focus marks
+//! the card in multi-pane tabs.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -113,17 +114,18 @@ impl PaneWidget {
             resume.connect_clicked(move |_| on_action(&pid, PaneAction::Resume));
         }
 
-        // Status (recedes on unfocused panes) | actions (on hover/focus).
+        // Status (recedes on unfocused panes) | attention (never
+        // recedes) | actions (on hover/focus).
         let info = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         info.add_css_class("pane-info");
         info.set_hexpand(true);
         info.append(&lifecycle.widget);
         info.append(&title);
         info.append(&subtitle);
-        info.append(&badge.widget);
         let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         header.add_css_class("pane-header");
         header.append(&info);
+        header.append(&badge.widget);
         header.append(&resume);
         header.append(&actions);
 

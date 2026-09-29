@@ -78,8 +78,9 @@ Rules that keep it calm:
 - Widgets are reconciled in place (rows keyed by workspace id, tab
   pages by tab id), never rebuilt on refresh, so selection and scroll
   survive events and state changes can transition.
-- Rings are outer shadows: attention never changes layout, so it never
-  resizes a terminal.
+- Rings are inset shadows: attention never changes layout, so it never
+  resizes a terminal, and split panes (which clip each child) can't cut
+  them off.
 - Motion is limited to colour/opacity/shadow on persistent widgets,
   150–200ms ease-out, plus crossfades on reveal. Nothing animates in
   response to keyboard navigation; GTK disables all of it when the
