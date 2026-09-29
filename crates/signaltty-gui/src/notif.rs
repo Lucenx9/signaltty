@@ -20,6 +20,8 @@ impl Notifier {
         }
         let mut n = notify_rust::Notification::new();
         n.appname("signaltty")
+            .icon("dev.signaltty.gui")
+            .hint(notify_rust::Hint::DesktopEntry("dev.signaltty.gui".into()))
             .summary(title)
             .body(body)
             .action("focus", "Focus")

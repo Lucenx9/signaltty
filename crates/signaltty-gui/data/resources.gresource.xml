@@ -4,6 +4,8 @@
 <gresources>
   <gresource prefix="/dev/signaltty/gui">
     <file>style.css</file>
+    <file>icons/scalable/apps/dev.signaltty.gui.svg</file>
+    <file>icons/scalable/apps/dev.signaltty.gui-symbolic.svg</file>
     <file>icons/scalable/actions/signaltty-split-right-symbolic.svg</file>
     <file>icons/scalable/actions/signaltty-split-down-symbolic.svg</file>
     <file>icons/scalable/actions/signaltty-unread-symbolic.svg</file>

@@ -44,6 +44,25 @@ GUI system deps: `libgtk-4-dev libadwaita-1-dev
 libvte-2.91-gtk4-dev` (libadwaita ≥ 1.7; GUI crate only; server/CLI
 build without them).
 
+## Install the desktop app
+
+```bash
+./contrib/install-desktop.sh install
+```
+
+This builds the GUI in release mode and installs `signaltty-gui` in
+`~/.local/bin`, the desktop entry in `~/.local/share/applications`, the
+AppStream metadata in `~/.local/share/metainfo`, and both icons in
+`~/.local/share/icons/hicolor/scalable/apps`. Make sure `~/.local/bin`
+is on the desktop session's `PATH`, then sign out and back in if the
+launcher does not refresh. The GUI connects to the signaltty server.
+
+To remove these files:
+
+```bash
+./contrib/install-desktop.sh uninstall
+```
+
 GUI shortcuts (Ctrl+Shift, so plain Ctrl chords reach the terminal):
 
 | Keys | Action |
@@ -85,7 +104,7 @@ crates/signaltty-cli     CLI client incl. interactive attach
 crates/signaltty-gui     native GUI (sidebar/tabs/splits/VTE,
                          attention rings, next-unread, notifications)
 crates/signaltty-testkit hermetic-server test harness (real PTYs)
-contrib/                 systemd user unit
+contrib/                 systemd user unit and desktop integration
 ```
 
 ## Run as a user service (recommended)

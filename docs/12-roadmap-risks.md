@@ -64,7 +64,7 @@ future work: read-only automation tokens, sandboxing spike.
 | 4 | VTE-as-external-renderer friction (feed/input mapping) | Medium / Medium | Spike early in Phase 3; fallback to custom renderer over headless state |
 | 5 | Multi-viewer resize contention | Medium / Low | Last-writer-wins + broadcast (documented in 04); revisit tiling hints if painful |
 | 6 | Scrollback memory with many panes | Medium / Medium | Hard per-pane caps + tail-only persistence; metrics in `server.status` |
-| 7 | GTK system-dep availability on user machines | Low / Medium | Core/CLI fully usable without GUI; Flatpak or static story in Phase 3 |
+| 7 | GTK system-dep availability on user machines | Low / Medium | Core/CLI fully usable without GUI; desktop entry and icon install to `~/.local` for systems with GTK; assess Flatpak packaging later |
 | 8 | Agent CLIs changing resume flags | Medium / Medium | `resume_capability` owned per adapter, probed (`--help`) at install; never auto-run without opt-in |
 | 9 | Notification fatigue / false attention | Medium / High | Explicit-beats-heuristic ordering; per-pane mute; attention only re-raises on new signals |
 | 10 | libghostty-vt temptation (unstable API) | Low / High | Pinned behind trait + feature flag only; never on the critical path |

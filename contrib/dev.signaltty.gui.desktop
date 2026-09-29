@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=signaltty
+Comment=Terminal workspaces for parallel AI coding agents
+Exec=signaltty-gui
+Icon=dev.signaltty.gui
+Categories=Development;TerminalEmulator;
+StartupWMClass=dev.signaltty.gui
+StartupNotify=true

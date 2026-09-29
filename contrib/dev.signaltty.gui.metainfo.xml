@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.signaltty.gui</id>
+  <name>signaltty</name>
+  <summary>Terminal workspaces for parallel AI coding agents</summary>
+  <url type="homepage">https://github.com/Lucenx9/signaltty</url>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <launchable type="desktop-id">dev.signaltty.gui.desktop</launchable>
+  <developer id="dev.signaltty">
+    <name>signaltty contributors</name>
+  </developer>
+  <description>
+    <p>signaltty keeps terminal sessions running in a persistent server and lets you organize them into workspaces, tabs, and panes. Its native desktop client shows when an agent needs your attention.</p>
+  </description>
+  <content_rating type="oars-1.1"/>
+</component>

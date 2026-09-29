@@ -1407,7 +1407,7 @@ impl App {
     fn show_about(&self) {
         let about = adw::AboutDialog::builder()
             .application_name("signaltty")
-            .application_icon("utilities-terminal-symbolic")
+            .application_icon("dev.signaltty.gui")
             .version(env!("CARGO_PKG_VERSION"))
             .comments("A native workspace for parallel AI coding agents.")
             .build();
