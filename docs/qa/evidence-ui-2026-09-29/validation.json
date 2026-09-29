@@ -1,0 +1,16 @@
+{
+  "baseline": "fbe9409469e5f1b12c20d7f627e1674ba2806fd7",
+  "build": "pass",
+  "workspace_tests": 188,
+  "graphical_tests": 10,
+  "clippy": "pass with two pre-existing server warnings",
+  "fmt": "pass",
+  "regressions": {
+    "approval_baseline_min_width": 823,
+    "approval_fixed_width": 320,
+    "focus": "actual control pixels differ after keyboard focus",
+    "motion_old_css": "render test fails with residual scale",
+    "motion_fixed": "pointer scale present, reduced and keyboard scale absent"
+  },
+  "source_commit": "d2de1ef"
+}

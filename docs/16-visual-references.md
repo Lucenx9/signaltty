@@ -68,13 +68,13 @@ action (exactly our `AdwStatusPage` shape).
 
 ## Gap analysis vs `gui/data/style.css`
 
-What already matches (do not touch): inset hairline rings, 150–200ms
-single-curve motion, press-scale pills, status-vocabulary colors,
+What already matches (do not touch): inset hairline rings, short
+pointer-only press feedback, status-vocabulary colors,
 `AdwStatusPage` empty states, hover-reveal row controls, `.numeric` counts.
 
 | # | Delta | Cost | Note |
 |---|---|---|---|
-| 1 | **Visible keyboard focus** (Geist triple ring, instant) on decision-bar buttons, sidebar rows, header button | CSS-only | Required by spec 003 ("keyboard reachable") yet unfunded: today focus is invisible on buttons. Highest value, no model change. |
+| 1 | **Visible keyboard focus**, instant and inset on decision buttons, sidebar rows and header controls | Complete in spec009 | Native render regression verifies that inactive-pane controls appear under keyboard focus. |
 | 2 | **Sidebar list keyboard nav** (`J`/`K` move, `U` mark read on the selected row, type-to-filter?) | GUI-only | Linear parity for the attention loop; reuses `pane.mark_seen` + selection. Needs a display to verify. |
 | 3 | **Command palette** (`Ctrl+K`: jump to workspace/pane, run `win.*` actions) | GUI-only, medium | Subsumes `Ctrl+Shift+J`; Geist `command-menu` + Linear `⌘K` agree on the shape. Natural home for future `workspace diff` display too. |
 | 4 | **Permission-orange audit**: `orange-3` hardcoded with one dark override vs Geist per-theme accent pairs | CSS-only | Either tune the pair or fold approval into the warning scale; eyeball light + dark. |
@@ -88,8 +88,7 @@ seen-states and turn-scoped diffs (ADR-0011 stands).
 
 ## Recommendation
 
-Spec `008-command-palette-focus` covering deltas 1–3 (+ 4–5 as polish
-inside it): keyboard focus rings first (unblocks the 003 promise),
-sidebar `J`/`K`/`U` second, palette third. Implementation waits for a
-display (screenshots light + dark are the gate per the constitution) —
-this file is the research input, not the green light.
+Spec009 completes focus and native presentation refinement, with light,
+dark, narrow and high-contrast evidence in [UI verification](qa/ui-2026-09-29.md).
+List-specific shortcuts and a command palette remain separate feature work;
+this reference does not authorize those interactions.

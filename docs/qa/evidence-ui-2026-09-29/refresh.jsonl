@@ -1,0 +1,2 @@
+{"case": "PreToolUse", "hooks": 200, "workspaces": 8, "events": {"agent.working": 1}, "ipc": {"workspace.get": 1}, "refresh_ipc": 1, "refresh_ipc_per_event": 1.0}
+{"case": "PreToolUse with message", "hooks": 200, "workspaces": 8, "events": {"notification.created": 200, "attention.created": 1}, "ipc": {"pane.get": 1, "workspace.get": 34}, "refresh_ipc": 34, "refresh_ipc_per_event": 0.1692}

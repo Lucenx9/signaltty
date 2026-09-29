@@ -27,6 +27,12 @@ finish isolated display tests before starting native GUI probes.
   leaves the owned window open briefly for light-theme capture. On KDE add
   `--screenshot /tmp/signaltty-light.png` to capture before teardown.
 - `python3 scripts/bench-gui-refresh.py --check` verifies refresh coalescing.
+- `ADW_DEBUG_COLOR_SCHEME=prefer-light python3 scripts/qa-ui-scenes.py --output /tmp/signaltty-ui.png`
+  captures a populated isolated window through KDE KWin/Spectacle. Repeat with
+  `prefer-dark`, `ADW_DEBUG_HIGH_CONTRAST=1`, `--width 360 --long-choice`, or
+  `--font 'Sans 18'`. The font override uses temporary GTK settings and disables
+  portal font overrides; it never changes desktop preferences. It checks
+  the owned window's active state and actual width before capture.
 
 Use the [feature map](features/README.md) for what each probe proves. GTK ignored
 tests run individually with `GTK_A11Y=none dbus-run-session -- cargo test -p
