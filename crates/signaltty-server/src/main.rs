@@ -19,6 +19,9 @@ struct Args {
     /// Plugin directory (default: $XDG_CONFIG_HOME/signaltty/plugins).
     #[arg(long)]
     plugin_dir: Option<PathBuf>,
+    /// Agent detection overlays (default: $XDG_CONFIG_HOME/signaltty/agents).
+    #[arg(long)]
+    agents_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -39,6 +42,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(d) = args.plugin_dir {
         config.plugin_dir = d;
+    }
+    if let Some(d) = args.agents_dir {
+        config.agents_dir = d;
     }
     serve(config).await
 }

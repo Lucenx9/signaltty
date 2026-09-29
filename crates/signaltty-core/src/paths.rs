@@ -68,6 +68,14 @@ pub fn plugin_dir() -> PathBuf {
         .unwrap_or_else(|_| config_dir().join("plugins"))
 }
 
+/// Directory scanned for agent detection overlays (`<name>.toml`).
+/// See docs/07, ADR-0009.
+pub fn agents_dir() -> PathBuf {
+    std::env::var("SIGNALTTY_AGENTS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| config_dir().join("agents"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

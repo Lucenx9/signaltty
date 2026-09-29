@@ -587,6 +587,126 @@ async fn decision_without_channel_is_read_only() {
     srv.shutdown().await;
 }
 
+fn write_manifest(dir: &std::path::Path, name: &str, body: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join(name), body).unwrap();
+}
+
+#[tokio::test]
+async fn manifest_overlay_detects_and_classifies() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-agents-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    write_manifest(
+        &dir,
+        "wrap.toml",
+        r#"
+[agent]
+kind = "codex"
+binaries = ["sleep"]
+
+[lifecycle.PingTest]
+lifecycle = "working"
+message = "future says hi"
+"#,
+    );
+    // Malformed files never block startup (isolated, logged, skipped).
+    write_manifest(&dir, "broken.toml", "[agent\nkind = ");
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let mut c = srv.client().await;
+
+    // Spawn-time detection honors overlay binaries.
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["agent"]["kind"], "codex");
+
+    // Overlay hook maps classify; unmapped hooks fall through to builtin.
+    let r = c
+        .call(
+            "hook-event",
+            json!({"agent": "codex", "event": "PingTest", "pane_id": pane}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["lifecycle"], "working");
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["last_message"], "future says hi");
+    let r = c
+        .call(
+            "hook-event",
+            json!({"agent": "codex", "event": "Stop", "pane_id": pane}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["lifecycle"], "done");
+    srv.shutdown().await;
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn procscan_promotes_through_shell_and_follows_cwd() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-agents-proc-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    write_manifest(
+        &dir,
+        "wrap.toml",
+        "[agent]\nkind = \"codex\"\nbinaries = [\"sleep\"]\n",
+    );
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let mut c = srv.client().await;
+    // Spawned as `sh` (generic); the tick sees through to `sleep`.
+    let w = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let ws = w["workspace"]["id"].as_str().unwrap();
+    let p = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws, "argv": ["sh", "-c", "cd /; exec sleep 30"]}),
+        )
+        .await
+        .unwrap();
+    let pane = p["pane"]["id"].as_str().unwrap().to_string();
+    // Promotion + cwd follow land within two ticks.
+    let start = std::time::Instant::now();
+    loop {
+        let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+        if p["pane"]["agent"]["kind"] == "codex" && p["pane"]["cwd"] == "/" {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(25),
+            "no promotion: {p}"
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    // Afterwards the tick is quiet: nothing pushed for a full interval.
+    let mut sub = srv.client().await;
+    sub.call("subscribe", json!({"events": ["pane.*"]}))
+        .await
+        .unwrap();
+    let heard = tokio::time::timeout(
+        Duration::from_secs(11),
+        sub.read_events(1, Duration::from_secs(30)),
+    )
+    .await;
+    assert!(heard.is_err(), "tick must be quiet, got {heard:?}");
+    srv.shutdown().await;
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[tokio::test]
 async fn hook_event_drives_codex_lifecycle() {
     let srv = TestServer::start().await;

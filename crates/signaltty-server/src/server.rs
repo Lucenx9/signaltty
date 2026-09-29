@@ -58,6 +58,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let plugins = signaltty_plugin::PluginRegistry::load(config.plugin_dir.clone());
+    let overlays = crate::router::load_overlays(&config.agents_dir);
     let ctx = Arc::new(Ctx {
         store: store.clone(),
         bcast,
@@ -65,6 +66,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         config: config.clone(),
         shutdown: shutdown.clone(),
         plugins,
+        overlays,
     });
 
     // Plugin event hooks: every broadcast event (except high-volume
@@ -88,6 +90,26 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(_) => break,
+                }
+            }
+        });
+    }
+
+    // Live /proc refresh (docs/07 layer 4): promote agent kinds and follow
+    // cwds every 10s. Broadcasts + persists only when something changed.
+    {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                let events =
+                    crate::procscan::scan(&ctx.store, &ctx.ptys.child_pids(), &ctx.overlays);
+                if !events.is_empty() {
+                    for ev in events {
+                        let _ = ctx.bcast.send(ev);
+                    }
+                    ctx.mark_persist();
                 }
             }
         });

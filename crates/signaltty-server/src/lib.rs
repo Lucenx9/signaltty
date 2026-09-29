@@ -5,6 +5,7 @@ pub mod config;
 pub mod git;
 pub mod params;
 pub mod persist;
+pub mod procscan;
 pub mod pty;
 pub mod router;
 pub mod server;

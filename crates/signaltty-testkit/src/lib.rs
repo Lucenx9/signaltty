@@ -47,6 +47,14 @@ impl TestServer {
 
     /// Start with an explicit plugin dir (None = server default).
     pub async fn start_with_plugin_dir(plugin_dir: Option<&Path>) -> TestServer {
+        Self::start_with_dirs(plugin_dir, None).await
+    }
+
+    /// Start with explicit plugin + agents dirs (None = server default).
+    pub async fn start_with_dirs(
+        plugin_dir: Option<&Path>,
+        agents_dir: Option<&Path>,
+    ) -> TestServer {
         let ns = format!("signaltty-test-{}-{}", std::process::id(), unique());
         let base = std::env::temp_dir().join(ns);
         let socket = base.join("signaltty.sock");
@@ -60,6 +68,9 @@ impl TestServer {
             .arg(&state_dir);
         if let Some(dir) = plugin_dir {
             cmd.arg("--plugin-dir").arg(dir);
+        }
+        if let Some(dir) = agents_dir {
+            cmd.arg("--agents-dir").arg(dir);
         }
         let mut child = cmd
             .stdin(Stdio::null())

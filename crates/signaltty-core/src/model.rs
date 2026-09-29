@@ -339,6 +339,17 @@ pub enum AgentKind {
 }
 
 impl AgentKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentKind::Codex => "codex",
+            AgentKind::Claude => "claude",
+            AgentKind::Opencode => "opencode",
+            AgentKind::Cursor => "cursor",
+            AgentKind::Generic => "generic",
+            AgentKind::None => "none",
+        }
+    }
+
     pub fn parse(s: &str) -> Option<AgentKind> {
         Some(match s {
             "codex" => AgentKind::Codex,

@@ -30,9 +30,71 @@ pub struct Ctx {
     pub config: Config,
     pub shutdown: Arc<tokio::sync::Notify>,
     pub plugins: signaltty_plugin::PluginRegistry,
+    /// Manifest detection overlays (data, not code — see ADR-0009).
+    /// Consulted before builtins by [`Ctx::adapter`] and spawn detection.
+    pub overlays: Vec<signaltty_agent::OverlayAdapter>,
+}
+
+/// Load detection overlays from `<dir>/*.toml`. Per-file failure
+/// isolation: malformed files are logged and skipped, never fatal.
+pub fn load_overlays(dir: &std::path::Path) -> Vec<signaltty_agent::OverlayAdapter> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    let mut files: Vec<_> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+        .collect();
+    files.sort();
+    for path in files {
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        match std::fs::read_to_string(&path) {
+            Ok(text) => match signaltty_agent::parse_manifest(&text) {
+                Ok(manifest) => match signaltty_agent::OverlayAdapter::new(manifest) {
+                    Ok(overlay) => {
+                        tracing::info!(
+                            "agent overlay '{name}' ({}): {}",
+                            overlay.kind().as_str(),
+                            path.display()
+                        );
+                        out.push(overlay);
+                    }
+                    Err(e) => tracing::warn!("agent manifest {}: {e} (skipped)", path.display()),
+                },
+                Err(e) => tracing::warn!("agent manifest {}: {e} (skipped)", path.display()),
+            },
+            Err(e) => tracing::warn!("agent manifest {}: {e} (skipped)", path.display()),
+        }
+    }
+    out
 }
 
 impl Ctx {
+    /// Overlay-first adapter routing (manifests are data, not code): the
+    /// first overlay for the named kind wins, else the builtin. Unknown
+    /// names stay `None` so callers keep reporting `BAD_PARAMS`.
+    pub fn adapter(&self, name: &str) -> Option<&dyn signaltty_agent::AgentAdapter> {
+        let kind = AgentKind::parse(name)?;
+        Some(self.adapter_for_kind(kind))
+    }
+
+    pub fn adapter_for_kind(&self, kind: AgentKind) -> &dyn signaltty_agent::AgentAdapter {
+        self.overlays
+            .iter()
+            .find(|o| o.kind() == kind)
+            .map(|o| o as &dyn signaltty_agent::AgentAdapter)
+            .unwrap_or_else(|| signaltty_agent::adapter_for_kind(kind))
+    }
+
+    pub fn detect_kind(&self, argv: &[String]) -> AgentKind {
+        signaltty_agent::detect_kind_with_overlays(argv, &self.overlays)
+    }
+
     pub fn mark_persist(&self) {
         self.ptys.mark_persist();
     }
@@ -449,7 +511,7 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     // Explicit hint wins; otherwise detect from argv (process info layer).
     let kind = match p.agent_hint {
         Some(hint) => AgentKind::parse(&hint).unwrap_or(AgentKind::None),
-        None => signaltty_agent::detect_kind(&argv),
+        None => ctx.detect_kind(&argv),
     };
 
     // Resolve tab: explicit, active, or auto-create "agents".
@@ -936,7 +998,7 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
     if !pending.options.iter().any(|o| o.id == p.option_id) {
         return Err(bad_params(format!("unknown option '{}'", p.option_id)));
     }
-    let adapter = signaltty_agent::adapter_for_kind(kind);
+    let adapter = ctx.adapter_for_kind(kind);
     let Some(channel) = adapter.answer_channel() else {
         return Err(bad_params(format!(
             "adapter '{}' has no answer channel (answer in the terminal)",
@@ -1099,7 +1161,8 @@ fn h_hook_event(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::HookEvent = decode(params)?;
     let agent = p.agent;
     let hook = p.hook;
-    let adapter = signaltty_agent::adapter_for_name(&agent)
+    let adapter = ctx
+        .adapter(&agent)
         .ok_or_else(|| bad_params(format!("unknown agent '{agent}'")))?;
     let mut pane_id = p.pane_id;
     // Fallback: attribute by process ancestry (survives env-stripping
@@ -1291,7 +1354,8 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
     pane.agent.kind = kind;
     pane.agent.agent_session_id = Some(session_id.clone());
     // The adapter owns the official resume command for this id.
-    pane.agent.resume_argv = signaltty_agent::adapter_for_kind(kind)
+    pane.agent.resume_argv = ctx
+        .adapter_for_kind(kind)
         .resume_capability(&session_id)
         .map(|r| r.argv);
     let pane = pane.clone();
