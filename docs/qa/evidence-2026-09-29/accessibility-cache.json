@@ -1,0 +1,7 @@
+{
+  "terminal_text": "1\n1\nQARECONNECTA\nQARECONNECTA\nQARECONNECTB\nQARECONNECTB\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+  "server_terminal": {
+    "text": "1\r\n1\r\nQARECONNECTA\r\nQARECONNECTA\r\nQARECONNECTB\r\nQARECONNECTB\r\nQAONLINE\r\nQAONLINE\r",
+    "truncated": false
+  }
+}
