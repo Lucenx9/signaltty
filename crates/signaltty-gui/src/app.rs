@@ -589,6 +589,8 @@ impl App {
             }
             (items, needing, m.active_ws.clone())
         };
+        let mut items = items;
+        sidebar::sort_summaries(&mut items);
         self.sidebar.update(&items);
         self.update_attention_button(&needing);
         match active {

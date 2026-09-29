@@ -67,6 +67,21 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
     }
 }
 
+/// Priority order for the sidebar (docs/14 §1): attention severity,
+/// then lifecycle rank (blocked → done → working → idle), then
+/// recency, then name so full ties stay deterministic across
+/// refreshes instead of jittering.
+pub fn sort_summaries(items: &mut [WsSummary]) {
+    items.sort_by(|a, b| {
+        b.attention
+            .severity()
+            .cmp(&a.attention.severity())
+            .then(b.lifecycle.sidebar_rank().cmp(&a.lifecycle.sidebar_rank()))
+            .then(b.last_activity.cmp(&a.last_activity))
+            .then(a.name.cmp(&b.name))
+    });
+}
+
 /// Display name for real agents; shells and unknown commands have none.
 pub fn agent_name(kind: AgentKind) -> Option<&'static str> {
     match kind {
@@ -241,5 +256,85 @@ impl Sidebar {
                 self.list.select_row(Some(&r.row));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn summary(
+        name: &str,
+        lifecycle: Lifecycle,
+        attention: Attention,
+        minutes_ago: Option<i64>,
+    ) -> WsSummary {
+        WsSummary {
+            id: name.to_string(),
+            name: name.to_string(),
+            lifecycle,
+            attention,
+            message: String::new(),
+            meta: String::new(),
+            last_activity: minutes_ago.map(|m| {
+                Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap() - chrono::Duration::minutes(m)
+            }),
+        }
+    }
+
+    fn names(items: &[WsSummary]) -> Vec<&str> {
+        items.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    #[test]
+    fn attention_severity_beats_lifecycle() {
+        let mut items = vec![
+            summary(
+                "blocked-quiet",
+                Lifecycle::Blocked,
+                Attention::None,
+                Some(0),
+            ),
+            summary("idle-error", Lifecycle::Idle, Attention::Error, Some(60)),
+            summary("idle-unread", Lifecycle::Idle, Attention::Unread, Some(0)),
+        ];
+        sort_summaries(&mut items);
+        assert_eq!(
+            names(&items),
+            ["idle-error", "idle-unread", "blocked-quiet"]
+        );
+    }
+
+    #[test]
+    fn lifecycle_follows_directive_order_within_equal_attention() {
+        let mut items = vec![
+            summary("idle", Lifecycle::Idle, Attention::None, Some(0)),
+            summary("working", Lifecycle::Working, Attention::None, Some(0)),
+            summary("done", Lifecycle::Done, Attention::None, Some(0)),
+            summary("blocked", Lifecycle::Blocked, Attention::None, Some(0)),
+        ];
+        sort_summaries(&mut items);
+        assert_eq!(names(&items), ["blocked", "done", "working", "idle"]);
+    }
+
+    #[test]
+    fn recency_then_name_break_ties_deterministically() {
+        let mut items = vec![
+            summary("b-old", Lifecycle::Idle, Attention::None, Some(30)),
+            summary("a-new", Lifecycle::Idle, Attention::None, Some(1)),
+            summary("c-new", Lifecycle::Idle, Attention::None, Some(1)),
+            summary("d-never", Lifecycle::Idle, Attention::None, None),
+        ];
+        sort_summaries(&mut items);
+        assert_eq!(names(&items), ["a-new", "c-new", "b-old", "d-never"]);
+        let mut again = vec![
+            summary("d-never", Lifecycle::Idle, Attention::None, None),
+            summary("c-new", Lifecycle::Idle, Attention::None, Some(1)),
+            summary("b-old", Lifecycle::Idle, Attention::None, Some(30)),
+            summary("a-new", Lifecycle::Idle, Attention::None, Some(1)),
+        ];
+        sort_summaries(&mut again);
+        assert_eq!(names(&again), names(&items), "order input-independent");
     }
 }

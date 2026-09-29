@@ -67,6 +67,21 @@ impl Lifecycle {
             Lifecycle::Unknown | Lifecycle::Exited => 0,
         }
     }
+
+    /// Rank for sidebar sort order (docs/14 §1): a finished turn
+    /// needs review while a working agent needs nothing, so done
+    /// outranks working here — the reverse of [`Self::urgency`].
+    /// blocked > failed > done > working > idle > unknown/exited.
+    pub fn sidebar_rank(self) -> u8 {
+        match self {
+            Lifecycle::Blocked => 5,
+            Lifecycle::Failed => 4,
+            Lifecycle::Done => 3,
+            Lifecycle::Working => 2,
+            Lifecycle::Idle => 1,
+            Lifecycle::Unknown | Lifecycle::Exited => 0,
+        }
+    }
 }
 
 /// Whether the human needs to look. Severity order:
@@ -134,6 +149,14 @@ impl Attention {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_rank_follows_directive_order() {
+        use Lifecycle::*;
+        let ranked = [Blocked, Failed, Done, Working, Idle, Unknown, Exited];
+        let ranks: Vec<u8> = ranked.iter().map(|l| l.sidebar_rank()).collect();
+        assert_eq!(ranks, vec![5, 4, 3, 2, 1, 0, 0]);
+    }
 
     #[test]
     fn attention_raise_is_max_by_severity() {
