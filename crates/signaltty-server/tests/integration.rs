@@ -1486,7 +1486,6 @@ async fn schema_lists_every_dispatched_method() {
     srv.shutdown().await;
 }
 
-
 #[tokio::test]
 async fn spawn_rejects_a_tab_in_another_workspace() {
     let srv = TestServer::start().await;
@@ -1511,7 +1510,6 @@ async fn spawn_rejects_a_tab_in_another_workspace() {
     );
     srv.shutdown().await;
 }
-
 
 #[tokio::test]
 async fn failed_spawn_does_not_create_an_automatic_tab() {
@@ -1545,7 +1543,6 @@ async fn failed_spawn_does_not_create_an_automatic_tab() {
     );
     srv.shutdown().await;
 }
-
 
 #[tokio::test]
 async fn layout_replacement_cannot_hide_owned_panes() {
@@ -1587,7 +1584,6 @@ async fn layout_replacement_cannot_hide_owned_panes() {
     srv.shutdown().await;
 }
 
-
 #[tokio::test]
 async fn layout_rejects_duplicate_panes_and_clamps_ratios() {
     let srv = TestServer::start().await;
@@ -1624,6 +1620,102 @@ async fn layout_rejects_duplicate_panes_and_clamps_ratios() {
     srv.shutdown().await;
 }
 
+#[tokio::test]
+async fn detach_stops_streaming_without_stopping_the_process() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let mut control = srv.client().await;
+    let (_ws, pane) = new_pane(
+        &mut control,
+        vec!["sh", "-c", "while read line; do echo RESULT:$line; done"],
+    )
+    .await;
+    c.call("pane.attach", json!({"pane_id": pane, "mark_seen": false}))
+        .await
+        .unwrap();
+    c.call("pane.detach", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    control
+        .call(
+            "pane.input",
+            json!({"pane_id": pane, "data_b64": base64_encode("detached-marker\n")}),
+        )
+        .await
+        .unwrap();
+    wait_for_text(
+        &mut control,
+        &pane,
+        "RESULT:detached-marker",
+        Duration::from_secs(5),
+    )
+    .await;
+    let line = c.raw_roundtrip(&json!({"protocol": "signaltty/1", "id": "after-detach", "method": "pane.get", "params": {"pane_id": pane}}).to_string()).await;
+    let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(
+        response["id"], "after-detach",
+        "unexpected stream after detach: {line}"
+    );
+    assert_eq!(response["result"]["pane"]["live"]["state"], "live");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn attach_snapshot_and_stream_share_output_offsets() {
+    let srv = TestServer::start().await;
+    let mut control = srv.client().await;
+    let mut attached = srv.client().await;
+    let (_ws, pane) = new_pane(
+        &mut control,
+        vec![
+            "sh",
+            "-c",
+            "echo before-snapshot; while read line; do echo RESULT:$line; done",
+        ],
+    )
+    .await;
+    wait_for_text(
+        &mut control,
+        &pane,
+        "before-snapshot",
+        Duration::from_secs(5),
+    )
+    .await;
+    let snapshot = attached
+        .call("pane.attach", json!({"pane_id": pane, "mark_seen": false}))
+        .await
+        .unwrap();
+    let offset = snapshot["output_offset"]
+        .as_u64()
+        .expect("snapshot must identify covered output");
+    assert!(offset > 0);
+    control
+        .call(
+            "pane.input",
+            json!({"pane_id": pane, "data_b64": base64_encode("offset-marker\n")}),
+        )
+        .await
+        .unwrap();
+    let events = attached.read_events(1, Duration::from_secs(5)).await;
+    assert_eq!(events[0]["event"], "pty.data");
+    assert!(events[0]["payload"]["output_offset"].as_u64().unwrap() > offset);
+    wait_for_text(
+        &mut control,
+        &pane,
+        "RESULT:offset-marker",
+        Duration::from_secs(5),
+    )
+    .await;
+    let next = control
+        .call("pane.attach", json!({"pane_id": pane, "mark_seen": false}))
+        .await
+        .unwrap();
+    assert!(
+        next["output_offset"].as_u64().unwrap()
+            >= events[0]["payload"]["output_offset"].as_u64().unwrap()
+    );
+    srv.shutdown().await;
+}
 
 #[tokio::test]
 async fn concurrent_spawn_and_close_do_not_leave_a_live_pane() {
@@ -1654,7 +1746,6 @@ async fn concurrent_spawn_and_close_do_not_leave_a_live_pane() {
     }
     srv.shutdown().await;
 }
-
 
 #[tokio::test]
 async fn closing_restored_legacy_layout_cleans_hidden_owned_panes() {
@@ -1696,6 +1787,73 @@ async fn closing_restored_legacy_layout_cleans_hidden_owned_panes() {
     }
 }
 
+#[tokio::test]
+async fn attached_pane_streams_after_exit_and_resume_without_reattaching() {
+    let agents = plugin_test_dir("resume-stream");
+    write_manifest(
+        &agents,
+        "resume.toml",
+        r#"
+[agent]
+kind = "codex"
+binaries = ["sh"]
+[session]
+resume = ["sh", "-c", "echo resumed-stream; read line"]
+"#,
+    );
+    let srv = TestServer::start_with_dirs(None, Some(&agents)).await;
+    let mut control = srv.client().await;
+    let mut attached = srv.client().await;
+    let (_ws, pane) = new_pane(
+        &mut control,
+        vec!["sh", "-c", "read line; echo initial-stream"],
+    )
+    .await;
+    control
+        .call(
+            "report-session",
+            json!({"pane_id": pane, "agent": "codex", "agent_session_id": "fixture"}),
+        )
+        .await
+        .unwrap();
+    attached
+        .call("pane.attach", json!({"pane_id": pane, "mark_seen": false}))
+        .await
+        .unwrap();
+    control
+        .call(
+            "pane.input",
+            json!({"pane_id": pane, "data_b64": base64_encode("exit\n")}),
+        )
+        .await
+        .unwrap();
+    control
+        .call(
+            "wait",
+            json!({"pane_id": pane, "until": "exited", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    // Consume already queued output while confirming the initial child exited.
+    let exited = attached
+        .call("pane.get", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    assert_eq!(exited["pane"]["live"]["state"], "exited");
+    control
+        .call("pane.resume", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    let streamed = attached.read_events(1, Duration::from_secs(3)).await;
+    assert_eq!(streamed[0]["event"], "pty.data");
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(streamed[0]["payload"]["data_b64"].as_str().unwrap())
+        .unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("resumed-stream"));
+    srv.shutdown().await;
+    std::fs::remove_dir_all(agents).ok();
+}
 
 #[tokio::test]
 async fn simultaneous_resume_requests_launch_only_one_child() {

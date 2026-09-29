@@ -54,6 +54,7 @@ pub struct PtyManager {
     store: SharedStore,
     bcast: broadcast::Sender<StoredEvent>,
     terms: Arc<Mutex<HeadlessBackend>>,
+    output_offsets: Arc<Mutex<HashMap<String, u64>>>,
     handles: Arc<Mutex<HashMap<String, PtyHandle>>>,
     viewers: Arc<Mutex<HashMap<String, usize>>>,
     persist_pending: Arc<AtomicBool>,
@@ -69,6 +70,7 @@ impl PtyManager {
             store,
             bcast,
             terms: Arc::new(Mutex::new(HeadlessBackend::new())),
+            output_offsets: Arc::new(Mutex::new(HashMap::new())),
             handles: Arc::new(Mutex::new(HashMap::new())),
             viewers: Arc::new(Mutex::new(HashMap::new())),
             persist_pending,
@@ -77,6 +79,16 @@ impl PtyManager {
 
     pub fn terms(&self) -> Arc<Mutex<HeadlessBackend>> {
         self.terms.clone()
+    }
+
+    /// The replayable terminal state and its covered byte offset share a lock.
+    pub fn snapshot(&self, pane_id: &str) -> (Vec<u8>, u64) {
+        let terms = self.terms.lock().unwrap();
+        let offsets = self.output_offsets.lock().unwrap();
+        (
+            terms.screen_state(pane_id),
+            offsets.get(pane_id).copied().unwrap_or(0),
+        )
     }
 
     pub fn mark_persist(&self) {
@@ -183,7 +195,14 @@ impl PtyManager {
     }
 
     fn on_output(&self, pane_id: &str, data: &[u8], scanner: &mut OscScanner) {
-        self.terms.lock().unwrap().feed_output(pane_id, data);
+        let output_offset = {
+            let mut terms = self.terms.lock().unwrap();
+            let mut offsets = self.output_offsets.lock().unwrap();
+            terms.feed_output(pane_id, data);
+            let offset = offsets.entry(pane_id.to_string()).or_default();
+            *offset += data.len() as u64;
+            *offset
+        };
         let broadcast_data = {
             let viewers = self.viewers.lock().unwrap();
             viewers.get(pane_id).copied().unwrap_or(0) > 0
@@ -205,6 +224,7 @@ impl PtyManager {
                 payload: serde_json::json!({
                     "pane_id": pane_id,
                     "data_b64": base64::engine::general_purpose::STANDARD.encode(data),
+                    "output_offset": output_offset,
                 }),
             });
         }
@@ -264,7 +284,7 @@ impl PtyManager {
 
     fn on_exit(&self, pane_id: &str, code: Option<i32>) {
         self.handles.lock().unwrap().remove(pane_id);
-        self.viewers.lock().unwrap().remove(pane_id);
+        // Viewers belong to connections, so they survive a child restart.
         let mut outbound = Vec::new();
         {
             let mut s = self.store.write().unwrap();
@@ -343,7 +363,9 @@ impl PtyManager {
         let _ = self.signal(pane_id, sig.unwrap_or("TERM"), false);
         self.handles.lock().unwrap().remove(pane_id);
         self.viewers.lock().unwrap().remove(pane_id);
-        self.terms.lock().unwrap().destroy(pane_id);
+        let mut terms = self.terms.lock().unwrap();
+        terms.destroy(pane_id);
+        self.output_offsets.lock().unwrap().remove(pane_id);
     }
 
     pub fn is_live(&self, pane_id: &str) -> bool {
@@ -367,6 +389,16 @@ impl PtyManager {
                 v.remove(pane_id);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn viewer_count(&self, pane_id: &str) -> usize {
+        self.viewers
+            .lock()
+            .unwrap()
+            .get(pane_id)
+            .copied()
+            .unwrap_or(0)
     }
 
     pub fn live_handles(&self) -> HashSet<String> {

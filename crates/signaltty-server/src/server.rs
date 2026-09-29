@@ -205,8 +205,17 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 struct ConnState {
+    ptys: PtyManager,
     subs: Vec<String>,
     attached: HashSet<String>,
+}
+
+impl Drop for ConnState {
+    fn drop(&mut self) {
+        for pane_id in &self.attached {
+            self.ptys.remove_viewer(pane_id);
+        }
+    }
 }
 
 async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn std::error::Error>> {
@@ -215,6 +224,7 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
     let writer = Arc::new(Mutex::new(write_half));
     let mut rx = ctx.bcast.subscribe();
     let mut state = ConnState {
+        ptys: ctx.ptys.clone(),
         subs: Vec::new(),
         attached: HashSet::new(),
     };
@@ -251,16 +261,24 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                     send_line(writer.clone(), resp.to_line()).await?;
                     continue;
                 }
-                let (resp, effect) = dispatch(&ctx, &req).await;
-                send_line(writer.clone(), resp.to_line()).await?;
-                // Apply connection effects.
+                let (mut resp, effect) = dispatch(&ctx, &req).await;
+                // Register streaming before the final snapshot. Output is either
+                // covered by its offset or delivered after the response.
                 for pane_id in effect.attach {
-                    ctx.ptys.add_viewer(&pane_id);
-                    state.attached.insert(pane_id);
+                    if state.attached.insert(pane_id.clone()) {
+                        ctx.ptys.add_viewer(&pane_id);
+                    }
+                    let (snapshot, output_offset) = ctx.ptys.snapshot(&pane_id);
+                    use base64::Engine;
+                    resp.result["snapshot_b64"] = serde_json::json!(base64::engine::general_purpose::STANDARD.encode(snapshot));
+                    resp.result["output_offset"] = serde_json::json!(output_offset);
                 }
+                send_line(writer.clone(), resp.to_line()).await?;
+                // Apply the remaining connection effects.
                 for pane_id in effect.detach {
-                    ctx.ptys.remove_viewer(&pane_id);
-                    state.attached.remove(&pane_id);
+                    if state.attached.remove(&pane_id) {
+                        ctx.ptys.remove_viewer(&pane_id);
+                    }
                 }
                 if let Some(subs) = effect.subscribe {
                     state.subs = subs;
@@ -302,9 +320,28 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
         }
     }
 
-    // Implicit detach: drop viewer registrations.
-    for pane_id in state.attached {
-        ctx.ptys.remove_viewer(&pane_id);
-    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_a_connection_unregisters_all_viewers_even_on_error() {
+        let store = Arc::new(std::sync::RwLock::new(crate::store::Store::new()));
+        let (events, _) = tokio::sync::broadcast::channel(8);
+        let ptys = crate::pty::PtyManager::new(store, events, Arc::new(AtomicBool::new(false)));
+        ptys.add_viewer("pane");
+        // Another connection remains attached to the same pane.
+        ptys.add_viewer("pane");
+        {
+            let _connection = ConnState {
+                ptys: ptys.clone(),
+                subs: Vec::new(),
+                attached: HashSet::from(["pane".to_string()]),
+            };
+        }
+        assert_eq!(ptys.viewer_count("pane"), 1);
+    }
 }

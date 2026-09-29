@@ -928,7 +928,7 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
             .cloned()
             .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?
     };
-    let snapshot = ctx.ptys.terms().lock().unwrap().screen_state(&id);
+    let (snapshot, output_offset) = ctx.ptys.snapshot(&id);
     // Attach marks seen only when the client passes mark_seen (CLI
     // interactive attach = explicit focus). Multi-pane GUIs pass false
     // and clear per-pane on focus instead — visibility alone must not
@@ -951,6 +951,7 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
     Ok((
         json!({
             "snapshot_b64": base64::engine::general_purpose::STANDARD.encode(&snapshot),
+            "output_offset": output_offset,
             "size": pane.pty_size,
             "live": pane.live,
             "restore_state": pane.restore_state,
@@ -965,7 +966,7 @@ fn h_pane_detach(_ctx: &Ctx, params: &Value) -> Handler {
     let id = decode::<params::PaneId>(params)?.pane_id;
     let mut effect = ConnEffect::default();
     effect.detach.push(id);
-    Ok((json!({"detached": true}), ConnEffect::default()))
+    Ok((json!({"detached": true}), effect))
 }
 
 fn h_pane_close(ctx: &Ctx, params: &Value) -> Handler {

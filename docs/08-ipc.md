@@ -66,11 +66,11 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
 | `pane.signal` | `{pane_id, signal, group?}` | `{sent}` |
 | `pane.read` | `{pane_id, mode: "screen"\|"tail", lines?, strip_ansi?}` | `{text, truncated}` |
-| `pane.attach` | `{pane_id, cols?, rows?, mark_seen?}` | `{snapshot_b64, size, live, ...}` then `pty.data` stream; the snapshot is replayable VT state (contents, colours, cursor, modes) (`mark_seen` default true; GUIs pass false and clear on focus) |
+| `pane.attach` | `{pane_id, cols?, rows?, mark_seen?}` | `{snapshot_b64, output_offset, size, live, ...}` then `pty.data` stream; the snapshot is replayable VT state (contents, colours, cursor, modes) (`mark_seen` default true; GUIs pass false and acknowledge on focus) |
 | `pane.detach` | `{pane_id}` | `{detached}` (also implicit on disconnect) |
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
 | `pane.resume` | `{pane_id}` | `{pane}` (spawns adapter resume argv; errors unless restored+resumable) |
-| `pane.mark_seen` | `{pane_id}` | `{pane}` (clears attention and any pending decision) |
+| `pane.mark_seen` | `{pane_id}` | `{pane}` (records reading; clears ordinary attention while preserving unanswered decisions and their required attention) |
 | `decision.answer` | `{pane_id, decision_id, option_id}` | `{answered, lifecycle?, attention?}` (delivers through the pane adapter's channel and consumes the id; stale/consumed ids → `NO_SUCH_DECISION`, unknown option or channelless adapter → `BAD_PARAMS`) |
 | `notify` | `{pane_id?, title, body?, severity?}` | `{notification}` |
 | `hook-event` | `{agent, event, pane_id?, client_pid?, payload?, message?, title?, severity?, decision?}` | `{accepted, agent, event, pane_id, lifecycle?, attention?}` (adapter classification; pane by explicit id or `client_pid` ancestry; `decision: {id, prompt, options[{id, label}]}` sets/supersedes the pane's pending decision, captured `answerable` iff the adapter has a channel) |
@@ -97,6 +97,16 @@ rotation keeps one `.1` predecessor, 8 MiB cap each). `subscribe
 rotated or the server restarted — replays merge file + ring deduped by
 `seq` (cap 4096).
 
+`pane.spawn` rejects an explicit tab from another workspace with `BAD_PARAMS`.
+A failed process launch leaves no automatic tab or pane. Ownership validation,
+process launch and pane publication complete before a concurrent close can
+remove the target tab or workspace.
+
+`tab.set_layout` requires every pane owned by the tab exactly once. Missing,
+foreign or repeated pane IDs return `BAD_PARAMS` without mutation. Split ratios
+must be finite and clamp to 0.05–0.95. Layout replacement arranges existing
+panes; `pane.close` deletes one.
+
 `tab.set_ratio` moves one divider: `path` holds 0 (first) / 1
 (second) choices from the tab root (`[]` = root) and must resolve to
 a `Split`, else `BAD_PARAMS`. `ratio` is clamped to 0.05–0.95 so a
@@ -121,9 +131,17 @@ git.branch_changed
 server.will_shutdown
 ```
 
-`pty.data {pane_id, data_b64}` streams only to connections that ran
-`pane.attach` for that pane. All other events go to `subscribe`rs by
-glob match.
+`pty.data {pane_id, data_b64, output_offset}` streams only to connections
+that ran `pane.attach` for that pane. `output_offset` is the cumulative end
+byte offset of this output chunk. The attach reply carries the offset covered
+by its snapshot, acquired atomically with terminal state. Streaming registration
+precedes the final snapshot, and its response precedes subsequent stream events.
+Clients discard or trim output already covered by that snapshot. Offsets are
+per-pane for the lifetime of the server and are not persisted. Repeated attach
+on one connection registers one viewer; detach removes it and preserves the
+process. Viewer registration survives a child exit and `pane.resume`, so
+existing connections receive resumed output without attaching again.
+All other events go to `subscribe`rs by glob match.
 
 ## Error codes
 
@@ -136,8 +154,8 @@ into one emit carrying the previous id). `decision.answered
 {pane_id, decision_id, option_id}` fires on delivery. `decision.cleared
 {pane_id, decision_id, reason}` fires when the bar drops unanswered
 (`reason`: `attention_cleared | moved_on | pane_exited`). A pending decision
-clears when attention clears, when the agent leaves `blocked`, or when the
-child exits — whichever comes first.
+clears on answer, when an agent transition clears its required attention or leaves `blocked`, or when the child exits. Reading,
+focusing, `pane.mark_seen`, and default attach preserve the decision and gate.
 
 ## CLI mapping
 
