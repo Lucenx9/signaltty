@@ -144,10 +144,23 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum WorkspaceOp {
     List,
-    Get { id: String },
-    Rename { id: String, name: String },
-    Close { id: String },
-    RefreshGit { id: String },
+    Get {
+        id: String,
+    },
+    Rename {
+        id: String,
+        name: String,
+    },
+    Close {
+        id: String,
+    },
+    RefreshGit {
+        id: String,
+    },
+    /// Worktree-vs-HEAD diff as data (files, per-dir groups, totals).
+    Diff {
+        id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -484,6 +497,41 @@ async fn run(args: Args) -> Result<(), CliError> {
                         .await?;
                     let branch = r["workspace"]["git"]["branch"].as_str().unwrap_or("-");
                     emit(json, &r, format!("branch={branch}"));
+                    Ok(())
+                }
+                WorkspaceOp::Diff { id } => {
+                    let r = c
+                        .call("workspace.diff", json!({"workspace_id": id}))
+                        .await?;
+                    let mut human = String::new();
+                    for f in r["files"].as_array().cloned().unwrap_or_default() {
+                        let path = f["path"].as_str().unwrap_or("?");
+                        if f["untracked"].as_bool().unwrap_or(false) {
+                            human.push_str(&format!("?? {path}\n"));
+                        } else if f["binary"].as_bool().unwrap_or(false) {
+                            human.push_str(&format!("bin {path}\n"));
+                        } else {
+                            human.push_str(&format!(
+                                "+{} -{} {path}\n",
+                                f["added"].as_u64().unwrap_or(0),
+                                f["removed"].as_u64().unwrap_or(0),
+                            ));
+                        }
+                    }
+                    for g in r["dirs"].as_array().cloned().unwrap_or_default() {
+                        human.push_str(&format!(
+                            "{}/ +{} -{}\n",
+                            g["dir"].as_str().unwrap_or("?"),
+                            g["added"].as_u64().unwrap_or(0),
+                            g["removed"].as_u64().unwrap_or(0),
+                        ));
+                    }
+                    human.push_str(&format!(
+                        "total +{} -{}\n",
+                        r["added"].as_u64().unwrap_or(0),
+                        r["removed"].as_u64().unwrap_or(0),
+                    ));
+                    emit(json, &r, human.trim_end().to_string());
                     Ok(())
                 }
             }

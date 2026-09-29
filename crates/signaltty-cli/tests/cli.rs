@@ -287,6 +287,50 @@ async fn cli_skill_cat_check_install() {
 }
 
 #[tokio::test]
+async fn cli_workspace_diff_reports_counts() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-clidiff-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+    };
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "t@t"]);
+    run(&["config", "user.name", "t"]);
+    run(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "base"]);
+    std::fs::write(dir.join("a.txt"), "1\n2\n").unwrap();
+    let srv = TestServer::start().await;
+    let new = cli_json(
+        &srv.socket,
+        &["new", "--cwd", dir.to_str().unwrap(), "--", "sleep", "30"],
+    );
+    let ws = new["workspace_id"].as_str().unwrap().to_string();
+    let d = cli_json(&srv.socket, &["workspace", "diff", &ws]);
+    assert_eq!(d["added"], 1);
+    let (ok, text) = cli(&srv.socket, &["workspace", "diff", &ws]);
+    assert!(ok, "{text}");
+    assert!(text.contains("+1 -0 a.txt"), "{text}");
+    assert!(text.contains("total +1 -0"), "{text}");
+    srv.shutdown().await;
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
 async fn cli_integration_status_lists_manifests() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-cli-agents-{}-{}",
