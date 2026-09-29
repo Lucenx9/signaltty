@@ -114,60 +114,61 @@ impl Default for Store {
 
 pub type SharedStore = Arc<RwLock<Store>>;
 
-/// Set lifecycle if changed; returns the event to broadcast, if any.
-pub fn set_lifecycle(store: &SharedStore, pane_id: &str, next: Lifecycle) -> Option<StoredEvent> {
-    let mut s = store.write().unwrap();
-    let pane = s.panes.get_mut(pane_id)?;
-    let prev = pane.lifecycle;
-    if prev == next {
-        return None;
+impl Store {
+    /// Set lifecycle if changed; returns the event to broadcast, if any.
+    /// Callers hold the lock, so one event costs one lock cycle and the
+    /// state change can never part from its emit.
+    pub fn set_lifecycle(&mut self, pane_id: &str, next: Lifecycle) -> Option<StoredEvent> {
+        let pane = self.panes.get_mut(pane_id)?;
+        let prev = pane.lifecycle;
+        if prev == next {
+            return None;
+        }
+        pane.set_lifecycle(next);
+        pane.last_activity_at = Utc::now();
+        let ev = self.emit(
+            next.event_name(),
+            serde_json::json!({"pane_id": pane_id, "lifecycle": next.as_str(), "prev": prev.as_str()}),
+        );
+        Some(ev)
     }
-    pane.set_lifecycle(next);
-    pane.last_activity_at = Utc::now();
-    let ev = s.emit(
-        next.event_name(),
-        serde_json::json!({"pane_id": pane_id, "lifecycle": next.as_str(), "prev": prev.as_str()}),
-    );
-    Some(ev)
-}
 
-/// Raise attention if the new state is more severe; returns event if changed.
-pub fn raise_attention(store: &SharedStore, pane_id: &str, next: Attention) -> Option<StoredEvent> {
-    let mut s = store.write().unwrap();
-    let pane = s.panes.get_mut(pane_id)?;
-    let prev = pane.attention;
-    let raised = prev.raise(next);
-    if raised == prev {
-        return None;
+    /// Raise attention if the new state is more severe; returns event if changed.
+    pub fn raise_attention(&mut self, pane_id: &str, next: Attention) -> Option<StoredEvent> {
+        let pane = self.panes.get_mut(pane_id)?;
+        let prev = pane.attention;
+        let raised = prev.raise(next);
+        if raised == prev {
+            return None;
+        }
+        pane.attention = raised;
+        pane.last_activity_at = Utc::now();
+        let name = if prev == Attention::None {
+            signaltty_proto::event::ATTENTION_CREATED
+        } else {
+            signaltty_proto::event::ATTENTION_UPDATED
+        };
+        let ev = self.emit(
+            name,
+            serde_json::json!({"pane_id": pane_id, "attention": raised.as_str(), "prev": prev.as_str()}),
+        );
+        Some(ev)
     }
-    pane.attention = raised;
-    pane.last_activity_at = Utc::now();
-    let name = if prev == Attention::None {
-        signaltty_proto::event::ATTENTION_CREATED
-    } else {
-        signaltty_proto::event::ATTENTION_UPDATED
-    };
-    let ev = s.emit(
-        name,
-        serde_json::json!({"pane_id": pane_id, "attention": raised.as_str(), "prev": prev.as_str()}),
-    );
-    Some(ev)
-}
 
-/// Clear attention explicitly (user replied / focused via hook). Returns
-/// the event to broadcast, if anything changed.
-pub fn clear_attention(store: &SharedStore, pane_id: &str, reason: &str) -> Option<StoredEvent> {
-    let mut s = store.write().unwrap();
-    let pane = s.panes.get_mut(pane_id)?;
-    if pane.attention == Attention::None {
-        return None;
+    /// Clear attention explicitly (user replied / focused via hook). Returns
+    /// the event to broadcast, if anything changed.
+    pub fn clear_attention(&mut self, pane_id: &str, reason: &str) -> Option<StoredEvent> {
+        let pane = self.panes.get_mut(pane_id)?;
+        if pane.attention == Attention::None {
+            return None;
+        }
+        pane.mark_seen(chrono::Utc::now());
+        let ev = self.emit(
+            signaltty_proto::event::ATTENTION_CLEARED,
+            serde_json::json!({"pane_id": pane_id, "reason": reason}),
+        );
+        Some(ev)
     }
-    pane.mark_seen(chrono::Utc::now());
-    let ev = s.emit(
-        signaltty_proto::event::ATTENTION_CLEARED,
-        serde_json::json!({"pane_id": pane_id, "reason": reason}),
-    );
-    Some(ev)
 }
 
 #[cfg(test)]
@@ -220,14 +221,38 @@ mod tests {
 
     #[test]
     fn raise_attention_emits_created_then_updated() {
-        let store: SharedStore = Arc::new(RwLock::new(Store::new()));
+        let mut store = Store::new();
         let p = pane_with(Attention::None, 0);
         let id = p.id.clone();
-        store.write().unwrap().panes.insert(id.clone(), p);
-        let e1 = raise_attention(&store, &id, Attention::Unread).unwrap();
+        store.panes.insert(id.clone(), p);
+        let e1 = store.raise_attention(&id, Attention::Unread).unwrap();
         assert_eq!(e1.name, "attention.created");
-        assert!(raise_attention(&store, &id, Attention::Unread).is_none());
-        let e2 = raise_attention(&store, &id, Attention::Error).unwrap();
+        assert!(store.raise_attention(&id, Attention::Unread).is_none());
+        let e2 = store.raise_attention(&id, Attention::Error).unwrap();
         assert_eq!(e2.name, "attention.updated");
+    }
+
+    #[test]
+    fn set_lifecycle_emits_only_on_change() {
+        let mut store = Store::new();
+        let p = pane_with(Attention::None, 0);
+        let id = p.id.clone();
+        store.panes.insert(id.clone(), p);
+        assert!(store.set_lifecycle(&id, Lifecycle::Working).is_none());
+        let e = store.set_lifecycle(&id, Lifecycle::Done).unwrap();
+        assert_eq!(e.name, "agent.done");
+        assert!(store.set_lifecycle(&id, Lifecycle::Done).is_none());
+    }
+
+    #[test]
+    fn clear_attention_emits_only_when_set() {
+        let mut store = Store::new();
+        let p = pane_with(Attention::Unread, 0);
+        let id = p.id.clone();
+        store.panes.insert(id.clone(), p);
+        let e = store.clear_attention(&id, "test").unwrap();
+        assert_eq!(e.name, "attention.cleared");
+        assert!(store.clear_attention(&id, "test").is_none());
+        assert!(store.clear_attention("pane_nope", "test").is_none());
     }
 }

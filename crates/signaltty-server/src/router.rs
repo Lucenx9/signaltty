@@ -19,8 +19,9 @@ use signaltty_proto::{code, event, method, Request, Response};
 use signaltty_term::TerminalBackend;
 
 use crate::config::Config;
+use crate::params::{self, bad_params, decode, parse_severity, validate_until};
 use crate::pty::{PtyManager, SpawnRequest};
-use crate::store::{clear_attention, raise_attention, set_lifecycle, SharedStore, StoredEvent};
+use crate::store::{SharedStore, StoredEvent};
 
 pub struct Ctx {
     pub store: SharedStore,
@@ -51,50 +52,6 @@ pub struct ConnEffect {
 }
 
 type Handler = Result<(Value, ConnEffect), (String, String)>;
-
-fn bad_params(msg: impl Into<String>) -> (String, String) {
-    (code::BAD_PARAMS.to_string(), msg.into())
-}
-
-fn get_str(params: &Value, key: &str) -> Result<String, (String, String)> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| bad_params(format!("missing string param '{key}'")))
-}
-
-fn opt_str(params: &Value, key: &str) -> Option<String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
-fn opt_u16(params: &Value, key: &str) -> Result<Option<u16>, (String, String)> {
-    match params.get(key) {
-        None => Ok(None),
-        Some(v) => v
-            .as_u64()
-            .and_then(|n| u16::try_from(n).ok())
-            .map(Some)
-            .ok_or_else(|| bad_params(format!("param '{key}' must be a u16"))),
-    }
-}
-
-fn opt_u64(params: &Value, key: &str) -> Result<Option<u64>, (String, String)> {
-    match params.get(key) {
-        None => Ok(None),
-        Some(v) => v
-            .as_u64()
-            .map(Some)
-            .ok_or_else(|| bad_params(format!("param '{key}' must be a u64"))),
-    }
-}
-
-fn opt_bool(params: &Value, key: &str) -> bool {
-    params.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
-}
 
 fn pane_result(pane: &Pane) -> Value {
     json!({"pane": pane})
@@ -166,7 +123,9 @@ fn h_server_status(ctx: &Ctx, _params: &Value) -> Handler {
 }
 
 fn h_server_shutdown(ctx: &Ctx, params: &Value) -> Handler {
-    let force = opt_bool(params, "force");
+    let force = decode::<params::ServerShutdown>(params)?
+        .force
+        .unwrap_or(false);
     {
         let s = ctx.store.read().unwrap();
         if !force && s.live_panes() > 0 {
@@ -191,14 +150,15 @@ fn default_cwd() -> String {
 }
 
 fn h_workspace_create(ctx: &Ctx, params: &Value) -> Handler {
-    let cwd = opt_str(params, "cwd").unwrap_or_else(default_cwd);
+    let p: params::WorkspaceCreate = decode(params)?;
+    let cwd = p.cwd.unwrap_or_else(default_cwd);
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(bad_params(format!("cwd is not a directory: {cwd}")));
     }
     let now = Utc::now();
     let ws = Workspace {
         id: new_ws_id(),
-        name: opt_str(params, "name").unwrap_or_else(|| "workspace".to_string()),
+        name: p.name.unwrap_or_else(|| "workspace".to_string()),
         git: crate::git::git_info(&cwd),
         cwd,
         tabs: Vec::new(),
@@ -225,7 +185,7 @@ fn h_workspace_list(ctx: &Ctx) -> Handler {
 }
 
 fn h_workspace_get(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "workspace_id")?;
+    let id = decode::<params::WorkspaceId>(params)?.workspace_id;
     let s = ctx.store.read().unwrap();
     let ws = s
         .workspaces
@@ -249,8 +209,9 @@ fn h_workspace_get(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_workspace_rename(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "workspace_id")?;
-    let name = get_str(params, "name")?;
+    let p: params::WorkspaceRename = decode(params)?;
+    let id = p.workspace_id;
+    let name = p.name;
     let mut s = ctx.store.write().unwrap();
     let ws = s
         .workspaces
@@ -291,8 +252,9 @@ fn close_pane_locked(ctx: &Ctx, s: &mut crate::store::Store, pane_id: &str, sign
 }
 
 fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "workspace_id")?;
-    let signal = opt_str(params, "signal");
+    let p: params::WorkspaceClose = decode(params)?;
+    let id = p.workspace_id;
+    let signal = p.signal;
     let mut s = ctx.store.write().unwrap();
     let ws = s
         .workspaces
@@ -316,7 +278,7 @@ fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_workspace_refresh_git(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "workspace_id")?;
+    let id = decode::<params::WorkspaceId>(params)?.workspace_id;
     let (ws, branch_changed) = {
         let mut s = ctx.store.write().unwrap();
         let ws = s
@@ -342,12 +304,13 @@ fn h_workspace_refresh_git(ctx: &Ctx, params: &Value) -> Handler {
 // ---- tabs ----
 
 fn h_tab_create(ctx: &Ctx, params: &Value) -> Handler {
-    let ws_id = get_str(params, "workspace_id")?;
+    let p: params::TabCreate = decode(params)?;
+    let ws_id = p.workspace_id;
     let now = Utc::now();
     let tab = Tab {
         id: new_tab_id(),
         workspace_id: ws_id.clone(),
-        title: opt_str(params, "title").unwrap_or_else(|| "tab".to_string()),
+        title: p.title.unwrap_or_else(|| "tab".to_string()),
         layout: None,
         active_pane_id: None,
         created_at: now,
@@ -369,8 +332,9 @@ fn h_tab_create(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_tab_close(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "tab_id")?;
-    let signal = opt_str(params, "signal");
+    let p: params::TabClose = decode(params)?;
+    let id = p.tab_id;
+    let signal = p.signal;
     let mut s = ctx.store.write().unwrap();
     let tab = s
         .tabs
@@ -395,11 +359,9 @@ fn h_tab_close(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_tab_set_layout(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "tab_id")?;
-    let layout: signaltty_core::model::Layout = params
-        .get("layout")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .ok_or_else(|| bad_params("missing or invalid 'layout'"))?;
+    let p: params::TabSetLayout = decode(params)?;
+    let id = p.tab_id;
+    let layout = p.layout;
     // All panes in the layout must exist and belong to this tab.
     let mut s = ctx.store.write().unwrap();
     for p in layout.panes() {
@@ -427,28 +389,10 @@ fn h_tab_set_layout(ctx: &Ctx, params: &Value) -> Handler {
 /// another client changed concurrently (whole-tree `tab.set_layout`
 /// would). Out-of-range ratios clamp; the echo is `tab.updated`.
 fn h_tab_set_ratio(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "tab_id")?;
-    let path: Vec<bool> = params
-        .get("path")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .map(|v| match v.as_u64() {
-                    Some(0) => Ok(false),
-                    Some(1) => Ok(true),
-                    _ => Err(()),
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()
-        .map_err(|_| bad_params("'path' must be an array of 0/1"))?
-        .ok_or_else(|| bad_params("missing 'path' array"))?;
-    let ratio = params
-        .get("ratio")
-        .and_then(|v| v.as_f64())
-        .filter(|r| r.is_finite())
-        .map(|r| signaltty_core::model::Layout::clamp_ratio(r as f32))
-        .ok_or_else(|| bad_params("missing or invalid 'ratio'"))?;
+    let p: params::TabSetRatio = decode(params)?;
+    let id = p.tab_id;
+    let path = p.path.0;
+    let ratio = p.ratio.0;
     let mut s = ctx.store.write().unwrap();
     let tab = s
         .tabs
@@ -471,10 +415,8 @@ fn h_tab_set_ratio(ctx: &Ctx, params: &Value) -> Handler {
 
 // ---- panes ----
 
-fn resolve_size(params: &Value) -> Result<PtySize, (String, String)> {
-    let cols = opt_u16(params, "cols")?.unwrap_or(80);
-    let rows = opt_u16(params, "rows")?.unwrap_or(24);
-    Ok(PtySize::clamp(cols, rows))
+fn resolve_size(cols: Option<u16>, rows: Option<u16>) -> PtySize {
+    PtySize::clamp(cols.unwrap_or(80), rows.unwrap_or(24))
 }
 
 fn pane_title(argv: &[String]) -> String {
@@ -489,21 +431,16 @@ fn pane_title(argv: &[String]) -> String {
 }
 
 fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
-    let ws_id = get_str(params, "workspace_id")?;
-    let argv: Vec<String> = params
-        .get("argv")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .ok_or_else(|| bad_params("missing 'argv' array"))?;
+    let p: params::PaneSpawn = decode(params)?;
+    let ws_id = p.workspace_id;
+    let argv = p.argv;
     if argv.is_empty() {
         return Err(bad_params("'argv' must not be empty"));
     }
-    let env: HashMap<String, String> = params
-        .get("env")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
-    let size = resolve_size(params)?;
+    let env = p.env;
+    let size = resolve_size(p.cols, p.rows);
     // Explicit hint wins; otherwise detect from argv (process info layer).
-    let kind = match opt_str(params, "agent_hint") {
+    let kind = match p.agent_hint {
         Some(hint) => AgentKind::parse(&hint).unwrap_or(AgentKind::None),
         None => signaltty_agent::detect_kind(&argv),
     };
@@ -519,11 +456,11 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
                 .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), ws_id.clone()))?;
             (ws.cwd.clone(), ws.active_tab_id.clone())
         };
-        let cwd = opt_str(params, "cwd").unwrap_or(ws_cwd);
+        let cwd = p.cwd.clone().unwrap_or(ws_cwd);
         if !std::path::Path::new(&cwd).is_dir() {
             return Err(bad_params(format!("cwd is not a directory: {cwd}")));
         }
-        let tab_id = match opt_str(params, "tab_id") {
+        let tab_id = match p.tab_id.clone() {
             Some(t) => {
                 if !s.tabs.contains_key(&t) {
                     return Err((code::NO_SUCH_TAB.to_string(), t));
@@ -618,12 +555,13 @@ fn user_shell() -> String {
 }
 
 fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
-    let pane_id = get_str(params, "pane_id")?;
-    let dir = match opt_str(params, "direction").as_deref().unwrap_or("right") {
-        "right" => SplitDir::Right,
-        "down" => SplitDir::Down,
-        d => return Err(bad_params(format!("bad direction '{d}'"))),
-    };
+    let ps: params::PaneSplit = decode(params)?;
+    let pane_id = ps.pane_id;
+    let dir = ps
+        .direction
+        .as_ref()
+        .map(|d| d.split_dir())
+        .unwrap_or(SplitDir::Right);
     let (ws_id, tab_id, cwd, size) = {
         let s = ctx.store.read().unwrap();
         let p = s
@@ -633,17 +571,14 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
         (
             p.workspace_id.clone(),
             p.tab_id.clone(),
-            opt_str(params, "cwd").unwrap_or_else(|| p.cwd.clone()),
+            ps.cwd.clone().unwrap_or_else(|| p.cwd.clone()),
             p.pty_size,
         )
     };
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(bad_params(format!("cwd is not a directory: {cwd}")));
     }
-    let argv: Vec<String> = params
-        .get("argv")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_else(|| vec![user_shell()]);
+    let argv = ps.argv.unwrap_or_else(|| vec![user_shell()]);
     if argv.is_empty() {
         return Err(bad_params("'argv' must not be empty"));
     }
@@ -704,7 +639,7 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_pane_get(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
+    let id = decode::<params::PaneId>(params)?.pane_id;
     let s = ctx.store.read().unwrap();
     let pane = s
         .panes
@@ -714,8 +649,9 @@ fn h_pane_get(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_pane_input(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
-    let data_b64 = get_str(params, "data_b64")?;
+    let p: params::PaneInput = decode(params)?;
+    let id = p.pane_id;
+    let data_b64 = p.data_b64;
     if data_b64.len() > 1024 * 1024 {
         return Err((
             code::RATE_LIMITED.to_string(),
@@ -746,9 +682,10 @@ fn h_pane_input(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_pane_resize(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
-    let cols = opt_u16(params, "cols")?.ok_or_else(|| bad_params("missing 'cols'"))?;
-    let rows = opt_u16(params, "rows")?.ok_or_else(|| bad_params("missing 'rows'"))?;
+    let p: params::PaneResize = decode(params)?;
+    let id = p.pane_id;
+    let cols = p.cols;
+    let rows = p.rows;
     let size = PtySize::clamp(cols, rows);
     let pane = {
         let mut s = ctx.store.write().unwrap();
@@ -769,9 +706,10 @@ fn h_pane_resize(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_pane_signal(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
-    let signal = get_str(params, "signal")?;
-    let group = opt_bool(params, "group");
+    let p: params::PaneSignal = decode(params)?;
+    let id = p.pane_id;
+    let signal = p.signal;
+    let group = p.group.unwrap_or(false);
     {
         let s = ctx.store.read().unwrap();
         if !s.panes.contains_key(&id) {
@@ -789,22 +727,20 @@ fn h_pane_signal(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_pane_read(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
+    let p: params::PaneRead = decode(params)?;
+    let id = p.pane_id;
     {
         let s = ctx.store.read().unwrap();
         if !s.panes.contains_key(&id) {
             return Err((code::NO_SUCH_PANE.to_string(), id));
         }
     }
-    let mode = opt_str(params, "mode").unwrap_or_else(|| "tail".to_string());
-    let strip = params
-        .get("strip_ansi")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let mode = p.mode.unwrap_or(params::ReadMode::Tail);
+    let strip = p.strip_ansi.unwrap_or(true);
     let terms = ctx.ptys.terms();
     let terms = terms.lock().unwrap();
-    match mode.as_str() {
-        "screen" => {
+    match mode {
+        params::ReadMode::Screen => {
             let text = terms.snapshot(&id);
             let text = if strip {
                 signaltty_term::strip_ansi(&text)
@@ -816,8 +752,8 @@ fn h_pane_read(ctx: &Ctx, params: &Value) -> Handler {
                 ConnEffect::default(),
             ))
         }
-        "tail" => {
-            let n = opt_u64(params, "lines")?.unwrap_or(200).min(5000) as usize;
+        params::ReadMode::Tail => {
+            let n = p.lines.unwrap_or(200).min(5000) as usize;
             let lines = terms.tail(&id, n, strip).unwrap_or_default();
             let total = terms.scrollback_len(&id);
             Ok((
@@ -825,14 +761,14 @@ fn h_pane_read(ctx: &Ctx, params: &Value) -> Handler {
                 ConnEffect::default(),
             ))
         }
-        m => Err(bad_params(format!("bad mode '{m}' (want screen|tail)"))),
     }
 }
 
 fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
+    let p: params::PaneAttach = decode(params)?;
+    let id = p.pane_id;
     // Optional resize on attach = last-writer-wins arbitration.
-    if let (Some(cols), Some(rows)) = (opt_u16(params, "cols")?, opt_u16(params, "rows")?) {
+    if let (Some(cols), Some(rows)) = (p.cols, p.rows) {
         let size = PtySize::clamp(cols, rows);
         {
             let mut s = ctx.store.write().unwrap();
@@ -855,27 +791,19 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
     // interactive attach = explicit focus). Multi-pane GUIs pass false
     // and clear per-pane on focus instead — visibility alone must not
     // clear attention.
-    let want_seen = params
-        .get("mark_seen")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    let mut cleared = false;
-    {
+    let want_seen = p.mark_seen.unwrap_or(true);
+    let cleared = {
         let mut s = ctx.store.write().unwrap();
-        if let Some(p) = s.panes.get_mut(&id) {
-            if want_seen && p.attention != Attention::None {
-                p.mark_seen(Utc::now());
-                cleared = true;
-            }
-        }
-        if cleared {
-            let ev = s.emit(
-                event::ATTENTION_CLEARED,
-                json!({"pane_id": id, "reason": "attach"}),
-            );
+        let ev = want_seen
+            .then(|| s.clear_attention(&id, "attach"))
+            .flatten();
+        if let Some(ev) = ev {
             let _ = ctx.bcast.send(ev);
+            true
+        } else {
+            false
         }
-    }
+    };
     if cleared {
         ctx.mark_persist();
     }
@@ -895,15 +823,16 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_pane_detach(_ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
+    let id = decode::<params::PaneId>(params)?.pane_id;
     let mut effect = ConnEffect::default();
     effect.detach.push(id);
     Ok((json!({"detached": true}), ConnEffect::default()))
 }
 
 fn h_pane_close(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
-    let signal = opt_str(params, "signal");
+    let p: params::PaneClose = decode(params)?;
+    let id = p.pane_id;
+    let signal = p.signal;
     {
         let s = ctx.store.read().unwrap();
         if !s.panes.contains_key(&id) {
@@ -922,7 +851,7 @@ fn h_pane_close(ctx: &Ctx, params: &Value) -> Handler {
 /// restored tombstone. Never automatic — the user (or automation)
 /// explicitly invokes it per pane.
 fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
+    let id = decode::<params::PaneId>(params)?.pane_id;
     let (cwd, size, argv) = {
         let s = ctx.store.read().unwrap();
         let pane = s
@@ -949,41 +878,36 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
     }) {
         return Err((code::SPAWN_FAILED.to_string(), e));
     }
-    let pane = {
+    let (pane, transition) = {
         let mut s = ctx.store.write().unwrap();
-        let pane = s.panes.get_mut(&id).unwrap();
-        pane.live = LiveState::Live;
-        pane.restore_state = RestoreState::Live;
-        pane.set_lifecycle(Lifecycle::Unknown);
-        pane.last_activity_at = Utc::now();
-        pane.clone()
+        {
+            let pane = s.panes.get_mut(&id).unwrap();
+            pane.live = LiveState::Live;
+            pane.restore_state = RestoreState::Live;
+            pane.last_activity_at = Utc::now();
+        }
+        let transition = s.set_lifecycle(&id, Lifecycle::Unknown);
+        let pane = s.panes.get(&id).cloned().unwrap();
+        (pane, transition)
     };
+    if let Some(ev) = transition {
+        let _ = ctx.bcast.send(ev);
+    }
     ctx.emit(event::PANE_CREATED, json!({"pane": pane, "resumed": true}));
     ctx.mark_persist();
     Ok((pane_result(&pane), ConnEffect::default()))
 }
 
 fn h_pane_mark_seen(ctx: &Ctx, params: &Value) -> Handler {
-    let id = get_str(params, "pane_id")?;
+    let id = decode::<params::PaneId>(params)?.pane_id;
     let mut s = ctx.store.write().unwrap();
-    let (pane_snapshot, cleared) = {
-        let pane = s
-            .panes
-            .get_mut(&id)
-            .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?;
-        let cleared = pane.attention != Attention::None;
-        if cleared {
-            pane.mark_seen(Utc::now());
-        }
-        (pane.clone(), cleared)
-    };
-    if cleared {
-        let ev = s.emit(
-            event::ATTENTION_CLEARED,
-            json!({"pane_id": id, "reason": "mark_seen"}),
-        );
+    s.panes
+        .get(&id)
+        .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?;
+    if let Some(ev) = s.clear_attention(&id, "mark_seen") {
         let _ = ctx.bcast.send(ev);
     }
+    let pane_snapshot = s.panes.get(&id).cloned().unwrap();
     drop(s);
     ctx.mark_persist();
     Ok((pane_result(&pane_snapshot), ConnEffect::default()))
@@ -1043,7 +967,11 @@ pub fn push_notification(
         let ev = s.emit(event::NOTIFICATION_CREATED, json!({"notification": notif}));
         let _ = bcast.send(ev);
     }
-    if let Some(ev) = raise_attention(store, pane_id, severity.attention()) {
+    let ev = store
+        .write()
+        .unwrap()
+        .raise_attention(pane_id, severity.attention());
+    if let Some(ev) = ev {
         let _ = bcast.send(ev);
     }
     notif
@@ -1058,16 +986,14 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 fn h_notify(ctx: &Ctx, params: &Value) -> Handler {
-    let pane_id = get_str(params, "pane_id")?;
-    let title = get_str(params, "title")?;
+    let p: params::Notify = decode(params)?;
+    let pane_id = p.pane_id;
+    let title = p.title;
     if title.is_empty() {
         return Err(bad_params("'title' must not be empty"));
     }
-    let body = opt_str(params, "body").unwrap_or_default();
-    let severity = opt_str(params, "severity")
-        .map(|s| NotificationSeverity::parse(&s).ok_or_else(|| bad_params("bad severity")))
-        .transpose()?
-        .unwrap_or(NotificationSeverity::Info);
+    let body = p.body.unwrap_or_default();
+    let severity = parse_severity(&p.severity)?;
     {
         let s = ctx.store.read().unwrap();
         if !s.panes.contains_key(&pane_id) {
@@ -1092,21 +1018,22 @@ fn h_notify(ctx: &Ctx, params: &Value) -> Handler {
 /// Explicit `message`/`severity` params still win over the adapter's
 /// notification draft when present.
 fn h_hook_event(ctx: &Ctx, params: &Value) -> Handler {
-    let agent = get_str(params, "agent")?;
-    let hook = get_str(params, "event")?;
+    let p: params::HookEvent = decode(params)?;
+    let agent = p.agent;
+    let hook = p.hook;
     let adapter = signaltty_agent::adapter_for_name(&agent)
         .ok_or_else(|| bad_params(format!("unknown agent '{agent}'")))?;
-    let mut pane_id = opt_str(params, "pane_id");
+    let mut pane_id = p.pane_id;
     // Fallback: attribute by process ancestry (survives env-stripping
     // sandboxes; ignores foreign hooks like Cursor Desktop).
     if pane_id.is_none() {
-        if let Some(client_pid) = opt_u64(params, "client_pid")? {
+        if let Some(client_pid) = p.client_pid {
             if let Ok(pid) = u32::try_from(client_pid) {
                 pane_id = crate::attrib::resolve_pane_by_ancestry(pid, &ctx.ptys.child_pids());
             }
         }
     }
-    let payload = params.get("payload").cloned().unwrap_or(Value::Null);
+    let payload = p.payload;
     let event = signaltty_agent::AdapterEvent {
         agent: agent.clone(),
         hook: hook.clone(),
@@ -1143,25 +1070,23 @@ fn h_hook_event(ctx: &Ctx, params: &Value) -> Handler {
         }
     }
 
-    // 2. Lifecycle + attention from the adapter.
+    // 2. Lifecycle + attention from the adapter, under one lock.
     let decision = adapter.lifecycle_state(&event);
-    if let Some(lifecycle) = decision.lifecycle {
-        if let Some(ev) = set_lifecycle(&ctx.store, &pid, lifecycle) {
-            let _ = ctx.bcast.send(ev);
+    let outbound = {
+        let mut s = ctx.store.write().unwrap();
+        let mut outbound = Vec::new();
+        if let Some(lifecycle) = decision.lifecycle {
+            outbound.extend(s.set_lifecycle(&pid, lifecycle));
         }
-    }
-    match decision.attention {
-        Some(Attention::None) => {
-            if let Some(ev) = clear_attention(&ctx.store, &pid, "hook") {
-                let _ = ctx.bcast.send(ev);
-            }
+        match decision.attention {
+            Some(Attention::None) => outbound.extend(s.clear_attention(&pid, "hook")),
+            Some(att) => outbound.extend(s.raise_attention(&pid, att)),
+            None => {}
         }
-        Some(att) => {
-            if let Some(ev) = raise_attention(&ctx.store, &pid, att) {
-                let _ = ctx.bcast.send(ev);
-            }
-        }
-        None => {}
+        outbound
+    };
+    for ev in outbound {
+        let _ = ctx.bcast.send(ev);
     }
     if let Some(message) = decision.message {
         let mut s = ctx.store.write().unwrap();
@@ -1172,18 +1097,15 @@ fn h_hook_event(ctx: &Ctx, params: &Value) -> Handler {
     }
 
     // 3. Notification: explicit params win, else the adapter's draft.
-    let explicit = opt_str(params, "message").or_else(|| opt_str(params, "body"));
+    let explicit = p.message.or_else(|| p.body.clone());
     if let Some(body) = explicit {
         if !body.is_empty() {
-            let severity = opt_str(params, "severity")
-                .map(|s| NotificationSeverity::parse(&s).ok_or_else(|| bad_params("bad severity")))
-                .transpose()?
-                .unwrap_or(NotificationSeverity::Info);
+            let severity = parse_severity(&p.severity)?;
             push_notification(
                 &ctx.store,
                 &ctx.bcast,
                 &pid,
-                opt_str(params, "title").as_deref(),
+                p.title.as_deref(),
                 &body,
                 severity,
                 &format!("hook:{agent}:{hook}"),
@@ -1225,9 +1147,10 @@ fn h_hook_event(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
-    let pane_id = get_str(params, "pane_id")?;
-    let session_id = get_str(params, "agent_session_id")?;
-    let agent = opt_str(params, "agent").unwrap_or_else(|| "generic".to_string());
+    let p: params::ReportSession = decode(params)?;
+    let pane_id = p.pane_id;
+    let session_id = p.agent_session_id;
+    let agent = p.agent.unwrap_or_else(|| "generic".to_string());
     let kind = AgentKind::parse(&agent).unwrap_or(AgentKind::Generic);
     let mut s = ctx.store.write().unwrap();
     let pane = s
@@ -1251,11 +1174,9 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
 // ---- subscribe / wait / focus ----
 
 fn h_subscribe(ctx: &Ctx, params: &Value) -> Handler {
-    let events: Vec<String> = params
-        .get("events")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_else(|| vec!["*".to_string()]);
-    let from_seq = opt_u64(params, "from_seq")?;
+    let p: params::Subscribe = decode(params)?;
+    let events = p.events.unwrap_or_else(|| vec!["*".to_string()]);
+    let from_seq = p.from_seq;
     let seq = ctx.store.read().unwrap().seq;
     let effect = ConnEffect {
         subscribe: Some(events),
@@ -1288,26 +1209,16 @@ async fn h_wait(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffe
         Ok((v, _)) => (Response::ok(&req.id, v), ConnEffect::default()),
         Err((c, m)) => (Response::err(&req.id, &c, m), effect),
     };
-    let pane_id = match get_str(params, "pane_id") {
-        Ok(id) => id,
+    let p: params::Wait = match decode(params) {
+        Ok(p) => p,
         Err(e) => return respond(Err(e)),
     };
-    let until = match get_str(params, "until") {
-        Ok(u) => u,
-        Err(e) => return respond(Err(e)),
-    };
-    if Attention::parse(&until).is_none()
-        && Lifecycle::parse(&until).is_none()
-        && until != "seen"
-        && until != "attention_cleared"
-        && until != "exited"
-    {
-        return respond(Err(bad_params(format!("bad 'until': {until}"))));
+    let pane_id = p.pane_id;
+    let until = p.until;
+    if let Err(e) = validate_until(&until) {
+        return respond(Err(e));
     }
-    let timeout_s = match opt_u64(params, "timeout_s") {
-        Ok(t) => t.unwrap_or(3600),
-        Err(e) => return respond(Err(e)),
-    };
+    let timeout_s = p.timeout_s.unwrap_or(3600);
     {
         let s = ctx.store.read().unwrap();
         if !s.panes.contains_key(&pane_id) {

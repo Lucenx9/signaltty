@@ -3,6 +3,7 @@
 pub mod attrib;
 pub mod config;
 pub mod git;
+pub mod params;
 pub mod persist;
 pub mod pty;
 pub mod router;

@@ -15,7 +15,7 @@ use signaltty_core::model::{LiveState, PtySize, RestoreState};
 use signaltty_core::state::{Attention, Lifecycle};
 use signaltty_term::{HeadlessBackend, OscEvent, OscScanner, TerminalBackend};
 
-use crate::store::{raise_attention, set_lifecycle, SharedStore, StoredEvent};
+use crate::store::{SharedStore, StoredEvent};
 
 /// Env vars a client may override at spawn. Everything else comes from
 /// the server environment, minus the blocklist.
@@ -250,7 +250,12 @@ impl PtyManager {
                 self.mark_persist();
             }
             OscEvent::Bell => {
-                if let Some(ev) = raise_attention(&self.store, pane_id, Attention::Unread) {
+                let ev = self
+                    .store
+                    .write()
+                    .unwrap()
+                    .raise_attention(pane_id, Attention::Unread);
+                if let Some(ev) = ev {
                     let _ = self.bcast.send(ev);
                 }
             }
@@ -272,12 +277,9 @@ impl PtyManager {
                     serde_json::json!({"pane_id": pane_id, "code": code}),
                 ));
             }
-        }
-        if let Some(ev) = set_lifecycle(&self.store, pane_id, Lifecycle::Exited) {
-            outbound.push(ev);
-        }
-        if let Some(ev) = raise_attention(&self.store, pane_id, Attention::Unread) {
-            outbound.push(ev);
+            // One lock for the whole exit: transitions ride along.
+            outbound.extend(s.set_lifecycle(pane_id, Lifecycle::Exited));
+            outbound.extend(s.raise_attention(pane_id, Attention::Unread));
         }
         for ev in outbound {
             let _ = self.bcast.send(ev);

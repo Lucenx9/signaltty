@@ -36,8 +36,10 @@ Event:
 
 Rules: `protocol` mismatch → `BAD_PROTOCOL` error, connection stays
 open. Unknown method → `UNKNOWN_METHOD`. Unknown fields ignored
-(forward compat). Every mutating result returns opaque ids. `seq` is a
-monotonic server counter; clients can `subscribe {from_seq}` to replay.
+(forward compat); present-but-mistyped fields → `BAD_PARAMS` (missing
+and explicit null still mean "absent" for optionals). Every mutating
+result returns opaque ids. `seq` is a monotonic server counter;
+clients can `subscribe {from_seq}` to replay.
 
 ## Methods
 
