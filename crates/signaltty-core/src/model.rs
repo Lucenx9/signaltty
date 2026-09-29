@@ -543,7 +543,12 @@ mod tests {
         fn walk(l: &Layout, scale: f32, out: &mut Vec<f32>) {
             match l {
                 Layout::Pane { .. } => out.push(scale),
-                Layout::Split { ratio, first, second, .. } => {
+                Layout::Split {
+                    ratio,
+                    first,
+                    second,
+                    ..
+                } => {
                     walk(first, scale * ratio, out);
                     walk(second, scale * (1.0 - ratio), out);
                 }

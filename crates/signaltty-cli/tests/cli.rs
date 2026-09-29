@@ -3,8 +3,8 @@
 
 use std::process::Command;
 
-use signaltty_testkit::{bin_path, TestServer};
 use serde_json::Value;
+use signaltty_testkit::{bin_path, TestServer};
 
 fn cli(socket: &std::path::Path, args: &[&str]) -> (bool, String) {
     let out = Command::new(bin_path("signaltty"))

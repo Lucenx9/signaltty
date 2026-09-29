@@ -2,9 +2,9 @@
 //! identify / lifecycle_state / session_identity / notification_event /
 //! resume_capability / metadata.
 
+use serde_json::Value;
 use signaltty_core::model::{AgentKind, NotificationSeverity};
 use signaltty_core::state::{Attention, Lifecycle};
-use serde_json::Value;
 
 /// What the adapter knows about the pane's foreground process.
 #[derive(Debug, Clone)]

@@ -4,8 +4,8 @@
 
 use std::time::Duration;
 
-use signaltty_testkit::{TestClient, TestServer};
 use serde_json::json;
+use signaltty_testkit::{TestClient, TestServer};
 
 async fn new_pane(c: &mut TestClient, argv: Vec<&str>) -> (String, String) {
     let w = c

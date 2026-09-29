@@ -16,8 +16,8 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gtk4::prelude::*;
 use gtk4::gio;
+use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use signaltty_core::model::AgentKind;
@@ -63,11 +63,7 @@ pub fn available_commands() -> Vec<CommandOption> {
     }];
     for (kind, label) in agent_kinds() {
         let meta = signaltty_agent::adapter_for_kind(kind).metadata();
-        if let Some(bin) = meta
-            .binaries
-            .iter()
-            .find(|b| binary_in_path(b).is_some())
-        {
+        if let Some(bin) = meta.binaries.iter().find(|b| binary_in_path(b).is_some()) {
             out.push(CommandOption {
                 label,
                 argv: vec![bin.to_string()],
@@ -412,27 +408,22 @@ pub fn show_dialog(
             let name_row = name_row.clone();
             let state = Rc::clone(&state);
             let revalidate = Rc::clone(&revalidate);
-            picker.select_folder(
-                Some(&parent),
-                None::<&gio::Cancellable>,
-                move |result| {
-                    let Ok(folder) = result else {
-                        return; // dismissed
-                    };
-                    let Some(path) = folder.path().map(|p| p.to_string_lossy().to_string())
-                    else {
-                        return;
-                    };
-                    state.borrow_mut().cwd = path.clone();
-                    folder_row.set_subtitle(&tilde(&path));
-                    if !state.borrow().name_edited {
-                        state.borrow_mut().setting_name = true;
-                        name_row.set_text(&folder_basename(&path));
-                        state.borrow_mut().setting_name = false;
-                    }
-                    revalidate();
-                },
-            );
+            picker.select_folder(Some(&parent), None::<&gio::Cancellable>, move |result| {
+                let Ok(folder) = result else {
+                    return; // dismissed
+                };
+                let Some(path) = folder.path().map(|p| p.to_string_lossy().to_string()) else {
+                    return;
+                };
+                state.borrow_mut().cwd = path.clone();
+                folder_row.set_subtitle(&tilde(&path));
+                if !state.borrow().name_edited {
+                    state.borrow_mut().setting_name = true;
+                    name_row.set_text(&folder_basename(&path));
+                    state.borrow_mut().setting_name = false;
+                }
+                revalidate();
+            });
         }
     };
     let browse_action = Rc::new(browse_action);
@@ -606,11 +597,7 @@ mod tests {
         let expected_argv = commands[default_command_index(&commands)].argv.clone();
         assert_eq!(
             got.borrow().clone(),
-            Some((
-                "signaltty-dialog-e2e".to_string(),
-                dir_s,
-                expected_argv
-            ))
+            Some(("signaltty-dialog-e2e".to_string(), dir_s, expected_argv))
         );
         assert!(closed.get());
         std::fs::remove_dir_all(&dir).unwrap();
