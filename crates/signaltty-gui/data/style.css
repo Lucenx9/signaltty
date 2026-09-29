@@ -14,7 +14,9 @@
  *   done        green dot     turn complete
  *
  * Motion: only colour/shadow/opacity transitions on persistent
- * widgets, 150–200ms, strong ease-out. Nothing animates on keyboard
+ * widgets, 150–200ms, cubic-bezier(0.23, 1, 0.32, 1) ease-out.
+ * Press feedback is scale(0.97) on pills, scale(0.92) on the
+ * 24px icon buttons. Nothing animates on keyboard
  * navigation; GTK drops all of it when animations are disabled.
  */
 
@@ -25,7 +27,7 @@
   min-height: 8px;
   border-radius: 999px;
   background-color: alpha(currentColor, 0.25);
-  transition: background-color 200ms ease, box-shadow 200ms ease;
+  transition: background-color 200ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .status-dot.hollow {
@@ -100,7 +102,7 @@
 .row-status {
   font-size: 0.8em;
   color: alpha(currentColor, 0.48);
-  transition: opacity 150ms ease, color 200ms ease;
+  transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1), color 200ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .row-status.speaking {
   font-weight: 600;
@@ -147,8 +149,8 @@
   padding: 0;
   opacity: 0;
   color: alpha(currentColor, 0.6);
-  transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease,
-    transform 120ms ease-out;
+  transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1), background-color 150ms cubic-bezier(0.23, 1, 0.32, 1), color 150ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .row-close:hover {
   color: inherit;
@@ -174,8 +176,10 @@
   padding: 0 10px 0 9px;
   border-radius: 999px;
   background-color: alpha(currentColor, 0.08);
-  transition: transform 120ms ease-out, background-color 150ms ease,
-    color 200ms ease;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 150ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 150ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .attention-button.attention-unread {
   color: var(--accent-color);
@@ -232,7 +236,7 @@
 }
 
 .pane-info {
-  transition: opacity 150ms ease;
+  transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .pane-title {
@@ -248,7 +252,7 @@
  * header never jumps. */
 .pane-actions {
   opacity: 0;
-  transition: opacity 150ms ease;
+  transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .pane:hover .pane-actions,
 .pane.focused .pane-actions {
@@ -259,7 +263,7 @@
   min-width: 24px;
   min-height: 24px;
   padding: 0;
-  transition: transform 120ms ease-out, background-color 150ms ease;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 150ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .pane-actions button:active {
   transform: scale(0.92);
@@ -279,29 +283,33 @@
 }
 
 /* With several panes in a tab, the focused one is marked and the rest
- * recede — chrome only, never the terminal text. */
-.tab-page.split .pane.focused {
+ * recede — chrome only, never the terminal text. Specificity stays at
+ * two classes so every attention ring below (three) wins over focus:
+ * what needs you outranks where you are. */
+.split .pane.focused {
   box-shadow: inset 0 0 0 1px alpha(var(--accent-bg-color), 0.7), 0 1px 3px alpha(black, 0.08);
 }
 .tab-page.split .pane:not(.focused) .pane-info {
   opacity: 0.55;
 }
 
-/* Attention rings — declared after focus so they always win. Weight
- * follows severity: unread is a hairline, gates get a ring + glow. */
-.pane.attention-unread {
+/* Attention rings — three classes beat the two-class focus rule
+ * above however they are ordered, so a focused pane still shows
+ * what needs you. Weight follows severity: unread is a hairline,
+ * gates get a ring + glow. */
+.tab-page .pane.attention-unread {
   box-shadow: inset 0 0 0 1px alpha(var(--accent-bg-color), 0.7), 0 1px 3px alpha(black, 0.08);
 }
-.pane.attention-warning {
+.tab-page .pane.attention-warning {
   box-shadow: inset 0 0 0 1.5px var(--warning-bg-color), 0 1px 3px alpha(black, 0.08);
 }
-.pane.attention-input {
+.tab-page .pane.attention-input {
   box-shadow: inset 0 0 0 2px var(--warning-bg-color), inset 0 0 14px alpha(var(--warning-bg-color), 0.2);
 }
-.pane.attention-permission {
+.tab-page .pane.attention-permission {
   box-shadow: inset 0 0 0 2px var(--orange-3), inset 0 0 16px alpha(var(--orange-3), 0.22);
 }
-.pane.attention-error {
+.tab-page .pane.attention-error {
   box-shadow: inset 0 0 0 2px var(--error-bg-color), inset 0 0 16px alpha(var(--error-bg-color), 0.22);
 }
 
@@ -309,7 +317,7 @@
 
 button.pill,
 .resume-button {
-  transition: transform 120ms ease-out, background-color 150ms ease;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 150ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 button.pill:active,
 .resume-button:active,
