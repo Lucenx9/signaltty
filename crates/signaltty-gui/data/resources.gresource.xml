@@ -13,5 +13,6 @@
     <file>icons/scalable/actions/signaltty-permission-symbolic.svg</file>
     <file>icons/scalable/actions/signaltty-warning-symbolic.svg</file>
     <file>icons/scalable/actions/signaltty-error-symbolic.svg</file>
+    <file>icons/scalable/actions/signaltty-tab-new-symbolic.svg</file>
   </gresource>
 </gresources>

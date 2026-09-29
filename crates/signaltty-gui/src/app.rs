@@ -138,7 +138,7 @@ impl App {
         btn_menu.set_menu_model(Some(&crate::actions::primary_menu()));
         btn_menu.set_primary(true);
         header.pack_end(&btn_menu);
-        let btn_new_tab = gtk4::Button::from_icon_name("tab-new-symbolic");
+        let btn_new_tab = gtk4::Button::from_icon_name("signaltty-tab-new-symbolic");
         btn_new_tab.set_tooltip_text(Some("New Tab (Ctrl+Shift+T)"));
         btn_new_tab.set_action_name(Some("win.new-tab"));
         header.pack_end(&btn_new_tab);
@@ -168,7 +168,7 @@ impl App {
         no_workspace.set_child(Some(&btn_empty));
 
         let no_tabs = adw::StatusPage::new();
-        no_tabs.set_icon_name(Some("tab-new-symbolic"));
+        no_tabs.set_icon_name(Some("signaltty-tab-new-symbolic"));
         no_tabs.set_title("No Tabs");
         no_tabs.set_description(Some("Open a tab to start a terminal in this workspace."));
         let btn_no_tabs = gtk4::Button::with_label("New Tab");
@@ -253,13 +253,13 @@ impl App {
         let count = gtk4::Label::new(None);
         count.add_css_class("numeric");
         count.add_css_class("heading");
-        let inner = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        let inner = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
         inner.append(&dot);
         inner.append(&count);
         let button = gtk4::Button::new();
         button.set_child(Some(&inner));
-        button.add_css_class("flat");
         button.add_css_class("attention-button");
+        button.set_valign(gtk4::Align::Center);
         button.set_action_name(Some("win.next-attention"));
         let revealer = gtk4::Revealer::new();
         revealer.set_transition_type(gtk4::RevealerTransitionType::Crossfade);
@@ -624,6 +624,7 @@ impl App {
         let worst = needing.iter().fold(Attention::None, |acc, a| acc.raise(*a));
         b.count.set_text(&needing.len().to_string());
         status::set_attention_class(&b.dot, worst);
+        status::set_attention_class(&b.button, worst);
         b.button.set_tooltip_text(Some(&match needing.len() {
             1 => "1 pane needs attention — jump to it (Ctrl+Shift+J)".to_string(),
             n => format!("{n} panes need attention — jump to the next (Ctrl+Shift+J)"),

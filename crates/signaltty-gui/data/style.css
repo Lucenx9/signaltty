@@ -150,9 +150,35 @@
 
 /* ---- header: "needs you" button -------------------------------------- */
 
+/* A pill tinted by the worst attention it counts — the same colours as
+ * the sidebar's status slot, so "2" reads as "2 of those". */
 .attention-button {
-  padding-left: 10px;
-  padding-right: 12px;
+  min-height: 24px;
+  padding: 0 10px 0 9px;
+  border-radius: 999px;
+  background-color: alpha(currentColor, 0.08);
+  transition: transform 120ms ease-out, background-color 150ms ease,
+    color 200ms ease;
+}
+.attention-button.attention-unread {
+  color: var(--accent-color);
+  background-color: alpha(var(--accent-bg-color), 0.14);
+}
+.attention-button.attention-input,
+.attention-button.attention-warning {
+  color: var(--warning-color);
+  background-color: alpha(var(--warning-bg-color), 0.16);
+}
+.attention-button.attention-permission {
+  color: var(--orange-5);
+  background-color: alpha(var(--orange-3), 0.16);
+}
+.attention-button.attention-error {
+  color: var(--error-color);
+  background-color: alpha(var(--error-bg-color), 0.16);
+}
+.attention-button:hover {
+  box-shadow: inset 0 0 0 100px alpha(currentColor, 0.06);
 }
 
 /* ---- tab page + panes ------------------------------------------------ */
@@ -265,8 +291,7 @@
 /* ---- pressable pills -------------------------------------------------- */
 
 button.pill,
-.resume-button,
-.attention-button {
+.resume-button {
   transition: transform 120ms ease-out, background-color 150ms ease;
 }
 button.pill:active,
@@ -279,7 +304,8 @@ button.pill:active,
 
 @media (prefers-color-scheme: dark) {
   .status-pill.attention-permission,
-  .row-status.attention-permission {
+  .row-status.attention-permission,
+  .attention-button.attention-permission {
     color: var(--orange-2);
   }
 
