@@ -154,6 +154,12 @@ read-only rendering.
 
 ## Assumptions
 
+- **Probe outcome (2026-09-29, implemented)**: Codex `TypeText`
+  (option number + Enter) is the first channel — fixture-verified
+  (bytes reach the PTY through `decision.answer`; see ADR-0008).
+  Live-TUI confirmation (click → real Codex resumes with that choice)
+  is follow-up work: approval prompts need an interactive session the
+  harness cannot drive. Original note preserved below:
 - **Deferred**: this spec ships as design only. Implementation waits
   for the plan-phase adapter probes (which CLIs accept answers
   non-interactively, and how) because FR-004 forbids guessing

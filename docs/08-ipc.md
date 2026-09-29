@@ -69,9 +69,10 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.detach` | `{pane_id}` | `{detached}` (also implicit on disconnect) |
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
 | `pane.resume` | `{pane_id}` | `{pane}` (spawns adapter resume argv; errors unless restored+resumable) |
-| `pane.mark_seen` | `{pane_id}` | `{pane}` (clears attention) |
+| `pane.mark_seen` | `{pane_id}` | `{pane}` (clears attention and any pending decision) |
+| `decision.answer` | `{pane_id, decision_id, option_id}` | `{answered, lifecycle?, attention?}` (delivers through the pane adapter's channel and consumes the id; stale/consumed ids → `NO_SUCH_DECISION`, unknown option or channelless adapter → `BAD_PARAMS`) |
 | `notify` | `{pane_id?, title, body?, severity?}` | `{notification}` |
-| `hook-event` | `{agent, event, pane_id?, client_pid?, payload?, message?, title?, severity?}` | `{accepted, agent, event, pane_id, lifecycle?, attention?}` (adapter classification; pane by explicit id or `client_pid` ancestry) |
+| `hook-event` | `{agent, event, pane_id?, client_pid?, payload?, message?, title?, severity?, decision?}` | `{accepted, agent, event, pane_id, lifecycle?, attention?}` (adapter classification; pane by explicit id or `client_pid` ancestry; `decision: {id, prompt, options[{id, label}]}` sets/supersedes the pane's pending decision, captured `answerable` iff the adapter has a channel) |
 | `report-session` | `{pane_id, agent_session_id, agent?}` | `{pane}` |
 | `subscribe` | `{events?: ["agent.*","attention.*",…], from_seq?}` | `{subscribed, seq}` then event stream |
 | `wait` | `{pane_id, until, timeout_s?}` | `{satisfied, state}` or `TIMEOUT` |
@@ -101,6 +102,7 @@ pane.resized       pty.data           pty.snapshot
 agent.working      agent.blocked      agent.done         agent.failed
 agent.idle         agent.unknown      agent.exited
 attention.created  attention.updated  attention.cleared
+decision.created   decision.answered  decision.cleared
 notification.created
 git.branch_changed
 server.will_shutdown
@@ -113,8 +115,16 @@ glob match.
 ## Error codes
 
 `BAD_PROTOCOL, UNKNOWN_METHOD, BAD_PARAMS, NO_SUCH_{SERVER,WORKSPACE,TAB,PANE},
-PANE_EXITED, PANES_ALIVE, SPAWN_FAILED, IO_ERROR, TIMEOUT, RATE_LIMITED,
-FORBIDDEN, INTERNAL`.
+NO_SUCH_DECISION, PANE_EXITED, PANES_ALIVE, SPAWN_FAILED, IO_ERROR, TIMEOUT,
+RATE_LIMITED, FORBIDDEN, INTERNAL`.
+
+`decision.created {pane_id, decision, prev?}` fires on set (a supersede folds
+into one emit carrying the previous id). `decision.answered
+{pane_id, decision_id, option_id}` fires on delivery. `decision.cleared
+{pane_id, decision_id, reason}` fires when the bar drops unanswered
+(`reason`: `attention_cleared | moved_on | pane_exited`). A pending decision
+clears when attention clears, when the agent leaves `blocked`, or when the
+child exits — whichever comes first.
 
 ## CLI mapping
 

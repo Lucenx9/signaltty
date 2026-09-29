@@ -83,6 +83,7 @@ One terminal/PTY + process. Survives client detach while the server lives.
 | `lifecycle_since` | when `lifecycle` last changed (optional; absent in old snapshots) |
 | `last_run_secs` | length of the latest `working` stretch — GUI renders "Working for 2m…" → "Worked for 2m" |
 | `last_message` | latest explicit notification / hook payload summary (never raw scrollback scrape as primary) |
+| `pending_decision` | at most one structured decision `{id, prompt, options[{id, label}], answerable, received_at}` set by `hook-event` (directive 2); rendered as inline buttons iff `answerable`, cleared on answer / attention-clear / leaving `blocked` / exit |
 | `scrollback_len` | bytes/lines retained (bounded ring) |
 | `created_at`, `last_activity_at`, `last_seen_at` | timestamps |
 
