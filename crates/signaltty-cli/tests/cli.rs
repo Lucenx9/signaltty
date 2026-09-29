@@ -213,6 +213,80 @@ async fn cli_decision_answer_flow() {
 }
 
 #[tokio::test]
+async fn cli_skill_cat_check_install() {
+    // `skill` prints the embedded doc; `check` gates on SIGNALTTY_PANE.
+    let out = Command::new(bin_path("signaltty"))
+        .args(["skill", "cat"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let body = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        body.lines().next().unwrap().trim() == "<!-- signaltty-skill -->",
+        "{body}"
+    );
+    assert!(body.contains("signaltty schema"));
+    let out = Command::new(bin_path("signaltty"))
+        .args(["skill", "check"])
+        .env_remove("SIGNALTTY_PANE")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let out = Command::new(bin_path("signaltty"))
+        .args(["skill", "check"])
+        .env("SIGNALTTY_PANE", "pane_x")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    // Install is idempotent and removes only its own files.
+    let home = std::env::temp_dir().join(format!(
+        "signaltty-skill-home-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let home_s = home.display().to_string();
+    // A foreign file where our skill would go must survive uninstall.
+    let foreign = home.join(".agents/skills/signaltty/SKILL.md");
+    std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
+    std::fs::write(&foreign, "mine\n").unwrap();
+    let run = |args: &[&str]| {
+        Command::new(bin_path("signaltty"))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let out = run(&["skill", "install", "--home", &home_s]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8(out.stderr).unwrap()
+    );
+    // Foreign content wins: install must not overwrite it.
+    assert_eq!(std::fs::read_to_string(&foreign).unwrap(), "mine\n");
+    std::fs::remove_file(&foreign).unwrap();
+    let out = run(&["skill", "install", "--home", &home_s]);
+    assert!(out.status.success());
+    let out = run(&["skill", "install", "--home", &home_s]);
+    assert!(out.status.success());
+    assert!(String::from_utf8(out.stdout)
+        .unwrap()
+        .contains("already installed"));
+    for d in [".agents/skills", ".claude/skills", ".codex/skills"] {
+        let f = home.join(d).join("signaltty/SKILL.md");
+        assert!(f.is_file(), "{d}");
+    }
+    let out = run(&["skill", "uninstall", "--home", &home_s]);
+    assert!(out.status.success());
+    for d in [".agents/skills", ".claude/skills", ".codex/skills"] {
+        assert!(!home.join(d).join("signaltty/SKILL.md").exists(), "{d}");
+    }
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
 async fn cli_integration_status_lists_manifests() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-cli-agents-{}-{}",

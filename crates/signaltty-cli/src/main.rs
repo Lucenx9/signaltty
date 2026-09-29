@@ -2,6 +2,7 @@ mod attach;
 mod client;
 mod daemon;
 mod integration;
+mod skill;
 
 use std::path::PathBuf;
 
@@ -113,6 +114,11 @@ enum Command {
     Integration {
         #[command(subcommand)]
         op: IntegrationOp,
+    },
+    /// The gated agent skill (directive 5): read, check, install.
+    Skill {
+        #[command(subcommand)]
+        op: SkillOp,
     },
     /// Wait until a pane reaches a state (lifecycle, attention, exited, seen).
     Wait {
@@ -265,6 +271,29 @@ enum PluginOp {
 }
 
 #[derive(Debug, Subcommand)]
+enum SkillOp {
+    /// Print the skill document (agents read this inside a pane).
+    Cat,
+    /// Gate: exit 0 inside a managed pane, 1 outside.
+    Check,
+    /// Install the skill file into the harness skills dirs.
+    Install {
+        #[arg(long)]
+        home: Option<String>,
+    },
+    /// Remove skill files installed by `install`.
+    Uninstall {
+        #[arg(long)]
+        home: Option<String>,
+    },
+    /// Show skill install status.
+    Status {
+        #[arg(long)]
+        home: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum IntegrationOp {
     /// Install hook shims for an agent (or `all`).
     Install {
@@ -390,8 +419,13 @@ async fn run(args: Args) -> Result<(), CliError> {
             }
             let p = c.call("pane.spawn", sparams).await?;
             let pane_id = p["pane"]["id"].as_str().unwrap_or("?").to_string();
-            let result = json!({"workspace_id": ws_id, "pane_id": pane_id});
-            emit(json, &result, format!("workspace {ws_id} pane {pane_id}"));
+            let handle = w["workspace"]["handle"].as_str().unwrap_or("?").to_string();
+            let result = json!({"workspace_id": ws_id, "handle": handle, "pane_id": pane_id});
+            emit(
+                json,
+                &result,
+                format!("workspace {ws_id} ({handle}) pane {pane_id}"),
+            );
             Ok(())
         }
         Command::Workspace { op } => {
@@ -402,8 +436,9 @@ async fn run(args: Args) -> Result<(), CliError> {
                     let mut human = String::new();
                     for w in r["workspaces"].as_array().cloned().unwrap_or_default() {
                         human.push_str(&format!(
-                            "{}  {}  {}  branch={}\n",
+                            "{}  {}  {}  {}  branch={}\n",
                             w["id"].as_str().unwrap_or("?"),
+                            w["handle"].as_str().unwrap_or("-"),
                             w["name"].as_str().unwrap_or("?"),
                             w["cwd"].as_str().unwrap_or("?"),
                             w["git"]["branch"].as_str().unwrap_or("-"),
@@ -625,6 +660,38 @@ async fn run(args: Args) -> Result<(), CliError> {
                 }
             }
         }
+        Command::Skill { op } => match op {
+            SkillOp::Cat => {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "text": skill::TEXT})
+                    );
+                } else {
+                    print!("{}", skill::TEXT);
+                }
+                Ok(())
+            }
+            SkillOp::Check => match skill::check() {
+                Ok(pane) => {
+                    emit(json, &json!({"pane": pane}), format!("managed pane {pane}"));
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            },
+            SkillOp::Install { home } => {
+                let home = integration::home_dir(home.as_deref())?;
+                skill::install(&home, json)
+            }
+            SkillOp::Uninstall { home } => {
+                let home = integration::home_dir(home.as_deref())?;
+                skill::uninstall(&home, json)
+            }
+            SkillOp::Status { home } => {
+                let home = integration::home_dir(home.as_deref())?;
+                skill::status(&home, json)
+            }
+        },
         Command::Wait {
             pane,
             until,
