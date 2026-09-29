@@ -126,6 +126,19 @@
 .row-status.lifecycle-failed,
 .row-status.attention-error { color: var(--error-color); }
 
+/* Section label over the rows that need you; a hairline closes it. */
+.sidebar-section {
+  padding: 8px 18px 2px 18px;
+  font-size: 0.75em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: alpha(currentColor, 0.5);
+}
+.sidebar-section-rule {
+  margin: 6px 18px;
+  background-color: alpha(currentColor, 0.08);
+}
+
 /* Close shares the slot: it crossfades in over the status on hover or
  * keyboard focus, so resting rows carry no controls. */
 .row-close {
@@ -134,10 +147,14 @@
   padding: 0;
   opacity: 0;
   color: alpha(currentColor, 0.6);
-  transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease;
+  transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease,
+    transform 120ms ease-out;
 }
 .row-close:hover {
   color: inherit;
+}
+.row-close:active {
+  transform: scale(0.92);
 }
 .navigation-sidebar > row:hover .row-close,
 .navigation-sidebar > row:focus-within .row-close {

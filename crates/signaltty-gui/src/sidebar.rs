@@ -12,7 +12,8 @@
 //! ```
 //!
 //! The close button shares the status slot and crossfades in on hover
-//! or keyboard focus, so a resting row carries no controls.
+//! or keyboard focus, so a resting row carries no controls. When rows
+//! need you, they sit under a "Needs you" label with a hairline below.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -112,6 +113,30 @@ pub fn sort_summaries(items: &mut [WsSummary]) {
     });
 }
 
+/// Rows the human must act on (warning and up). Sorting puts them
+/// first, so they form one contiguous "Needs you" section.
+pub fn needs_you(a: Attention) -> bool {
+    a.severity() >= Attention::Warning.severity()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SectionHeader {
+    /// Label above the first row that needs you.
+    NeedsYou,
+    /// Hairline between that section and the rest.
+    Rest,
+}
+
+/// Header for a row given whether it and the row above need you. With
+/// nothing waiting there are no headers at all.
+pub fn section_header(above: Option<bool>, needs: bool) -> Option<SectionHeader> {
+    match (above, needs) {
+        (None | Some(false), true) => Some(SectionHeader::NeedsYou),
+        (Some(true), false) => Some(SectionHeader::Rest),
+        _ => None,
+    }
+}
+
 /// Display name for real agents; shells and unknown commands have none.
 pub fn agent_name(kind: AgentKind) -> Option<&'static str> {
     match kind {
@@ -203,6 +228,11 @@ impl Row {
     }
 
     fn update(&mut self, s: WsSummary) {
+        if needs_you(s.attention) {
+            self.row.add_css_class(NEEDS_YOU);
+        } else {
+            self.row.remove_css_class(NEEDS_YOU);
+        }
         self.name.set_text(&s.name);
         self.place.set_text(&s.place);
         self.place.set_tooltip_text(Some(&s.place));
@@ -230,6 +260,39 @@ impl Row {
     }
 }
 
+/// Row class the section headers key on.
+const NEEDS_YOU: &str = "needs-you";
+
+fn apply_section_header(row: &gtk4::ListBoxRow, above: Option<&gtk4::ListBoxRow>) {
+    let header = section_header(
+        above.map(|r| r.has_css_class(NEEDS_YOU)),
+        row.has_css_class(NEEDS_YOU),
+    );
+    let widget: Option<gtk4::Widget> = match header {
+        None => None,
+        Some(SectionHeader::NeedsYou) => {
+            let label = gtk4::Label::new(Some("Needs you"));
+            label.set_xalign(0.0);
+            label.add_css_class("sidebar-section");
+            Some(label.upcast())
+        }
+        Some(SectionHeader::Rest) => {
+            let rule = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+            rule.add_css_class("sidebar-section-rule");
+            Some(rule.upcast())
+        }
+    };
+    // Keep an equivalent header rather than churn widgets on refresh.
+    let same = match (&widget, row.header()) {
+        (None, None) => true,
+        (Some(new), Some(old)) => new.type_() == old.type_(),
+        _ => false,
+    };
+    if !same {
+        row.set_header(widget.as_ref());
+    }
+}
+
 type SelectCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
 type CloseCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
 
@@ -246,6 +309,7 @@ impl Sidebar {
         let list = gtk4::ListBox::new();
         list.add_css_class("navigation-sidebar");
         list.set_selection_mode(gtk4::SelectionMode::Single);
+        list.set_header_func(apply_section_header);
         let on_select: SelectCallback = Rc::new(RefCell::new(None));
         let on_close: CloseCallback = Rc::new(RefCell::new(None));
         {
@@ -308,6 +372,8 @@ impl Sidebar {
                 }
             }
         }
+        // Section membership can change without a move.
+        self.list.invalidate_headers();
     }
 
     /// Re-render relative times ("now" → "2m") between server events.
@@ -356,6 +422,27 @@ mod tests {
 
     fn names(items: &[WsSummary]) -> Vec<&str> {
         items.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    #[test]
+    fn sections_appear_only_around_rows_that_need_you() {
+        use SectionHeader::*;
+        let headers = |needs: &[bool]| -> Vec<Option<SectionHeader>> {
+            needs
+                .iter()
+                .enumerate()
+                .map(|(i, n)| section_header(i.checked_sub(1).map(|j| needs[j]), *n))
+                .collect()
+        };
+        assert_eq!(
+            headers(&[true, true, false, false]),
+            [Some(NeedsYou), None, Some(Rest), None]
+        );
+        assert_eq!(headers(&[false, false]), [None, None], "calm → no headers");
+        assert_eq!(headers(&[true]), [Some(NeedsYou)]);
+        assert!(needs_you(Attention::Warning));
+        assert!(needs_you(Attention::PermissionRequired));
+        assert!(!needs_you(Attention::Unread));
     }
 
     #[test]

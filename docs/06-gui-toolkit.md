@@ -72,6 +72,10 @@ verb-tense run state), then branch or folder with the agents on the
 right. The slot says one thing — attention outranks lifecycle — and
 shows the relative time when nothing needs saying. Colour is spent only
 there; the name, headline and meta step down in weight and opacity.
+Rows at warning severity or above sort first and sit under a "Needs
+you" label with a hairline below; with nothing waiting there are no
+section headers. The header's attention count is a pill tinted by the
+worst attention it counts, in the same colours.
 
 Rules that keep it calm:
 
