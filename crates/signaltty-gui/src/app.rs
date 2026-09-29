@@ -19,7 +19,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gtk4::prelude::*;
 use gtk4::{gio, glib};
@@ -63,8 +63,29 @@ struct Model {
 struct TabEntry {
     page: adw::TabPage,
     bin: adw::Bin,
-    layout_sig: String,
+    layout: Option<Layout>,
 }
+
+/// One live divider. `path` is the split's address from the tab root
+/// (`false` = first, `true` = second), the same address
+/// `tab.set_ratio` takes, so a drag maps back to the server node.
+struct PanedEntry {
+    weak: glib::WeakRef<gtk4::Paned>,
+    path: Vec<bool>,
+    /// Last ratio written from server data (build or echo).
+    applied: f32,
+    /// Set once allocated and positioned, or once the user drags
+    /// (user intent wins over the initial placement).
+    positioned: bool,
+    /// User-dragged ratio awaiting settle + send, with last move time.
+    pending: Option<(f32, Instant)>,
+}
+
+/// Ratios within this of the server value count as unchanged; keeps
+/// pixel rounding from scheduling endless sends.
+const RATIO_EPS: f32 = 0.002;
+/// A dragged divider is sent once it rests this long: never mid-drag.
+const RATIO_SETTLE: Duration = Duration::from_millis(300);
 
 /// Header button: how many panes need you; click jumps to the next.
 struct AttentionButton {
@@ -96,8 +117,13 @@ pub struct App {
     reconciling: Cell<bool>,
     gui_tab: RefCell<Option<String>>,
     focused_pane: RefCell<Option<String>>,
-    /// Fresh splits awaiting their first positioned allocation.
-    splits: RefCell<Vec<(glib::WeakRef<gtk4::Paned>, f32)>>,
+    /// Live dividers per tab: initial placement, drag persistence
+    /// and in-place server updates all go through here instead of
+    /// rebuilding the widget tree.
+    paneds: RefCell<HashMap<String, Vec<PanedEntry>>>,
+    /// Set while applying server ratios, so programmatic moves are
+    /// not mistaken for user drags (`notify::position` is synchronous).
+    suppress_paned: Cell<bool>,
     /// The New Workspace dialog is single-instance: repeats of the
     /// action (or its accelerator) while it is open are ignored.
     new_ws_open: Cell<bool>,
@@ -270,7 +296,8 @@ impl App {
             reconciling: Cell::new(false),
             gui_tab: RefCell::new(None),
             focused_pane: RefCell::new(None),
-            splits: RefCell::new(Vec::new()),
+            paneds: RefCell::new(HashMap::new()),
+            suppress_paned: Cell::new(false),
             new_ws_open: Cell::new(false),
             me: RefCell::new(Weak::new()),
         });
@@ -427,21 +454,166 @@ impl App {
         for w in self.widgets.borrow().values() {
             w.sync_size();
         }
-        self.splits.borrow_mut().retain(|(weak, ratio)| {
-            let Some(paned) = weak.upgrade() else {
-                return false;
-            };
-            let total = match paned.orientation() {
-                gtk4::Orientation::Vertical => paned.height(),
-                _ => paned.width(),
-            };
-            if total > 100 {
-                paned.set_position((total as f32 * ratio) as i32);
-                false
-            } else {
-                true
+        self.sync_paneds();
+    }
+
+    /// One pass over live dividers: place fresh ones, send rested
+    /// drags, drop dead widgets. Jobs are gathered first so no borrow
+    /// is held across a move (`notify::position` is synchronous) or a
+    /// send (the actor call blocks the UI thread).
+    fn sync_paneds(&self) {
+        struct Job {
+            tab_id: String,
+            path: Vec<bool>,
+            position: Option<i32>,
+            send: Option<f32>,
+        }
+        let mut jobs = Vec::new();
+        {
+            let paneds = self.paneds.borrow();
+            for (tab_id, entries) in paneds.iter() {
+                for e in entries {
+                    let Some(paned) = e.weak.upgrade() else {
+                        continue;
+                    };
+                    let total = match paned.orientation() {
+                        gtk4::Orientation::Vertical => paned.height(),
+                        _ => paned.width(),
+                    };
+                    if total <= 100 {
+                        continue; // unallocated; try next tick
+                    }
+                    let mut job = Job {
+                        tab_id: tab_id.clone(),
+                        path: e.path.clone(),
+                        position: None,
+                        send: None,
+                    };
+                    if !e.positioned {
+                        job.position = Some((total as f32 * e.applied) as i32);
+                    }
+                    if let Some((ratio, at)) = e.pending {
+                        if at.elapsed() >= RATIO_SETTLE {
+                            job.send = Some(ratio);
+                        }
+                    }
+                    if job.position.is_some() || job.send.is_some() {
+                        jobs.push(job);
+                    }
+                }
             }
+        }
+        for job in jobs {
+            if let Some(pos) = job.position {
+                self.place_paned(&job.tab_id, &job.path, pos);
+            }
+            if let Some(ratio) = job.send {
+                self.send_ratio(&job.tab_id, &job.path, ratio);
+            }
+        }
+        self.paneds.borrow_mut().retain(|_, entries| {
+            entries.retain(|e| e.weak.upgrade().is_some());
+            !entries.is_empty()
         });
+    }
+
+    /// Move a divider to a server ratio without tripping the drag
+    /// detector.
+    fn place_paned(&self, tab_id: &str, path: &[bool], position: i32) {
+        let paned = self
+            .paneds
+            .borrow()
+            .get(tab_id)
+            .and_then(|v| v.iter().find(|e| e.path == path))
+            .and_then(|e| e.weak.upgrade());
+        let Some(paned) = paned else { return };
+        self.suppress_paned.set(true);
+        paned.set_position(position);
+        self.suppress_paned.set(false);
+        if let Some(entries) = self.paneds.borrow_mut().get_mut(tab_id) {
+            if let Some(e) = entries.iter_mut().find(|e| e.path == path) {
+                e.positioned = true;
+            }
+        }
+    }
+
+    /// Persist a rested drag. On success the echoed ratio becomes the
+    /// baseline (the server may have clamped it); on failure the drag
+    /// stays queued for the next tick unless its divider is gone, in
+    /// which case it is dropped as stale.
+    fn send_ratio(&self, tab_id: &str, path: &[bool], ratio: f32) {
+        let ipath: Vec<u8> = path.iter().map(|b| u8::from(*b)).collect();
+        match self.actor.call(
+            "tab.set_ratio",
+            json!({"tab_id": tab_id, "path": ipath, "ratio": ratio}),
+        ) {
+            Ok(v) => {
+                let confirmed = v
+                    .get("tab")
+                    .and_then(|t| t.get("layout"))
+                    .and_then(|l| serde_json::from_value::<Layout>(l.clone()).ok())
+                    .and_then(|l| l.ratio_at_path(path))
+                    .unwrap_or(ratio);
+                self.clear_pending(tab_id, path, Some(confirmed));
+            }
+            Err(_) => {
+                if !self.split_alive(tab_id, path) {
+                    self.clear_pending(tab_id, path, None);
+                }
+            }
+        }
+    }
+
+    fn clear_pending(&self, tab_id: &str, path: &[bool], applied: Option<f32>) {
+        if let Some(entries) = self.paneds.borrow_mut().get_mut(tab_id) {
+            if let Some(e) = entries.iter_mut().find(|e| e.path == path) {
+                if let Some(a) = applied {
+                    e.applied = a;
+                }
+                e.pending = None;
+            }
+        }
+    }
+
+    /// Does the model still have a split at this address?
+    fn split_alive(&self, tab_id: &str, path: &[bool]) -> bool {
+        self.model
+            .borrow()
+            .tabs
+            .iter()
+            .find(|t| t.id == tab_id)
+            .and_then(|t| t.layout.as_ref())
+            .is_some_and(|l| l.has_split_at(path))
+    }
+
+    /// A divider moved (user drag; programmatic moves are suppressed).
+    /// Records the ratio for the settle-then-send pass. Dragging back
+    /// onto the server value clears the queue.
+    fn on_paned_position(&self, tab_id: &str, path: &[bool], paned: &gtk4::Paned) {
+        if self.suppress_paned.get() {
+            return;
+        }
+        let total = match paned.orientation() {
+            gtk4::Orientation::Vertical => paned.height(),
+            _ => paned.width(),
+        };
+        if total <= 0 {
+            return;
+        }
+        let ratio = (paned.position() as f32 / total as f32).clamp(0.0, 1.0);
+        let mut paneds = self.paneds.borrow_mut();
+        let Some(entry) = paneds
+            .get_mut(tab_id)
+            .and_then(|v| v.iter_mut().find(|e| e.path == path))
+        else {
+            return;
+        };
+        entry.positioned = true; // the user owns this divider now
+        if (ratio - entry.applied).abs() <= RATIO_EPS {
+            entry.pending = None;
+        } else {
+            entry.pending = Some((ratio, Instant::now()));
+        }
     }
 
     fn weak(&self) -> Weak<App> {
@@ -605,8 +777,9 @@ impl App {
     }
 
     /// Reconcile tab pages with model tabs. A tab's widget tree is only
-    /// rebuilt when its layout changed (split drags survive refreshes);
-    /// titles and status are updated in place.
+    /// rebuilt when its layout structure changed (split drags survive
+    /// refreshes); ratio-only changes move the live dividers in place,
+    /// and titles and status are updated in place.
     fn render_tabs(&self) {
         let (tabs, server_active) = {
             let m = self.model.borrow();
@@ -638,22 +811,24 @@ impl App {
             .collect();
         for (id, page) in stale {
             self.tabs.borrow_mut().remove(&id);
+            self.paneds.borrow_mut().remove(&id);
             self.tab_view.close_page(&page);
         }
         for tab in &tabs {
-            let sig = serde_json::to_string(&tab.layout).unwrap_or_default();
             let existing = self
                 .tabs
                 .borrow()
                 .get(&tab.id)
-                .map(|e| (e.page.clone(), e.bin.clone(), e.layout_sig != sig));
+                .map(|e| (e.page.clone(), e.bin.clone(), e.layout.clone()));
             let page = match existing {
-                Some((page, bin, changed)) => {
-                    if changed {
+                Some((page, bin, old_layout)) => {
+                    if !same_layout(&old_layout, &tab.layout) {
                         self.set_tab_layout(&bin, tab);
                         if let Some(e) = self.tabs.borrow_mut().get_mut(&tab.id) {
-                            e.layout_sig = sig;
+                            e.layout = tab.layout.clone();
                         }
+                    } else {
+                        self.apply_server_ratios(&tab.id, tab.layout.as_ref());
                     }
                     page
                 }
@@ -667,7 +842,7 @@ impl App {
                         TabEntry {
                             page: page.clone(),
                             bin,
-                            layout_sig: sig,
+                            layout: tab.layout.clone(),
                         },
                     );
                     page
@@ -719,8 +894,50 @@ impl App {
         page.set_needs_attention(attention.severity() >= Attention::InputRequired.severity());
     }
 
+    /// Ratio-only server updates move live dividers instead of
+    /// rebuilding, which would drop in-flight drags and loop echoes.
+    fn apply_server_ratios(&self, tab_id: &str, layout: Option<&Layout>) {
+        let Some(layout) = layout else { return };
+        let mut places: Vec<(Vec<bool>, i32)> = Vec::new();
+        {
+            let mut paneds = self.paneds.borrow_mut();
+            let Some(list) = paneds.get_mut(tab_id) else {
+                return;
+            };
+            for e in list.iter_mut() {
+                if e.pending.is_some() {
+                    continue; // unsent drag wins; its send carries the newer value
+                }
+                let Some(ratio) = layout.ratio_at_path(&e.path) else {
+                    continue;
+                };
+                if (e.applied - ratio).abs() <= RATIO_EPS {
+                    continue;
+                }
+                e.applied = ratio;
+                if !e.positioned {
+                    continue; // the sizing pass places from the baseline
+                }
+                let Some(paned) = e.weak.upgrade() else {
+                    continue;
+                };
+                let total = match paned.orientation() {
+                    gtk4::Orientation::Vertical => paned.height(),
+                    _ => paned.width(),
+                };
+                if total > 100 {
+                    places.push((e.path.clone(), (total as f32 * ratio) as i32));
+                }
+            }
+        }
+        for (path, pos) in places {
+            self.place_paned(tab_id, &path, pos);
+        }
+    }
+
     fn set_tab_layout(&self, bin: &adw::Bin, tab: &Tab) {
         // Drop the old tree first so reused pane cards are free to move.
+        self.paneds.borrow_mut().remove(&tab.id);
         bin.set_child(None::<&gtk4::Widget>);
         let child: gtk4::Widget = match &tab.layout {
             None => {
@@ -742,7 +959,7 @@ impl App {
                 page.set_child(Some(&btn));
                 page.upcast()
             }
-            Some(layout) => self.build_layout(layout),
+            Some(layout) => self.build_layout(&tab.id, &mut Vec::new(), layout),
         };
         if matches!(tab.layout, Some(Layout::Split { .. })) {
             bin.add_css_class("split");
@@ -752,7 +969,7 @@ impl App {
         bin.set_child(Some(&child));
     }
 
-    fn build_layout(&self, layout: &Layout) -> gtk4::Widget {
+    fn build_layout(&self, tab_id: &str, path: &mut Vec<bool>, layout: &Layout) -> gtk4::Widget {
         match layout {
             Layout::Pane { pane_id } => {
                 let root = self.widget_for(pane_id).root.clone();
@@ -769,13 +986,36 @@ impl App {
                     SplitDir::Right => gtk4::Orientation::Horizontal,
                     SplitDir::Down => gtk4::Orientation::Vertical,
                 });
-                paned.set_start_child(Some(&self.build_layout(first)));
-                paned.set_end_child(Some(&self.build_layout(second)));
+                path.push(false);
+                paned.set_start_child(Some(&self.build_layout(tab_id, path, first)));
+                path.pop();
+                path.push(true);
+                paned.set_end_child(Some(&self.build_layout(tab_id, path, second)));
+                path.pop();
                 paned.set_shrink_start_child(false);
                 paned.set_shrink_end_child(false);
                 paned.set_wide_handle(true);
-                // Position once allocated (see sync_sizes tick).
-                self.splits.borrow_mut().push((paned.downgrade(), *ratio));
+                // Drags report back through on_paned_position; the sizing
+                // pass positions this once allocated (see sync_paneds).
+                let w = self.weak();
+                let watched_tab = tab_id.to_string();
+                let watched_path = path.clone();
+                paned.connect_position_notify(move |paned| {
+                    if let Some(a) = w.upgrade() {
+                        a.on_paned_position(&watched_tab, &watched_path, paned);
+                    }
+                });
+                self.paneds
+                    .borrow_mut()
+                    .entry(tab_id.to_string())
+                    .or_default()
+                    .push(PanedEntry {
+                        weak: paned.downgrade(),
+                        path: path.clone(),
+                        applied: *ratio,
+                        positioned: false,
+                        pending: None,
+                    });
                 paned.upcast()
             }
         }
@@ -1172,6 +1412,15 @@ impl App {
             .comments("A native workspace for parallel AI coding agents.")
             .build();
         about.present(Some(&self.window));
+    }
+}
+
+/// Layout equality ignoring ratios (`None` equals only `None`).
+fn same_layout(a: &Option<Layout>, b: &Option<Layout>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.same_structure(b),
+        _ => false,
     }
 }
 

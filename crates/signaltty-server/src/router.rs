@@ -113,6 +113,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::TAB_CREATE => h_tab_create(ctx, &req.params),
         method::TAB_CLOSE => h_tab_close(ctx, &req.params),
         method::TAB_SET_LAYOUT => h_tab_set_layout(ctx, &req.params),
+        method::TAB_SET_RATIO => h_tab_set_ratio(ctx, &req.params),
         method::PANE_SPAWN => h_pane_spawn(ctx, &req.params),
         method::PANE_SPLIT => h_pane_split(ctx, &req.params),
         method::PANE_GET => h_pane_get(ctx, &req.params),
@@ -412,6 +413,54 @@ fn h_tab_set_layout(ctx: &Ctx, params: &Value) -> Handler {
         .get_mut(&id)
         .ok_or_else(|| (code::NO_SUCH_TAB.to_string(), id.clone()))?;
     tab.layout = Some(layout);
+    let tab = tab.clone();
+    let ev = s.emit(event::TAB_UPDATED, json!({"tab": tab}));
+    drop(s);
+    let _ = ctx.bcast.send(ev);
+    ctx.mark_persist();
+    Ok((json!({"tab": tab}), ConnEffect::default()))
+}
+
+/// Move one divider: `path` holds 0 (first) / 1 (second) choices from
+/// the tab root (`[]` = root) and must resolve to a `Split`. A
+/// targeted update, so a dragged divider never overwrites a layout
+/// another client changed concurrently (whole-tree `tab.set_layout`
+/// would). Out-of-range ratios clamp; the echo is `tab.updated`.
+fn h_tab_set_ratio(ctx: &Ctx, params: &Value) -> Handler {
+    let id = get_str(params, "tab_id")?;
+    let path: Vec<bool> = params
+        .get("path")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .map(|v| match v.as_u64() {
+                    Some(0) => Ok(false),
+                    Some(1) => Ok(true),
+                    _ => Err(()),
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()
+        .map_err(|_| bad_params("'path' must be an array of 0/1"))?
+        .ok_or_else(|| bad_params("missing 'path' array"))?;
+    let ratio = params
+        .get("ratio")
+        .and_then(|v| v.as_f64())
+        .filter(|r| r.is_finite())
+        .map(|r| signaltty_core::model::Layout::clamp_ratio(r as f32))
+        .ok_or_else(|| bad_params("missing or invalid 'ratio'"))?;
+    let mut s = ctx.store.write().unwrap();
+    let tab = s
+        .tabs
+        .get_mut(&id)
+        .ok_or_else(|| (code::NO_SUCH_TAB.to_string(), id.clone()))?;
+    let applied = tab
+        .layout
+        .as_mut()
+        .is_some_and(|layout| layout.set_ratio_at_path(&path, ratio));
+    if !applied {
+        return Err(bad_params("path does not resolve to a split"));
+    }
     let tab = tab.clone();
     let ev = s.emit(event::TAB_UPDATED, json!({"tab": tab}));
     drop(s);

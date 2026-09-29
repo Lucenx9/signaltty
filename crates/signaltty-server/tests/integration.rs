@@ -792,3 +792,102 @@ async fn plugin_reload_and_failure_isolation() {
     srv.shutdown().await;
     std::fs::remove_dir_all(&base).ok();
 }
+
+fn ratio_at(layout: &serde_json::Value, path: &[usize]) -> f64 {
+    let mut node = layout;
+    for side in path {
+        node = &node[if *side == 0 { "first" } else { "second" }];
+    }
+    node["ratio"].as_f64().unwrap()
+}
+
+#[tokio::test]
+async fn set_ratio_persists_divider_and_clamps() {
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let s = c
+        .call(
+            "pane.split",
+            json!({"pane_id": pane, "direction": "right", "argv": ["sleep", "30"]}),
+        )
+        .await
+        .unwrap();
+    let pane2 = s["pane"]["id"].as_str().unwrap().to_string();
+    let pane2_tab = s["pane"]["tab_id"].as_str().unwrap().to_string();
+    c.call(
+        "pane.split",
+        json!({"pane_id": pane2, "direction": "right", "argv": ["sleep", "30"]}),
+    )
+    .await
+    .unwrap();
+    let layout = c
+        .call("workspace.get", json!({"workspace_id": ws}))
+        .await
+        .unwrap()["tabs"][0]["layout"]
+        .clone();
+    // Equal thirds through the whole stack, not 1/2 + 1/4 + 1/4.
+    assert!((ratio_at(&layout, &[]) - 1.0 / 3.0).abs() < 1e-6);
+    assert!((ratio_at(&layout, &[1]) - 0.5).abs() < 1e-6);
+
+    // A dragged divider persists.
+    let r = c
+        .call(
+            "tab.set_ratio",
+            json!({"tab_id": pane2_tab, "path": [], "ratio": 0.25}),
+        )
+        .await
+        .unwrap();
+    assert!((ratio_at(&r["tab"]["layout"], &[]) - 0.25).abs() < 1e-6);
+    let g = c
+        .call("workspace.get", json!({"workspace_id": ws}))
+        .await
+        .unwrap();
+    assert!((ratio_at(&g["tabs"][0]["layout"], &[]) - 0.25).abs() < 1e-6);
+
+    // Out-of-range ratios clamp instead of collapsing a pane.
+    c.call(
+        "tab.set_ratio",
+        json!({"tab_id": pane2_tab, "path": [], "ratio": 0.99}),
+    )
+    .await
+    .unwrap();
+    let g = c
+        .call("workspace.get", json!({"workspace_id": ws}))
+        .await
+        .unwrap();
+    assert!((ratio_at(&g["tabs"][0]["layout"], &[]) - 0.95).abs() < 1e-6);
+
+    // Bad paths and unknown tabs fail without touching the layout.
+    assert!(c
+        .call(
+            "tab.set_ratio",
+            json!({"tab_id": pane2_tab, "path": [1, 1, 1], "ratio": 0.5}),
+        )
+        .await
+        .is_err());
+    assert!(c
+        .call(
+            "tab.set_ratio",
+            json!({"tab_id": pane2_tab, "path": [2], "ratio": 0.5}),
+        )
+        .await
+        .is_err());
+    assert!(c
+        .call(
+            "tab.set_ratio",
+            json!({"tab_id": "tab_nope", "path": [], "ratio": 0.5}),
+        )
+        .await
+        .is_err());
+
+    // The divider survives a server restart.
+    srv.restart().await;
+    let mut c = srv.client().await;
+    let g = c
+        .call("workspace.get", json!({"workspace_id": ws}))
+        .await
+        .unwrap();
+    assert!((ratio_at(&g["tabs"][0]["layout"], &[]) - 0.95).abs() < 1e-6);
+    srv.shutdown().await;
+}

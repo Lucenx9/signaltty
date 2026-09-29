@@ -95,6 +95,13 @@ instance and shared by Ctrl+Shift+N, the sidebar "+" and the empty
 state; the custom field toggles with plain visibility so nothing
 animates on keyboard navigation.
 
+Dividers persist: each `GtkPaned` reports to `tab.set_ratio` with its
+tree path once the drag rests 300 ms, never mid-drag. Reconciliation
+compares layout structure ignoring ratios, so a ratio-only echo moves
+the live divider in place instead of rebuilding the terminals — no
+event → rebuild → event loop. A divider with an unsent drag always
+wins over an incoming echo until its own send lands.
+
 ## Event refresh and measurement
 
 The GUI merges workspace invalidations into one batch every 16 ms while

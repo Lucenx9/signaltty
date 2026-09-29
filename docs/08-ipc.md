@@ -54,6 +54,7 @@ monotonic server counter; clients can `subscribe {from_seq}` to replay.
 | `tab.create` | `{workspace_id, title?}` | `{tab}` |
 | `tab.close` | `{tab_id}` | `{closed}` |
 | `tab.set_layout` | `{tab_id, layout}` | `{tab}` |
+| `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
 | `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?}` | `{pane}` |
 | `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane}` (new sibling) |
 | `pane.get` | `{pane_id}` | `{pane}` |
@@ -78,6 +79,14 @@ monotonic server counter; clients can `subscribe {from_seq}` to replay.
 `until`: `blocked | done | idle | failed | exited | seen | attention_cleared`.
 Glob subscriptions: `*`, `agent.*`, `pane.*`, `workspace.*`, `tab.*`,
 `attention.*`, `notification.*`, `git.*`, `pty.*`.
+
+`tab.set_ratio` moves one divider: `path` holds 0 (first) / 1
+(second) choices from the tab root (`[]` = root) and must resolve to
+a `Split`, else `BAD_PARAMS`. `ratio` is clamped to 0.05–0.95 so a
+client can never collapse a pane. The echo is `tab.updated`, like
+`tab.set_layout`. GUIs persist dragged dividers through this method
+rather than `tab.set_layout`: a targeted update cannot overwrite a
+layout another client changed concurrently.
 
 ## Events (all carry `seq`)
 

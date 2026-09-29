@@ -113,6 +113,7 @@ pub mod method {
     pub const TAB_CREATE: &str = "tab.create";
     pub const TAB_CLOSE: &str = "tab.close";
     pub const TAB_SET_LAYOUT: &str = "tab.set_layout";
+    pub const TAB_SET_RATIO: &str = "tab.set_ratio";
     pub const PANE_SPAWN: &str = "pane.spawn";
     pub const PANE_SPLIT: &str = "pane.split";
     pub const PANE_GET: &str = "pane.get";

@@ -55,8 +55,15 @@ enum Layout { Pane(PaneId), Split { dir: H|V, ratio: f32, first: Box<Layout>, se
 ```
 
 The GUI renders this tree; the server only stores it. Splitting a pane
-replaces a `Pane` leaf with a `Split`. Closing the last pane of a tab
+replaces a `Pane` leaf with a `Split`, then rebalances the run: every
+visual sibling in the same direction gets an equal share, so repeated
+splits divide a tab into thirds, quarters, and so on instead of
+halving the newest pane. Closing the last pane of a tab
 closes the tab (configurable: keep empty tabs or not; default close).
+Divider positions are plain ratios in the tree; clients move one
+divider with `tab.set_ratio` (path of first/second choices from the
+root, ratio clamped to 0.05–0.95), which persists like any other tab
+change.
 
 ## Pane
 
