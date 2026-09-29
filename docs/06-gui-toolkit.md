@@ -114,7 +114,8 @@ state; the custom field toggles with plain visibility so nothing
 animates on keyboard navigation.
 
 Each sidebar row has a close button for its workspace; it shares the
-status slot and crossfades in over it on hover or keyboard focus. The
+status slot and swaps in over it on hover or keyboard focus — instantly,
+not faded, so the two labels never overlap mid-transition. The
 primary menu's Close Workspace action targets the active workspace. Both show a single
 destructive confirmation that names the workspace and warns that its running
 terminals and agents will stop. Confirming calls the existing
