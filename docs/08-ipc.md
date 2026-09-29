@@ -47,6 +47,7 @@ clients can `subscribe {from_seq}` to replay.
 |---|---|---|
 | `server.status` | — | `{version, protocol, uptime_s, workspaces, tabs, panes, live_panes}` |
 | `server.shutdown` | `{force?}` | `{stopped}` (refuses with `PANES_ALIVE` unless force) |
+| `server.schema` | — | `{protocol, version, methods[], events[], codes[]}` (self-printing contract, same constants the router matches on) |
 | `workspace.create` | `{name?, cwd?}` | `{workspace}` |
 | `workspace.list` | — | `{workspaces:[…]}` |
 | `workspace.get` | `{workspace_id}` | `{workspace, tabs:[…]}` |
@@ -98,7 +99,7 @@ tab.created        tab.updated        tab.closed
 pane.created       pane.updated       pane.exited        pane.closed
 pane.resized       pty.data           pty.snapshot
 agent.working      agent.blocked      agent.done         agent.failed
-agent.idle         agent.unknown
+agent.idle         agent.unknown      agent.exited
 attention.created  attention.updated  attention.cleared
 notification.created
 git.branch_changed

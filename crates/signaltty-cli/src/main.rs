@@ -33,6 +33,8 @@ enum Command {
     Daemon,
     /// Server status.
     Status,
+    /// Print the server's API contract (methods, events, error codes).
+    Schema,
     /// Create a workspace and spawn a pane in it.
     New {
         #[arg(long)]
@@ -306,6 +308,31 @@ async fn run(args: Args) -> Result<(), CliError> {
                 r["tabs"].as_u64().unwrap_or(0),
                 r["panes"].as_u64().unwrap_or(0),
                 r["live_panes"].as_u64().unwrap_or(0),
+            );
+            emit(json, &r, human);
+            Ok(())
+        }
+        Command::Schema => {
+            let mut c = Client::connect(&socket).await?;
+            let r = c.call("server.schema", json!({})).await?;
+            let names = |key: &str| {
+                r[key]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default()
+            };
+            let human = format!(
+                "signaltty {} ({})\nmethods: {}\nevents: {}\ncodes: {}",
+                r["version"].as_str().unwrap_or("?"),
+                r["protocol"].as_str().unwrap_or("?"),
+                names("methods"),
+                names("events"),
+                names("codes"),
             );
             emit(json, &r, human);
             Ok(())

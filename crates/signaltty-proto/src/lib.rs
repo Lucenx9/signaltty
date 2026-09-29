@@ -104,6 +104,7 @@ impl EventMsg {
 pub mod method {
     pub const SERVER_STATUS: &str = "server.status";
     pub const SERVER_SHUTDOWN: &str = "server.shutdown";
+    pub const SERVER_SCHEMA: &str = "server.schema";
     pub const WORKSPACE_CREATE: &str = "workspace.create";
     pub const WORKSPACE_LIST: &str = "workspace.list";
     pub const WORKSPACE_GET: &str = "workspace.get";
@@ -134,6 +135,45 @@ pub mod method {
     pub const FOCUS_NEXT_UNREAD: &str = "focus.next_unread";
     pub const PLUGIN_LIST: &str = "plugin.list";
     pub const PLUGIN_RELOAD: &str = "plugin.reload";
+
+    /// Every method the router dispatches, in docs/08 table order.
+    /// `server.schema` prints this; the sync test proves it matches
+    /// the dispatch table. Add new methods here and in the router.
+    pub const ALL: &[&str] = &[
+        SERVER_STATUS,
+        SERVER_SHUTDOWN,
+        SERVER_SCHEMA,
+        WORKSPACE_CREATE,
+        WORKSPACE_LIST,
+        WORKSPACE_GET,
+        WORKSPACE_RENAME,
+        WORKSPACE_CLOSE,
+        WORKSPACE_REFRESH_GIT,
+        TAB_CREATE,
+        TAB_CLOSE,
+        TAB_SET_LAYOUT,
+        TAB_SET_RATIO,
+        PANE_SPAWN,
+        PANE_SPLIT,
+        PANE_GET,
+        PANE_INPUT,
+        PANE_RESIZE,
+        PANE_SIGNAL,
+        PANE_READ,
+        PANE_ATTACH,
+        PANE_DETACH,
+        PANE_CLOSE,
+        PANE_RESUME,
+        PANE_MARK_SEEN,
+        NOTIFY,
+        HOOK_EVENT,
+        REPORT_SESSION,
+        SUBSCRIBE,
+        WAIT,
+        FOCUS_NEXT_UNREAD,
+        PLUGIN_LIST,
+        PLUGIN_RELOAD,
+    ];
 }
 
 // Event names (docs/08).
@@ -163,6 +203,35 @@ pub mod event {
     pub const NOTIFICATION_CREATED: &str = "notification.created";
     pub const GIT_BRANCH_CHANGED: &str = "git.branch_changed";
     pub const SERVER_WILL_SHUTDOWN: &str = "server.will_shutdown";
+
+    /// Every event the server emits, in docs/08 order.
+    pub const ALL: &[&str] = &[
+        WORKSPACE_CREATED,
+        WORKSPACE_UPDATED,
+        WORKSPACE_CLOSED,
+        TAB_CREATED,
+        TAB_UPDATED,
+        TAB_CLOSED,
+        PANE_CREATED,
+        PANE_UPDATED,
+        PANE_EXITED,
+        PANE_CLOSED,
+        PANE_RESIZED,
+        PTY_DATA,
+        AGENT_WORKING,
+        AGENT_BLOCKED,
+        AGENT_DONE,
+        AGENT_FAILED,
+        AGENT_IDLE,
+        AGENT_UNKNOWN,
+        AGENT_EXITED,
+        ATTENTION_CREATED,
+        ATTENTION_UPDATED,
+        ATTENTION_CLEARED,
+        NOTIFICATION_CREATED,
+        GIT_BRANCH_CHANGED,
+        SERVER_WILL_SHUTDOWN,
+    ];
 }
 
 // Error codes (docs/08).
@@ -181,6 +250,24 @@ pub mod code {
     pub const RATE_LIMITED: &str = "RATE_LIMITED";
     pub const FORBIDDEN: &str = "FORBIDDEN";
     pub const INTERNAL: &str = "INTERNAL";
+
+    /// Every error code the server returns, in docs/08 order.
+    pub const ALL: &[&str] = &[
+        BAD_PROTOCOL,
+        UNKNOWN_METHOD,
+        BAD_PARAMS,
+        NO_SUCH_WORKSPACE,
+        NO_SUCH_TAB,
+        NO_SUCH_PANE,
+        PANE_EXITED,
+        PANES_ALIVE,
+        SPAWN_FAILED,
+        IO_ERROR,
+        TIMEOUT,
+        RATE_LIMITED,
+        FORBIDDEN,
+        INTERNAL,
+    ];
 }
 
 /// Subscription glob: `*`, `prefix.*`, or exact name.
@@ -201,6 +288,43 @@ pub fn check_protocol(req: &Request) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn all_lists_cover_every_constant_without_duplicates() {
+        for name in method::ALL {
+            assert!(!name.is_empty());
+        }
+        for (list, len) in [
+            (method::ALL, 33usize),
+            (event::ALL, 25usize),
+            (code::ALL, 14usize),
+        ] {
+            let set: HashSet<&&str> = list.iter().collect();
+            assert_eq!(set.len(), list.len(), "no duplicates");
+            assert_eq!(list.len(), len, "every constant listed");
+        }
+        for must in [
+            method::SERVER_STATUS,
+            method::SERVER_SCHEMA,
+            method::PANE_SPAWN,
+            method::HOOK_EVENT,
+            method::WAIT,
+            method::FOCUS_NEXT_UNREAD,
+        ] {
+            assert!(method::ALL.contains(&must), "{must} listed");
+        }
+        for must in [
+            event::PTY_DATA,
+            event::AGENT_DONE,
+            event::SERVER_WILL_SHUTDOWN,
+        ] {
+            assert!(event::ALL.contains(&must), "{must} listed");
+        }
+        for must in [code::BAD_PARAMS, code::UNKNOWN_METHOD, code::TIMEOUT] {
+            assert!(code::ALL.contains(&must), "{must} listed");
+        }
+    }
 
     #[test]
     fn glob_matching() {

@@ -61,6 +61,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
     let out: Handler = match req.method.as_str() {
         method::SERVER_STATUS => h_server_status(ctx, &req.params),
         method::SERVER_SHUTDOWN => h_server_shutdown(ctx, &req.params),
+        method::SERVER_SCHEMA => h_server_schema(),
         method::WORKSPACE_CREATE => h_workspace_create(ctx, &req.params),
         method::WORKSPACE_LIST => h_workspace_list(ctx),
         method::WORKSPACE_GET => h_workspace_get(ctx, &req.params),
@@ -117,6 +118,22 @@ fn h_server_status(ctx: &Ctx, _params: &Value) -> Handler {
             "panes": s.panes.len(),
             "live_panes": s.live_panes(),
             "seq": s.seq,
+        }),
+        ConnEffect::default(),
+    ))
+}
+
+/// Self-printing contract: the same constants the router matches
+/// on, so clients (human or agent) can read the API at runtime.
+/// Unknown params are ignored, like `server.status`.
+fn h_server_schema() -> Handler {
+    Ok((
+        json!({
+            "protocol": signaltty_proto::PROTOCOL,
+            "version": env!("CARGO_PKG_VERSION"),
+            "methods": method::ALL,
+            "events": event::ALL,
+            "codes": code::ALL,
         }),
         ConnEffect::default(),
     ))

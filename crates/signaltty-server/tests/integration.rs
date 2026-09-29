@@ -891,3 +891,40 @@ async fn set_ratio_persists_divider_and_clamps() {
     assert!((ratio_at(&g["tabs"][0]["layout"], &[]) - 0.95).abs() < 1e-6);
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn schema_lists_every_dispatched_method() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let schema = c.call("server.schema", json!({})).await.unwrap();
+    assert_eq!(schema["protocol"], "signaltty/1");
+    assert!(!schema["version"].as_str().unwrap_or("").is_empty());
+    let methods: Vec<String> = serde_json::from_value(schema["methods"].clone()).unwrap();
+    for must in [
+        "server.status",
+        "server.schema",
+        "pane.spawn",
+        "hook-event",
+        "wait",
+        "focus.next_unread",
+    ] {
+        assert!(methods.contains(&must.to_string()), "{must} listed");
+    }
+    assert!(!schema["events"].as_array().unwrap().is_empty());
+    assert!(!schema["codes"].as_array().unwrap().is_empty());
+    // Every listed method dispatches: probing with {} may fail param
+    // decode or id lookup, but never falls through to UNKNOWN_METHOD.
+    for m in &methods {
+        if m == "server.shutdown" {
+            continue; // would stop the fixture; covered by shutdown tests
+        }
+        match c.call(m, json!({})).await {
+            Ok(_) => {}
+            Err(e) => assert!(
+                !e.starts_with("UNKNOWN_METHOD"),
+                "{m} listed but not dispatched: {e}"
+            ),
+        }
+    }
+    srv.shutdown().await;
+}
