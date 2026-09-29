@@ -3,13 +3,16 @@
 //! updated in place — refreshes never rebuild them, so selection,
 //! scroll position and status transitions survive every server event.
 //!
-//! Row anatomy (Mail-style, fixed three lines):
+//! Row anatomy (t3code-style, fixed three lines, no leading column):
 //!
 //! ```text
-//!  ◌  api-server                     2m     lifecycle · name · time
-//!     Bash(cargo test -p api)   Approval    headline · attention
-//!     main · claude                         branch/dir · agents
+//!  api-server                 ◌ Working     name · status slot (time when calm)
+//!  Bash(cargo test -p api)                  headline
+//!  feat/auth                     Claude     branch/dir · agents
 //! ```
+//!
+//! The close button shares the status slot and crossfades in on hover
+//! or keyboard focus, so a resting row carries no controls.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,7 +22,7 @@ use gtk4::prelude::*;
 
 use signaltty_core::{AgentKind, Attention, Lifecycle, Pane, Workspace};
 
-use crate::status::{self, AttentionBadge, LifecycleIndicator};
+use crate::status::{self, StatusSlot};
 use crate::util::{tilde, time_ago};
 
 pub struct WsSummary {
@@ -32,8 +35,10 @@ pub struct WsSummary {
     /// Timing of the pane that sets `lifecycle` (see `headline`).
     pub lifecycle_since: Option<DateTime<Utc>>,
     pub last_run_secs: Option<i64>,
-    /// "branch · agents" (directory when not a git repo).
-    pub meta: String,
+    /// Branch, or the directory when not a git repo.
+    pub place: String,
+    /// Agent display names, comma-joined; empty for plain shells.
+    pub agents: String,
     pub last_activity: Option<DateTime<Utc>>,
 }
 
@@ -60,12 +65,6 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
         .collect();
     agents.sort_unstable();
     agents.dedup();
-    let place = ws.git.branch.clone().unwrap_or_else(|| tilde(&ws.cwd));
-    let meta = if agents.is_empty() {
-        place
-    } else {
-        format!("{place} · {}", agents.join(", "))
-    };
     WsSummary {
         id: ws.id.clone(),
         name: ws.name.clone(),
@@ -74,7 +73,8 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
         message,
         lifecycle_since: lead.and_then(|p| p.lifecycle_since),
         last_run_secs: lead.and_then(|p| p.last_run_secs),
-        meta,
+        place: ws.git.branch.clone().unwrap_or_else(|| tilde(&ws.cwd)),
+        agents: agents.join(", "),
         last_activity: panes.iter().map(|p| p.last_activity_at).max(),
     }
 }
@@ -127,11 +127,10 @@ struct Row {
     id: String,
     row: gtk4::ListBoxRow,
     name: gtk4::Label,
-    time: gtk4::Label,
+    status: StatusSlot,
     message: gtk4::Label,
-    meta: gtk4::Label,
-    lifecycle: LifecycleIndicator,
-    badge: AttentionBadge,
+    place: gtk4::Label,
+    agents: gtk4::Label,
     close: gtk4::Button,
     /// Kept so the 30s tick can re-render time-derived text.
     summary: Option<WsSummary>,
@@ -151,18 +150,17 @@ impl Row {
         let name = label(&["workspace-name"]);
         name.set_hexpand(true);
         let message = label(&["workspace-message"]);
-        message.set_hexpand(true);
-        let meta = label(&["caption", "dimmed"]);
-        let time = gtk4::Label::new(None);
-        time.add_css_class("caption");
-        time.add_css_class("numeric");
-        time.add_css_class("dimmed");
-        time.set_halign(gtk4::Align::End);
-        let lifecycle = LifecycleIndicator::new();
-        let badge = AttentionBadge::new();
-        badge.widget.set_halign(gtk4::Align::End);
+        let place = label(&["workspace-meta"]);
+        place.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        place.set_hexpand(true);
+        let agents = label(&["workspace-meta"]);
+        agents.set_halign(gtk4::Align::End);
+        let status = StatusSlot::new();
         let close = gtk4::Button::from_icon_name("window-close-symbolic");
         close.add_css_class("flat");
+        close.add_css_class("circular");
+        close.add_css_class("row-close");
+        close.set_halign(gtk4::Align::End);
         close.set_valign(gtk4::Align::Center);
         let close_id = id.to_string();
         let on_close = Rc::clone(on_close);
@@ -171,18 +169,22 @@ impl Row {
                 cb(close_id.clone());
             }
         });
+        // Status and close share one slot; CSS swaps them on hover.
+        let slot = gtk4::Overlay::new();
+        slot.set_child(Some(&status.widget));
+        slot.add_overlay(&close);
+        slot.set_size_request(28, -1);
+        slot.set_halign(gtk4::Align::End);
 
         let grid = gtk4::Grid::new();
-        grid.set_column_spacing(10);
+        grid.set_column_spacing(8);
         grid.set_row_spacing(2);
         grid.add_css_class("workspace-row");
-        grid.attach(&lifecycle.widget, 0, 0, 1, 1);
-        grid.attach(&name, 1, 0, 1, 1);
-        grid.attach(&time, 2, 0, 1, 1);
-        grid.attach(&message, 1, 1, 1, 1);
-        grid.attach(&badge.widget, 2, 1, 1, 1);
-        grid.attach(&meta, 1, 2, 2, 1);
-        grid.attach(&close, 3, 0, 1, 3);
+        grid.attach(&name, 0, 0, 1, 1);
+        grid.attach(&slot, 1, 0, 1, 1);
+        grid.attach(&message, 0, 1, 2, 1);
+        grid.attach(&place, 0, 2, 1, 1);
+        grid.attach(&agents, 1, 2, 1, 1);
 
         let row = gtk4::ListBoxRow::new();
         row.set_widget_name(id);
@@ -191,11 +193,10 @@ impl Row {
             id: id.to_string(),
             row,
             name,
-            time,
+            status,
             message,
-            meta,
-            lifecycle,
-            badge,
+            place,
+            agents,
             close,
             summary: None,
         }
@@ -203,9 +204,9 @@ impl Row {
 
     fn update(&mut self, s: WsSummary) {
         self.name.set_text(&s.name);
-        self.meta.set_text(&s.meta);
-        self.lifecycle.set(s.lifecycle);
-        self.badge.set(s.attention);
+        self.place.set_text(&s.place);
+        self.place.set_tooltip_text(Some(&s.place));
+        self.agents.set_text(&s.agents);
         self.close
             .set_tooltip_text(Some(&format!("Close {}", s.name)));
         self.close
@@ -224,8 +225,8 @@ impl Row {
             self.message.set_text(&headline);
             self.message.set_tooltip_text(Some(&headline));
         }
-        self.time
-            .set_text(&s.last_activity.map(time_ago).unwrap_or_default());
+        let time = s.last_activity.map(time_ago).unwrap_or_default();
+        self.status.set(s.lifecycle, s.attention, &time);
     }
 }
 
@@ -345,7 +346,8 @@ mod tests {
             message: None,
             lifecycle_since: None,
             last_run_secs: None,
-            meta: String::new(),
+            place: String::new(),
+            agents: String::new(),
             last_activity: minutes_ago.map(|m| {
                 Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap() - chrono::Duration::minutes(m)
             }),

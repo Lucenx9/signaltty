@@ -75,6 +75,48 @@ pub fn lifecycle_label(l: Lifecycle) -> &'static str {
     }
 }
 
+/// What a sidebar row's status slot says: the one state worth a word
+/// and a colour, or `label: None` to show the relative time instead
+/// (with an accent dot when `class` is unread).
+#[derive(Debug, PartialEq, Eq)]
+pub struct RowStatus {
+    pub label: Option<&'static str>,
+    pub class: Option<&'static str>,
+    pub spinner: bool,
+}
+
+/// Attention outranks lifecycle; "Done" only speaks while unseen —
+/// once looked at, a finished turn is just a time.
+pub fn row_status(lifecycle: Lifecycle, attention: Attention) -> RowStatus {
+    let say = |label, class| RowStatus {
+        label: Some(label),
+        class: Some(class),
+        spinner: false,
+    };
+    if let Some(label) = attention_label(attention) {
+        return say(label, attention_class(attention).unwrap_or_default());
+    }
+    match (lifecycle, attention) {
+        (Lifecycle::Working, _) => RowStatus {
+            spinner: true,
+            ..say("Working", "lifecycle-working")
+        },
+        (Lifecycle::Blocked, _) => say("Waiting", "lifecycle-blocked"),
+        (Lifecycle::Failed, _) => say("Failed", "lifecycle-failed"),
+        (Lifecycle::Done, Attention::Unread) => say("Done", "lifecycle-done"),
+        (_, Attention::Unread) => RowStatus {
+            label: None,
+            class: Some("attention-unread"),
+            spinner: false,
+        },
+        _ => RowStatus {
+            label: None,
+            class: None,
+            spinner: false,
+        },
+    }
+}
+
 /// Verb-tense run state (docs/14 §6): "Working for 2m…" while the
 /// agent runs, "Worked for 2m" once the turn is done — same slot, no
 /// mode switch. `None` when the pane is in neither state or the
@@ -191,6 +233,78 @@ impl LifecycleIndicator {
     }
 }
 
+/// Sidebar status slot: `[mark] label`, coloured by one class on the
+/// slot (the mark paints `currentColor`). Shows the relative time when
+/// `row_status` has nothing to say.
+pub struct StatusSlot {
+    pub widget: gtk4::Box,
+    mark: gtk4::Stack,
+    label: gtk4::Label,
+}
+
+const ROW_STATUS_CLASSES: [&str; 9] = [
+    "attention-unread",
+    "attention-input",
+    "attention-permission",
+    "attention-warning",
+    "attention-error",
+    "lifecycle-working",
+    "lifecycle-blocked",
+    "lifecycle-failed",
+    "lifecycle-done",
+];
+
+impl StatusSlot {
+    pub fn new() -> StatusSlot {
+        let dot = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        dot.add_css_class("row-status-dot");
+        dot.set_valign(gtk4::Align::Center);
+        dot.set_halign(gtk4::Align::Center);
+        let spinner = libadwaita::Spinner::new();
+        let mark = gtk4::Stack::new();
+        mark.set_size_request(12, 12);
+        mark.set_valign(gtk4::Align::Center);
+        mark.add_named(&dot, Some("dot"));
+        mark.add_named(&spinner, Some("spinner"));
+        let label = gtk4::Label::new(None);
+        label.add_css_class("numeric");
+        let widget = gtk4::Box::new(gtk4::Orientation::Horizontal, 5);
+        widget.add_css_class("row-status");
+        widget.set_halign(gtk4::Align::End);
+        widget.set_valign(gtk4::Align::Center);
+        widget.append(&mark);
+        widget.append(&label);
+        StatusSlot {
+            widget,
+            mark,
+            label,
+        }
+    }
+
+    /// `time` fills the slot when the status has no word of its own.
+    pub fn set(&self, lifecycle: Lifecycle, attention: Attention, time: &str) {
+        let s = row_status(lifecycle, attention);
+        set_class(&self.widget, &ROW_STATUS_CLASSES, s.class);
+        if s.label.is_some() {
+            self.widget.add_css_class("speaking");
+        } else {
+            self.widget.remove_css_class("speaking");
+        }
+        self.mark.set_visible(s.class.is_some());
+        self.mark
+            .set_visible_child_name(if s.spinner { "spinner" } else { "dot" });
+        let text = s.label.unwrap_or(time);
+        if self.label.text() != text {
+            self.label.set_text(text);
+        }
+        let tooltip = match attention {
+            Attention::None => lifecycle_label(lifecycle),
+            a => attention_tooltip(a),
+        };
+        self.widget.set_tooltip_text(Some(tooltip));
+    }
+}
+
 /// Trailing attention mark: a labelled pill for anything that needs
 /// the human, an accent dot for plain unread, nothing otherwise.
 /// Fades in and out; never shifts neighbours while fading.
@@ -270,6 +384,33 @@ mod tests {
             attention_label(Attention::PermissionRequired),
             Some("Approval")
         );
+    }
+
+    #[test]
+    fn row_status_speaks_for_the_loudest_state_only() {
+        let s = row_status;
+        let label = |l, a| s(l, a).label;
+        assert_eq!(
+            label(Lifecycle::Working, Attention::PermissionRequired),
+            Some("Approval"),
+            "a gate outranks progress"
+        );
+        assert_eq!(label(Lifecycle::Blocked, Attention::None), Some("Waiting"));
+        assert_eq!(label(Lifecycle::Failed, Attention::None), Some("Failed"));
+        let working = s(Lifecycle::Working, Attention::Unread);
+        assert_eq!(working.label, Some("Working"));
+        assert!(working.spinner);
+        assert_eq!(label(Lifecycle::Done, Attention::Unread), Some("Done"));
+        assert_eq!(label(Lifecycle::Done, Attention::None), None, "seen → time");
+        assert_eq!(
+            s(Lifecycle::Idle, Attention::Unread),
+            RowStatus {
+                label: None,
+                class: Some("attention-unread"),
+                spinner: false
+            }
+        );
+        assert_eq!(s(Lifecycle::Idle, Attention::None).class, None);
     }
 
     #[test]

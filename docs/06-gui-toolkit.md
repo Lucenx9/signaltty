@@ -54,16 +54,24 @@ accelerator. Colour comes only from libadwaita variables, so light,
 dark, the system accent and high contrast follow the desktop;
 terminals take the desktop monospace font and a matching palette.
 
-One status vocabulary, rendered identically on every surface
+One status vocabulary, shared by every surface
 (`crates/signaltty-gui/src/status.rs`, colours in `data/style.css`):
 
-| Axis | Sidebar row / pane header | Tab | Pane card |
-|---|---|---|---|
-| lifecycle `working` | spinner | tab spinner | — |
-| lifecycle `blocked`/`failed`/`done` | amber / red / green dot | — | — |
-| attention `unread` | accent dot | indicator icon | hairline accent ring |
-| attention `input`/`warning` | "Input"/"Warning" pill | icon + bar glow | amber ring |
-| attention `permission`/`error` | "Approval"/"Error" pill | icon + bar glow | ring + glow |
+| Axis | Sidebar status slot | Pane header | Tab | Pane card |
+|---|---|---|---|---|
+| lifecycle `working` | spinner + "Working" (accent) | spinner | tab spinner | — |
+| lifecycle `blocked`/`failed` | "Waiting" / "Failed" (amber / red) | amber / red dot | — | — |
+| lifecycle `done` | "Done" (green) while unread, else time | green dot | — | — |
+| attention `unread` | accent dot + time | accent dot | indicator icon | hairline accent ring |
+| attention `input`/`warning` | "Input"/"Warning" (amber) | pill | icon + bar glow | amber ring |
+| attention `permission`/`error` | "Approval"/"Error" (orange / red) | pill | icon + bar glow | ring + inner glow |
+
+A sidebar row is three quiet lines, modelled on t3code's thread rows:
+name with the status slot on the right, the latest message (or the
+verb-tense run state), then branch or folder with the agents on the
+right. The slot says one thing — attention outranks lifecycle — and
+shows the relative time when nothing needs saying. Colour is spent only
+there; the name, headline and meta step down in weight and opacity.
 
 Rules that keep it calm:
 
@@ -95,8 +103,9 @@ instance and shared by Ctrl+Shift+N, the sidebar "+" and the empty
 state; the custom field toggles with plain visibility so nothing
 animates on keyboard navigation.
 
-Each sidebar row has a close button for its workspace. The primary menu's
-Close Workspace action targets the active workspace. Both show a single
+Each sidebar row has a close button for its workspace; it shares the
+status slot and crossfades in over it on hover or keyboard focus. The
+primary menu's Close Workspace action targets the active workspace. Both show a single
 destructive confirmation that names the workspace and warns that its running
 terminals and agents will stop. Confirming calls the existing
 `workspace.close` method and refreshes the full workspace list. Cancel sends

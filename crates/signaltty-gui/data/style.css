@@ -75,16 +75,77 @@
 
 /* ---- sidebar -------------------------------------------------------- */
 
+/* Three quiet lines: the name carries weight, the headline reads as
+ * secondary text, the place is a whisper. Colour is spent only on the
+ * status slot. */
 .workspace-row {
-  padding: 8px 6px 8px 4px;
+  padding: 7px 2px 7px 4px;
 }
 
 .workspace-row .workspace-name {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .workspace-row .workspace-message {
-  opacity: 0.85;
+  font-size: 0.93em;
+  color: alpha(currentColor, 0.72);
+}
+
+.workspace-row .workspace-meta {
+  font-size: 0.8em;
+  color: alpha(currentColor, 0.48);
+}
+
+/* Status slot: `[mark] word` in one colour, or a dim time at rest. */
+.row-status {
+  font-size: 0.8em;
+  color: alpha(currentColor, 0.48);
+  transition: opacity 150ms ease, color 200ms ease;
+}
+.row-status.speaking {
+  font-weight: 600;
+}
+
+.row-status-dot {
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 999px;
+  background-color: currentColor;
+}
+/* Unread colours the dot only; the time beside it stays quiet. */
+.row-status.attention-unread .row-status-dot {
+  background-color: var(--accent-bg-color);
+}
+
+.row-status.lifecycle-working { color: var(--accent-color); }
+.row-status.lifecycle-done { color: var(--success-color); }
+.row-status.lifecycle-blocked,
+.row-status.attention-input,
+.row-status.attention-warning { color: var(--warning-color); }
+.row-status.attention-permission { color: var(--orange-5); }
+.row-status.lifecycle-failed,
+.row-status.attention-error { color: var(--error-color); }
+
+/* Close shares the slot: it crossfades in over the status on hover or
+ * keyboard focus, so resting rows carry no controls. */
+.row-close {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  opacity: 0;
+  color: alpha(currentColor, 0.6);
+  transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+.row-close:hover {
+  color: inherit;
+}
+.navigation-sidebar > row:hover .row-close,
+.navigation-sidebar > row:focus-within .row-close {
+  opacity: 1;
+}
+.navigation-sidebar > row:hover .row-status,
+.navigation-sidebar > row:focus-within .row-status {
+  opacity: 0;
 }
 
 /* ---- header: "needs you" button -------------------------------------- */
@@ -216,7 +277,8 @@ button.pill:active,
 /* ---- dark ------------------------------------------------------------ */
 
 @media (prefers-color-scheme: dark) {
-  .status-pill.attention-permission {
+  .status-pill.attention-permission,
+  .row-status.attention-permission {
     color: var(--orange-2);
   }
 
