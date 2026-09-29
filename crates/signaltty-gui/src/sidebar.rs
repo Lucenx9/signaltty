@@ -7,7 +7,7 @@
 //!
 //! ```text
 //!  ◌  api-server                     2m     lifecycle · name · time
-//!     Bash(cargo test -p api)   Approval    latest message · attention
+//!     Bash(cargo test -p api)   Approval    headline · attention
 //!     main · claude                         branch/dir · agents
 //! ```
 
@@ -27,8 +27,11 @@ pub struct WsSummary {
     pub name: String,
     pub lifecycle: Lifecycle,
     pub attention: Attention,
-    /// Latest explicit message, else a lifecycle description.
-    pub message: String,
+    /// Latest explicit message; the headline falls back to run state.
+    pub message: Option<String>,
+    /// Timing of the pane that sets `lifecycle` (see `headline`).
+    pub lifecycle_since: Option<DateTime<Utc>>,
+    pub last_run_secs: Option<i64>,
     /// "branch · agents" (directory when not a git repo).
     pub meta: String,
     pub last_activity: Option<DateTime<Utc>>,
@@ -42,8 +45,13 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
         .iter()
         .filter(|p| p.last_message.as_deref().is_some_and(|m| !m.is_empty()))
         .max_by_key(|p| p.last_activity_at)
-        .and_then(|p| p.last_message.clone())
-        .unwrap_or_else(|| status::lifecycle_label(lifecycle).to_string());
+        .and_then(|p| p.last_message.clone());
+    // The longest-running pane in the rolled-up state speaks for the
+    // workspace: "Working for 12m…" beats a sibling's 1m.
+    let lead = panes
+        .iter()
+        .filter(|p| p.lifecycle == lifecycle)
+        .min_by_key(|p| p.lifecycle_since);
     let mut agents: Vec<&str> = panes
         .iter()
         .filter_map(|p| agent_name(p.agent.kind))
@@ -62,8 +70,28 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
         lifecycle,
         attention,
         message,
+        lifecycle_since: lead.and_then(|p| p.lifecycle_since),
+        last_run_secs: lead.and_then(|p| p.last_run_secs),
         meta,
         last_activity: panes.iter().map(|p| p.last_activity_at).max(),
+    }
+}
+
+impl WsSummary {
+    /// Second-line text: explicit message, else the verb-tense run
+    /// state, else the plain lifecycle word.
+    pub fn headline(&self, now: DateTime<Utc>) -> String {
+        self.message
+            .clone()
+            .or_else(|| {
+                status::run_label(
+                    self.lifecycle,
+                    self.lifecycle_since,
+                    self.last_run_secs,
+                    now,
+                )
+            })
+            .unwrap_or_else(|| status::lifecycle_label(self.lifecycle).to_string())
     }
 }
 
@@ -102,7 +130,8 @@ struct Row {
     meta: gtk4::Label,
     lifecycle: LifecycleIndicator,
     badge: AttentionBadge,
-    last_activity: Option<DateTime<Utc>>,
+    /// Kept so the 30s tick can re-render time-derived text.
+    summary: Option<WsSummary>,
 }
 
 impl Row {
@@ -153,24 +182,28 @@ impl Row {
             meta,
             lifecycle,
             badge,
-            last_activity: None,
+            summary: None,
         }
     }
 
-    fn update(&mut self, s: &WsSummary) {
+    fn update(&mut self, s: WsSummary) {
         self.name.set_text(&s.name);
-        self.message.set_text(&s.message);
-        self.message.set_tooltip_text(Some(&s.message));
         self.meta.set_text(&s.meta);
         self.lifecycle.set(s.lifecycle);
         self.badge.set(s.attention);
-        self.last_activity = s.last_activity;
+        self.summary = Some(s);
         self.refresh_time();
     }
 
     fn refresh_time(&self) {
+        let Some(s) = &self.summary else { return };
+        let headline = s.headline(Utc::now());
+        if self.message.text() != headline {
+            self.message.set_text(&headline);
+            self.message.set_tooltip_text(Some(&headline));
+        }
         self.time
-            .set_text(&self.last_activity.map(time_ago).unwrap_or_default());
+            .set_text(&s.last_activity.map(time_ago).unwrap_or_default());
     }
 }
 
@@ -217,7 +250,7 @@ impl Sidebar {
     /// place. Moves remove + re-insert rows; GTK keeps the selection
     /// on the moved row, so selection follows the workspace, not the
     /// row index (covered by the display test's order assertions).
-    pub fn update(&self, items: &[WsSummary]) {
+    pub fn update(&self, items: Vec<WsSummary>) {
         let mut rows = self.rows.borrow_mut();
         rows.retain(|r| {
             let keep = items.iter().any(|s| s.id == r.id);
@@ -226,7 +259,7 @@ impl Sidebar {
             }
             keep
         });
-        for (i, item) in items.iter().enumerate() {
+        for (i, item) in items.into_iter().enumerate() {
             match rows.iter().position(|r| r.id == item.id) {
                 Some(pos) if pos == i => rows[i].update(item),
                 Some(pos) => {
@@ -278,7 +311,9 @@ mod tests {
             name: name.to_string(),
             lifecycle,
             attention,
-            message: String::new(),
+            message: None,
+            lifecycle_since: None,
+            last_run_secs: None,
             meta: String::new(),
             last_activity: minutes_ago.map(|m| {
                 Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap() - chrono::Duration::minutes(m)
@@ -339,5 +374,16 @@ mod tests {
         ];
         sort_summaries(&mut again);
         assert_eq!(names(&again), names(&items), "order input-independent");
+    }
+
+    #[test]
+    fn headline_prefers_message_then_run_state_then_lifecycle() {
+        let now = Utc::now();
+        let mut s = summary("ws", Lifecycle::Done, Attention::None, Some(0));
+        assert_eq!(s.headline(now), "Done", "no timing → plain word");
+        s.last_run_secs = Some(130);
+        assert_eq!(s.headline(now), "Worked for 2m");
+        s.message = Some("Bash(cargo test)".into());
+        assert_eq!(s.headline(now), "Bash(cargo test)");
     }
 }

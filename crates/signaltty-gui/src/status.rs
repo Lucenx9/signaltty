@@ -3,6 +3,7 @@
 //! attention always look and read the same. Colours live in
 //! data/style.css under the class names produced here.
 
+use chrono::{DateTime, Utc};
 use gtk4::prelude::*;
 
 use signaltty_core::{Attention, Lifecycle, Pane};
@@ -71,6 +72,42 @@ pub fn lifecycle_label(l: Lifecycle) -> &'static str {
         Lifecycle::Idle => "Idle",
         Lifecycle::Failed => "Failed",
         Lifecycle::Exited => "Exited",
+    }
+}
+
+/// Verb-tense run state (docs/14 §6): "Working for 2m…" while the
+/// agent runs, "Worked for 2m" once the turn is done — same slot, no
+/// mode switch. `None` when the pane is in neither state or the
+/// timing is unknown (snapshots from before timing was recorded).
+pub fn run_label(
+    lifecycle: Lifecycle,
+    since: Option<DateTime<Utc>>,
+    last_run_secs: Option<i64>,
+    now: DateTime<Utc>,
+) -> Option<String> {
+    match lifecycle {
+        Lifecycle::Working => {
+            let secs = (now - since?).num_seconds();
+            // The sidebar ticks every 30s; live seconds would read stale.
+            Some(if secs < 60 {
+                "Working…".to_string()
+            } else {
+                format!("Working for {}…", duration(secs))
+            })
+        }
+        Lifecycle::Done => Some(format!("Worked for {}", duration(last_run_secs?))),
+        _ => None,
+    }
+}
+
+/// "40s", "2m", "1h 5m".
+fn duration(secs: i64) -> String {
+    let secs = secs.max(0);
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m", secs / 60),
+        _ if secs % 3600 < 60 => format!("{}h", secs / 3600),
+        _ => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
     }
 }
 
@@ -233,5 +270,32 @@ mod tests {
             attention_label(Attention::PermissionRequired),
             Some("Approval")
         );
+    }
+
+    #[test]
+    fn run_label_switches_tense_in_place() {
+        let now = Utc::now();
+        let ago = |s| Some(now - chrono::Duration::seconds(s));
+        let run = |l, since, last| run_label(l, since, last, now);
+        assert_eq!(run(Lifecycle::Working, ago(20), None).unwrap(), "Working…");
+        assert_eq!(
+            run(Lifecycle::Working, ago(150), None).unwrap(),
+            "Working for 2m…"
+        );
+        assert_eq!(
+            run(Lifecycle::Done, ago(5), Some(40)).unwrap(),
+            "Worked for 40s"
+        );
+        assert_eq!(
+            run(Lifecycle::Done, None, Some(3900)).unwrap(),
+            "Worked for 1h 5m"
+        );
+        assert_eq!(
+            run(Lifecycle::Done, None, Some(7210)).unwrap(),
+            "Worked for 2h"
+        );
+        assert_eq!(run(Lifecycle::Working, None, None), None);
+        assert_eq!(run(Lifecycle::Done, ago(5), None), None);
+        assert_eq!(run(Lifecycle::Idle, ago(5), Some(40)), None);
     }
 }
