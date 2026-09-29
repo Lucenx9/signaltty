@@ -54,6 +54,7 @@ clients can `subscribe {from_seq}` to replay.
 | `workspace.rename` | `{workspace_id, name}` | `{workspace}` |
 | `workspace.close` | `{workspace_id, signal?}` | `{closed}` |
 | `workspace.refresh_git` | `{workspace_id}` | `{workspace}` |
+| `workspace.diff` | `{workspace_id}` | `{workspace_id, branch?, files[{path, added, removed, untracked, binary}], dirs[{dir, added, removed}], added, removed}` (worktree-vs-HEAD `git diff --numstat` as data; non-repo → `BAD_PARAMS`) |
 | `tab.create` | `{workspace_id, title?}` | `{tab}` |
 | `tab.close` | `{tab_id}` | `{closed}` |
 | `tab.set_layout` | `{tab_id, layout}` | `{tab}` |
