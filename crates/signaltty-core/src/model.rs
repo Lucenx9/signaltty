@@ -76,6 +76,51 @@ impl Layout {
         ratio.clamp(Self::MIN_RATIO, Self::MAX_RATIO)
     }
 
+    /// Validate leaf uniqueness and finite ratios, then normalize dividers.
+    pub fn validate_and_normalize(&mut self) -> Result<(), CoreError> {
+        fn validate(
+            layout: &Layout,
+            seen: &mut std::collections::HashSet<String>,
+        ) -> Result<(), CoreError> {
+            match layout {
+                Layout::Pane { pane_id } => {
+                    if !seen.insert(pane_id.clone()) {
+                        return Err(CoreError::BadLayout(format!("duplicate pane {pane_id}")));
+                    }
+                }
+                Layout::Split {
+                    ratio,
+                    first,
+                    second,
+                    ..
+                } => {
+                    if !ratio.is_finite() {
+                        return Err(CoreError::BadLayout("ratio must be finite".into()));
+                    }
+                    validate(first, seen)?;
+                    validate(second, seen)?;
+                }
+            }
+            Ok(())
+        }
+        fn normalize(layout: &mut Layout) {
+            if let Layout::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } = layout
+            {
+                *ratio = Layout::clamp_ratio(*ratio);
+                normalize(first);
+                normalize(second);
+            }
+        }
+        validate(self, &mut std::collections::HashSet::new())?;
+        normalize(self);
+        Ok(())
+    }
+
     /// Replace the leaf holding `pane_id` with a split containing the old
     /// pane and `new_pane_id`, then divide the run evenly: every visual
     /// sibling in the same direction ends up with the same width (or
@@ -640,6 +685,28 @@ pub struct Notification {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn layout_validation_rejects_non_finite_ratios_without_mutation() {
+        use super::{Layout, SplitDir};
+        for ratio in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut layout = Layout::Split {
+                dir: SplitDir::Right,
+                ratio,
+                first: Box::new(Layout::Pane {
+                    pane_id: "a".into(),
+                }),
+                second: Box::new(Layout::Pane {
+                    pane_id: "b".into(),
+                }),
+            };
+            assert!(layout.validate_and_normalize().is_err());
+            assert_eq!(
+                layout.ratio_at_path(&[]).unwrap().to_bits(),
+                ratio.to_bits()
+            );
+        }
+    }
+
     use super::*;
 
     fn pane(id: &str) -> Layout {
