@@ -55,4 +55,6 @@ configuration does not prove a provider trusted or loaded it: Codex still owns
 its native `/hooks` review. Direct launch is the automatic trigger; agents typed
 inside existing shells require previously configured hooks or manual installation.
 
-Delivery: pending push and remote CI.
+Delivery: pushed `6cd930b9d46f94c0194a47a2a44a391cdff8620a` to `origin/main`.
+[Remote CI run 36643280057](https://github.com/Lucenx9/signaltty/actions/runs/36643280057) passed fmt, clippy and all workspace tests.
+Total local verification: 206 workspace + 11 native display tests = 217 passing.

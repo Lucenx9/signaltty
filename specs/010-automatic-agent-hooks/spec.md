@@ -1,6 +1,6 @@
 # Automatic agent hooks
 
-Status: Implemented and verified locally; remote delivery pending. User approved automatic setup on supported agent launches and delivery to main.
+Status: Completed. Delivered on main as 6cd930b; CI run 36643280057 passed. User approved automatic setup on supported agent launches and delivery to main.
 
 ## User scenarios
 
