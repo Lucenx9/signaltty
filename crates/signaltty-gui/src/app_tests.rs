@@ -5,6 +5,28 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn desktop_motion_preference_applies_at_startup_and_changes_live() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let settings = gtk4::Settings::default().unwrap();
+    let original = settings.is_gtk_enable_animations();
+    settings.set_gtk_enable_animations(false);
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    assert!(app.window.has_css_class("reduced-motion"));
+    settings.set_gtk_enable_animations(true);
+    assert!(!app.window.has_css_class("reduced-motion"));
+    settings.set_gtk_enable_animations(false);
+    assert!(app.window.has_css_class("reduced-motion"));
+    app.window.destroy();
+    settings.set_gtk_enable_animations(original);
+}
+
 fn emit(app: &App, name: &str, payload: Value) {
     app.on_event(UiEvent::ServerEvent {
         name: name.into(),

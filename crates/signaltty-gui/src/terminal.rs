@@ -84,7 +84,7 @@ pub struct PaneWidget {
     resume: gtk4::Button,
     decision_bar: gtk4::Box,
     decision_prompt: gtk4::Label,
-    decision_options: gtk4::Box,
+    decision_options: libadwaita::WrapBox,
     decision_hint: gtk4::Label,
     shown_decision: RefCell<Option<String>>,
     on_action: Rc<ActionCallback>,
@@ -118,6 +118,9 @@ impl PaneWidget {
             b.add_css_class("flat");
             b.add_css_class("circular");
             b.set_tooltip_text(Some(tooltip));
+            b.update_property(&[gtk4::accessible::Property::Label(
+                tooltip.split(" (").next().unwrap_or(tooltip),
+            )]);
             b.set_focus_on_click(false);
             let on_action = Rc::clone(&on_action);
             let pid = pane_id.to_string();
@@ -191,13 +194,18 @@ impl PaneWidget {
         decision_prompt.add_css_class("decision-prompt");
         decision_prompt.set_xalign(0.0);
         decision_prompt.set_hexpand(true);
-        decision_prompt.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        let decision_options = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        decision_prompt.set_wrap(true);
+        decision_prompt.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+        decision_prompt.set_selectable(true);
+        let decision_options = libadwaita::WrapBox::new();
+        decision_options.set_child_spacing(6);
+        decision_options.set_line_spacing(6);
         decision_options.add_css_class("decision-options");
         let decision_hint = gtk4::Label::new(Some("Answer in the terminal"));
         decision_hint.add_css_class("decision-hint");
         decision_hint.add_css_class("dimmed");
-        let decision_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        decision_hint.set_xalign(0.0);
+        let decision_bar = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
         decision_bar.add_css_class("decision-bar");
         decision_bar.append(&decision_prompt);
         decision_bar.append(&decision_options);
@@ -400,8 +408,14 @@ impl PaneWidget {
                         self.decision_options.remove(&child);
                     }
                     for (option_id, label) in &rendered.options {
-                        let button = gtk4::Button::with_label(label);
+                        let text = gtk4::Label::new(Some(label));
+                        text.set_wrap(true);
+                        text.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+                        text.set_xalign(0.0);
+                        let button = gtk4::Button::new();
+                        button.set_child(Some(&text));
                         button.add_css_class("pill");
+                        button.update_property(&[gtk4::accessible::Property::Label(label)]);
                         button.set_tooltip_text(Some(label));
                         button.set_focus_on_click(false);
                         let on_action = Rc::clone(&self.on_action);
@@ -499,5 +513,247 @@ mod tests {
         assert_eq!(r.prompt, "Allow rm -rf /tmp/x?");
         assert!(r.options.is_empty(), "never fake buttons");
         assert!(r.read_only);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn approval_question_and_choices_fit_a_narrow_pane() {
+        libadwaita::init().unwrap();
+        gtk4::gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+        let display = gtk4::gdk::Display::default().unwrap();
+        let provider = gtk4::CssProvider::new();
+        provider.load_from_resource("/dev/signaltty/gui/style.css");
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        let (actor, _requests) = IpcHandle::test_channel();
+        let selected = Rc::new(RefCell::new(None));
+        let selection = Rc::clone(&selected);
+        let widget = PaneWidget::new(
+            "pane-narrow",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(move |pane, action| {
+                    *selection.borrow_mut() = Some((pane.to_string(), action));
+                }),
+            },
+        );
+        let mut approval = decision(true);
+        approval.prompt = "Run the workspace verification suite and inspect the native interface in light and dark themes?".into();
+        approval.options[0].label = "Allow once".into();
+        approval.options[1].label =
+            "Allow this verification command for the current workspace session".into();
+        let mut pane = Pane::new(
+            "workspace".into(),
+            "tab".into(),
+            "/tmp".into(),
+            vec!["codex".into()],
+            Default::default(),
+            chrono::Utc::now(),
+        );
+        pane.pending_decision = Some(approval.clone());
+        widget.update_meta(&pane);
+        let minimum = widget.root.measure(gtk4::Orientation::Horizontal, -1).0;
+        assert!(minimum <= 320, "approval forces a {minimum}px pane");
+
+        let window = gtk4::Window::new();
+        window.set_default_size(320, 520);
+        window.set_child(Some(&widget.root));
+        window.present();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while widget.root.width() == 0 {
+            assert!(std::time::Instant::now() < deadline);
+            gtk4::glib::MainContext::default().iteration(true);
+        }
+        assert!(widget.root.width() <= 320);
+        assert!(!widget.decision_prompt.layout().is_ellipsized());
+        assert!(widget.decision_prompt.layout().line_count() > 1);
+        let mut child = widget.decision_options.first_child();
+        let mut choices = Vec::new();
+        while let Some(option) = child {
+            let button = option.clone().downcast::<gtk4::Button>().unwrap();
+            let bounds = button.compute_bounds(&widget.root).unwrap();
+            assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= 320.0);
+            let label = button.child().unwrap().downcast::<gtk4::Label>().unwrap();
+            assert!(!label.layout().is_ellipsized());
+            choices.push(button);
+            child = option.next_sibling();
+        }
+        assert_eq!(choices.len(), 3);
+        choices[1].emit_clicked();
+        assert!(matches!(
+            selected.borrow().as_ref(),
+            Some((id, PaneAction::AnswerDecision { decision_id, option_id }))
+                if id == "pane-narrow" && decision_id == "d1" && option_id == "always"
+        ));
+        let terminal = widget.term.clone();
+        pane.pending_decision = None;
+        widget.update_meta(&pane);
+        assert_eq!(
+            widget.term, terminal,
+            "answering must retain the mounted VTE"
+        );
+        window.close();
+        gtk4::style_context_remove_provider_for_display(&display, &provider);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn keyboard_focus_renders_an_inactive_panes_controls() {
+        libadwaita::init().unwrap();
+        gtk4::gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+        let display = gtk4::gdk::Display::default().unwrap();
+        let provider = gtk4::CssProvider::new();
+        provider.load_from_resource("/dev/signaltty/gui/style.css");
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        let settings = gtk4::Settings::default().unwrap();
+        settings.set_gtk_enable_animations(false);
+        let (actor, _requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "inactive",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let window = gtk4::Window::new();
+        window.set_default_size(420, 180);
+        window.set_child(Some(&pane.root));
+        window.present();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while pane.root.width() == 0 {
+            assert!(std::time::Instant::now() < deadline);
+            gtk4::glib::MainContext::default().iteration(true);
+        }
+        gtk4::prelude::GtkWindowExt::set_focus(&window, Some(&pane.term));
+        pane.root.unset_state_flags(gtk4::StateFlags::PRELIGHT);
+        let header = pane.root.first_child().unwrap();
+        let actions = header.last_child().unwrap();
+        let control = actions.first_child().unwrap();
+        let bounds = actions.compute_bounds(&pane.root).unwrap();
+        let pixels = || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(60);
+            while std::time::Instant::now() < deadline {
+                while gtk4::glib::MainContext::default().iteration(false) {}
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            let paintable = gtk4::WidgetPaintable::new(Some(&pane.root));
+            let snapshot = gtk4::Snapshot::new();
+            paintable.snapshot(
+                &snapshot,
+                pane.root.width() as f64,
+                pane.root.height() as f64,
+            );
+            let node = snapshot.to_node().unwrap();
+            let renderer = gtk4::gsk::CairoRenderer::new();
+            renderer.realize_for_display(&display).unwrap();
+            let texture = renderer.render_texture(&node, Some(&bounds));
+            renderer.unrealize();
+            let stride = texture.width() as usize * 4;
+            let mut bytes = vec![0; stride * texture.height() as usize];
+            texture.download(&mut bytes, stride);
+            bytes
+        };
+        let hidden = pixels();
+        window.set_focus_visible(true);
+        assert!(control.grab_focus());
+        pane.root.unset_state_flags(gtk4::StateFlags::PRELIGHT);
+        let focused = pixels();
+        assert!(
+            hidden != focused,
+            "keyboard-focused controls remain invisible"
+        );
+        window.close();
+        gtk4::style_context_remove_provider_for_display(&display, &provider);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn reduced_motion_removes_rendered_press_scaling() {
+        libadwaita::init().unwrap();
+        gtk4::gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+        let display = gtk4::gdk::Display::default().unwrap();
+        let provider = gtk4::CssProvider::new();
+        provider.load_from_resource("/dev/signaltty/gui/style.css");
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        gtk4::Settings::default()
+            .unwrap()
+            .set_gtk_enable_animations(false);
+        let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        let button = gtk4::Button::with_label("Allow once");
+        button.add_css_class("pill");
+        button.set_focusable(false);
+        root.append(&button);
+        let window = gtk4::Window::new();
+        window.set_child(Some(&root));
+        window.present();
+        button.set_state_flags(gtk4::StateFlags::ACTIVE, false);
+
+        fn scaled(node: &gtk4::gsk::RenderNode) -> bool {
+            use gtk4::gsk;
+            if let Some(n) = node.downcast_ref::<gsk::TransformNode>() {
+                let (xx, _, _, yy, _, _) = n.transform().to_2d();
+                return (xx - 0.97).abs() < 0.001 && (yy - 0.97).abs() < 0.001
+                    || scaled(&n.child());
+            }
+            if let Some(n) = node.downcast_ref::<gsk::ContainerNode>() {
+                return (0..n.n_children()).any(|i| scaled(&n.child(i)));
+            }
+            if let Some(n) = node.downcast_ref::<gsk::ClipNode>() {
+                return scaled(&n.child());
+            }
+            if let Some(n) = node.downcast_ref::<gsk::RoundedClipNode>() {
+                return scaled(&n.child());
+            }
+            if let Some(n) = node.downcast_ref::<gsk::OpacityNode>() {
+                return scaled(&n.child());
+            }
+            false
+        }
+        let snapshot = || {
+            let end = std::time::Instant::now() + std::time::Duration::from_millis(80);
+            while std::time::Instant::now() < end {
+                while gtk4::glib::MainContext::default().pending() {
+                    gtk4::glib::MainContext::default().iteration(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            let paintable = gtk4::WidgetPaintable::new(Some(&root));
+            let snapshot = gtk4::Snapshot::new();
+            paintable.snapshot(&snapshot, root.width() as f64, root.height() as f64);
+            snapshot.to_node().unwrap()
+        };
+        assert!(
+            scaled(&snapshot()),
+            "probe must observe normal press scaling"
+        );
+        root.add_css_class("reduced-motion");
+        assert!(
+            !scaled(&snapshot()),
+            "reduced motion still scales the pressed button"
+        );
+        root.remove_css_class("reduced-motion");
+        assert!(
+            scaled(&snapshot()),
+            "normal feedback must return immediately"
+        );
+        button.set_focusable(true);
+        window.set_focus_visible(true);
+        assert!(button.grab_focus());
+        assert!(!scaled(&snapshot()), "keyboard activation must not scale");
+        window.close();
+        gtk4::style_context_remove_provider_for_display(&display, &provider);
     }
 }

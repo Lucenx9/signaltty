@@ -121,6 +121,7 @@ impl App {
         sidebar_header.set_title_widget(Some(&adw::WindowTitle::new("Workspaces", "")));
         let btn_new_ws = gtk4::Button::from_icon_name("list-add-symbolic");
         btn_new_ws.set_tooltip_text(Some("New Workspace (Ctrl+Shift+N)"));
+        btn_new_ws.update_property(&[gtk4::accessible::Property::Label("New Workspace")]);
         btn_new_ws.set_action_name(Some("win.new-workspace"));
         sidebar_header.pack_start(&btn_new_ws);
         let sidebar_page = adw::ToolbarView::new();
@@ -134,16 +135,19 @@ impl App {
         let btn_sidebar = gtk4::ToggleButton::new();
         btn_sidebar.set_icon_name("sidebar-show-symbolic");
         btn_sidebar.set_tooltip_text(Some("Toggle Sidebar (F9)"));
+        btn_sidebar.update_property(&[gtk4::accessible::Property::Label("Toggle Sidebar")]);
         btn_sidebar.set_action_name(Some("win.toggle-sidebar"));
         header.pack_start(&btn_sidebar);
         let btn_menu = gtk4::MenuButton::new();
         btn_menu.set_icon_name("open-menu-symbolic");
         btn_menu.set_tooltip_text(Some("Main Menu"));
+        btn_menu.update_property(&[gtk4::accessible::Property::Label("Main Menu")]);
         btn_menu.set_menu_model(Some(&crate::actions::primary_menu()));
         btn_menu.set_primary(true);
         header.pack_end(&btn_menu);
         let btn_new_tab = gtk4::Button::from_icon_name("signaltty-tab-new-symbolic");
         btn_new_tab.set_tooltip_text(Some("New Tab (Ctrl+Shift+T)"));
+        btn_new_tab.update_property(&[gtk4::accessible::Property::Label("New Tab")]);
         btn_new_tab.set_action_name(Some("win.new-tab"));
         header.pack_end(&btn_new_tab);
         let attention = Self::attention_button();
@@ -183,8 +187,7 @@ impl App {
         no_tabs.set_child(Some(&btn_no_tabs));
 
         let content = gtk4::Stack::new();
-        content.set_transition_type(gtk4::StackTransitionType::Crossfade);
-        content.set_transition_duration(150);
+        content.set_transition_type(gtk4::StackTransitionType::None);
         content.add_named(&tab_view, Some("tabs"));
         content.add_named(&no_tabs, Some("no-tabs"));
         content.add_named(&no_workspace, Some("no-workspace"));
@@ -251,6 +254,7 @@ impl App {
         app.me.replace(Rc::downgrade(&app));
         app.install_actions(application);
         app.connect_signals();
+        app.sync_desktop_preferences();
         app
     }
 
@@ -389,6 +393,20 @@ impl App {
                 a.restyle_terminals();
             }
         });
+        let w = self.weak();
+        sm.connect_high_contrast_notify(move |_| {
+            if let Some(a) = w.upgrade() {
+                a.sync_desktop_preferences();
+            }
+        });
+        let w = self.weak();
+        self.window
+            .settings()
+            .connect_gtk_enable_animations_notify(move |_| {
+                if let Some(a) = w.upgrade() {
+                    a.sync_desktop_preferences();
+                }
+            });
         // Size-sync tick: VTE sizes + fresh split positions. Cheap, and
         // quiet when nothing changed (gtk4 0.11: no size-allocate signal).
         let w = self.weak();
@@ -413,6 +431,25 @@ impl App {
     fn restyle_terminals(&self) {
         for w in self.widgets.borrow().values() {
             w.apply_style();
+        }
+    }
+
+    fn sync_desktop_preferences(&self) {
+        for (class, enabled) in [
+            (
+                "reduced-motion",
+                !self.window.settings().is_gtk_enable_animations(),
+            ),
+            (
+                "high-contrast",
+                adw::StyleManager::default().is_high_contrast(),
+            ),
+        ] {
+            if enabled {
+                self.window.add_css_class(class);
+            } else {
+                self.window.remove_css_class(class);
+            }
         }
     }
 
@@ -709,6 +746,11 @@ impl App {
         let b = &self.attention;
         let worst = needing.iter().fold(Attention::None, |acc, a| acc.raise(*a));
         b.count.set_text(&needing.len().to_string());
+        b.button
+            .update_property(&[gtk4::accessible::Property::Label(&format!(
+                "Focus next pane needing attention: {}",
+                needing.len()
+            ))]);
         status::set_attention_class(&b.dot, worst);
         status::set_attention_class(&b.button, worst);
         b.button.set_tooltip_text(Some(&match needing.len() {

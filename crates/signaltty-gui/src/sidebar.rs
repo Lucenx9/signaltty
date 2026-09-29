@@ -11,8 +11,8 @@
 //!  feat/auth                     Claude     branch/dir · agents
 //! ```
 //!
-//! The close button shares the status slot and crossfades in on hover
-//! or keyboard focus, so a resting row carries no controls. When rows
+//! Close has a separate trailing target, revealed on hover or keyboard
+//! focus without hiding urgency. When rows
 //! need you, they sit under a "Needs you" label with a hairline below.
 
 use std::cell::RefCell;
@@ -204,19 +204,13 @@ impl Row {
                 cb(close_id.clone());
             }
         });
-        // Status and close share one slot; CSS swaps them on hover.
-        let slot = gtk4::Overlay::new();
-        slot.set_child(Some(&status.widget));
-        slot.add_overlay(&close);
-        slot.set_size_request(28, -1);
-        slot.set_halign(gtk4::Align::End);
-
         let grid = gtk4::Grid::new();
         grid.set_column_spacing(8);
         grid.set_row_spacing(2);
         grid.add_css_class("workspace-row");
         grid.attach(&name, 0, 0, 1, 1);
-        grid.attach(&slot, 1, 0, 1, 1);
+        grid.attach(&status.widget, 1, 0, 1, 1);
+        grid.attach(&close, 2, 0, 1, 3);
         grid.attach(&message, 0, 1, 2, 1);
         grid.attach(&place, 0, 2, 1, 1);
         grid.attach(&agents, 1, 2, 1, 1);
@@ -249,9 +243,11 @@ impl Row {
             Some(handle) => self.name.set_text(&format!("{} · {handle}", s.name)),
             None => self.name.set_text(&s.name),
         }
+        self.name.set_tooltip_text(Some(&self.name.text()));
         self.place.set_text(&s.place);
         self.place.set_tooltip_text(Some(&s.place));
         self.agents.set_text(&s.agents);
+        self.agents.set_tooltip_text(Some(&s.agents));
         self.close
             .set_tooltip_text(Some(&format!("Close {}", s.name)));
         self.close
@@ -266,6 +262,19 @@ impl Row {
     fn refresh_time(&self) {
         let Some(s) = &self.summary else { return };
         let headline = s.headline(Utc::now());
+        let description = [
+            self.name.text().to_string(),
+            status::attention_tooltip(s.attention).to_string(),
+            headline.clone(),
+            s.place.clone(),
+            s.agents.clone(),
+        ]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+        self.row
+            .update_property(&[gtk4::accessible::Property::Label(&description)]);
         if self.message.text() != headline {
             self.message.set_text(&headline);
             self.message.set_tooltip_text(Some(&headline));

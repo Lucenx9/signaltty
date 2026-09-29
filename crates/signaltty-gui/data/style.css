@@ -13,11 +13,10 @@
  *   working     spinner       the agent is making progress
  *   done        green dot     turn complete
  *
- * Motion: only colour/shadow/opacity transitions on persistent
- * widgets, 150–200ms, cubic-bezier(0.23, 1, 0.32, 1) ease-out.
- * Press feedback is scale(0.97) on pills, scale(0.92) on the
- * 24px icon buttons. Nothing animates on keyboard
- * navigation; GTK drops all of it when animations are disabled.
+ * Motion: native state fades plus 120ms pointer press feedback,
+ * cubic-bezier(0.23, 1, 0.32, 1), scale(0.97). Focus, navigation
+ * and frequently revealed controls change instantly. The root's
+ * reduced-motion class also removes static press transforms.
  */
 
 /* ---- status dot ---------------------------------------------------- */
@@ -27,7 +26,6 @@
   min-height: 8px;
   border-radius: 999px;
   background-color: alpha(currentColor, 0.25);
-  transition: background-color 200ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .status-dot.hollow {
@@ -81,7 +79,7 @@
  * secondary text, the place is a whisper. Colour is spent only on the
  * status slot. */
 .workspace-row {
-  padding: 7px 2px 7px 4px;
+  padding: 8px 2px 8px 6px;
 }
 
 .workspace-row .workspace-name {
@@ -90,21 +88,23 @@
 
 .workspace-row .workspace-message {
   font-size: 0.93em;
-  color: alpha(currentColor, 0.72);
+  color: alpha(currentColor, 0.78);
 }
 
 .workspace-row .workspace-meta {
-  font-size: 0.8em;
-  color: alpha(currentColor, 0.48);
+  font-size: 0.85em;
+  color: alpha(currentColor, 0.65);
 }
 
-/* Status slot: `[mark] word` in one colour, or a dim time at rest. The
- * swap with the close button is instant, never a fade: fading two text
- * labels over each other in one slot smears mid-transition. */
+.navigation-sidebar > row:selected {
+  background-color: alpha(var(--accent-bg-color), 0.1);
+  box-shadow: inset 2px 0 var(--accent-bg-color);
+}
+
+/* Status stays visible beside the independent close target. */
 .row-status {
   font-size: 0.8em;
-  color: alpha(currentColor, 0.48);
-  transition: color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+  color: alpha(currentColor, 0.65);
 }
 .row-status.speaking {
   font-weight: 600;
@@ -133,40 +133,33 @@
 /* Section label over the rows that need you; a hairline closes it. */
 .sidebar-section {
   padding: 8px 18px 2px 18px;
-  font-size: 0.75em;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: alpha(currentColor, 0.5);
+  font-size: 0.85em;
+  font-weight: 600;
+  color: alpha(currentColor, 0.65);
 }
 .sidebar-section-rule {
   margin: 6px 18px;
   background-color: alpha(currentColor, 0.08);
 }
 
-/* Close shares the slot: it crossfades in over the status on hover or
- * keyboard focus, so resting rows carry no controls. */
+/* Close reveals instantly without replacing urgency or moving text. */
 .row-close {
-  min-width: 24px;
-  min-height: 24px;
+  min-width: 28px;
+  min-height: 28px;
   padding: 0;
   opacity: 0;
   color: alpha(currentColor, 0.6);
-  transition: background-color 150ms cubic-bezier(0.23, 1, 0.32, 1), color 150ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .row-close:hover {
   color: inherit;
 }
-.row-close:active {
-  transform: scale(0.92);
+.row-close:active:not(:focus-visible) {
+  transform: scale(0.97);
 }
 .navigation-sidebar > row:hover .row-close,
 .navigation-sidebar > row:focus-within .row-close {
   opacity: 1;
-}
-.navigation-sidebar > row:hover .row-status,
-.navigation-sidebar > row:focus-within .row-status {
-  opacity: 0;
 }
 
 /* ---- header: "needs you" button -------------------------------------- */
@@ -178,10 +171,7 @@
   padding: 0 10px 0 9px;
   border-radius: 999px;
   background-color: alpha(currentColor, 0.08);
-  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
-    background-color 150ms cubic-bezier(0.23, 1, 0.32, 1),
-    color 200ms cubic-bezier(0.23, 1, 0.32, 1),
-    box-shadow 150ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .attention-button.attention-unread {
   color: var(--accent-color);
@@ -207,7 +197,7 @@
 /* ---- tab page + panes ------------------------------------------------ */
 
 .tab-page {
-  padding: 6px;
+  padding: 8px;
 }
 
 /* Gaps between panes, not bars: the handle is transparent and wide
@@ -229,16 +219,11 @@
    * change never resizes the terminal underneath, and a split's GtkPaned
    * (which clips each child to its allocation) can't cut them off. */
   box-shadow: inset 0 0 0 1px var(--border-color), 0 1px 3px alpha(black, 0.08);
-  transition: box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .pane-header {
-  min-height: 30px;
-  padding: 0 6px 0 12px;
-}
-
-.pane-info {
-  transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1);
+  min-height: 34px;
+  padding: 0 8px 0 12px;
 }
 
 .pane-title {
@@ -254,21 +239,21 @@
  * header never jumps. */
 .pane-actions {
   opacity: 0;
-  transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .pane:hover .pane-actions,
-.pane.focused .pane-actions {
+.pane.focused .pane-actions,
+.pane:focus-within .pane-actions {
   opacity: 1;
 }
 
 .pane-actions button {
-  min-width: 24px;
-  min-height: 24px;
+  min-width: 28px;
+  min-height: 28px;
   padding: 0;
-  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 150ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
-.pane-actions button:active {
-  transform: scale(0.92);
+.pane-actions button:active:not(:focus-visible) {
+  transform: scale(0.97);
 }
 
 .resume-button {
@@ -281,7 +266,7 @@
 /* Terminal padding lives here; the card paints the background
  * (the terminal leaves its default background clear). */
 .pane vte-terminal {
-  padding: 2px 10px 8px 10px;
+  padding: 6px 12px 10px 12px;
 }
 
 /* With several panes in a tab, the focused one is marked and the rest
@@ -292,7 +277,7 @@
   box-shadow: inset 0 0 0 1px alpha(var(--accent-bg-color), 0.7), 0 1px 3px alpha(black, 0.08);
 }
 .tab-page.split .pane:not(.focused) .pane-info {
-  opacity: 0.55;
+  opacity: 0.7;
 }
 
 /* Attention rings — three classes beat the two-class focus rule
@@ -321,8 +306,9 @@
  * above the terminal. One hairline separates it from the header; the
  * terminal grid below never moves except by the bar's own height. */
 .decision-bar {
-  padding: 6px 12px;
+  padding: 10px 12px 12px;
   border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
   background-color: alpha(var(--accent-bg-color), 0.06);
 }
 .decision-prompt {
@@ -330,9 +316,9 @@
   font-size: 0.9em;
 }
 .decision-options button {
-  min-height: 26px;
-  padding: 0 14px;
-  border-radius: 999px;
+  min-height: 28px;
+  padding: 3px 12px;
+  border-radius: 8px;
   font-size: 0.9em;
 }
 .decision-hint {
@@ -343,12 +329,57 @@
 
 button.pill,
 .resume-button {
-  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 150ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
-button.pill:active,
-.resume-button:active,
-.attention-button:active {
+button.pill:active:not(:focus-visible),
+.resume-button:active:not(:focus-visible),
+.attention-button:active:not(:focus-visible) {
   transform: scale(0.97);
+}
+
+/* Focus is immediate and inset so clipped pane edges cannot hide it. */
+headerbar button:focus-visible,
+.navigation-sidebar > row:focus-visible,
+.row-close:focus-visible,
+.pane-actions button:focus-visible,
+.decision-options button:focus-visible,
+.resume-button:focus-visible,
+button.pill:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+  transition: none;
+}
+
+/* GtkSettings is available on our GTK 4.18 baseline; App mirrors it
+ * here instead of depending on newer CSS preference media queries. */
+.reduced-motion .row-close,
+.reduced-motion .pane-actions button,
+.reduced-motion .decision-options button,
+.reduced-motion button.pill,
+.reduced-motion .resume-button,
+.reduced-motion .attention-button {
+  transition: none;
+}
+.reduced-motion .row-close:active,
+.reduced-motion .pane-actions button:active,
+.reduced-motion .decision-options button:active,
+.reduced-motion button.pill:active,
+.reduced-motion .resume-button:active,
+.reduced-motion .attention-button:active {
+  transform: none;
+}
+
+.high-contrast .workspace-message,
+.high-contrast .workspace-meta,
+.high-contrast .sidebar-section,
+.high-contrast .row-status {
+  color: inherit;
+}
+.high-contrast .tab-page.split .pane:not(.focused) .pane-info {
+  opacity: 1;
+}
+.high-contrast .status-pill {
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 
 /* ---- dark ------------------------------------------------------------ */

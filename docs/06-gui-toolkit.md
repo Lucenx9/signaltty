@@ -85,10 +85,12 @@ Rules that keep it calm:
 - Rings are inset shadows: attention never changes layout, so it never
   resizes a terminal, and split panes (which clip each child) can't cut
   them off.
-- Motion is limited to colour/opacity/shadow on persistent widgets,
-  150–200ms ease-out, plus crossfades on reveal. Nothing animates in
-  response to keyboard navigation; GTK disables all of it when the
-  desktop turns animations off.
+- Pointer presses use a 120ms ease-out transform at scale 0.97.
+  Focus, attention styling and control reveal change instantly; keyboard
+  presses never scale. Native asynchronous state reveal remains toolkit-owned.
+  The window follows GtkSettings animation preferences at startup and on
+  changes, removing both interpolation and static press transforms.
+  High contrast removes muted sidebar text and inactive-pane chrome opacity.
 - Workspace switches never animate pages: bulk tab replacement (close
   cascade + select) runs with the tab view hidden so one paint shows
   the final state. `AdwTabView` slides on programmatic selection and
@@ -113,14 +115,21 @@ instance and shared by Ctrl+Shift+N, the sidebar "+" and the empty
 state; the custom field toggles with plain visibility so nothing
 animates on keyboard navigation.
 
-Each sidebar row has a close button for its workspace; it shares the
-status slot and swaps in over it on hover or keyboard focus — instantly,
-not faded, so the two labels never overlap mid-transition. The
+Each sidebar row has a separate trailing close target, revealed instantly
+on hover or keyboard focus while the status remains visible. Its reserved
+space keeps text stationary. Keyboard focus outlines are inset, and pane
+actions reveal on focus anywhere in the pane. The
 primary menu's Close Workspace action targets the active workspace. Both show a single
 destructive confirmation that names the workspace and warns that its running
 terminals and agents will stop. Confirming calls the existing
 `workspace.close` method and refreshes the full workspace list. Cancel sends
 no request. A failed close leaves the row visible and shows a toast.
+
+Inline approvals place the complete selectable, wrapped question above
+native `AdwWrapBox` choices. Long option labels wrap as well, so a 320px
+pane never forces the split wider. Choices keep their original decision
+and option IDs; removing the decision bar retains the mounted VTE.
+Header controls and workspace rows expose descriptive accessible names.
 
 Dividers persist: each `GtkPaned` reports to `tab.set_ratio` with its
 tree path once the drag rests 300 ms, never mid-drag. Reconciliation
