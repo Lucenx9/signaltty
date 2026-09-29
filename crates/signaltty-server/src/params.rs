@@ -213,6 +213,22 @@ pub struct Notify {
     pub severity: Option<String>,
 }
 
+/// One structured option inside a `hook-event` decision payload.
+/// Unknown fields ignored (forward compat, docs/08).
+#[derive(Debug, Deserialize)]
+pub struct DecisionOptionPayload {
+    pub id: String,
+    pub label: String,
+}
+
+/// Structured decision request carried by `hook-event` (directive 2).
+#[derive(Debug, Deserialize)]
+pub struct DecisionPayload {
+    pub id: String,
+    pub prompt: String,
+    pub options: Vec<DecisionOptionPayload>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct HookEvent {
     pub agent: String,
@@ -226,6 +242,14 @@ pub struct HookEvent {
     pub body: Option<String>,
     pub severity: Option<String>,
     pub title: Option<String>,
+    pub decision: Option<DecisionPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DecisionAnswer {
+    pub pane_id: String,
+    pub decision_id: String,
+    pub option_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -326,6 +350,33 @@ mod tests {
         assert!(matches!(p.direction, Some(SplitDirection::Down)));
         assert_eq!(p.direction.unwrap().split_dir(), SplitDir::Down);
         assert!(decode::<PaneRead>(&json!({"pane_id": "p", "mode": "sideways"})).is_err());
+    }
+
+    #[test]
+    fn decision_payload_decode() {
+        // Full decision decodes; unknown fields ignored.
+        let h: HookEvent = decode(&json!({
+            "agent": "codex", "event": "PermissionRequest",
+            "decision": {"id": "d1", "prompt": "Allow?",
+                "options": [{"id": "once", "label": "Once", "future": 1}]},
+        }))
+        .unwrap();
+        let d = h.decision.unwrap();
+        assert_eq!((d.id.as_str(), d.options.len()), ("d1", 1));
+        // Absent decision stays absent.
+        let h: HookEvent = decode(&json!({"agent": "codex", "event": "Stop"})).unwrap();
+        assert!(h.decision.is_none());
+        // Present-but-mistyped is BAD_PARAMS, never silent.
+        assert!(
+            decode::<HookEvent>(&json!({"agent": "codex", "event": "PermissionRequest",
+                "decision": {"id": 42, "prompt": "p", "options": []}}))
+            .is_err()
+        );
+        // Answer ids are required.
+        assert!(decode::<DecisionAnswer>(&json!({"pane_id": "p", "decision_id": "d"})).is_err());
+        let a: DecisionAnswer =
+            decode(&json!({"pane_id": "p", "decision_id": "d", "option_id": "o"})).unwrap();
+        assert_eq!(a.option_id, "o");
     }
 
     #[test]

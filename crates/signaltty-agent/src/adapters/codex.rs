@@ -92,6 +92,13 @@ impl AgentAdapter for CodexAdapter {
         })
     }
 
+    /// First probed channel: the Codex TUI offers numbered options,
+    /// so typing the option number + Enter answers (fixture-verified
+    /// byte delivery; live-TUI confirmation is follow-up work).
+    fn answer_channel(&self) -> Option<crate::types::AnswerChannel> {
+        Some(crate::types::AnswerChannel::TypeText)
+    }
+
     fn metadata(&self) -> AdapterMetadata {
         AdapterMetadata {
             kind: AgentKind::Codex,
@@ -140,6 +147,15 @@ mod tests {
         let d = a.lifecycle_state(&ev("UserPromptSubmit", json!({})));
         assert_eq!(d.lifecycle, Some(Lifecycle::Working));
         assert_eq!(d.attention, Some(Attention::None));
+    }
+
+    #[test]
+    fn codex_advertises_type_text_channel() {
+        let a = CodexAdapter;
+        assert_eq!(
+            a.answer_channel(),
+            Some(crate::types::AnswerChannel::TypeText)
+        );
     }
 
     #[test]

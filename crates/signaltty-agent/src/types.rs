@@ -68,6 +68,31 @@ pub struct ResumeCommand {
     pub argv: Vec<String>,
 }
 
+/// How the server delivers a user's decision pick to the agent.
+/// Exactly one variant until more channels are probed against real
+/// CLIs (see `docs/adr/0008-decision-answer.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnswerChannel {
+    /// Type the 1-based option number + Enter over `pane.input`.
+    /// First probe: Codex TUI (numbered options).
+    TypeText,
+}
+
+/// Bytes to write for `option_id`, or `None` when the id is unknown.
+/// Pure: the headless-tested seam for answer delivery.
+pub fn answer_bytes(
+    channel: AnswerChannel,
+    options: &[signaltty_core::model::DecisionOption],
+    option_id: &str,
+) -> Option<Vec<u8>> {
+    match channel {
+        AnswerChannel::TypeText => options
+            .iter()
+            .position(|o| o.id == option_id)
+            .map(|i| format!("{}\n", i + 1).into_bytes()),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AdapterMetadata {
     pub kind: AgentKind,
@@ -87,6 +112,48 @@ pub trait AgentAdapter: Send + Sync {
     fn notification_event(&self, ev: &AdapterEvent) -> Option<NotificationDraft>;
     /// Official resume argv for a persisted session id, if supported.
     fn resume_capability(&self, session_id: &str) -> Option<ResumeCommand>;
+    /// How a picked decision option reaches this agent, if probed.
+    /// Default `None`: read-only rendering until a channel is proven.
+    fn answer_channel(&self) -> Option<AnswerChannel> {
+        None
+    }
     /// Static metadata.
     fn metadata(&self) -> AdapterMetadata;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use signaltty_core::model::DecisionOption;
+
+    fn options() -> Vec<DecisionOption> {
+        vec![
+            DecisionOption {
+                id: "once".into(),
+                label: "Once".into(),
+            },
+            DecisionOption {
+                id: "always".into(),
+                label: "Always".into(),
+            },
+            DecisionOption {
+                id: "deny".into(),
+                label: "Deny".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn type_text_answers_by_1_based_position() {
+        let opts = options();
+        assert_eq!(
+            answer_bytes(AnswerChannel::TypeText, &opts, "once"),
+            Some(b"1\n".to_vec())
+        );
+        assert_eq!(
+            answer_bytes(AnswerChannel::TypeText, &opts, "deny"),
+            Some(b"3\n".to_vec())
+        );
+        assert_eq!(answer_bytes(AnswerChannel::TypeText, &opts, "nope"), None);
+    }
 }

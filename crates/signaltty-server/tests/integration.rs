@@ -381,6 +381,212 @@ async fn restart_restores_structure_without_processes() {
     srv.shutdown().await;
 }
 
+fn decision_payload(id: &str) -> serde_json::Value {
+    json!({
+        "id": id, "prompt": "Allow rm -rf /tmp/x?",
+        "options": [
+            {"id": "once", "label": "Once"},
+            {"id": "always", "label": "Always"},
+            {"id": "deny", "label": "Deny"},
+        ],
+    })
+}
+
+#[tokio::test]
+async fn decision_answer_delivers_bytes_and_consumes() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    // A codex pane whose child is `cat`: echoes whatever the answer
+    // channel types (`agent_hint` is how tests stand in for the real CLI).
+    let w = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let ws = w["workspace"]["id"].as_str().unwrap();
+    let p = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws, "argv": ["cat"], "agent_hint": "codex"}),
+        )
+        .await
+        .unwrap();
+    let pane = p["pane"]["id"].as_str().unwrap().to_string();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    c.call(
+        "hook-event",
+        json!({"agent": "codex", "event": "PermissionRequest", "pane_id": pane,
+               "decision": decision_payload("d1")}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["pending_decision"]["id"], "d1");
+    assert_eq!(p["pane"]["pending_decision"]["answerable"], true);
+    assert_eq!(
+        p["pane"]["pending_decision"]["options"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+
+    // Answering "Once" types "1\\n": cat echoes it back.
+    let r = c
+        .call(
+            "decision.answer",
+            json!({"pane_id": pane, "decision_id": "d1", "option_id": "once"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["answered"], true);
+    wait_for_text(&mut c, &pane, "1", Duration::from_secs(5)).await;
+
+    // Consumed: the bar is gone and a repeat never redelivers.
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert!(p["pane"].get("pending_decision").is_none());
+    let err = c
+        .call(
+            "decision.answer",
+            json!({"pane_id": pane, "decision_id": "d1", "option_id": "once"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("NO_SUCH_DECISION"), "{err}");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn decision_prose_supersede_and_clearing() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+
+    c.call(
+        "hook-event",
+        json!({"agent": "codex", "event": "PermissionRequest", "pane_id": pane,
+               "decision": decision_payload("d1")}),
+    )
+    .await
+    .unwrap();
+    // Prose-only attention neither fakes buttons nor drops the real ones.
+    c.call(
+        "hook-event",
+        json!({"agent": "codex", "event": "PermissionRequest", "pane_id": pane,
+               "message": "approval requested"}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["pending_decision"]["id"], "d1");
+
+    // Newer decision supersedes: latest wins.
+    c.call(
+        "hook-event",
+        json!({"agent": "codex", "event": "PermissionRequest", "pane_id": pane,
+               "decision": decision_payload("d2")}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["pending_decision"]["id"], "d2");
+    // The superseded id is stale, never redeliverable.
+    let err = c
+        .call(
+            "decision.answer",
+            json!({"pane_id": pane, "decision_id": "d1", "option_id": "once"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("NO_SUCH_DECISION"), "{err}");
+
+    // The agent moving on (out of blocked) drops the bar.
+    c.call(
+        "hook-event",
+        json!({"agent": "codex", "event": "UserPromptSubmit", "pane_id": pane}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert!(p["pane"].get("pending_decision").is_none());
+
+    // Explicit per-pane interaction clears with the attention.
+    c.call(
+        "hook-event",
+        json!({"agent": "codex", "event": "PermissionRequest", "pane_id": pane,
+               "decision": decision_payload("d3")}),
+    )
+    .await
+    .unwrap();
+    c.call("pane.mark_seen", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert!(p["pane"].get("pending_decision").is_none());
+
+    // Unknown option is a shape error; the decision survives it.
+    c.call(
+        "hook-event",
+        json!({"agent": "codex", "event": "PermissionRequest", "pane_id": pane,
+               "decision": decision_payload("d4")}),
+    )
+    .await
+    .unwrap();
+    let err = c
+        .call(
+            "decision.answer",
+            json!({"pane_id": pane, "decision_id": "d4", "option_id": "maybe"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("BAD_PARAMS"), "{err}");
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["pending_decision"]["id"], "d4");
+
+    // Exiting the child drops the bar with it.
+    c.call("pane.signal", json!({"pane_id": pane, "signal": "KILL"}))
+        .await
+        .unwrap();
+    c.call(
+        "wait",
+        json!({"pane_id": pane, "until": "exited", "timeout_s": 5}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert!(p["pane"].get("pending_decision").is_none());
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn decision_without_channel_is_read_only() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    c.call(
+        "hook-event",
+        json!({"agent": "claude", "event": "Notification", "pane_id": pane,
+               "decision": decision_payload("d1")}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["pending_decision"]["answerable"], false);
+    // Server refuses to guess a delivery channel; the decision survives.
+    let err = c
+        .call(
+            "decision.answer",
+            json!({"pane_id": pane, "decision_id": "d1", "option_id": "once"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("BAD_PARAMS"), "{err}");
+    assert!(err.contains("no answer channel"), "{err}");
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["pending_decision"]["id"], "d1");
+    srv.shutdown().await;
+}
+
 #[tokio::test]
 async fn hook_event_drives_codex_lifecycle() {
     let srv = TestServer::start().await;

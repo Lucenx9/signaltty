@@ -383,6 +383,33 @@ pub enum RestoreState {
     Exited,
 }
 
+/// One answerable option of a pending [`Decision`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// A structured decision request from an agent (directive 2): rendered as
+/// data-driven buttons, never scraped from terminal text. At most one per
+/// pane; newer supersedes older. See `docs/adr/0008-decision-answer.md`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Decision {
+    pub id: String,
+    pub prompt: String,
+    pub options: Vec<DecisionOption>,
+    /// Captured at ingest from the adapter's answer channel: buttons iff
+    /// true, else a read-only prompt with an answer-in-terminal hint.
+    /// Defaults to true for forward-compat payloads predating channels.
+    #[serde(default = "crate::model::decision_answerable_default")]
+    pub answerable: bool,
+    pub received_at: DateTime<Utc>,
+}
+
+fn decision_answerable_default() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pane {
     pub id: String,
@@ -408,6 +435,9 @@ pub struct Pane {
     /// Latest explicit notification / hook summary. Never a raw scrape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_message: Option<String>,
+    /// Pending structured decision (directive 2). None = plain terminal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_decision: Option<Decision>,
     pub created_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -450,6 +480,7 @@ impl Pane {
             last_run_secs: None,
             attention: Attention::None,
             last_message: None,
+            pending_decision: None,
             created_at: now,
             last_activity_at: now,
             last_seen_at: None,
@@ -793,5 +824,63 @@ mod tests {
         assert_eq!(p.last_lifecycle, Lifecycle::Working);
         p.set_lifecycle(Lifecycle::Idle, t0 + chrono::Duration::seconds(200));
         assert_eq!(p.last_run_secs, Some(125), "only working stretches count");
+    }
+
+    #[test]
+    fn decision_roundtrips_and_defaults_for_old_snapshots() {
+        let now = Utc::now();
+        let d = Decision {
+            id: "d1".into(),
+            prompt: "Allow rm -rf /tmp/x?".into(),
+            options: vec![
+                DecisionOption {
+                    id: "once".into(),
+                    label: "Once".into(),
+                },
+                DecisionOption {
+                    id: "always".into(),
+                    label: "Always".into(),
+                },
+                DecisionOption {
+                    id: "deny".into(),
+                    label: "Deny".into(),
+                },
+            ],
+            answerable: false,
+            received_at: now,
+        };
+        let back: Decision = serde_json::from_value(serde_json::to_value(&d).unwrap()).unwrap();
+        assert_eq!(back, d);
+        // Payloads predating channels stay answerable.
+        let legacy: Decision = serde_json::from_value(serde_json::json!({
+            "id": "d1", "prompt": "p", "options": [],
+            "received_at": now,
+        }))
+        .unwrap();
+        assert!(legacy.answerable);
+        // Old pane snapshots load with no pending decision.
+        let p = Pane::new(
+            "w".into(),
+            "t".into(),
+            "/".into(),
+            vec!["sh".into()],
+            PtySize::default(),
+            now,
+        );
+        assert_eq!(p.pending_decision, None);
+        let v = serde_json::to_value(&p).unwrap();
+        assert!(
+            v.get("pending_decision").is_none(),
+            "None skips serialization"
+        );
+        let back: Pane = serde_json::from_value(serde_json::json!({
+            "id": p.id, "workspace_id": "w", "tab_id": "t", "title": "sh",
+            "cwd": "/", "argv": ["sh"], "pty_size": {"cols": 80, "rows": 24},
+            "live": {"state": "live"}, "restore_state": "LIVE",
+            "agent": {"kind": "none"}, "lifecycle": "unknown", "last_lifecycle": "unknown",
+            "attention": "none", "created_at": now, "last_activity_at": now,
+        }))
+        .unwrap();
+        assert_eq!(back.pending_decision, None);
     }
 }

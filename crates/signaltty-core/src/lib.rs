@@ -10,7 +10,7 @@ pub mod state;
 pub use error::CoreError;
 pub use ids::{new_notif_id, new_pane_id, new_tab_id, new_ws_id};
 pub use model::{
-    AgentInfo, AgentKind, GitInfo, Layout, LiveState, Notification, NotificationSeverity, Pane,
-    PtySize, RestoreState, SplitDir, Tab, Workspace,
+    AgentInfo, AgentKind, Decision, DecisionOption, GitInfo, Layout, LiveState, Notification,
+    NotificationSeverity, Pane, PtySize, RestoreState, SplitDir, Tab, Workspace,
 };
 pub use state::{Attention, Lifecycle};

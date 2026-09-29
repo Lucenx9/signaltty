@@ -84,6 +84,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::PANE_CLOSE => h_pane_close(ctx, &req.params),
         method::PANE_RESUME => h_pane_resume(ctx, &req.params),
         method::PANE_MARK_SEEN => h_pane_mark_seen(ctx, &req.params),
+        method::DECISION_ANSWER => h_decision_answer(ctx, &req.params),
         method::NOTIFY => h_notify(ctx, &req.params),
         method::HOOK_EVENT => h_hook_event(ctx, &req.params),
         method::REPORT_SESSION => h_report_session(ctx, &req.params),
@@ -767,15 +768,18 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
     let want_seen = p.mark_seen.unwrap_or(true);
     let cleared = {
         let mut s = ctx.store.write().unwrap();
-        let ev = want_seen
-            .then(|| s.clear_attention(&id, "attach"))
-            .flatten();
-        if let Some(ev) = ev {
-            let _ = ctx.bcast.send(ev);
-            true
-        } else {
-            false
+        let mut cleared = false;
+        if want_seen {
+            if let Some(ev) = s.clear_attention(&id, "attach") {
+                let _ = ctx.bcast.send(ev);
+                cleared = true;
+            }
+            // Attaching with focus semantics dismisses the bar too.
+            if let Some(ev) = s.clear_decision(&id, "attention_cleared") {
+                let _ = ctx.bcast.send(ev);
+            }
         }
+        cleared
     };
     if cleared {
         ctx.mark_persist();
@@ -880,10 +884,106 @@ fn h_pane_mark_seen(ctx: &Ctx, params: &Value) -> Handler {
     if let Some(ev) = s.clear_attention(&id, "mark_seen") {
         let _ = ctx.bcast.send(ev);
     }
+    // Explicit per-pane interaction dismisses the decision bar with the
+    // attention: the user is looking and answers in the terminal or not.
+    if let Some(ev) = s.clear_decision(&id, "attention_cleared") {
+        let _ = ctx.bcast.send(ev);
+    }
     let pane_snapshot = s.panes.get(&id).cloned().unwrap();
     drop(s);
     ctx.mark_persist();
     Ok((pane_result(&pane_snapshot), ConnEffect::default()))
+}
+
+/// Answer a pending decision through the pane adapter's channel.
+/// Consumes the id first so a concurrent clear can never double-deliver;
+/// stale/double answers are typed `NO_SUCH_DECISION` (the client refreshes
+/// and drops its bar), never a redelivery.
+fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
+    let p: params::DecisionAnswer = decode(params)?;
+    let (kind, live) = {
+        let s = ctx.store.read().unwrap();
+        let pane = s
+            .panes
+            .get(&p.pane_id)
+            .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), p.pane_id.clone()))?;
+        (pane.agent.kind, pane.live)
+    };
+    if !matches!(live, LiveState::Live) {
+        return Err((code::PANE_EXITED.to_string(), p.pane_id));
+    }
+    let pending = {
+        let s = ctx.store.read().unwrap();
+        s.panes
+            .get(&p.pane_id)
+            .and_then(|pane| pane.pending_decision.clone())
+    };
+    let Some(pending) = pending else {
+        return Err((
+            code::NO_SUCH_DECISION.to_string(),
+            format!("pane {} has no pending decision", p.pane_id),
+        ));
+    };
+    if pending.id != p.decision_id {
+        return Err((
+            code::NO_SUCH_DECISION.to_string(),
+            format!(
+                "decision {} is stale (pending {})",
+                p.decision_id, pending.id
+            ),
+        ));
+    }
+    if !pending.options.iter().any(|o| o.id == p.option_id) {
+        return Err(bad_params(format!("unknown option '{}'", p.option_id)));
+    }
+    let adapter = signaltty_agent::adapter_for_kind(kind);
+    let Some(channel) = adapter.answer_channel() else {
+        return Err(bad_params(format!(
+            "adapter '{}' has no answer channel (answer in the terminal)",
+            adapter.metadata().display_name,
+        )));
+    };
+    let bytes = signaltty_agent::answer_bytes(channel, &pending.options, &p.option_id)
+        .ok_or_else(|| bad_params(format!("unknown option '{}'", p.option_id)))?;
+    // Consume before delivering: a concurrent clear turns this into a
+    // typed stale-id on retry, never a second delivery.
+    let consumed = {
+        let mut s = ctx.store.write().unwrap();
+        s.answer_decision(&p.pane_id, &p.decision_id, &p.option_id)
+    };
+    let Some(ev) = consumed else {
+        return Err((
+            code::NO_SUCH_DECISION.to_string(),
+            format!("decision {} is stale", p.decision_id),
+        ));
+    };
+    let _ = ctx.bcast.send(ev);
+    if let Err(e) = ctx.ptys.input(&p.pane_id, &bytes) {
+        // The gate is consumed but the bytes never landed (the child
+        // exited between the checks): loud error, user answers in-terminal.
+        let _ = ctx.bcast.send(ctx.store.write().unwrap().emit(
+            event::DECISION_CLEARED,
+            json!({"pane_id": p.pane_id, "reason": "pane_exited"}),
+        ));
+        return Err(if e == "pane has no live PTY" {
+            (code::PANE_EXITED.to_string(), p.pane_id)
+        } else {
+            (code::IO_ERROR.to_string(), e)
+        });
+    }
+    let (lifecycle, attention) = {
+        let s = ctx.store.read().unwrap();
+        let pane = s.panes.get(&p.pane_id).unwrap();
+        (
+            pane.lifecycle.as_str().to_string(),
+            pane.attention.as_str().to_string(),
+        )
+    };
+    ctx.mark_persist();
+    Ok((
+        json!({"answered": true, "lifecycle": lifecycle, "attention": attention}),
+        ConnEffect::default(),
+    ))
 }
 
 // ---- notifications ----
@@ -1057,7 +1157,12 @@ fn h_hook_event(ctx: &Ctx, params: &Value) -> Handler {
             outbound.extend(s.set_lifecycle(&pid, lifecycle));
         }
         match decision.attention {
-            Some(Attention::None) => outbound.extend(s.clear_attention(&pid, "hook")),
+            Some(Attention::None) => {
+                if let Some(ev) = s.clear_attention(&pid, "hook") {
+                    outbound.push(ev);
+                }
+                outbound.extend(s.clear_decision(&pid, "attention_cleared"));
+            }
             Some(att) => outbound.extend(s.raise_attention(&pid, att)),
             None => {}
         }
@@ -1065,6 +1170,54 @@ fn h_hook_event(ctx: &Ctx, params: &Value) -> Handler {
     };
     for ev in outbound {
         let _ = ctx.bcast.send(ev);
+    }
+    // 2b. Structured decision ingest (directive 2): explicit data wins.
+    // A decision payload sets/supersedes; without one, leaving `blocked`
+    // means the gate is gone and the bar must not stick.
+    if let Some(payload) = p.decision {
+        if payload.prompt.is_empty() || payload.options.is_empty() {
+            return Err(bad_params(
+                "decision needs a prompt and at least one option",
+            ));
+        }
+        let answerable = adapter.answer_channel().is_some();
+        let record = signaltty_core::model::Decision {
+            id: payload.id,
+            prompt: payload.prompt,
+            options: payload
+                .options
+                .into_iter()
+                .map(|o| signaltty_core::model::DecisionOption {
+                    id: o.id,
+                    label: o.label,
+                })
+                .collect(),
+            answerable,
+            received_at: Utc::now(),
+        };
+        let ev = {
+            let mut s = ctx.store.write().unwrap();
+            s.set_decision(&pid, record)
+        };
+        if let Some(ev) = ev {
+            let _ = ctx.bcast.send(ev);
+        }
+    } else {
+        let moved_on = {
+            let s = ctx.store.read().unwrap();
+            s.panes
+                .get(&pid)
+                .is_some_and(|pane| pane.lifecycle != Lifecycle::Blocked)
+        };
+        if moved_on {
+            let ev = {
+                let mut s = ctx.store.write().unwrap();
+                s.clear_decision(&pid, "moved_on")
+            };
+            if let Some(ev) = ev {
+                let _ = ctx.bcast.send(ev);
+            }
+        }
     }
     if let Some(message) = decision.message {
         let mut s = ctx.store.write().unwrap();

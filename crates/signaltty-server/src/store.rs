@@ -156,6 +156,70 @@ impl Store {
         Some(ev)
     }
 
+    /// Set (or supersede) the pane's pending decision. A supersede folds
+    /// into a single `decision.created` carrying the previous id — one
+    /// emit per transition, never a cleared+created pair.
+    pub fn set_decision(
+        &mut self,
+        pane_id: &str,
+        decision: signaltty_core::model::Decision,
+    ) -> Option<StoredEvent> {
+        let pane = self.panes.get_mut(pane_id)?;
+        let prev = pane.pending_decision.replace(decision.clone());
+        pane.last_activity_at = chrono::Utc::now();
+        let ev = self.emit(
+            signaltty_proto::event::DECISION_CREATED,
+            serde_json::json!({
+                "pane_id": pane_id, "decision": decision,
+                "prev": prev.map(|d| d.id),
+            }),
+        );
+        Some(ev)
+    }
+
+    /// Consume the pending decision on answer. `None` when absent or the
+    /// id is stale (superseded / already answered): the caller reports
+    /// `{answered: false}`, never an error.
+    pub fn answer_decision(
+        &mut self,
+        pane_id: &str,
+        decision_id: &str,
+        option_id: &str,
+    ) -> Option<StoredEvent> {
+        let pane = self.panes.get_mut(pane_id)?;
+        match &pane.pending_decision {
+            Some(d) if d.id == decision_id => {}
+            _ => return None,
+        }
+        pane.pending_decision = None;
+        pane.last_activity_at = chrono::Utc::now();
+        let ev = self.emit(
+            signaltty_proto::event::DECISION_ANSWERED,
+            serde_json::json!({
+                "pane_id": pane_id,
+                "decision_id": decision_id,
+                "option_id": option_id,
+            }),
+        );
+        Some(ev)
+    }
+
+    /// Drop the pending decision without answering. `None` when absent.
+    pub fn clear_decision(&mut self, pane_id: &str, reason: &str) -> Option<StoredEvent> {
+        let pane = self.panes.get_mut(pane_id)?;
+        let dropped = pane.pending_decision.take()?;
+        pane.last_activity_at = chrono::Utc::now();
+        let ev = self.emit(
+            signaltty_proto::event::DECISION_CLEARED,
+            serde_json::json!({
+                "pane_id": pane_id,
+                "decision_id": dropped.id,
+                "reason": reason,
+            }),
+        );
+        Some(ev)
+    }
+
     /// Clear attention explicitly (user replied / focused via hook). Returns
     /// the event to broadcast, if anything changed.
     pub fn clear_attention(&mut self, pane_id: &str, reason: &str) -> Option<StoredEvent> {
@@ -235,6 +299,44 @@ mod tests {
         let e = store.set_lifecycle(&id, Lifecycle::Done).unwrap();
         assert_eq!(e.name, "agent.done");
         assert!(store.set_lifecycle(&id, Lifecycle::Done).is_none());
+    }
+
+    #[test]
+    fn decision_lifecycle_created_answered_cleared() {
+        use signaltty_core::model::{Decision, DecisionOption};
+        let mut store = Store::new();
+        let p = pane_with(Attention::None, 0);
+        let id = p.id.clone();
+        store.panes.insert(id.clone(), p);
+        let decision = |did: &str| Decision {
+            id: did.to_string(),
+            prompt: "Allow?".to_string(),
+            options: vec![DecisionOption {
+                id: "once".into(),
+                label: "Once".into(),
+            }],
+            answerable: true,
+            received_at: Utc::now(),
+        };
+        let e = store.set_decision(&id, decision("d1")).unwrap();
+        assert_eq!(e.name, "decision.created");
+        assert_eq!(e.payload["prev"], serde_json::Value::Null);
+        // Supersede folds into one created carrying prev.
+        let e = store.set_decision(&id, decision("d2")).unwrap();
+        assert_eq!(e.payload["prev"], serde_json::json!("d1"));
+        // Stale id never consumes.
+        assert!(store.answer_decision(&id, "d1", "once").is_none());
+        let e = store.answer_decision(&id, "d2", "once").unwrap();
+        assert_eq!(e.name, "decision.answered");
+        // Answered twice is a no-op (caller reports answered:false).
+        assert!(store.answer_decision(&id, "d2", "once").is_none());
+        assert!(store.clear_decision(&id, "test").is_none());
+        // Clearing an absent decision on an unknown pane is a no-op.
+        assert!(store.clear_decision("pane_nope", "test").is_none());
+        store.set_decision(&id, decision("d3")).unwrap();
+        let e = store.clear_decision(&id, "attention_cleared").unwrap();
+        assert_eq!(e.name, "decision.cleared");
+        assert_eq!(e.payload["reason"], serde_json::json!("attention_cleared"));
     }
 
     #[test]

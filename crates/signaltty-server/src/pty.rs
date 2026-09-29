@@ -280,6 +280,9 @@ impl PtyManager {
             // One lock for the whole exit: transitions ride along.
             outbound.extend(s.set_lifecycle(pane_id, Lifecycle::Exited));
             outbound.extend(s.raise_attention(pane_id, Attention::Unread));
+            // A decision outlives nothing: the bar renders read-only
+            // nowhere once the child is gone.
+            outbound.extend(s.clear_decision(pane_id, "pane_exited"));
         }
         for ev in outbound {
             let _ = self.bcast.send(ev);

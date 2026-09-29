@@ -127,6 +127,7 @@ pub mod method {
     pub const PANE_CLOSE: &str = "pane.close";
     pub const PANE_RESUME: &str = "pane.resume";
     pub const PANE_MARK_SEEN: &str = "pane.mark_seen";
+    pub const DECISION_ANSWER: &str = "decision.answer";
     pub const NOTIFY: &str = "notify";
     pub const HOOK_EVENT: &str = "hook-event";
     pub const REPORT_SESSION: &str = "report-session";
@@ -165,6 +166,7 @@ pub mod method {
         PANE_CLOSE,
         PANE_RESUME,
         PANE_MARK_SEEN,
+        DECISION_ANSWER,
         NOTIFY,
         HOOK_EVENT,
         REPORT_SESSION,
@@ -197,6 +199,9 @@ pub mod event {
     pub const AGENT_IDLE: &str = "agent.idle";
     pub const AGENT_UNKNOWN: &str = "agent.unknown";
     pub const AGENT_EXITED: &str = "agent.exited";
+    pub const DECISION_CREATED: &str = "decision.created";
+    pub const DECISION_ANSWERED: &str = "decision.answered";
+    pub const DECISION_CLEARED: &str = "decision.cleared";
     pub const ATTENTION_CREATED: &str = "attention.created";
     pub const ATTENTION_UPDATED: &str = "attention.updated";
     pub const ATTENTION_CLEARED: &str = "attention.cleared";
@@ -217,6 +222,9 @@ pub mod event {
         PANE_EXITED,
         PANE_CLOSED,
         PANE_RESIZED,
+        DECISION_CREATED,
+        DECISION_ANSWERED,
+        DECISION_CLEARED,
         PTY_DATA,
         AGENT_WORKING,
         AGENT_BLOCKED,
@@ -242,6 +250,7 @@ pub mod code {
     pub const NO_SUCH_WORKSPACE: &str = "NO_SUCH_WORKSPACE";
     pub const NO_SUCH_TAB: &str = "NO_SUCH_TAB";
     pub const NO_SUCH_PANE: &str = "NO_SUCH_PANE";
+    pub const NO_SUCH_DECISION: &str = "NO_SUCH_DECISION";
     pub const PANE_EXITED: &str = "PANE_EXITED";
     pub const PANES_ALIVE: &str = "PANES_ALIVE";
     pub const SPAWN_FAILED: &str = "SPAWN_FAILED";
@@ -259,6 +268,7 @@ pub mod code {
         NO_SUCH_WORKSPACE,
         NO_SUCH_TAB,
         NO_SUCH_PANE,
+        NO_SUCH_DECISION,
         PANE_EXITED,
         PANES_ALIVE,
         SPAWN_FAILED,
@@ -296,9 +306,9 @@ mod tests {
             assert!(!name.is_empty());
         }
         for (list, len) in [
-            (method::ALL, 33usize),
-            (event::ALL, 25usize),
-            (code::ALL, 14usize),
+            (method::ALL, 34usize),
+            (event::ALL, 28usize),
+            (code::ALL, 15usize),
         ] {
             let set: HashSet<&&str> = list.iter().collect();
             assert_eq!(set.len(), list.len(), "no duplicates");

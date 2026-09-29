@@ -81,6 +81,14 @@ mod tests {
     }
 
     #[test]
+    fn only_codex_advertises_a_channel() {
+        for name in ["codex", "claude", "opencode", "cursor", "generic"] {
+            let channel = adapter_for_name(name).unwrap().answer_channel();
+            assert_eq!(channel.is_some(), name == "codex", "{name}");
+        }
+    }
+
+    #[test]
     fn names_resolve() {
         assert!(adapter_for_name("codex").is_some());
         assert!(adapter_for_name("nope").is_none());
