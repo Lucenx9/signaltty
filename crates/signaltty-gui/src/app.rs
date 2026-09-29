@@ -964,6 +964,17 @@ impl App {
                 self.window.present();
                 self.focus_pane(&id);
             }
+            UiEvent::MarkSeen(id) => {
+                // Notification action: clear attention in place, no focus
+                // yank. Reuses the explicit per-pane interaction path.
+                if self
+                    .actor
+                    .call("pane.mark_seen", json!({"pane_id": id}))
+                    .is_ok()
+                {
+                    self.refresh_pane_workspace(&id);
+                }
+            }
             UiEvent::Reconnected => {
                 self.banner.set_revealed(false);
                 self.toast("Reconnected");

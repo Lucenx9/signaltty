@@ -58,6 +58,8 @@ pub enum UiEvent {
     },
     /// Desktop-notification click (sent by notif.rs, not the actor).
     FocusPane(String),
+    /// Desktop-notification "Mark read" (clears attention in place).
+    MarkSeen(String),
     Reconnected,
     Disconnected,
 }
