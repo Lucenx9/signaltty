@@ -13,25 +13,58 @@
 //! never resizes the terminal and a split can't clip it); focus marks
 //! the card in multi-pane tabs.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4::prelude::*;
 use serde_json::json;
 use vte4::prelude::*;
 
-use signaltty_core::{Lifecycle, LiveState, Pane};
+use signaltty_core::{Decision, Lifecycle, LiveState, Pane};
 
 use crate::actor::IpcHandle;
 use crate::sidebar::agent_name;
 use crate::status::{self, AttentionBadge, LifecycleIndicator};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum PaneAction {
     SplitRight,
     SplitDown,
     Close,
     Resume,
+    AnswerDecision {
+        decision_id: String,
+        option_id: String,
+    },
+}
+
+/// What the inline decision bar shows for a pending decision.
+/// Headless-tested seam: pure mapping, no widgets.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DecisionRender {
+    pub prompt: String,
+    pub options: Vec<(String, String)>,
+    /// No proven answer channel: prompt + hint, no buttons.
+    pub read_only: bool,
+}
+
+/// Map a [`Decision`] to its bar contents. Prose-only attention never
+/// reaches here (the server only sets structured decisions), so every
+/// option listed is a real button.
+pub fn decision_render(decision: &Decision) -> DecisionRender {
+    DecisionRender {
+        prompt: decision.prompt.clone(),
+        options: if decision.answerable {
+            decision
+                .options
+                .iter()
+                .map(|o| (o.id.clone(), o.label.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        },
+        read_only: !decision.answerable,
+    }
 }
 
 type ActionCallback = Box<dyn Fn(&str, PaneAction)>;
@@ -49,6 +82,12 @@ pub struct PaneWidget {
     subtitle: gtk4::Label,
     badge: AttentionBadge,
     resume: gtk4::Button,
+    decision_bar: gtk4::Box,
+    decision_prompt: gtk4::Label,
+    decision_options: gtk4::Box,
+    decision_hint: gtk4::Label,
+    shown_decision: RefCell<Option<String>>,
+    on_action: Rc<ActionCallback>,
     pane_id: String,
     actor: IpcHandle,
     live: Cell<bool>,
@@ -82,7 +121,9 @@ impl PaneWidget {
             b.set_focus_on_click(false);
             let on_action = Rc::clone(&on_action);
             let pid = pane_id.to_string();
-            b.connect_clicked(move |_| on_action(&pid, action));
+            // Clone across the inner closure: the outer builder stays `Fn`.
+            let act = action.clone();
+            b.connect_clicked(move |_| on_action(&pid, act.clone()));
             b
         };
         let actions = gtk4::Box::new(gtk4::Orientation::Horizontal, 2);
@@ -143,7 +184,28 @@ impl PaneWidget {
         scroller.set_child(Some(&term));
         scroller.set_vexpand(true);
 
+        // Inline decision bar (directive 2): prompt + one button per
+        // option, built once and toggled. The VTE widget is never touched
+        // here, so the bar appearing never rebuilds the terminal.
+        let decision_prompt = gtk4::Label::new(None);
+        decision_prompt.add_css_class("decision-prompt");
+        decision_prompt.set_xalign(0.0);
+        decision_prompt.set_hexpand(true);
+        decision_prompt.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        let decision_options = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        decision_options.add_css_class("decision-options");
+        let decision_hint = gtk4::Label::new(Some("Answer in the terminal"));
+        decision_hint.add_css_class("decision-hint");
+        decision_hint.add_css_class("dimmed");
+        let decision_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        decision_bar.add_css_class("decision-bar");
+        decision_bar.append(&decision_prompt);
+        decision_bar.append(&decision_options);
+        decision_bar.append(&decision_hint);
+        decision_bar.set_visible(false);
+
         root.append(&header);
+        root.append(&decision_bar);
         root.append(&scroller);
 
         let w = Rc::new(PaneWidget {
@@ -152,6 +214,12 @@ impl PaneWidget {
             lifecycle,
             title,
             subtitle,
+            decision_bar,
+            decision_prompt,
+            decision_options,
+            decision_hint,
+            shown_decision: RefCell::new(None),
+            on_action: Rc::clone(&on_action),
             badge,
             resume,
             pane_id: pane_id.to_string(),
@@ -315,6 +383,52 @@ impl PaneWidget {
         // Resume affordance for restored/resumable tombstones.
         self.resume
             .set_visible(!live && pane.agent.resume_argv.is_some());
+        self.sync_decision_bar(pane.pending_decision.as_ref());
+    }
+
+    /// Toggle the inline decision bar. Buttons rebuild only when the
+    /// decision id changes; showing/hiding never touches the VTE.
+    fn sync_decision_bar(&self, decision: Option<&Decision>) {
+        match decision {
+            None => {
+                self.decision_bar.set_visible(false);
+                *self.shown_decision.borrow_mut() = None;
+            }
+            Some(d) => {
+                let rendered = decision_render(d);
+                self.decision_prompt.set_text(&rendered.prompt);
+                self.decision_prompt
+                    .set_tooltip_text(Some(&rendered.prompt));
+                self.decision_hint.set_visible(rendered.read_only);
+                if self.shown_decision.borrow().as_deref() != Some(d.id.as_str()) {
+                    while let Some(child) = self.decision_options.first_child() {
+                        self.decision_options.remove(&child);
+                    }
+                    for (option_id, label) in &rendered.options {
+                        let button = gtk4::Button::with_label(label);
+                        button.add_css_class("pill");
+                        button.set_tooltip_text(Some(label));
+                        button.set_focus_on_click(false);
+                        let on_action = Rc::clone(&self.on_action);
+                        let pane_id = self.pane_id.clone();
+                        let decision_id = d.id.clone();
+                        let option_id = option_id.clone();
+                        button.connect_clicked(move |_| {
+                            on_action(
+                                &pane_id,
+                                PaneAction::AnswerDecision {
+                                    decision_id: decision_id.clone(),
+                                    option_id: option_id.clone(),
+                                },
+                            );
+                        });
+                        self.decision_options.append(&button);
+                    }
+                    *self.shown_decision.borrow_mut() = Some(d.id.clone());
+                }
+                self.decision_bar.set_visible(true);
+            }
+        }
     }
 }
 
@@ -340,3 +454,55 @@ const PALETTE: [&str; 16] = [
     "#241f31", "#c01c28", "#2ec27e", "#f5c211", "#1e78e4", "#9841bb", "#0ab9dc", "#c0bfbc",
     "#5e5c64", "#ed333b", "#57e389", "#f8e45c", "#51a1ff", "#c061cb", "#4fd2fd", "#f6f5f4",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use signaltty_core::DecisionOption;
+
+    fn decision(answerable: bool) -> Decision {
+        Decision {
+            id: "d1".into(),
+            prompt: "Allow rm -rf /tmp/x?".into(),
+            options: vec![
+                DecisionOption {
+                    id: "once".into(),
+                    label: "Once".into(),
+                },
+                DecisionOption {
+                    id: "always".into(),
+                    label: "Always".into(),
+                },
+                DecisionOption {
+                    id: "deny".into(),
+                    label: "Deny".into(),
+                },
+            ],
+            answerable,
+            received_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn render_lists_every_option_as_a_button() {
+        let r = decision_render(&decision(true));
+        assert_eq!(r.prompt, "Allow rm -rf /tmp/x?");
+        assert_eq!(
+            r.options,
+            vec![
+                ("once".to_string(), "Once".to_string()),
+                ("always".to_string(), "Always".to_string()),
+                ("deny".to_string(), "Deny".to_string()),
+            ]
+        );
+        assert!(!r.read_only);
+    }
+
+    #[test]
+    fn render_without_channel_is_read_only_with_no_buttons() {
+        let r = decision_render(&decision(false));
+        assert_eq!(r.prompt, "Allow rm -rf /tmp/x?");
+        assert!(r.options.is_empty(), "never fake buttons");
+        assert!(r.read_only);
+    }
+}

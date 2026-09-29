@@ -313,6 +313,30 @@
   box-shadow: inset 0 0 0 2px var(--error-bg-color), inset 0 0 16px alpha(var(--error-bg-color), 0.22);
 }
 
+/* ---- inline decision bar ---------------------------------------------- */
+
+/* The question sits where the user already looks: below the header,
+ * above the terminal. One hairline separates it from the header; the
+ * terminal grid below never moves except by the bar's own height. */
+.decision-bar {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-color);
+  background-color: alpha(var(--accent-bg-color), 0.06);
+}
+.decision-prompt {
+  font-weight: 600;
+  font-size: 0.9em;
+}
+.decision-options button {
+  min-height: 26px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 0.9em;
+}
+.decision-hint {
+  font-size: 0.85em;
+}
+
 /* ---- pressable pills -------------------------------------------------- */
 
 button.pill,

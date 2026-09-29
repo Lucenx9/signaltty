@@ -1041,7 +1041,23 @@ impl App {
             PaneAction::SplitDown => self.split_pane(pane_id, SplitDir::Down),
             PaneAction::Close => self.close_pane(pane_id),
             PaneAction::Resume => self.resume_pane(pane_id),
+            PaneAction::AnswerDecision {
+                decision_id,
+                option_id,
+            } => self.answer_decision(pane_id, &decision_id, &option_id),
         }
+    }
+
+    /// Deliver a decision pick; the bar clears on the resulting
+    /// `decision.answered` event (or the toast explains a stale bar).
+    fn answer_decision(&self, pane_id: &str, decision_id: &str, option_id: &str) {
+        if let Err(e) = self.actor.call(
+            "decision.answer",
+            json!({"pane_id": pane_id, "decision_id": decision_id, "option_id": option_id}),
+        ) {
+            self.toast(&format!("Couldn't answer — {e}"));
+        }
+        self.refresh_pane_workspace(pane_id);
     }
 
     // ---- focus navigation ----

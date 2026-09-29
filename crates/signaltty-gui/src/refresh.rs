@@ -67,6 +67,9 @@ impl PendingRefresh {
             | event::ATTENTION_CREATED
             | event::ATTENTION_UPDATED
             | event::ATTENTION_CLEARED
+            | event::DECISION_CREATED
+            | event::DECISION_ANSWERED
+            | event::DECISION_CLEARED
             | event::NOTIFICATION_CREATED => {}
             // PTY output is streamed directly; shutdown and future unrelated
             // events do not invalidate workspace data.
@@ -272,6 +275,9 @@ pub(crate) mod tests {
             (event::ATTENTION_CREATED, json!({"pane_id": "pane_b"})),
             (event::ATTENTION_UPDATED, json!({"pane_id": "pane_b"})),
             (event::ATTENTION_CLEARED, json!({"pane_id": "pane_b"})),
+            (event::DECISION_CREATED, json!({"pane_id": "pane_b"})),
+            (event::DECISION_ANSWERED, json!({"pane_id": "pane_b"})),
+            (event::DECISION_CLEARED, json!({"pane_id": "pane_b"})),
             (
                 event::NOTIFICATION_CREATED,
                 json!({"notification": {"workspace_id": "b", "pane_id": "pane_b"}}),
