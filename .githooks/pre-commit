@@ -1,0 +1,17 @@
+#!/bin/sh
+# Pre-commit: rustfmt check on staged Rust files only (fast, staged-only).
+# Installed via: scripts/setup-agent.sh hooks install
+set -eu
+
+staged="$(git diff --cached --name-only --diff-filter=ACM -z | tr '\0' '\n' | grep '\.rs$' || true)"
+[ -z "$staged" ] && exit 0
+
+if ! command -v rustfmt >/dev/null 2>&1; then
+  echo "pre-commit: rustfmt not found, skipping format check" >&2
+  exit 0
+fi
+
+echo "$staged" | xargs rustfmt --edition 2021 --check -- 2>&1 || {
+  echo "pre-commit: run rustfmt --edition 2021 on the files above, stage, retry" >&2
+  exit 1
+}
