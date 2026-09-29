@@ -27,8 +27,11 @@ looks, never inside the agent's TUI. Decisions must travel as data
 4. **`answerable` captured at ingest** and stored on the `Decision`, so
    the GTK GUI (which must not depend on `signaltty-agent` per ADR-0004)
    and the CLI render buttons vs. hint from data alone.
-5. **Clearing**: attention clear, lifecycle leaving `blocked`
-   (`moved_on`), child exit (`pane_exited`), or answer (`answered`).
+5. **Clearing**: an agent transition clearing required attention,
+   lifecycle leaving `blocked` (`moved_on`), child exit (`pane_exited`),
+   or answer (`answered`). Reading and focusing preserve unanswered
+   decisions and their gates, including `pane.mark_seen` and default
+   attach. ADR-0012 corrects the original acknowledgment semantics.
    "Always" answers once — no policy storage in v1.
 
 ## Consequences

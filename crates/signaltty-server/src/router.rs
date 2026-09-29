@@ -906,22 +906,16 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
     // and clear per-pane on focus instead — visibility alone must not
     // clear attention.
     let want_seen = p.mark_seen.unwrap_or(true);
-    let cleared = {
+    let pane = {
         let mut s = ctx.store.write().unwrap();
-        let mut cleared = false;
         if want_seen {
-            if let Some(ev) = s.clear_attention(&id, "attach") {
-                let _ = ctx.bcast.send(ev);
-                cleared = true;
-            }
-            // Attaching with focus semantics dismisses the bar too.
-            if let Some(ev) = s.clear_decision(&id, "attention_cleared") {
+            if let Some(ev) = s.mark_seen(&id, "attach") {
                 let _ = ctx.bcast.send(ev);
             }
         }
-        cleared
+        s.panes.get(&id).cloned().unwrap_or(pane)
     };
-    if cleared {
+    if want_seen {
         ctx.mark_persist();
     }
     let mut effect = ConnEffect::default();
@@ -933,7 +927,7 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
             "live": pane.live,
             "restore_state": pane.restore_state,
             "lifecycle": pane.lifecycle.as_str(),
-            "attention": Attention::None.as_str(),
+            "attention": pane.attention.as_str(),
         }),
         effect,
     ))
@@ -1021,12 +1015,7 @@ fn h_pane_mark_seen(ctx: &Ctx, params: &Value) -> Handler {
     s.panes
         .get(&id)
         .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?;
-    if let Some(ev) = s.clear_attention(&id, "mark_seen") {
-        let _ = ctx.bcast.send(ev);
-    }
-    // Explicit per-pane interaction dismisses the decision bar with the
-    // attention: the user is looking and answers in the terminal or not.
-    if let Some(ev) = s.clear_decision(&id, "attention_cleared") {
+    if let Some(ev) = s.mark_seen(&id, "mark_seen") {
         let _ = ctx.bcast.send(ev);
     }
     let pane_snapshot = s.panes.get(&id).cloned().unwrap();
@@ -1090,14 +1079,23 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
     let consumed = {
         let mut s = ctx.store.write().unwrap();
         s.answer_decision(&p.pane_id, &p.decision_id, &p.option_id)
+            .map(|ev| {
+                // Resolve this gate under the consume lock. A newer decision
+                // arriving during delivery must retain its own attention.
+                let cleared = s.mark_seen(&p.pane_id, "decision_answer");
+                (ev, cleared)
+            })
     };
-    let Some(ev) = consumed else {
+    let Some((ev, cleared)) = consumed else {
         return Err((
             code::NO_SUCH_DECISION.to_string(),
             format!("decision {} is stale", p.decision_id),
         ));
     };
     let _ = ctx.bcast.send(ev);
+    if let Some(cleared) = cleared {
+        let _ = ctx.bcast.send(cleared);
+    }
     if let Err(e) = ctx.ptys.input(&p.pane_id, &bytes) {
         // The gate is consumed but the bytes never landed (the child
         // exited between the checks): loud error, user answers in-terminal.

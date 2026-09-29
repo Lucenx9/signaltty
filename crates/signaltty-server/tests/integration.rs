@@ -440,11 +440,15 @@ async fn decision_answer_delivers_bytes_and_consumes() {
         .await
         .unwrap();
     assert_eq!(r["answered"], true);
+    assert_eq!(r["attention"], "none");
+    assert_eq!(r["lifecycle"], "blocked");
     wait_for_text(&mut c, &pane, "1", Duration::from_secs(5)).await;
 
     // Consumed: the bar is gone and a repeat never redelivers.
     let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
     assert!(p["pane"].get("pending_decision").is_none());
+    assert_eq!(p["pane"]["attention"], "none");
+    assert_eq!(p["pane"]["lifecycle"], "blocked");
     let err = c
         .call(
             "decision.answer",
@@ -510,7 +514,7 @@ async fn decision_prose_supersede_and_clearing() {
     let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
     assert!(p["pane"].get("pending_decision").is_none());
 
-    // Explicit per-pane interaction clears with the attention.
+    // Reading an approval preserves its decision and required attention.
     c.call(
         "hook-event",
         json!({"agent": "codex", "event": "PermissionRequest", "pane_id": pane,
@@ -522,7 +526,16 @@ async fn decision_prose_supersede_and_clearing() {
         .await
         .unwrap();
     let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
-    assert!(p["pane"].get("pending_decision").is_none());
+    assert_eq!(p["pane"]["pending_decision"]["id"], "d3");
+    assert_eq!(p["pane"]["attention"], "permission_required");
+    assert!(p["pane"]["last_seen_at"].is_string());
+    let attached = c
+        .call("pane.attach", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    assert_eq!(attached["attention"], "permission_required");
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["pending_decision"]["id"], "d3");
 
     // Unknown option is a shape error; the decision survives it.
     c.call(

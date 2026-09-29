@@ -243,6 +243,16 @@ impl Store {
         Some(ev)
     }
 
+    /// Acknowledge reading without resolving an unanswered decision.
+    pub fn mark_seen(&mut self, pane_id: &str, reason: &str) -> Option<StoredEvent> {
+        let pane = self.panes.get_mut(pane_id)?;
+        pane.last_seen_at = Some(chrono::Utc::now());
+        if pane.pending_decision.is_some() {
+            return None;
+        }
+        self.clear_attention(pane_id, reason)
+    }
+
     /// Clear attention explicitly (user replied / focused via hook). Returns
     /// the event to broadcast, if anything changed.
     pub fn clear_attention(&mut self, pane_id: &str, reason: &str) -> Option<StoredEvent> {

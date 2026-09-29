@@ -60,14 +60,17 @@ warning > unread > none`. A pane shows its highest outstanding item.
 
 ## Clearing rules
 
-- Attention clears only on **explicit user interaction with that
+- Ordinary attention clears only on **explicit user interaction with that
   pane**: focusing it, marking read, or replying. Visibility of the
   workspace/tab is not enough.
-- `mark_seen(pane)` sets `attention=none`, `read_at=now`, keeps
-  `lifecycle` untouched, emits `attention.cleared`.
+- `mark_seen(pane)` records `last_seen_at=now` and keeps lifecycle
+  untouched. It clears ordinary attention and emits `attention.cleared`.
+  An unanswered decision and its required attention survive reading,
+  focusing, notification clicks, and default attach. An answer or agent
+  transition resolves the decision. See [ADR-0012](adr/0012-acknowledgment-and-async-gui.md).
 - New signals re-raise attention (`attention.created`).
 - Desktop notifications are suppressed when the target pane is already
-  focused; clicking one focuses workspace+tab+pane and clears.
+  focused; clicking one focuses workspace+tab+pane and acknowledges reading.
 - "Jump to next unread" walks panes ordered by severity then recency.
 
 ## Sidebar summary (per workspace)
