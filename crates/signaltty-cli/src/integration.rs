@@ -408,6 +408,44 @@ pub fn status(home: &Path, agents: &[String], json: bool) -> Result<(), CliError
             "file": path.display().to_string(),
         });
     }
+    // Detection overlays (data, not code): manifests in the agents dir.
+    let agents_dir = std::env::var("SIGNALTTY_AGENTS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| signaltty_core::paths::agents_dir());
+    let mut manifests = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        let mut files: Vec<_> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+            .collect();
+        files.sort();
+        for path in files {
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let entry = match std::fs::read_to_string(&path) {
+                Ok(text) => match signaltty_agent::parse_manifest(&text) {
+                    Ok(m) => serde_json::json!({
+                        "file": path.display().to_string(),
+                        "kind": m.kind().map(|k| k.as_str().to_string()).unwrap_or_default(),
+                        "ok": true,
+                    }),
+                    Err(e) => serde_json::json!({
+                        "file": path.display().to_string(),
+                        "ok": false, "error": e,
+                    }),
+                },
+                Err(e) => serde_json::json!({
+                    "file": path.display().to_string(),
+                    "ok": false, "error": e.to_string(),
+                }),
+            };
+            manifests.push(serde_json::json!({"name": name, "manifest": entry}));
+        }
+    }
+    out["manifests"] = serde_json::Value::Array(manifests);
     if json {
         println!("{out}");
     } else {
@@ -422,6 +460,28 @@ pub fn status(home: &Path, agents: &[String], json: bool) -> Result<(), CliError
                 },
                 e["file"].as_str().unwrap()
             );
+        }
+        let manifests = out["manifests"].as_array().cloned().unwrap_or_default();
+        if manifests.is_empty() {
+            println!("manifests: none ({})", agents_dir.display());
+        }
+        for m in &manifests {
+            let inner = &m["manifest"];
+            if inner["ok"].as_bool().unwrap_or(false) {
+                println!(
+                    "manifest {}: kind={} ({})",
+                    m["name"].as_str().unwrap_or("?"),
+                    inner["kind"].as_str().unwrap_or("?"),
+                    inner["file"].as_str().unwrap_or("?"),
+                );
+            } else {
+                println!(
+                    "manifest {}: BROKEN: {} ({})",
+                    m["name"].as_str().unwrap_or("?"),
+                    inner["error"].as_str().unwrap_or("?"),
+                    inner["file"].as_str().unwrap_or("?"),
+                );
+            }
         }
     }
     Ok(())

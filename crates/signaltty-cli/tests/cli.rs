@@ -213,6 +213,44 @@ async fn cli_decision_answer_flow() {
 }
 
 #[tokio::test]
+async fn cli_integration_status_lists_manifests() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-cli-agents-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("wrap.toml"),
+        "[agent]\nkind = \"codex\"\nbinaries = [\"codex-wrap\"]\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("broken.toml"), "[agent\nkind = ").unwrap();
+    // Scoped env override: only this test reads manifests from here, and
+    // no other CLI test asserts on the manifests key.
+    std::env::set_var("SIGNALTTY_AGENTS_DIR", &dir);
+    let srv = TestServer::start().await;
+    let st = cli_json(&srv.socket, &["integration", "status"]);
+    let manifests = st["manifests"].as_array().cloned().unwrap_or_default();
+    assert_eq!(manifests.len(), 2, "{manifests:?}");
+    let wrap = manifests.iter().find(|m| m["name"] == "wrap").unwrap();
+    assert_eq!(wrap["manifest"]["kind"], "codex");
+    assert_eq!(wrap["manifest"]["ok"], true);
+    let broken = manifests.iter().find(|m| m["name"] == "broken").unwrap();
+    assert_eq!(broken["manifest"]["ok"], false);
+    let (ok, text) = cli(&srv.socket, &["integration", "status"]);
+    assert!(ok, "{text}");
+    assert!(text.contains("manifest wrap: kind=codex"), "{text}");
+    assert!(text.contains("BROKEN"), "{text}");
+    std::env::remove_var("SIGNALTTY_AGENTS_DIR");
+    srv.shutdown().await;
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
 async fn cli_integration_install_uninstall() {
     let home = std::env::temp_dir().join(format!(
         "signaltty-home-{}-{}",
