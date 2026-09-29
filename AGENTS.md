@@ -5,8 +5,27 @@ signaltty: native Linux workspace for parallel AI coding agents. Rust workspace 
 ## Layout
 
 - `crates/signaltty-{core,proto,term,agent,plugin,testkit,server,cli,gui}/` — core/proto stay toolkit-free (ADR-0004); GUI is the only gtk/vte user.
-- `docs/00-index.md` maps the rest: `01` workspace, `02` data model, `06` GUI toolkit, `08` IPC methods, `09` testing. Read the doc for the area you touch before editing it.
+- `docs/README.md` indexes the rest: `02` data model, `06` GUI toolkit, `07` agents, `08` IPC, `14` product direction, `15` agent skills. Read the doc for the area you touch before editing it.
 - `docs/adr/` records decisions; new load-bearing choice → add an ADR there.
+- `.specify/` holds the constitution + spec/plan/tasks templates + scripts; feature work lives in `specs/<nnn>-<name>/` via `/speckit-specify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement`.
+
+## Direction
+
+Build to `docs/14-product-direction.md`: cmux + herdr behavior, t3code visual quality. The constitution (`.specify/memory/constitution.md`) is binding; specs that contradict it justify the deviation in-spec.
+
+## Automation
+
+Fresh environment? Run this first (bash + git only):
+
+```sh
+scripts/setup-agent.sh all       # pinned skills + spec-kit commands + git hooks
+```
+
+Skills do the heavy lifting every phase — load them before working, per
+`docs/15-agent-skills.md` (Specify → `grill-with-docs`; Plan → `architect`;
+Implement → `implement` + `tdd` + `karpathy-guidelines` + `principle-*`;
+Review → `code-review` + `interrogate`; Verify → `prove-it-works`; UI →
+`frontend-design` + emilkowalski set). CI runs fmt + clippy + tests on every push.
 
 ## Commands
 

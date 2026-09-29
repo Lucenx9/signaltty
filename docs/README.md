@@ -26,4 +26,6 @@ Docs index:
 - [11 — Crate layout](11-crates.md)
 - [12 — MVP roadmap & risks](12-roadmap-risks.md)
 - [13 — Plugins & workflows](13-plugins.md)
+- [14 — Product direction (cmux + herdr, t3code visual bar)](14-product-direction.md)
+- [15 — Agent skills (install + phase routing)](15-agent-skills.md)
 - [ADRs](adr/)
