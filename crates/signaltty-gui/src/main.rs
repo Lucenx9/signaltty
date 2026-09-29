@@ -1,8 +1,10 @@
 //! signaltty-gui: native GTK4/libadwaita client for the session server.
 //! The GUI owns no processes and no PTYs; closing it never kills sessions.
 
+mod actions;
 mod actor;
 mod app;
+mod dividers;
 mod metrics;
 mod new_workspace;
 mod notif;

@@ -1,0 +1,276 @@
+//! Single registry for window actions: each action is defined once
+//! (name, menu label + section, accelerator) and this module builds
+//! the menu model, installs the gio actions and sets the accelerators
+//! from that table. A typo used to break one of the three silently
+//! (dead menu item, dead shortcut); now the table is the only place
+//! names are spelled, and the tests below pin the consistency.
+//!
+//! Handlers arrive as callbacks (see [`ActionHandlers`]), like
+//! [`PaneCallbacks`](crate::terminal::PaneCallbacks): App owns the
+//! behavior, the registry owns the wiring. Header/sidebar buttons
+//! still reference actions by `"win.…"` name; those names live here.
+
+use gtk4::gio;
+use gtk4::prelude::*;
+use libadwaita as adw;
+
+/// Which behavior an action triggers. `ToggleSidebar` is a property
+/// action bound to the split view; the rest take callbacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandlerKind {
+    NewWorkspace,
+    NewTab,
+    SplitRight,
+    SplitDown,
+    ClosePane,
+    NextAttention,
+    About,
+    ToggleSidebar,
+}
+
+pub struct ActionDef {
+    /// Short name (`"new-workspace"`); builders add the `"win."` prefix.
+    pub name: &'static str,
+    pub handler: HandlerKind,
+    /// Menu label; `None` keeps the action out of the menu.
+    pub label: Option<&'static str>,
+    /// Menu section; entries render grouped and ordered by it.
+    pub section: u8,
+    /// Accelerator (Ctrl+Shift: plain Ctrl chords belong to the
+    /// programs running in the terminals).
+    pub accel: Option<&'static str>,
+}
+
+pub const ACTIONS: &[ActionDef] = &[
+    ActionDef {
+        name: "new-workspace",
+        handler: HandlerKind::NewWorkspace,
+        label: Some("New Workspace"),
+        section: 0,
+        accel: Some("<Control><Shift>n"),
+    },
+    ActionDef {
+        name: "new-tab",
+        handler: HandlerKind::NewTab,
+        label: Some("New Tab"),
+        section: 0,
+        accel: Some("<Control><Shift>t"),
+    },
+    ActionDef {
+        name: "split-right",
+        handler: HandlerKind::SplitRight,
+        label: Some("Split Right"),
+        section: 1,
+        accel: Some("<Control><Shift>e"),
+    },
+    ActionDef {
+        name: "split-down",
+        handler: HandlerKind::SplitDown,
+        label: Some("Split Down"),
+        section: 1,
+        accel: Some("<Control><Shift>o"),
+    },
+    ActionDef {
+        name: "close-pane",
+        handler: HandlerKind::ClosePane,
+        label: Some("Close Pane"),
+        section: 1,
+        accel: Some("<Control><Shift>w"),
+    },
+    ActionDef {
+        name: "next-attention",
+        handler: HandlerKind::NextAttention,
+        label: Some("Next Pane Needing Attention"),
+        section: 2,
+        accel: Some("<Control><Shift>j"),
+    },
+    ActionDef {
+        name: "about",
+        handler: HandlerKind::About,
+        label: Some("About signaltty"),
+        section: 3,
+        accel: None,
+    },
+    ActionDef {
+        name: "toggle-sidebar",
+        handler: HandlerKind::ToggleSidebar,
+        label: None,
+        section: 0,
+        accel: Some("F9"),
+    },
+];
+
+/// App behavior behind the actions, one callback each.
+pub struct ActionHandlers {
+    pub new_workspace: Box<dyn Fn()>,
+    pub new_tab: Box<dyn Fn()>,
+    pub split_right: Box<dyn Fn()>,
+    pub split_down: Box<dyn Fn()>,
+    pub close_pane: Box<dyn Fn()>,
+    pub next_attention: Box<dyn Fn()>,
+    pub about: Box<dyn Fn()>,
+}
+
+impl ActionHandlers {
+    fn get(&self, kind: HandlerKind) -> &dyn Fn() {
+        match kind {
+            HandlerKind::NewWorkspace => &self.new_workspace,
+            HandlerKind::NewTab => &self.new_tab,
+            HandlerKind::SplitRight => &self.split_right,
+            HandlerKind::SplitDown => &self.split_down,
+            HandlerKind::ClosePane => &self.close_pane,
+            HandlerKind::NextAttention => &self.next_attention,
+            HandlerKind::About => &self.about,
+            HandlerKind::ToggleSidebar => unreachable!("property action has no callback"),
+        }
+    }
+}
+
+/// Menu layout, pure data: sections of `(label, "win."-prefixed action)`.
+pub fn menu_sections() -> Vec<Vec<(&'static str, String)>> {
+    let mut sections: Vec<Vec<(&'static str, String)>> = Vec::new();
+    for def in ACTIONS {
+        let Some(label) = def.label else {
+            continue;
+        };
+        while sections.len() <= def.section as usize {
+            sections.push(Vec::new());
+        }
+        sections[def.section as usize].push((label, format!("win.{}", def.name)));
+    }
+    sections.retain(|s| !s.is_empty());
+    sections
+}
+
+/// Primary menu, rendered from [`menu_sections`].
+pub fn primary_menu() -> gio::Menu {
+    let menu = gio::Menu::new();
+    for items in menu_sections() {
+        let section = gio::Menu::new();
+        for (label, action) in &items {
+            section.append(Some(label), Some(action));
+        }
+        menu.append_section(None, &section);
+    }
+    menu
+}
+
+/// Install every gio action and accelerator from the table.
+pub fn install(
+    window: &adw::ApplicationWindow,
+    application: &adw::Application,
+    split_view: &adw::OverlaySplitView,
+    handlers: ActionHandlers,
+) {
+    let handlers = std::rc::Rc::new(handlers);
+    for def in ACTIONS {
+        match def.handler {
+            HandlerKind::ToggleSidebar => {
+                window.add_action(&gio::PropertyAction::new(
+                    def.name,
+                    split_view,
+                    "show-sidebar",
+                ));
+            }
+            kind => {
+                let action = gio::SimpleAction::new(def.name, None);
+                // The match on HandlerKind (not on the name string) is
+                // exhaustive: a table entry without behavior is a
+                // compile error, not a dead menu item.
+                let handlers = std::rc::Rc::clone(&handlers);
+                action.connect_activate(move |_, _| handlers.get(kind)());
+                window.add_action(&action);
+            }
+        }
+        if let Some(accel) = def.accel {
+            application.set_accels_for_action(&format!("win.{}", def.name), &[accel]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_names_are_unique() {
+        let mut names: Vec<&str> = ACTIONS.iter().map(|d| d.name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), ACTIONS.len());
+    }
+
+    #[test]
+    fn menu_covers_exactly_the_labelled_actions() {
+        let sections = menu_sections();
+        let in_menu: Vec<String> = sections.iter().flatten().map(|(_, a)| a.clone()).collect();
+        let labelled: Vec<String> = ACTIONS
+            .iter()
+            .filter(|d| d.label.is_some())
+            .map(|d| format!("win.{}", d.name))
+            .collect();
+        assert_eq!(in_menu.len(), labelled.len());
+        for action in &labelled {
+            assert!(in_menu.contains(action), "{action} missing from menu");
+        }
+        // Sections stay dense and ordered; labels are non-empty.
+        assert_eq!(sections.len(), 4);
+        for items in &sections {
+            assert!(!items.is_empty());
+            for (label, _) in items {
+                assert!(!label.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn every_action_is_reachable() {
+        // No dead entries: each action has a menu label, a shortcut,
+        // or is the sidebar toggle (header button + F9).
+        for def in ACTIONS {
+            let reachable = def.label.is_some()
+                || def.accel.is_some()
+                || def.handler == HandlerKind::ToggleSidebar;
+            assert!(reachable, "{} is unreachable", def.name);
+        }
+    }
+
+    #[test]
+    fn accels_are_unique() {
+        let mut accels: Vec<&str> = ACTIONS.iter().filter_map(|d| d.accel).collect();
+        accels.sort_unstable();
+        let len = accels.len();
+        accels.dedup();
+        assert_eq!(accels.len(), len);
+    }
+
+    #[test]
+    fn rendered_menu_matches_table() {
+        // gio::Menu needs no display: assert the built model carries
+        // the win.-prefixed names, section by section.
+        let menu = primary_menu();
+        let model = menu.upcast_ref::<gio::MenuModel>();
+        let sections = menu_sections();
+        assert_eq!(model.n_items() as usize, sections.len());
+        for (i, items) in sections.iter().enumerate() {
+            let link = model
+                .item_link(i as i32, gio::MENU_LINK_SECTION)
+                .expect("section link");
+            assert_eq!(link.n_items() as usize, items.len());
+            for (j, (label, action)) in items.iter().enumerate() {
+                let mut got_label = None;
+                let mut got_action = None;
+                let attrs = link.iterate_item_attributes(j as i32);
+                while let Some((name, value)) = attrs.next() {
+                    if name == "label" {
+                        got_label = value.get::<String>();
+                    } else if name == "action" {
+                        got_action = value.get::<String>();
+                    }
+                }
+                assert_eq!(got_label.as_deref(), Some(*label));
+                assert_eq!(got_action.as_deref(), Some(action.as_str()));
+            }
+        }
+    }
+}
