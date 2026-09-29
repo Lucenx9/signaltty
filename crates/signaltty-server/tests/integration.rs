@@ -468,6 +468,34 @@ async fn hook_event_drives_codex_lifecycle() {
 }
 
 #[tokio::test]
+async fn untitled_hook_message_is_the_last_message_verbatim() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    c.call(
+        "hook-event",
+        json!({"agent": "claude", "event": "PreToolUse", "pane_id": pane,
+               "message": "Bash(cargo test)"}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    // The notification still needs a title; the pane's headline doesn't.
+    assert_eq!(p["pane"]["last_message"], "Bash(cargo test)");
+
+    c.call(
+        "hook-event",
+        json!({"agent": "claude", "event": "PreToolUse", "pane_id": pane,
+               "title": "Tests", "message": "3 failed"}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["last_message"], "Tests: 3 failed");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn hook_event_claude_notification_and_cursor_stop() {
     let srv = TestServer::start().await;
     let mut c = srv.client().await;

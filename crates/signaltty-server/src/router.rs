@@ -899,10 +899,13 @@ pub fn push_notification(
     severity: NotificationSeverity,
     source: &str,
 ) -> Notification {
-    let title = title
+    let given = title
         .map(|t| signaltty_term::sanitize_notification_text(t, 200))
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| "signaltty".to_string());
+        .filter(|t| !t.is_empty());
+    // Notifications always carry a title; the pane's last message only
+    // repeats one the caller actually gave.
+    let titled = given.is_some();
+    let title = given.unwrap_or_else(|| "signaltty".to_string());
     let body = signaltty_term::sanitize_notification_text(body, 2000);
     let workspace_id = store
         .read()
@@ -932,8 +935,10 @@ pub fn push_notification(
         if let Some(p) = s.panes.get_mut(pane_id) {
             p.last_message = Some(if body.is_empty() {
                 title.clone()
-            } else {
+            } else if titled {
                 format!("{title}: {}", truncate(&body, 300))
+            } else {
+                truncate(&body, 300)
             });
             p.last_activity_at = now;
         }
