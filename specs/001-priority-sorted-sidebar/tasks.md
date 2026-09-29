@@ -48,6 +48,14 @@ then wiring, then verification.
   independent; it still needs T002's rank to compile the sort. Run
   sequentially; the whole feature is one sitting.
 
+## Phase 5: Review follow-up
+
+- [x] T008 Extend the ignored display test with rendered row-order +
+  selection assertions (`assert_sidebar`: float, sink, rise cases);
+  verified light + dark. A planned selection-restore in
+  `Sidebar::update` was removed after red-proofs showed GTK keeps
+  selection on moved rows — only the doc note + test remain.
+
 ## Notes
 
 - Commit as `gui: priority-sort the workspace sidebar` after T007.

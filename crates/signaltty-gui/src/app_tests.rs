@@ -40,6 +40,35 @@ fn has_label(widget: &gtk4::Widget, text: &str) -> bool {
     false
 }
 
+/// Sidebar rows in rendered order: (workspace id, selected).
+fn sidebar_order(app: &App) -> Vec<(String, bool)> {
+    fn walk(widget: &gtk4::Widget, out: &mut Vec<(String, bool)>) {
+        if let Some(row) = widget.downcast_ref::<gtk4::ListBoxRow>() {
+            out.push((row.widget_name().to_string(), row.is_selected()));
+        }
+        let mut child = widget.first_child();
+        while let Some(w) = child {
+            walk(&w, out);
+            child = w.next_sibling();
+        }
+    }
+    let mut out = Vec::new();
+    walk(app.sidebar.widget.upcast_ref(), &mut out);
+    out
+}
+
+fn assert_sidebar(app: &App, ids: &[&str], selected: &str) {
+    let order = sidebar_order(app);
+    let names: Vec<&str> = order.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(names, ids, "priority order");
+    let sel: Vec<&str> = order
+        .iter()
+        .filter(|(_, s)| *s)
+        .map(|(id, _)| id.as_str())
+        .collect();
+    assert_eq!(sel, [selected], "selection follows the workspace");
+}
+
 #[test]
 #[ignore = "requires a GTK display; run with dbus-run-session (or xvfb-run)"]
 fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
@@ -108,6 +137,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
         "one list + one get per workspace"
     );
     assert_eq!(app.active_ws_id().as_deref(), Some("a"));
+    assert_sidebar(&app, &["a", "b"], "a");
     let original_page = app.tab_view.selected_page().unwrap();
     calls.lock().unwrap().clear();
 
@@ -149,6 +179,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
         "approval in background"
     ));
     assert_eq!(app.tab_view.selected_page(), Some(original_page));
+    assert_sidebar(&app, &["b", "a"], "a");
     calls.lock().unwrap().clear();
 
     // Switching uses that same snapshot, with no second workspace.get.
@@ -201,6 +232,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     assert!(first.indicator_icon().is_none());
     assert!(!first.is_loading());
     assert_eq!(app.tab_view.selected_page(), Some(selected.clone()));
+    assert_sidebar(&app, &["a", "b"], "b");
     calls.lock().unwrap().clear();
 
     // Deletion payloads contain only ids; routing must use the old snapshot.
@@ -219,6 +251,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     assert_eq!(app.tab_view.selected_page(), Some(selected));
     assert!(app.widgets.borrow().is_empty());
     assert_eq!(app.attention.count.text(), "1");
+    assert_sidebar(&app, &["a", "b"], "b");
     calls.lock().unwrap().clear();
 
     state.lock().unwrap().insert("c".into(), fixture("c"));
@@ -238,6 +271,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     assert_eq!(calls.lock().unwrap().len(), 4);
     assert!(has_label(app.sidebar.widget.upcast_ref(), "c"));
     assert!(!app.banner.is_revealed());
+    assert_sidebar(&app, &["a", "c", "b"], "b");
     calls.lock().unwrap().clear();
 
     state.lock().unwrap().remove("b");
@@ -247,6 +281,34 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     assert_eq!(app.active_ws_id().as_deref(), Some("a"));
     assert_eq!(app.title.title(), "a");
     assert!(!has_label(app.sidebar.widget.upcast_ref(), "b"));
+    assert_sidebar(&app, &["a", "c"], "a");
+    calls.lock().unwrap().clear();
+
+    // The selected workspace sinks when another needs attention;
+    // selection stays on it even though its own row moved.
+    {
+        let mut state = state.lock().unwrap();
+        state.get_mut("a").unwrap()["panes"][0]["attention"] = json!("none");
+        state.get_mut("c").unwrap()["panes"][0]["attention"] = json!("error");
+    }
+    emit(&app, "pane.updated", json!({"pane_id": "pane_a"}));
+    emit(&app, "pane.updated", json!({"pane_id": "pane_c"}));
+    drain_refresh(&app);
+    assert_eq!(calls.lock().unwrap().len(), 2);
+    assert_sidebar(&app, &["c", "a"], "a");
+    calls.lock().unwrap().clear();
+
+    // Only the other workspace changes, but the selected row still
+    // moves (back to the top); the active workspace is untouched so
+    // no show_workspace re-selects it — update() must preserve it.
+    {
+        let mut state = state.lock().unwrap();
+        state.get_mut("c").unwrap()["panes"][0]["attention"] = json!("none");
+    }
+    emit(&app, "pane.updated", json!({"pane_id": "pane_c"}));
+    drain_refresh(&app);
+    assert_eq!(calls.lock().unwrap().len(), 1);
+    assert_sidebar(&app, &["a", "c"], "a");
 
     app.actor.call("test.stop", json!({})).unwrap();
     app.window.destroy();

@@ -213,7 +213,10 @@ impl Sidebar {
         *self.on_select.borrow_mut() = Some(Box::new(cb));
     }
 
-    /// Reconcile rows with `items` (server order), updating in place.
+    /// Reconcile rows with `items` (priority order), updating in
+    /// place. Moves remove + re-insert rows; GTK keeps the selection
+    /// on the moved row, so selection follows the workspace, not the
+    /// row index (covered by the display test's order assertions).
     pub fn update(&self, items: &[WsSummary]) {
         let mut rows = self.rows.borrow_mut();
         rows.retain(|r| {
