@@ -1,0 +1,6 @@
+{
+  "case": "relaunching presents the existing window",
+  "status": "FAIL",
+  "before": 1,
+  "after": 2
+}

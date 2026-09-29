@@ -1,0 +1,24 @@
+{
+  "case": "restart restores structure without rerunning commands",
+  "status": "PASS",
+  "expected": {
+    "workspaces": 2,
+    "panes": 7,
+    "live_panes": 0
+  },
+  "actual": {
+    "protocol": "signaltty/1",
+    "id": "qa",
+    "ok": true,
+    "result": {
+      "live_panes": 0,
+      "panes": 7,
+      "protocol": "signaltty/1",
+      "seq": 6,
+      "tabs": 6,
+      "uptime_s": 15,
+      "version": "0.1.0",
+      "workspaces": 2
+    }
+  }
+}

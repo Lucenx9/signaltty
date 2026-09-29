@@ -1,0 +1,236 @@
+[
+  {
+    "case": "reject_foreign_tab",
+    "status": "FAIL",
+    "evidence": {
+      "protocol": "signaltty/1",
+      "id": "qa",
+      "ok": true,
+      "result": {
+        "pane": {
+          "agent": {
+            "kind": "generic"
+          },
+          "argv": [
+            "sleep",
+            "600"
+          ],
+          "attention": "none",
+          "created_at": "2026-09-29T20:12:31.641971825Z",
+          "cwd": "/tmp/signaltty-edge-8mbnlcug",
+          "id": "pane_6bc828644fb046f1ad5837730cd90173",
+          "last_activity_at": "2026-09-29T20:12:31.641971825Z",
+          "last_lifecycle": "unknown",
+          "lifecycle": "unknown",
+          "lifecycle_since": "2026-09-29T20:12:31.641971825Z",
+          "live": {
+            "state": "live"
+          },
+          "pty_size": {
+            "cols": 80,
+            "rows": 24
+          },
+          "restore_state": "LIVE",
+          "tab_id": "tab_984a7d90b69e4c888769653367200e57",
+          "title": "sleep",
+          "workspace_id": "ws_27b6533ac7aa4bc88cb9e2152ccf0bde"
+        }
+      }
+    }
+  },
+  {
+    "case": "closing_workspace_stops_its_panes",
+    "status": "FAIL",
+    "evidence": {
+      "protocol": "signaltty/1",
+      "id": "qa",
+      "ok": true,
+      "result": {
+        "pane": {
+          "agent": {
+            "kind": "generic"
+          },
+          "argv": [
+            "sleep",
+            "600"
+          ],
+          "attention": "none",
+          "created_at": "2026-09-29T20:12:31.641971825Z",
+          "cwd": "/tmp/signaltty-edge-8mbnlcug",
+          "id": "pane_6bc828644fb046f1ad5837730cd90173",
+          "last_activity_at": "2026-09-29T20:12:31.641971825Z",
+          "last_lifecycle": "unknown",
+          "lifecycle": "unknown",
+          "lifecycle_since": "2026-09-29T20:12:31.641971825Z",
+          "live": {
+            "state": "live"
+          },
+          "pty_size": {
+            "cols": 80,
+            "rows": 24
+          },
+          "restore_state": "LIVE",
+          "tab_id": "tab_984a7d90b69e4c888769653367200e57",
+          "title": "sleep",
+          "workspace_id": "ws_27b6533ac7aa4bc88cb9e2152ccf0bde"
+        }
+      }
+    }
+  },
+  {
+    "case": "layout_cannot_orphan_live_panes",
+    "status": "FAIL",
+    "evidence": {
+      "set_layout": {
+        "protocol": "signaltty/1",
+        "id": "qa",
+        "ok": true,
+        "result": {
+          "tab": {
+            "active_pane_id": "pane_a273ab427a4342638adb5a33c02e5e7f",
+            "created_at": "2026-09-29T20:12:31.644810925Z",
+            "id": "tab_11e518903c3d4148b21fd8df7ba5a0b8",
+            "layout": {
+              "pane_id": "pane_9d500a94e4f943f99199d57b7359bf01",
+              "type": "pane"
+            },
+            "title": "agents",
+            "workspace_id": "ws_d79f15c29a1b47dbb7dfd5fda5646efb"
+          }
+        }
+      },
+      "after_close": {
+        "protocol": "signaltty/1",
+        "id": "qa",
+        "ok": true,
+        "result": {
+          "pane": {
+            "agent": {
+              "kind": "none"
+            },
+            "argv": [
+              "sleep",
+              "600"
+            ],
+            "attention": "none",
+            "created_at": "2026-09-29T20:12:31.646186242Z",
+            "cwd": "/tmp/signaltty-edge-8mbnlcug",
+            "id": "pane_a273ab427a4342638adb5a33c02e5e7f",
+            "last_activity_at": "2026-09-29T20:12:31.646186242Z",
+            "last_lifecycle": "unknown",
+            "lifecycle": "unknown",
+            "lifecycle_since": "2026-09-29T20:12:31.646186242Z",
+            "live": {
+              "state": "live"
+            },
+            "pty_size": {
+              "cols": 80,
+              "rows": 24
+            },
+            "restore_state": "LIVE",
+            "tab_id": "tab_11e518903c3d4148b21fd8df7ba5a0b8",
+            "title": "sleep",
+            "workspace_id": "ws_d79f15c29a1b47dbb7dfd5fda5646efb"
+          }
+        }
+      },
+      "status": {
+        "live_panes": 2,
+        "panes": 2,
+        "protocol": "signaltty/1",
+        "seq": 14,
+        "tabs": 1,
+        "uptime_s": 0,
+        "version": "0.1.0",
+        "workspaces": 1
+      }
+    }
+  },
+  {
+    "case": "reject_duplicate_layout_panes",
+    "status": "FAIL",
+    "evidence": {
+      "protocol": "signaltty/1",
+      "id": "qa",
+      "ok": true,
+      "result": {
+        "tab": {
+          "active_pane_id": "pane_73213ba474674133b8bab3665c79a1d2",
+          "created_at": "2026-09-29T20:12:31.649200889Z",
+          "id": "tab_601658298741444bb24bcd5e1404513f",
+          "layout": {
+            "dir": "right",
+            "first": {
+              "pane_id": "pane_73213ba474674133b8bab3665c79a1d2",
+              "type": "pane"
+            },
+            "ratio": 0.5,
+            "second": {
+              "pane_id": "pane_73213ba474674133b8bab3665c79a1d2",
+              "type": "pane"
+            },
+            "type": "split"
+          },
+          "title": "agents",
+          "workspace_id": "ws_da24e5c7d0414324982fc56fc286e624"
+        }
+      }
+    }
+  },
+  {
+    "case": "layout_ratio_cannot_collapse_panes",
+    "status": "FAIL",
+    "evidence": {
+      "protocol": "signaltty/1",
+      "id": "qa",
+      "ok": true,
+      "result": {
+        "tab": {
+          "active_pane_id": "pane_a6c4236ff9b04fd6988606420870c01c",
+          "created_at": "2026-09-29T20:12:31.651647589Z",
+          "id": "tab_bb2abbec1a9a4651a8538ba7e8c6f9a9",
+          "layout": {
+            "dir": "right",
+            "first": {
+              "pane_id": "pane_bc91620d85b540329f16bbaefc65c250",
+              "type": "pane"
+            },
+            "ratio": 3.0,
+            "second": {
+              "pane_id": "pane_a6c4236ff9b04fd6988606420870c01c",
+              "type": "pane"
+            },
+            "type": "split"
+          },
+          "title": "agents",
+          "workspace_id": "ws_06581b18ddab432c82460d2293fe1d21"
+        }
+      }
+    }
+  },
+  {
+    "case": "failed_spawn_is_atomic",
+    "status": "FAIL",
+    "evidence": {
+      "error": {
+        "protocol": "signaltty/1",
+        "id": "qa",
+        "ok": false,
+        "error": {
+          "code": "SPAWN_FAILED",
+          "message": "spawn failed: Unable to spawn /signaltty-missing-command because it doesn't exist on the filesystem or is not executable (ENOENT: No such file or directory)"
+        }
+      },
+      "tabs_before": [],
+      "tabs_after": [
+        {
+          "created_at": "2026-09-29T20:12:31.655905548Z",
+          "id": "tab_48e273b97410450bbece09ef5f5021bb",
+          "layout": null,
+          "title": "agents",
+          "workspace_id": "ws_7a7f77ae8a62426d9c52de980ae3a6a8"
+        }
+      ]
+    }
+  }
+]

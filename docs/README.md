@@ -29,4 +29,5 @@ Docs index:
 - [14 — Product direction (cmux + herdr, t3code visual bar)](14-product-direction.md)
 - [15 — Agent skills (install + phase routing)](15-agent-skills.md)
 - [16 — Visual references (Geist, Linear, Vercel)](16-visual-references.md)
+- [App verification, 2026-09-29](qa/2026-09-29.md)
 - [ADRs](adr/)

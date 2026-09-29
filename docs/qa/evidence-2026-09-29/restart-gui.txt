@@ -1,0 +1,106 @@
+App=signaltty-gui (pid 52679)
+Window: "signaltty", App: signaltty-gui.
+
+0 frame signaltty, Secondary Actions: win.next-attention, win.split-down, win.close-pane, win.toggle-sidebar, window.close, win.new-tab, win.close-workspace, window.minimize, win.new-workspace, default.activate, win.split-right, window.toggle-maximized, win.about
+	1 grouping
+		2 grouping
+			3 grouping
+				4 grouping
+					5 grouping
+						6 panel agents
+						7 panel shell
+						8 panel shell
+						9 panel shell
+						10 panel shell
+							11 panel
+								12 panel
+									13 panel
+										14 grouping Exited
+										15 label zsh, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+										16 label Exited, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+									17 grouping
+									18 panel
+										19 button Split Right (Ctrl+Shift+E)
+										20 button Split Down (Ctrl+Shift+O)
+										21 button Close Pane (Ctrl+Shift+W)
+								22 scroll pane
+									23 terminal Terminal, Value: echo QARECONNECT QARECONNECT echo QARECONNECTB QARECONNECTB echo QAONLINE QAONLINE cachyos% [process exited]
+				24 grouping
+					25 panel
+						26 grouping
+							27 panel
+								28 toggle button Toggle Sidebar (F9)
+								29 panel AdwWindowTitle
+									30 panel box
+										31 label QA-shell, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+										32 label /tmp/signaltty-qa-39q736iq, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+								33 panel
+									34 grouping
+									35 button New Tab (Ctrl+Shift+T)
+									36 button Main Menu
+									37 grouping
+										38 button Minimize
+										39 button Maximize
+										40 button Close
+						41 grouping Lost connection to the session server — retrying…
+							42 grouping revealer
+						43 panel AdwTabBar
+							44 grouping revealer
+								45 panel ___object_1___
+									46 scroll pane pinned_scrolled_window
+										47 page tab list pinned_box, Secondary Actions: menu.popup
+											48 grouping
+											49 grouping
+									50 scroll pane scrolled_window
+										51 page tab list box, Secondary Actions: menu.popup
+											52 separator
+											53 grouping
+												54 page tab agents
+											55 separator
+											56 grouping
+												57 page tab shell
+											58 separator
+											59 grouping
+												60 page tab shell
+											61 separator
+											62 grouping
+												63 page tab shell
+											64 separator
+											65 grouping
+												66 page tab shell
+											67 grouping
+											68 grouping
+				69 grouping
+			70 grouping
+				71 scroll pane
+					72 list
+						73 list item, Text: QA-approval Codex needs approval /tmp/signaltty-qa-39q736iq Codex
+							74 panel
+								75 label QA-approval, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+								76 panel
+									77 panel
+										78 grouping
+										79 label Waiting, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+									80 button Close workspace QA-approval
+								81 label Codex needs approval, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+								82 label /tmp/signaltty-qa-39q736iq, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+								83 label Codex, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+						84 list item, Text: QA-shell Running /tmp/signaltty-qa-39q736iq
+							85 panel
+								86 label QA-shell, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+								87 panel
+									88 label now, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+									89 button Close workspace QA-shell
+								90 label Running, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+								91 label /tmp/signaltty-qa-39q736iq, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+								92 label, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+				93 grouping
+					94 grouping
+						95 panel
+							96 button New Workspace (Ctrl+Shift+N)
+							97 panel AdwWindowTitle
+								98 panel box
+									99 label Workspaces, Secondary Actions: clipboard.copy, selection.delete, clipboard.paste, link.open, clipboard.cut, link.copy, menu.popup, selection.select-all
+				100 grouping
+
+The focused UI element is terminal Terminal.

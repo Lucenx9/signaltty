@@ -1,0 +1,6 @@
+{
+  "case": "closing GUI keeps server processes alive",
+  "status": "PASS",
+  "before": 7,
+  "after": 7
+}

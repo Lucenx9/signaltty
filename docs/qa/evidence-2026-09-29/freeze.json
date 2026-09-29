@@ -1,0 +1,7 @@
+{
+  "case": "GUI main loop responsiveness while server stalls",
+  "status": "FAIL",
+  "seconds": 1.0,
+  "error": "g-io-error-quark: Timeout was reached (24)",
+  "responsive_after_resume": true
+}

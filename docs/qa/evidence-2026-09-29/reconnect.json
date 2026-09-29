@@ -1,0 +1,10 @@
+{
+  "case": "restore terminal snapshot after socket reconnect",
+  "status": "FAIL",
+  "pane": "pane_a2e4562e7386449e8a0317c74e446d61",
+  "server_text": "echo QARECONNECT                                                      \nQARECONNECT\n         echo QARECONNECTB                                                      \nQARECONNECTB\n         echo QAONLINE                                                          \nQAONLINE\ncachyos%",
+  "gui_texts": [
+    "echo QAONLINE                                                         \nQAONLINE\ncachyos%"
+  ],
+  "live_output_after_reconnect": true
+}

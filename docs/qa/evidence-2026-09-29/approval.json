@@ -1,0 +1,27 @@
+{
+  "case": "jumping to approval preserves the unanswered decision",
+  "status": "FAIL",
+  "before": {
+    "attention": "permission_required",
+    "pending_decision": {
+      "answerable": true,
+      "id": "qa-decision",
+      "options": [
+        {
+          "id": "allow",
+          "label": "Allow"
+        },
+        {
+          "id": "deny",
+          "label": "Deny"
+        }
+      ],
+      "prompt": "QA approval needed",
+      "received_at": "2026-09-29T20:16:34.566520256Z"
+    }
+  },
+  "after": {
+    "attention": "none",
+    "pending_decision": null
+  }
+}
