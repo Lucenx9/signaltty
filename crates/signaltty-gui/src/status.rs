@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use gtk4::prelude::*;
 
-use signaltty_core::{Attention, Lifecycle, Pane};
+use signaltty_core::{Attention, Lifecycle, LiveState, Pane};
 
 const ATTENTION_CLASSES: [&str; 5] = [
     "attention-unread",
@@ -180,9 +180,17 @@ pub fn worst_attention<'a>(panes: impl IntoIterator<Item = &'a Pane>) -> Attenti
 pub fn worst_lifecycle<'a>(panes: impl IntoIterator<Item = &'a Pane>) -> Lifecycle {
     panes
         .into_iter()
-        .map(|p| p.lifecycle)
+        .map(effective_lifecycle)
         .max_by_key(|l| l.urgency())
         .unwrap_or(Lifecycle::Unknown)
+}
+
+/// Saved agent history cannot report activity without a live process.
+pub fn effective_lifecycle(pane: &Pane) -> Lifecycle {
+    match pane.live {
+        LiveState::Live => pane.lifecycle,
+        LiveState::Exited { .. } => Lifecycle::Exited,
+    }
 }
 
 /// Leading lifecycle mark: a spinner while working, otherwise a dot
@@ -363,6 +371,30 @@ impl AttentionBadge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restored_agent_state_does_not_report_a_running_process() {
+        let mut pane = Pane::new(
+            "ws".into(),
+            "tab".into(),
+            "/tmp".into(),
+            vec!["sh".into()],
+            signaltty_core::PtySize::default(),
+            Utc::now(),
+        );
+        for saved in [Lifecycle::Unknown, Lifecycle::Working, Lifecycle::Blocked] {
+            pane.lifecycle = saved;
+            pane.live = signaltty_core::LiveState::Exited { code: None };
+            pane.restore_state = signaltty_core::RestoreState::Restored;
+            let displayed = worst_lifecycle([&pane]);
+            assert_eq!(lifecycle_label(displayed), "Exited");
+            assert!(!row_status(displayed, Attention::None).spinner);
+            assert_eq!(pane.lifecycle, saved, "saved history is retained");
+        }
+        pane.live = signaltty_core::LiveState::Live;
+        pane.lifecycle = Lifecycle::Working;
+        assert!(row_status(worst_lifecycle([&pane]), Attention::None).spinner);
+    }
 
     #[test]
     fn every_attention_has_a_consistent_presentation() {

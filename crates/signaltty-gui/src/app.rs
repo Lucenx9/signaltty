@@ -838,7 +838,11 @@ impl App {
             .collect();
         let attention = status::worst_attention(panes.iter().copied());
         page.set_title(&tab.title);
-        page.set_loading(panes.iter().any(|p| p.lifecycle == Lifecycle::Working));
+        page.set_loading(
+            panes
+                .iter()
+                .any(|p| status::effective_lifecycle(p) == Lifecycle::Working),
+        );
         page.set_indicator_icon(
             status::attention_icon(attention)
                 .map(gio::ThemedIcon::new)

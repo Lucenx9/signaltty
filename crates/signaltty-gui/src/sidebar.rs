@@ -62,7 +62,7 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
     // otherwise win `min_by_key` and hide a timed sibling.
     let lead = panes
         .iter()
-        .filter(|p| p.lifecycle == lifecycle)
+        .filter(|p| status::effective_lifecycle(p) == lifecycle)
         .min_by_key(|p| (p.lifecycle_since.is_none(), p.lifecycle_since));
     let mut agents: Vec<&str> = panes
         .iter()
@@ -618,5 +618,24 @@ mod tests {
             "Working for 12m…",
             "`None` timing must sort last, not win `min_by_key`"
         );
+    }
+
+    #[test]
+    fn restored_working_pane_cannot_supply_a_live_siblings_elapsed_time() {
+        let now = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let mut restored = pane(
+            Lifecycle::Working,
+            Some(now - chrono::Duration::minutes(45)),
+        );
+        restored.live = signaltty_core::LiveState::Exited { code: None };
+        restored.restore_state = signaltty_core::RestoreState::Restored;
+        let running = pane(Lifecycle::Working, Some(now - chrono::Duration::minutes(2)));
+        let summary = summarize(&workspace(), &[restored.clone(), running]);
+        assert_eq!(summary.lifecycle, Lifecycle::Working);
+        assert_eq!(summary.headline(now), "Working for 2m…");
+
+        let stopped = summarize(&workspace(), &[restored]);
+        assert_eq!(stopped.lifecycle, Lifecycle::Exited);
+        assert_eq!(stopped.headline(now), "Exited");
     }
 }

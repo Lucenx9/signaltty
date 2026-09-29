@@ -368,11 +368,7 @@ impl PaneWidget {
             LiveState::Live => {}
         }
         self.subtitle.set_text(&context.join(" · "));
-        self.lifecycle.set(if live {
-            pane.lifecycle
-        } else {
-            Lifecycle::Exited
-        });
+        self.lifecycle.set(status::effective_lifecycle(pane));
         self.badge.set(pane.attention);
         status::set_attention_class(&self.root, pane.attention);
 
