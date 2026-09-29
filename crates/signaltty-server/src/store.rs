@@ -10,6 +10,8 @@ use serde_json::Value;
 use signaltty_core::model::{Notification, Pane, Tab, Workspace};
 use signaltty_core::state::{Attention, Lifecycle};
 
+use crate::audit::AuditLog;
+
 pub const MAX_NOTIFICATIONS: usize = 200;
 pub const MAX_EVENTS: usize = 1024;
 
@@ -28,6 +30,7 @@ pub struct Store {
     pub events: VecDeque<StoredEvent>,
     pub seq: u64,
     pub started_at: DateTime<Utc>,
+    audit: Option<AuditLog>,
 }
 
 impl Store {
@@ -40,10 +43,26 @@ impl Store {
             events: VecDeque::new(),
             seq: 0,
             started_at: Utc::now(),
+            audit: None,
         }
     }
 
-    /// Assign seq, append to replay ring, return for broadcast.
+    /// Attach the JSONL audit. Every later [`Store::emit`] appends one
+    /// line, so no broadcast event escapes the log (high-volume `pty.data`
+    /// never passes through `emit` by design).
+    pub fn set_audit(&mut self, log: AuditLog) {
+        self.audit = Some(log);
+    }
+
+    /// Audit backfill for `subscribe {from_seq}` (empty without an audit).
+    pub fn audit_since(&self, from_seq: u64, limit: usize) -> Vec<StoredEvent> {
+        self.audit
+            .as_ref()
+            .map(|a| a.read_since(from_seq, limit))
+            .unwrap_or_default()
+    }
+
+    /// Assign seq, append to replay ring and audit, return for broadcast.
     pub fn emit(&mut self, name: &str, payload: Value) -> StoredEvent {
         self.seq += 1;
         let ev = StoredEvent {
@@ -54,6 +73,10 @@ impl Store {
         self.events.push_back(ev.clone());
         while self.events.len() > MAX_EVENTS {
             self.events.pop_front();
+        }
+        // Best-effort durable trail, same seq order as emission.
+        if let Some(audit) = &self.audit {
+            audit.append(ev.seq, &ev.name, &ev.payload);
         }
         ev
     }

@@ -59,6 +59,11 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let plugins = signaltty_plugin::PluginRegistry::load(config.plugin_dir.clone());
     let overlays = crate::router::load_overlays(&config.agents_dir);
+    // The audit lives in the store so every emit is logged at one seam.
+    store
+        .write()
+        .unwrap()
+        .set_audit(crate::audit::AuditLog::open_or_disabled(&config.state_dir));
     let ctx = Arc::new(Ctx {
         store: store.clone(),
         bcast,
@@ -261,7 +266,14 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                     state.subs = subs;
                 }
                 if let Some(from) = effect.replay_from {
-                    let backlog = ctx.store.read().unwrap().events_since(from);
+                    // Audit backfill (survives rotation + restart) merged
+                    // with the ring, deduped by seq (see audit.rs).
+                    let backlog = {
+                        let s = ctx.store.read().unwrap();
+                        let backfill = s.audit_since(from, crate::audit::REPLAY_CAP);
+                        let ring = s.events_since(from);
+                        crate::audit::merge_replay(backfill, ring)
+                    };
                     for ev in backlog {
                         if state.subs.iter().any(|g| signaltty_proto::glob_matches(g, &ev.name)) {
                             let msg = EventMsg::new(&ev.name, ev.seq, ev.payload);

@@ -1,6 +1,7 @@
 //! signaltty session server: owns PTYs, processes, state, IPC.
 
 pub mod attrib;
+pub mod audit;
 pub mod config;
 pub mod git;
 pub mod params;
