@@ -548,10 +548,40 @@ pub struct GitInfo {
     pub dirty: Option<bool>,
 }
 
+/// Slugify a workspace name into a stable handle: lowercase alphanumerics
+/// joined by single `-`, truncated to 32 chars, `ws` fallback. Never
+/// contains `_`, so handles and `ws_…` ids stay disjoint by construction.
+pub fn slugify(name: &str) -> String {
+    let mut out = String::new();
+    let mut dash = false;
+    for c in name.chars().flat_map(|c| c.to_lowercase()) {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            dash = false;
+        } else if !dash {
+            out.push('-');
+            dash = true;
+        }
+        if out.len() >= 32 {
+            break;
+        }
+    }
+    let slug = out.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "ws".to_string()
+    } else {
+        slug
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: String,
     pub name: String,
+    /// Immutable unique handle (`my-api`): the stable typable address.
+    /// `name` is the editable label. Backfilled on legacy snapshots.
+    #[serde(default)]
+    pub handle: String,
     pub cwd: String,
     #[serde(default)]
     pub git: GitInfo,
@@ -835,6 +865,21 @@ mod tests {
         assert_eq!(p.last_lifecycle, Lifecycle::Working);
         p.set_lifecycle(Lifecycle::Idle, t0 + chrono::Duration::seconds(200));
         assert_eq!(p.last_run_secs, Some(125), "only working stretches count");
+    }
+
+    #[test]
+    fn slugify_makes_stable_typable_handles() {
+        assert_eq!(slugify("My API!!"), "my-api");
+        assert_eq!(slugify("  spaced  out  "), "spaced-out");
+        assert_eq!(slugify("!!!"), "ws");
+        assert_eq!(slugify(""), "ws");
+        assert_eq!(slugify("UPPER_snake"), "upper-snake");
+        let long = slugify(&"a".repeat(100));
+        assert!(long.len() <= 32);
+        for s in ["my-api", "ws", &long] {
+            assert!(!s.contains('_'), "{s}");
+            assert!(!s.starts_with('-') && !s.ends_with('-'), "{s}");
+        }
     }
 
     #[test]

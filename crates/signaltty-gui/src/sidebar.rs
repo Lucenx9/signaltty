@@ -512,6 +512,7 @@ mod tests {
         Workspace {
             id: "ws".into(),
             name: "ws".into(),
+            handle: "ws".into(),
             cwd: "/tmp".into(),
             git: Default::default(),
             tabs: vec![],

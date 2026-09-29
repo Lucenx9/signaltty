@@ -100,6 +100,8 @@ impl Ctx {
     }
 
     pub fn emit(&self, name: &str, payload: Value) {
+        // The audit lives in Store::emit: every broadcast event is logged
+        // at the single seam, whatever the caller.
         let ev = self.store.write().unwrap().emit(name, payload);
         let _ = self.bcast.send(ev);
     }
@@ -229,6 +231,34 @@ fn default_cwd() -> String {
     std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string())
 }
 
+/// Unique handle for `base`: `base`, `base-2`, … Handles are immutable
+/// after create; the name stays the editable label.
+pub fn unique_handle(store: &crate::store::Store, base: &str) -> String {
+    if !store.workspaces.values().any(|w| w.handle == base) {
+        return base.to_string();
+    }
+    for n in 2.. {
+        let candidate = format!("{base}-{n}");
+        if !store.workspaces.values().any(|w| w.handle == candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+/// Resolve a `workspace_id` param: exact id first, then handle.
+/// Namespaces are disjoint by construction (handles never contain `_`).
+pub fn resolve_workspace(store: &crate::store::Store, handle_or_id: &str) -> Option<String> {
+    if store.workspaces.contains_key(handle_or_id) {
+        return Some(handle_or_id.to_string());
+    }
+    store
+        .workspaces
+        .values()
+        .find(|w| w.handle == handle_or_id)
+        .map(|w| w.id.clone())
+}
+
 fn h_workspace_create(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::WorkspaceCreate = decode(params)?;
     let cwd = p.cwd.unwrap_or_else(default_cwd);
@@ -236,9 +266,15 @@ fn h_workspace_create(ctx: &Ctx, params: &Value) -> Handler {
         return Err(bad_params(format!("cwd is not a directory: {cwd}")));
     }
     let now = Utc::now();
+    let name = p.name.unwrap_or_else(|| "workspace".to_string());
+    let handle = {
+        let s = ctx.store.read().unwrap();
+        unique_handle(&s, &signaltty_core::model::slugify(&name))
+    };
     let ws = Workspace {
         id: new_ws_id(),
-        name: p.name.unwrap_or_else(|| "workspace".to_string()),
+        name,
+        handle,
         git: crate::git::git_info(&cwd),
         cwd,
         tabs: Vec::new(),
@@ -265,12 +301,11 @@ fn h_workspace_list(ctx: &Ctx) -> Handler {
 }
 
 fn h_workspace_get(ctx: &Ctx, params: &Value) -> Handler {
-    let id = decode::<params::WorkspaceId>(params)?.workspace_id;
+    let raw = decode::<params::WorkspaceId>(params)?.workspace_id;
     let s = ctx.store.read().unwrap();
-    let ws = s
-        .workspaces
-        .get(&id)
-        .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), id.clone()))?;
+    let id = resolve_workspace(&s, &raw)
+        .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?;
+    let ws = s.workspaces.get(&id).unwrap();
     let tabs: Vec<&Tab> = ws.tabs.iter().filter_map(|t| s.tabs.get(t)).collect();
     let mut panes = Vec::new();
     for t in &tabs {
@@ -290,13 +325,17 @@ fn h_workspace_get(ctx: &Ctx, params: &Value) -> Handler {
 
 fn h_workspace_rename(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::WorkspaceRename = decode(params)?;
-    let id = p.workspace_id;
+    let raw = p.workspace_id;
     let name = p.name;
+    // Handles are immutable: the name is the editable label, the handle
+    // stays the stable address.
+    let id = {
+        let s = ctx.store.read().unwrap();
+        resolve_workspace(&s, &raw)
+            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?
+    };
     let mut s = ctx.store.write().unwrap();
-    let ws = s
-        .workspaces
-        .get_mut(&id)
-        .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), id.clone()))?;
+    let ws = s.workspaces.get_mut(&id).unwrap();
     ws.name = name;
     ws.updated_at = Utc::now();
     let ws = ws.clone();
@@ -333,13 +372,15 @@ fn close_pane_locked(ctx: &Ctx, s: &mut crate::store::Store, pane_id: &str, sign
 
 fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::WorkspaceClose = decode(params)?;
-    let id = p.workspace_id;
+    let raw = p.workspace_id;
     let signal = p.signal;
+    let id = {
+        let s = ctx.store.read().unwrap();
+        resolve_workspace(&s, &raw)
+            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?
+    };
     let mut s = ctx.store.write().unwrap();
-    let ws = s
-        .workspaces
-        .remove(&id)
-        .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), id.clone()))?;
+    let ws = s.workspaces.remove(&id).unwrap();
     for tab_id in ws.tabs {
         if let Some(tab) = s.tabs.remove(&tab_id) {
             let panes = tab.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
@@ -358,13 +399,15 @@ fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
 }
 
 fn h_workspace_refresh_git(ctx: &Ctx, params: &Value) -> Handler {
-    let id = decode::<params::WorkspaceId>(params)?.workspace_id;
+    let raw = decode::<params::WorkspaceId>(params)?.workspace_id;
+    let id = {
+        let s = ctx.store.read().unwrap();
+        resolve_workspace(&s, &raw)
+            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?
+    };
     let (ws, branch_changed) = {
         let mut s = ctx.store.write().unwrap();
-        let ws = s
-            .workspaces
-            .get_mut(&id)
-            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), id.clone()))?;
+        let ws = s.workspaces.get_mut(&id).unwrap();
         let old_branch = ws.git.branch.clone();
         ws.git = crate::git::git_info(&ws.cwd.clone());
         ws.updated_at = Utc::now();
@@ -385,7 +428,12 @@ fn h_workspace_refresh_git(ctx: &Ctx, params: &Value) -> Handler {
 
 fn h_tab_create(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::TabCreate = decode(params)?;
-    let ws_id = p.workspace_id;
+    let raw = p.workspace_id;
+    let ws_id = {
+        let s = ctx.store.read().unwrap();
+        resolve_workspace(&s, &raw)
+            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?
+    };
     let now = Utc::now();
     let tab = Tab {
         id: new_tab_id(),
@@ -501,7 +549,12 @@ fn resolve_size(cols: Option<u16>, rows: Option<u16>) -> PtySize {
 
 fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::PaneSpawn = decode(params)?;
-    let ws_id = p.workspace_id;
+    let raw = p.workspace_id;
+    let ws_id = {
+        let s = ctx.store.read().unwrap();
+        resolve_workspace(&s, &raw)
+            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?
+    };
     let argv = p.argv;
     if argv.is_empty() {
         return Err(bad_params("'argv' must not be empty"));

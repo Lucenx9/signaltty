@@ -142,7 +142,15 @@ pub fn load(config: &Config) -> Option<LoadedSnapshot> {
 /// started here — ever. Panes become RESTORED/RESUMABLE/EXITED.
 pub fn apply(store: &SharedStore, terms: &Mutex<HeadlessBackend>, mut loaded: LoadedSnapshot) {
     let mut s = store.write().unwrap();
+    // Legacy snapshots predate handles: backfill unique ones. Sorted by id
+    // so the `-2` suffixes land deterministically; each insert keeps the
+    // collision check honest for the next legacy workspace.
+    loaded.snapshot.workspaces.sort_by(|a, b| a.id.cmp(&b.id));
     for ws in loaded.snapshot.workspaces {
+        let mut ws = ws;
+        if ws.handle.is_empty() {
+            ws.handle = crate::router::unique_handle(&s, &signaltty_core::model::slugify(&ws.name));
+        }
         s.workspaces.insert(ws.id.clone(), ws);
     }
     for tab in loaded.snapshot.tabs {

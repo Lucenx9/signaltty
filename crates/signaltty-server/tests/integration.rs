@@ -708,6 +708,121 @@ async fn procscan_promotes_through_shell_and_follows_cwd() {
 }
 
 #[tokio::test]
+async fn workspace_handles_collide_resolve_and_migrate() {
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    // Same name twice → my-api, my-api-2.
+    let a = c
+        .call(
+            "workspace.create",
+            json!({"name": "My API!!", "cwd": "/tmp"}),
+        )
+        .await
+        .unwrap();
+    let b = c
+        .call(
+            "workspace.create",
+            json!({"name": "My API!!", "cwd": "/tmp"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(a["workspace"]["handle"], "my-api");
+    assert_eq!(b["workspace"]["handle"], "my-api-2");
+    // Handle-or-id resolves everywhere an id does.
+    let g = c
+        .call("workspace.get", json!({"workspace_id": "my-api"}))
+        .await
+        .unwrap();
+    assert_eq!(g["workspace"]["name"], "My API!!");
+    c.call(
+        "workspace.rename",
+        json!({"workspace_id": "my-api", "name": "Renamed"}),
+    )
+    .await
+    .unwrap();
+    let g = c
+        .call("workspace.get", json!({"workspace_id": "my-api"}))
+        .await
+        .unwrap();
+    assert_eq!(g["workspace"]["name"], "Renamed");
+    assert_eq!(g["workspace"]["handle"], "my-api", "handles are immutable");
+    c.call(
+        "tab.create",
+        json!({"workspace_id": "my-api-2", "title": "t"}),
+    )
+    .await
+    .unwrap();
+    c.call("workspace.refresh_git", json!({"workspace_id": "my-api-2"}))
+        .await
+        .unwrap();
+    let err = c
+        .call("workspace.get", json!({"workspace_id": "nope"}))
+        .await
+        .unwrap_err();
+    assert!(err.contains("NO_SUCH_WORKSPACE"), "{err}");
+    // Legacy migration: strip handles from the snapshot, restart, backfilled.
+    drop(c);
+    srv.restart().await;
+    let snap_path = srv.state_dir.join("snapshot.json");
+    // Graceful shutdown writes the snapshot; force a legacy shape by
+    // removing every handle, then restart once more.
+    let raw = std::fs::read_to_string(&snap_path).unwrap();
+    let mut snap: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    for ws in snap["workspaces"].as_array_mut().unwrap() {
+        ws.as_object_mut().unwrap().remove("handle");
+    }
+    std::fs::write(&snap_path, serde_json::to_string(&snap).unwrap()).unwrap();
+    srv.restart().await;
+    let mut c = srv.client().await;
+    let l = c.call("workspace.list", json!({})).await.unwrap();
+    let handles: Vec<String> = l["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["handle"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(handles.len(), 2);
+    assert!(handles.iter().all(|h| !h.is_empty()), "{handles:?}");
+    assert!(handles[0] != handles[1], "unique: {handles:?}");
+    // Migrated handles resolve too.
+    let g = c
+        .call("workspace.get", json!({"workspace_id": handles[0].clone()}))
+        .await
+        .unwrap();
+    assert_eq!(g["workspace"]["handle"], handles[0]);
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn audit_replays_across_restart() {
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let before = c.call("server.status", json!({})).await.unwrap()["seq"]
+        .as_u64()
+        .unwrap();
+    c.call("notify", json!({"pane_id": pane, "title": "audit-me"}))
+        .await
+        .unwrap();
+    drop(c);
+    srv.restart().await;
+    // The ring is empty after restart; the audit still serves the replay
+    // for a pre-restart seq.
+    let mut c2 = srv.client().await;
+    c2.call("subscribe", json!({"events": ["*"], "from_seq": before}))
+        .await
+        .unwrap();
+    let replayed = c2.read_events(2, Duration::from_secs(10)).await;
+    let titles: Vec<&str> = replayed
+        .iter()
+        .filter(|e| e["event"] == "notification.created")
+        .filter_map(|e| e["payload"]["notification"]["title"].as_str())
+        .collect();
+    assert_eq!(titles, vec!["audit-me"]);
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn hook_event_drives_codex_lifecycle() {
     let srv = TestServer::start().await;
     let mut c = srv.client().await;
