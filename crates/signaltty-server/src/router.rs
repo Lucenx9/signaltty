@@ -14,7 +14,7 @@ use signaltty_core::model::{
     SplitDir, Tab, Workspace,
 };
 use signaltty_core::state::{Attention, Lifecycle};
-use signaltty_core::{new_notif_id, new_pane_id, new_tab_id, new_ws_id};
+use signaltty_core::{new_notif_id, new_tab_id, new_ws_id};
 use signaltty_proto::{code, event, method, Request, Response};
 use signaltty_term::TerminalBackend;
 
@@ -436,17 +436,6 @@ fn resolve_size(cols: Option<u16>, rows: Option<u16>) -> PtySize {
     PtySize::clamp(cols.unwrap_or(80), rows.unwrap_or(24))
 }
 
-fn pane_title(argv: &[String]) -> String {
-    argv.first()
-        .map(|a| {
-            std::path::Path::new(a)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| a.clone())
-        })
-        .unwrap_or_else(|| "shell".to_string())
-}
-
 fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::PaneSpawn = decode(params)?;
     let ws_id = p.workspace_id;
@@ -519,30 +508,15 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
         (tab_id, cwd)
     };
 
-    let pane = Pane {
-        id: new_pane_id(),
-        workspace_id: ws_id.clone(),
-        tab_id: tab_id.clone(),
-        title: pane_title(&argv),
-        cwd: cwd.clone(),
-        argv: argv.clone(),
-        pty_size: size,
-        live: LiveState::Live,
-        restore_state: RestoreState::Live,
-        agent: signaltty_core::model::AgentInfo {
-            kind,
-            agent_session_id: None,
-            resume_argv: None,
-            model: None,
-        },
-        lifecycle: Lifecycle::Unknown,
-        last_lifecycle: Lifecycle::Unknown,
-        attention: Attention::None,
-        last_message: None,
-        created_at: now,
-        last_activity_at: now,
-        last_seen_at: None,
-    };
+    let mut pane = Pane::new(
+        ws_id.clone(),
+        tab_id.clone(),
+        cwd.clone(),
+        argv.clone(),
+        size,
+        now,
+    );
+    pane.agent.kind = kind;
     if let Err(e) = ctx.ptys.spawn(SpawnRequest {
         pane_id: pane.id.clone(),
         cwd,
@@ -600,25 +574,7 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
         return Err(bad_params("'argv' must not be empty"));
     }
     let now = Utc::now();
-    let pane = Pane {
-        id: new_pane_id(),
-        workspace_id: ws_id,
-        tab_id: tab_id.clone(),
-        title: pane_title(&argv),
-        cwd: cwd.clone(),
-        argv: argv.clone(),
-        pty_size: size,
-        live: LiveState::Live,
-        restore_state: RestoreState::Live,
-        agent: Default::default(),
-        lifecycle: Lifecycle::Unknown,
-        last_lifecycle: Lifecycle::Unknown,
-        attention: Attention::None,
-        last_message: None,
-        created_at: now,
-        last_activity_at: now,
-        last_seen_at: None,
-    };
+    let pane = Pane::new(ws_id, tab_id.clone(), cwd.clone(), argv.clone(), size, now);
     if let Err(e) = ctx.ptys.spawn(SpawnRequest {
         pane_id: pane.id.clone(),
         cwd,

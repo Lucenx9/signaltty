@@ -80,6 +80,8 @@ One terminal/PTY + process. Survives client detach while the server lives.
 | `live` | `Live | Exited {code, at}` |
 | `agent` | `AgentInfo` (below), all optional for plain shells |
 | `lifecycle` / `attention` | see [03](03-lifecycle-attention.md) |
+| `lifecycle_since` | when `lifecycle` last changed (optional; absent in old snapshots) |
+| `last_run_secs` | length of the latest `working` stretch — GUI renders "Working for 2m…" → "Worked for 2m" |
 | `last_message` | latest explicit notification / hook payload summary (never raw scrollback scrape as primary) |
 | `scrollback_len` | bytes/lines retained (bounded ring) |
 | `created_at`, `last_activity_at`, `last_seen_at` | timestamps |

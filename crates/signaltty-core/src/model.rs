@@ -397,6 +397,13 @@ pub struct Pane {
     pub agent: AgentInfo,
     pub lifecycle: Lifecycle,
     pub last_lifecycle: Lifecycle,
+    /// When `lifecycle` last changed; drives "Working for 2m…".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_since: Option<DateTime<Utc>>,
+    /// Length of the most recent `working` stretch, in seconds;
+    /// drives "Worked for 2m" once the turn ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_secs: Option<i64>,
     pub attention: Attention,
     /// Latest explicit notification / hook summary. Never a raw scrape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -408,6 +415,47 @@ pub struct Pane {
 }
 
 impl Pane {
+    /// A freshly spawned, live pane titled after its command.
+    pub fn new(
+        workspace_id: String,
+        tab_id: String,
+        cwd: String,
+        argv: Vec<String>,
+        pty_size: PtySize,
+        now: DateTime<Utc>,
+    ) -> Pane {
+        let title = argv
+            .first()
+            .map(|a| {
+                std::path::Path::new(a)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| a.clone())
+            })
+            .unwrap_or_else(|| "shell".to_string());
+        Pane {
+            id: crate::ids::new_pane_id(),
+            workspace_id,
+            tab_id,
+            title,
+            cwd,
+            argv,
+            pty_size,
+            live: LiveState::Live,
+            restore_state: RestoreState::Live,
+            agent: AgentInfo::default(),
+            lifecycle: Lifecycle::Unknown,
+            last_lifecycle: Lifecycle::Unknown,
+            lifecycle_since: Some(now),
+            last_run_secs: None,
+            attention: Attention::None,
+            last_message: None,
+            created_at: now,
+            last_activity_at: now,
+            last_seen_at: None,
+        }
+    }
+
     /// Attention clears only on explicit per-pane interaction.
     pub fn mark_seen(&mut self, now: DateTime<Utc>) {
         self.attention = Attention::None;
@@ -418,11 +466,17 @@ impl Pane {
         self.attention = self.attention.raise(next);
     }
 
-    pub fn set_lifecycle(&mut self, next: Lifecycle) {
-        if self.lifecycle != next {
-            self.last_lifecycle = self.lifecycle;
-            self.lifecycle = next;
+    /// Leaving `working` records how long the run took.
+    pub fn set_lifecycle(&mut self, next: Lifecycle, now: DateTime<Utc>) {
+        if self.lifecycle == next {
+            return;
         }
+        if self.lifecycle == Lifecycle::Working {
+            self.last_run_secs = self.lifecycle_since.map(|t| (now - t).num_seconds().max(0));
+        }
+        self.last_lifecycle = self.lifecycle;
+        self.lifecycle = next;
+        self.lifecycle_since = Some(now);
     }
 }
 
@@ -677,28 +731,67 @@ mod tests {
     #[test]
     fn pane_mark_seen_keeps_lifecycle() {
         let now = Utc::now();
-        let mut p = Pane {
-            id: "pane_x".into(),
-            workspace_id: "ws_x".into(),
-            tab_id: "tab_x".into(),
-            title: "t".into(),
-            cwd: "/tmp".into(),
-            argv: vec!["sh".into()],
-            pty_size: PtySize::default(),
-            live: LiveState::Live,
-            restore_state: RestoreState::Live,
-            agent: AgentInfo::default(),
-            lifecycle: Lifecycle::Done,
-            last_lifecycle: Lifecycle::Working,
-            attention: Attention::Unread,
-            last_message: None,
-            created_at: now,
-            last_activity_at: now,
-            last_seen_at: None,
-        };
+        let mut p = Pane::new(
+            "ws_x".into(),
+            "tab_x".into(),
+            "/tmp".into(),
+            vec!["sh".into()],
+            PtySize::default(),
+            now,
+        );
+        p.lifecycle = Lifecycle::Done;
+        p.attention = Attention::Unread;
         p.mark_seen(now);
         assert_eq!(p.attention, Attention::None);
         assert_eq!(p.lifecycle, Lifecycle::Done);
         assert!(p.last_seen_at.is_some());
+    }
+
+    #[test]
+    fn pane_new_titles_after_command() {
+        let now = Utc::now();
+        let p = Pane::new(
+            "w".into(),
+            "t".into(),
+            "/".into(),
+            vec!["/usr/bin/claude".into()],
+            PtySize::default(),
+            now,
+        );
+        assert_eq!(p.title, "claude");
+        let p = Pane::new(
+            "w".into(),
+            "t".into(),
+            "/".into(),
+            vec![],
+            PtySize::default(),
+            now,
+        );
+        assert_eq!(p.title, "shell");
+    }
+
+    #[test]
+    fn leaving_working_records_run_length() {
+        let t0 = Utc::now();
+        let mut p = Pane::new(
+            "w".into(),
+            "t".into(),
+            "/".into(),
+            vec!["sh".into()],
+            PtySize::default(),
+            t0,
+        );
+        p.set_lifecycle(Lifecycle::Working, t0);
+        p.set_lifecycle(Lifecycle::Working, t0 + chrono::Duration::seconds(30));
+        assert_eq!(
+            p.lifecycle_since,
+            Some(t0),
+            "no-op transition keeps the clock"
+        );
+        p.set_lifecycle(Lifecycle::Done, t0 + chrono::Duration::seconds(125));
+        assert_eq!(p.last_run_secs, Some(125));
+        assert_eq!(p.last_lifecycle, Lifecycle::Working);
+        p.set_lifecycle(Lifecycle::Idle, t0 + chrono::Duration::seconds(200));
+        assert_eq!(p.last_run_secs, Some(125), "only working stretches count");
     }
 }

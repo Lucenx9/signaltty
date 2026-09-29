@@ -124,8 +124,9 @@ impl Store {
         if prev == next {
             return None;
         }
-        pane.set_lifecycle(next);
-        pane.last_activity_at = Utc::now();
+        let now = Utc::now();
+        pane.set_lifecycle(next, now);
+        pane.last_activity_at = now;
         let ev = self.emit(
             next.event_name(),
             serde_json::json!({"pane_id": pane_id, "lifecycle": next.as_str(), "prev": prev.as_str()}),
@@ -174,30 +175,22 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use signaltty_core::model::{LiveState, PtySize, RestoreState};
-    use signaltty_core::{new_pane_id, AgentInfo};
+    use signaltty_core::model::PtySize;
 
     fn pane_with(att: Attention, mins_ago: i64) -> Pane {
         let now = Utc::now();
-        Pane {
-            id: new_pane_id(),
-            workspace_id: "ws_1".into(),
-            tab_id: "tab_1".into(),
-            title: "t".into(),
-            cwd: "/tmp".into(),
-            argv: vec!["sh".into()],
-            pty_size: PtySize::default(),
-            live: LiveState::Live,
-            restore_state: RestoreState::Live,
-            agent: AgentInfo::default(),
-            lifecycle: Lifecycle::Working,
-            last_lifecycle: Lifecycle::Unknown,
-            attention: att,
-            last_message: None,
-            created_at: now,
-            last_activity_at: now - chrono::Duration::minutes(mins_ago),
-            last_seen_at: None,
-        }
+        let mut p = Pane::new(
+            "ws_1".into(),
+            "tab_1".into(),
+            "/tmp".into(),
+            vec!["sh".into()],
+            PtySize::default(),
+            now,
+        );
+        p.lifecycle = Lifecycle::Working;
+        p.attention = att;
+        p.last_activity_at = now - chrono::Duration::minutes(mins_ago);
+        p
     }
 
     #[test]
