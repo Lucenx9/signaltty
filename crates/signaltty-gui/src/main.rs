@@ -3,7 +3,9 @@
 
 mod actor;
 mod app;
+mod metrics;
 mod notif;
+mod refresh;
 mod sidebar;
 mod status;
 mod terminal;

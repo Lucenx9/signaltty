@@ -68,6 +68,12 @@ pub struct IpcHandle {
 }
 
 impl IpcHandle {
+    #[cfg(test)]
+    pub fn test_channel() -> (Self, mpsc::UnboundedReceiver<ActorRequest>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (Self { tx }, rx)
+    }
+
     pub fn call(&self, method: &str, params: Value) -> Result<Value, String> {
         let (tx, rx) = oneshot::channel();
         self.tx
@@ -152,6 +158,7 @@ impl Conn {
             .write_all(line.as_bytes())
             .await
             .map_err(|e| e.to_string())?;
+        crate::metrics::record("ipc", method);
         Ok(id)
     }
 

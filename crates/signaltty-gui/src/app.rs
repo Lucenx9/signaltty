@@ -27,14 +27,19 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use serde_json::{json, Value};
 
-use signaltty_core::{Attention, Layout, Lifecycle, Pane, SplitDir, Tab, Workspace};
+use signaltty_core::{Attention, Layout, Lifecycle, Pane, SplitDir, Tab};
 
 use crate::actor::{IpcHandle, UiEvent, UiTx};
 use crate::notif::Notifier;
+use crate::refresh::{PendingRefresh, WorkspaceCache};
 use crate::sidebar::{self, Sidebar};
 use crate::status;
 use crate::terminal::{PaneAction, PaneCallbacks, PaneWidget};
 use crate::util::tilde;
+
+#[cfg(test)]
+#[path = "app_tests.rs"]
+mod tests;
 
 /// Window actions and their accelerators (Ctrl+Shift: plain Ctrl
 /// chords belong to the programs running in the terminals).
@@ -49,7 +54,7 @@ const ACCELS: &[(&str, &str)] = &[
 ];
 
 struct Model {
-    workspaces: Vec<Workspace>,
+    cache: WorkspaceCache,
     active_ws: Option<String>,
     tabs: Vec<Tab>,
     panes: HashMap<String, Pane>,
@@ -82,6 +87,8 @@ pub struct App {
     actor: IpcHandle,
     notifier: Notifier,
     model: RefCell<Model>,
+    pending_refresh: RefCell<PendingRefresh>,
+    refresh_scheduled: Cell<bool>,
     widgets: RefCell<HashMap<String, Rc<PaneWidget>>>,
     tabs: RefCell<HashMap<String, TabEntry>>,
     /// Set while the GUI itself mutates the tab view, so selection
@@ -248,11 +255,13 @@ impl App {
             actor,
             notifier: Notifier::new(ui_tx),
             model: RefCell::new(Model {
-                workspaces: Vec::new(),
+                cache: WorkspaceCache::default(),
                 active_ws: None,
                 tabs: Vec::new(),
                 panes: HashMap::new(),
             }),
+            pending_refresh: RefCell::new(PendingRefresh::default()),
+            refresh_scheduled: Cell::new(false),
             widgets: RefCell::new(HashMap::new()),
             tabs: RefCell::new(HashMap::new()),
             reconciling: Cell::new(false),
@@ -444,65 +453,89 @@ impl App {
     }
 
     fn refresh_later(&self) {
+        if let Some(id) = self.active_ws_id() {
+            self.pending_refresh.borrow_mut().workspaces.insert(id);
+        }
+        self.schedule_refresh();
+    }
+
+    fn schedule_refresh(&self) {
+        if self.pending_refresh.borrow().is_empty() || self.refresh_scheduled.replace(true) {
+            return;
+        }
         let w = self.weak();
-        glib::idle_add_local_once(move || {
+        // One bounded batch per frame, also while the window is unmapped.
+        // Further events merge into this batch without postponing its deadline.
+        glib::timeout_add_local_once(Duration::from_millis(16), move || {
             if let Some(a) = w.upgrade() {
-                a.refresh();
+                let pending = a.pending_refresh.take();
+                a.apply_refresh(pending);
+                a.refresh_scheduled.set(false);
             }
         });
     }
 
     // ---- data ----
 
-    /// Full refetch: sidebar summaries, attention count, active workspace.
+    /// Initial load, reconnect, or workspace creation/deletion only.
     pub fn refresh(&self) {
-        let list = match self.actor.call("workspace.list", json!({})) {
-            Ok(v) => v,
-            Err(e) => {
-                self.toast(&format!("Couldn't load workspaces — {e}"));
-                return;
-            }
-        };
-        let workspaces: Vec<Workspace> = list
-            .get("workspaces")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-        let mut items = Vec::new();
-        let mut needing = Vec::new();
-        for ws in &workspaces {
-            if let Ok(g) = self
-                .actor
-                .call("workspace.get", json!({"workspace_id": ws.id}))
-            {
-                let panes: Vec<Pane> = g
-                    .get("panes")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
-                needing.extend(
-                    panes
-                        .iter()
-                        .filter(|p| p.attention.needs_human())
-                        .map(|p| p.attention),
-                );
-                items.push(sidebar::summarize(ws, &panes));
-            }
+        self.apply_refresh(PendingRefresh::full());
+    }
+
+    fn refresh_workspace(&self, id: &str) {
+        let mut pending = PendingRefresh::default();
+        pending.workspaces.insert(id.to_string());
+        self.apply_refresh(pending);
+    }
+
+    fn refresh_pane_workspace(&self, pane_id: &str) {
+        let mut pending = PendingRefresh::default();
+        pending.on_event(
+            &self.model.borrow().cache,
+            "pane.updated",
+            &json!({"pane_id": pane_id}),
+        );
+        self.apply_refresh(pending);
+    }
+
+    fn apply_refresh(&self, pending: PendingRefresh) {
+        let full = pending.full;
+        let (changed, errors) = self
+            .model
+            .borrow_mut()
+            .cache
+            .refresh(pending, |method, params| self.actor.call(method, params));
+        for error in errors {
+            self.toast(&format!("Couldn't load workspaces — {error}"));
         }
-        self.sidebar.update(&items);
-        self.update_attention_button(&needing);
-        {
+        let (items, needing, active) = {
             let mut m = self.model.borrow_mut();
-            m.workspaces = workspaces;
             let keep = m
                 .active_ws
                 .clone()
-                .filter(|id| m.workspaces.iter().any(|w| &w.id == id));
-            let pick = keep.or_else(|| m.workspaces.first().map(|w| w.id.clone()));
-            m.active_ws = pick;
-        }
-        // Bind first: a match scrutinee borrow would live into the arms.
-        let active = self.model.borrow().active_ws.clone();
+                .filter(|id| m.cache.workspaces.iter().any(|ws| &ws.id == id));
+            m.active_ws = keep.or_else(|| m.cache.workspaces.first().map(|ws| ws.id.clone()));
+            let mut items = Vec::new();
+            let mut needing = Vec::new();
+            for ws in &m.cache.workspaces {
+                if let Some(snapshot) = m.cache.snapshots.get(&ws.id) {
+                    items.push(sidebar::summarize(&snapshot.workspace, &snapshot.panes));
+                    needing.extend(
+                        snapshot
+                            .panes
+                            .iter()
+                            .filter(|p| p.attention.needs_human())
+                            .map(|p| p.attention),
+                    );
+                }
+            }
+            (items, needing, m.active_ws.clone())
+        };
+        self.sidebar.update(&items);
+        self.update_attention_button(&needing);
         match active {
-            Some(id) => self.show_workspace(&id),
+            Some(id) if full || changed.contains(&id) => self.show_workspace(&id),
+            Some(_) => {}
             None => {
                 {
                     let mut m = self.model.borrow_mut();
@@ -531,39 +564,25 @@ impl App {
 
     /// Render one workspace: tabs + panes + widgets + sidebar selection.
     pub fn show_workspace(&self, ws_id: &str) {
-        let g = match self
-            .actor
-            .call("workspace.get", json!({"workspace_id": ws_id}))
-        {
-            Ok(v) => v,
-            Err(e) => {
-                self.toast(&format!("Couldn't open the workspace — {e}"));
-                return;
-            }
-        };
-        let ws: Option<Workspace> = serde_json::from_value(g["workspace"].clone()).ok();
-        let tabs: Vec<Tab> = g
-            .get("tabs")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-        let panes: Vec<Pane> = g
-            .get("panes")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-        if let Some(ws) = &ws {
-            self.title.set_title(&ws.name);
-            let place = tilde(&ws.cwd);
-            self.title.set_subtitle(&match &ws.git.branch {
-                Some(branch) => format!("{place} · {branch}"),
-                None => place,
-            });
-        }
-        let has_tabs = !tabs.is_empty();
+        let snapshot = self.model.borrow().cache.snapshots.get(ws_id).cloned();
+        let Some(snapshot) = snapshot else { return };
+        let ws = snapshot.workspace;
+        self.title.set_title(&ws.name);
+        let place = tilde(&ws.cwd);
+        self.title.set_subtitle(&match &ws.git.branch {
+            Some(branch) => format!("{place} · {branch}"),
+            None => place,
+        });
+        let has_tabs = !snapshot.tabs.is_empty();
         {
             let mut m = self.model.borrow_mut();
             m.active_ws = Some(ws_id.to_string());
-            m.tabs = tabs;
-            m.panes = panes.into_iter().map(|p| (p.id.clone(), p)).collect();
+            m.tabs = snapshot.tabs;
+            m.panes = snapshot
+                .panes
+                .into_iter()
+                .map(|p| (p.id.clone(), p))
+                .collect();
         }
         self.render_tabs();
         self.content
@@ -588,6 +607,7 @@ impl App {
         let (tabs, server_active) = {
             let m = self.model.borrow();
             let active = m
+                .cache
                 .workspaces
                 .iter()
                 .find(|w| Some(&w.id) == m.active_ws.as_ref())
@@ -831,14 +851,21 @@ impl App {
             UiEvent::Reconnected => {
                 self.banner.set_revealed(false);
                 self.toast("Reconnected");
-                self.refresh();
+                self.pending_refresh.borrow_mut().full = true;
+                self.schedule_refresh();
             }
             UiEvent::Disconnected => {
                 self.banner.set_revealed(true);
             }
             UiEvent::ServerEvent { name, payload, .. } => {
+                crate::metrics::record("event", &name);
                 self.maybe_notify(&name, &payload);
-                self.refresh();
+                self.pending_refresh.borrow_mut().on_event(
+                    &self.model.borrow().cache,
+                    &name,
+                    &payload,
+                );
+                self.schedule_refresh();
             }
         }
     }
@@ -910,6 +937,17 @@ impl App {
             .ok()
             .and_then(|v| serde_json::from_value(v["pane"].clone()).ok());
         let Some(pane) = pane else { return };
+        // Notification clicks can beat the next refresh batch.
+        let known = self
+            .model
+            .borrow()
+            .cache
+            .snapshots
+            .get(&pane.workspace_id)
+            .is_some_and(|s| s.panes.iter().any(|p| p.id == pane_id));
+        if !known {
+            self.refresh_workspace(&pane.workspace_id);
+        }
         // Bind first: an if-condition borrow would live into the body.
         let same_ws = self.model.borrow().active_ws.as_deref() == Some(pane.workspace_id.as_str());
         if !same_ws {
@@ -1038,7 +1076,7 @@ impl App {
             Ok(v) => self.focus_created(&v),
             Err(e) => self.toast(&format!("Couldn't start a terminal — {e}")),
         }
-        self.refresh();
+        self.refresh_workspace(&ws);
     }
 
     fn action_split(&self, dir: SplitDir) {
@@ -1060,7 +1098,7 @@ impl App {
             Ok(v) => self.focus_created(&v),
             Err(e) => self.toast(&format!("Couldn't split the pane — {e}")),
         }
-        self.refresh();
+        self.refresh_pane_workspace(pane_id);
     }
 
     fn action_close_pane(&self) {
@@ -1074,14 +1112,14 @@ impl App {
         if let Err(e) = self.actor.call("pane.close", json!({"pane_id": pane_id})) {
             self.toast(&format!("Couldn't close the pane — {e}"));
         }
-        self.refresh();
+        self.refresh_pane_workspace(pane_id);
     }
 
     fn resume_pane(&self, pane_id: &str) {
         if let Err(e) = self.actor.call("pane.resume", json!({"pane_id": pane_id})) {
             self.toast(&format!("Couldn't resume the session — {e}"));
         }
-        self.refresh();
+        self.refresh_pane_workspace(pane_id);
     }
 
     fn show_about(&self) {

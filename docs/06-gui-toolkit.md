@@ -80,3 +80,60 @@ Rules that keep it calm:
   status recedes; terminal text is never dimmed.
 - Icons the GUI depends on are bundled (`data/icons`), not assumed
   from the icon theme.
+
+## Event refresh and measurement
+
+The GUI merges workspace invalidations into one batch every 16 ms while
+there is pending work. Each batch reads each affected workspace once.
+Sidebar summaries, the attention count and active tabs share the cached
+`workspace.get` result; selecting a workspace does not fetch it again.
+Initial load, reconnection and workspace creation/deletion read the full
+list. Individual IPC calls still wait synchronously for the actor.
+
+Events route by `workspace_id`, nested `workspace.id`, `pane.workspace_id`,
+`tab.workspace_id`, or `notification.workspace_id`. Cached pane/tab indexes
+resolve ID-only lifecycle, attention and deletion events, including events
+for inactive workspaces. An unknown pane requires at most one `pane.get`
+per batch to find its workspace. PTY data goes straight to its terminal.
+`maybe_notify` runs for every attention event before batching.
+
+Set `SIGNALTTY_REFRESH_METRICS=1` to log cumulative IPC and server-event
+counters to stderr. Each line contains the method/event name, without
+payloads. To reproduce the measurement with a separate socket, state
+directory, plugin directory and D-Bus session:
+
+```sh
+cargo build --workspace
+python3 scripts/bench-gui-refresh.py --check
+```
+
+The script creates eight workspaces, sends 200 consecutive CLI calls to an
+inactive pane and counts GUI IPC after initial mapping/resizing settles.
+It stops the isolated server, its panes and the GUI afterward. Use `--gui
+/path/to/baseline-gui` without `--check` to measure a baseline built with
+the same counters.
+
+Measured on 2026-09-28, excluding startup and notification lookups:
+
+| 200 CLI hook calls | Server events | Before: list / get | After: list / get | Refresh IPC per event, before / after |
+|---|---:|---:|---:|---:|
+| `PreToolUse` | 1 | 1 / 9 | 0 / 1 | 10 / 1 |
+| `PreToolUse --message "tool N"` | 201 | 201 / 1809 | 0 / 33 | 10 / 0.1642 |
+
+Repeated plain `PreToolUse` calls produce only one `agent.working` event:
+the server suppresses unchanged lifecycle transitions. Adding a message
+produces 200 `notification.created` events and one `attention.created`.
+That case makes one additional notification `pane.get` both before and
+after: total IPC falls from 2011 to 34. The number of batches depends on
+CLI execution speed; the invariant is one workspace read per dirty
+workspace per batch. No server or protocol changes are needed.
+
+Cache and routing tests run with `cargo test --workspace`. The GTK test
+also exercises batching through `App::on_event`, checks the actual
+sidebar labels, attention count, tab indicators and selection, and counts
+the separate notification lookups. It requires a display and runs explicitly:
+
+```sh
+dbus-run-session -- cargo test -p signaltty-gui event_batches -- --ignored --test-threads=1
+cargo clippy -p signaltty-gui --all-targets -- -D warnings
+```
