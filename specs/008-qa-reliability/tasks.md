@@ -10,4 +10,4 @@
 - [x] T008 Re-run original QA reproductions and light/dark native UI verification.
 - [x] T009 Review diff, run all required gates and update QA resolutions.
 - [x] T010 Commit by concern and push main; verify remote commit.
-- [ ] T011 Resolve remote CI dependencies and replace installed-provider test processes with isolated fixtures; verify CI on main.
+- [x] T011 Resolve remote CI dependencies and replace installed-provider test processes with isolated fixtures; verify CI on main.
