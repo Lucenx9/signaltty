@@ -607,6 +607,14 @@ fn resolve_size(cols: Option<u16>, rows: Option<u16>) -> PtySize {
     PtySize::clamp(cols.unwrap_or(80), rows.unwrap_or(24))
 }
 
+fn launch_result(pane: &Pane, integration: Value) -> Value {
+    let mut result = pane_result(pane);
+    if !integration.is_null() {
+        result["integration"] = integration;
+    }
+    result
+}
+
 fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::PaneSpawn = decode(params)?;
     let raw = p.workspace_id;
@@ -672,7 +680,26 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
         now,
     );
     pane.agent.kind = kind;
-    ctx.ptys
+    pane.agent.config_env = env
+        .iter()
+        .filter(|(key, _)| {
+            matches!(
+                key.as_str(),
+                "CLAUDE_CONFIG_DIR" | "CODEX_HOME" | "OPENCODE_CONFIG_DIR"
+            )
+        })
+        .map(|(key, value)| {
+            let path = std::path::Path::new(value);
+            let absolute = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::path::Path::new(&cwd).join(path)
+            };
+            (key.clone(), absolute.to_string_lossy().into_owned())
+        })
+        .collect();
+    let integration = ctx
+        .ptys
         .spawn(SpawnRequest {
             pane_id: pane.id.clone(),
             cwd,
@@ -700,7 +727,7 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     let _ = ctx.bcast.send(ev);
     drop(s);
     ctx.mark_persist();
-    Ok((pane_result(&pane), ConnEffect::default()))
+    Ok((launch_result(&pane, integration), ConnEffect::default()))
 }
 
 fn user_shell() -> String {
@@ -742,17 +769,19 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
         return Err(bad_params("'argv' must not be empty"));
     }
     let now = Utc::now();
-    let pane = Pane::new(ws_id, tab_id.clone(), cwd.clone(), argv.clone(), size, now);
-    if let Err(e) = ctx.ptys.spawn(SpawnRequest {
-        pane_id: pane.id.clone(),
-        cwd,
-        argv,
-        env: HashMap::new(),
-        size,
-        socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
-    }) {
-        return Err((code::SPAWN_FAILED.to_string(), e));
-    }
+    let mut pane = Pane::new(ws_id, tab_id.clone(), cwd.clone(), argv.clone(), size, now);
+    pane.agent.kind = ctx.detect_kind(&argv);
+    let integration = ctx
+        .ptys
+        .spawn(SpawnRequest {
+            pane_id: pane.id.clone(),
+            cwd,
+            argv,
+            env: HashMap::new(),
+            size,
+            socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
+        })
+        .map_err(|e| (code::SPAWN_FAILED.to_string(), e))?;
     {
         s.panes.insert(pane.id.clone(), pane.clone());
         let tab_snapshot = {
@@ -777,7 +806,7 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
     let _ = ctx.bcast.send(ev);
     drop(s);
     ctx.mark_persist();
-    Ok((pane_result(&pane), ConnEffect::default()))
+    Ok((launch_result(&pane, integration), ConnEffect::default()))
 }
 
 fn h_pane_get(ctx: &Ctx, params: &Value) -> Handler {
@@ -994,7 +1023,7 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
     let id = decode::<params::PaneId>(params)?.pane_id;
     // Retain ownership and prevent concurrent resume until publication.
     let mut s = ctx.store.write().unwrap();
-    let (cwd, size, argv) = {
+    let (cwd, size, argv, env) = {
         let pane = s
             .panes
             .get(&id)
@@ -1007,18 +1036,24 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
             .resume_argv
             .clone()
             .ok_or_else(|| bad_params("pane has no adapter resume command (not resumable)"))?;
-        (pane.cwd.clone(), pane.pty_size, argv)
+        (
+            pane.cwd.clone(),
+            pane.pty_size,
+            argv,
+            pane.agent.config_env.clone(),
+        )
     };
-    if let Err(e) = ctx.ptys.spawn(SpawnRequest {
-        pane_id: id.clone(),
-        cwd,
-        argv,
-        env: HashMap::new(),
-        size,
-        socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
-    }) {
-        return Err((code::SPAWN_FAILED.to_string(), e));
-    }
+    let integration = ctx
+        .ptys
+        .spawn(SpawnRequest {
+            pane_id: id.clone(),
+            cwd,
+            argv,
+            env,
+            size,
+            socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
+        })
+        .map_err(|e| (code::SPAWN_FAILED.to_string(), e))?;
     let (pane, transition) = {
         {
             let pane = s.panes.get_mut(&id).unwrap();
@@ -1037,7 +1072,7 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
     let _ = ctx.bcast.send(ev);
     drop(s);
     ctx.mark_persist();
-    Ok((pane_result(&pane), ConnEffect::default()))
+    Ok((launch_result(&pane, integration), ConnEffect::default()))
 }
 
 fn h_pane_mark_seen(ctx: &Ctx, params: &Value) -> Handler {

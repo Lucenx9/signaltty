@@ -1132,9 +1132,26 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
             json!(codex)
         ),
     );
-    let srv = TestServer::start_with_dirs(None, Some(&agents)).await;
+    let mut srv = TestServer::start_with_dirs(None, Some(&agents)).await;
     let mut c = srv.client().await;
-    let (_ws, pane) = new_pane(&mut c, vec![codex.to_str().unwrap(), "--version"]).await;
+    let custom = srv.integration_home.join("custom-codex");
+    let ws = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let launch = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws["workspace"]["id"], "argv": [codex, "--version"],
+        "env": {"CODEX_HOME": custom, "CODEX_API_KEY": "must-not-persist"}}),
+        )
+        .await
+        .unwrap();
+    let pane = launch["pane"]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        launch["pane"]["agent"]["config_env"],
+        json!({"CODEX_HOME": custom})
+    );
     c.call(
         "wait",
         json!({"pane_id": pane, "until": "exited", "timeout_s": 15}),
@@ -1152,6 +1169,16 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
         r["pane"]["agent"]["resume_argv"],
         json!([codex, "resume", "bogus-id"])
     );
+    srv.restart().await;
+    c = srv.client().await;
+    assert!(
+        !std::fs::read_to_string(srv.state_dir.join("snapshot.json"))
+            .unwrap()
+            .contains("must-not-persist")
+    );
+    let hook_file = custom.join("hooks.json");
+    assert!(hook_file.is_file());
+    std::fs::remove_file(&hook_file).unwrap();
     // Resume launches the fixture with the reported session, on a real PTY.
     let r = c
         .call("pane.resume", json!({"pane_id": pane}))
@@ -1159,6 +1186,9 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
         .unwrap();
     assert_eq!(r["pane"]["live"]["state"], "live");
     assert_eq!(r["pane"]["restore_state"], "LIVE");
+    assert_eq!(r["integration"]["status"], "configured");
+    assert_eq!(r["integration"]["changed"], true);
+    assert!(hook_file.is_file());
     assert_eq!(r["pane"]["title"], "codex");
     wait_for_text(
         &mut c,
@@ -1931,4 +1961,194 @@ resume = ["sh", "-c", "read line"]
     }
     srv.shutdown().await;
     std::fs::remove_dir_all(agents).ok();
+}
+
+fn lifecycle_fixture(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, r#"#!/usr/bin/env python3
+import json, os, pathlib, subprocess, sys
+root = pathlib.Path(os.environ.get('CLAUDE_CONFIG_DIR', str(pathlib.Path(os.environ['SIGNALTTY_INTEGRATION_HOME']) / '.claude')))
+print('agent-started', flush=True)
+try:
+    hooks = json.loads((root / 'settings.json').read_text())['hooks']
+except Exception:
+    hooks = {}
+print('hooks-loaded' if hooks else 'hooks-unavailable', flush=True)
+for line in sys.stdin:
+    event = line.strip()
+    for group in hooks.get(event, []):
+        for hook in group['hooks']:
+            subprocess.run(hook['command'], shell=True, input=json.dumps({'session_id':'fixture', 'notification_type':'permission_prompt'}).encode(), check=True)
+    print('event-delivered:' + event, flush=True)
+"#).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    path
+}
+
+#[tokio::test]
+async fn automatic_hooks_are_loaded_before_spawn_and_split_and_drive_states() {
+    use base64::Engine;
+    let srv = TestServer::start().await;
+    let claude = lifecycle_fixture(srv.socket.parent().unwrap(), "claude");
+    let file = srv.integration_home.join(".claude/settings.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &file,
+        r#"{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"true"}]}]}}"#,
+    )
+    .unwrap();
+    let mut c = srv.client().await;
+    let w = c
+        .call("workspace.create", json!({"cwd":"/tmp"}))
+        .await
+        .unwrap();
+    let result = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id":w["workspace"]["id"], "argv":[claude]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["integration"]["status"], "configured");
+    assert_eq!(result["integration"]["changed"], true);
+    let pane = result["pane"]["id"].as_str().unwrap();
+    wait_for_text(&mut c, pane, "hooks-loaded", Duration::from_secs(5)).await;
+    for (event, state) in [
+        ("SessionStart", "idle"),
+        ("UserPromptSubmit", "working"),
+        ("Notification", "blocked"),
+        ("Stop", "done"),
+    ] {
+        c.call("pane.input", json!({"pane_id":pane,"data_b64":base64::engine::general_purpose::STANDARD.encode(format!("{event}\n"))})).await.unwrap();
+        wait_for_text(
+            &mut c,
+            pane,
+            &format!("event-delivered:{event}"),
+            Duration::from_secs(5),
+        )
+        .await;
+        let p = c.call("pane.get", json!({"pane_id":pane})).await.unwrap();
+        assert_eq!(p["pane"]["lifecycle"], state);
+    }
+    let root: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(root["model"], "opus");
+    assert_eq!(root["hooks"]["Stop"][0]["hooks"][0]["command"], "true");
+    std::fs::remove_file(&file).unwrap();
+    let split = c
+        .call("pane.split", json!({"pane_id":pane,"argv":[claude]}))
+        .await
+        .unwrap();
+    assert_eq!(split["integration"]["changed"], true);
+    assert_eq!(split["pane"]["agent"]["kind"], "claude");
+    wait_for_text(
+        &mut c,
+        split["pane"]["id"].as_str().unwrap(),
+        "hooks-loaded",
+        Duration::from_secs(5),
+    )
+    .await;
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn automatic_setup_failure_is_visible_without_stopping_the_agent() {
+    let srv = TestServer::start().await;
+    let claude = lifecycle_fixture(srv.socket.parent().unwrap(), "claude");
+    let file = srv.integration_home.join(".claude/settings.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "{broken").unwrap();
+    let mut c = srv.client().await;
+    let w = c
+        .call("workspace.create", json!({"cwd":"/tmp"}))
+        .await
+        .unwrap();
+    let r = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id":w["workspace"]["id"],"argv":[claude]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["integration"]["status"], "error");
+    assert!(r["integration"]["notice"]
+        .as_str()
+        .unwrap()
+        .contains("invalid JSON"));
+    wait_for_text(
+        &mut c,
+        r["pane"]["id"].as_str().unwrap(),
+        "agent-started",
+        Duration::from_secs(5),
+    )
+    .await;
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "{broken");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn hints_shells_and_ambiguous_aliases_do_not_authorize_setup() {
+    let srv = TestServer::start().await;
+    let agent = lifecycle_fixture(srv.socket.parent().unwrap(), "agent");
+    let mut c = srv.client().await;
+    for argv in [json!(["sh", "-c", "read line"]), json!([agent])] {
+        let w = c
+            .call("workspace.create", json!({"cwd":"/tmp"}))
+            .await
+            .unwrap();
+        let r = c
+            .call(
+                "pane.spawn",
+                json!({"workspace_id":w["workspace"]["id"],"argv":argv,"agent_hint":"cursor"}),
+            )
+            .await
+            .unwrap();
+        assert!(r.get("integration").is_none());
+    }
+    assert!(!srv.integration_home.join(".cursor/hooks.json").exists());
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn explicit_launch_config_root_and_disabled_mode_are_respected() {
+    let srv = TestServer::start().await;
+    let claude = lifecycle_fixture(srv.socket.parent().unwrap(), "claude");
+    let custom = srv.integration_home.join("custom-claude");
+    let mut c = srv.client().await;
+    let w = c
+        .call("workspace.create", json!({"cwd":"/tmp"}))
+        .await
+        .unwrap();
+    let r=c.call("pane.spawn",json!({"workspace_id":w["workspace"]["id"],"argv":[claude],"env":{"CLAUDE_CONFIG_DIR":custom}})).await.unwrap();
+    assert_eq!(
+        r["integration"]["file"],
+        custom.join("settings.json").to_string_lossy().as_ref()
+    );
+    wait_for_text(
+        &mut c,
+        r["pane"]["id"].as_str().unwrap(),
+        "hooks-loaded",
+        Duration::from_secs(5),
+    )
+    .await;
+    assert!(!srv.integration_home.join(".claude/settings.json").exists());
+    let split = c
+        .call(
+            "pane.split",
+            json!({"pane_id":r["pane"]["id"],"argv":[claude,"--bare"]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(split["integration"]["status"], "disabled");
+    let alternate = c
+        .call(
+            "pane.split",
+            json!({"pane_id":r["pane"]["id"],"argv":[claude,"--setting-sources=project,local"]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(alternate["integration"]["status"], "disabled");
+    assert!(!srv.integration_home.join(".claude/settings.json").exists());
+    srv.shutdown().await;
 }

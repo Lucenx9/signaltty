@@ -124,3 +124,7 @@ exists.
 
 UUIDv4 strings with a short type prefix for human greppability
 (`ws_`, `tab_`, `pane_`, `notif_`). Prefix is cosmetic; treat as opaque.
+
+`AgentInfo.config_env` retains only explicit `CLAUDE_CONFIG_DIR`, `CODEX_HOME`
+and `OPENCODE_CONFIG_DIR` paths, normalized against launch cwd, for official
+resume. Other environment variables and credentials are not retained.

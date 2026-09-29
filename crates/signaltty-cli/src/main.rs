@@ -431,9 +431,13 @@ async fn run(args: Args) -> Result<(), CliError> {
                 sparams["tab_id"] = json!(tab_id);
             }
             let p = c.call("pane.spawn", sparams).await?;
+            integration_notice(&p, json);
             let pane_id = p["pane"]["id"].as_str().unwrap_or("?").to_string();
             let handle = w["workspace"]["handle"].as_str().unwrap_or("?").to_string();
-            let result = json!({"workspace_id": ws_id, "handle": handle, "pane_id": pane_id});
+            let mut result = json!({"workspace_id": ws_id, "handle": handle, "pane_id": pane_id});
+            if let Some(setup) = p.get("integration") {
+                result["integration"] = setup.clone();
+            }
             emit(
                 json,
                 &result,
@@ -658,30 +662,30 @@ async fn run(args: Args) -> Result<(), CliError> {
         }
         Command::Integration { op } => match op {
             IntegrationOp::Install { agent, home } => {
-                let home = integration::home_dir(home.as_deref())?;
+                let home = home.map(std::path::PathBuf::from);
                 if agent == "all" {
                     for a in integration::valid_agents() {
-                        integration::install(&home, a, json)?;
+                        integration::install(home.as_deref(), a, json)?;
                     }
                     Ok(())
                 } else {
-                    integration::install(&home, &agent, json)
+                    integration::install(home.as_deref(), &agent, json)
                 }
             }
             IntegrationOp::Uninstall { agent, home } => {
-                let home = integration::home_dir(home.as_deref())?;
+                let home = home.map(std::path::PathBuf::from);
                 if agent == "all" {
                     for a in integration::valid_agents() {
-                        integration::uninstall(&home, a, json)?;
+                        integration::uninstall(home.as_deref(), a, json)?;
                     }
                     Ok(())
                 } else {
-                    integration::uninstall(&home, &agent, json)
+                    integration::uninstall(home.as_deref(), &agent, json)
                 }
             }
             IntegrationOp::Status { home } => {
-                let home = integration::home_dir(home.as_deref())?;
-                integration::status(&home, &[], json)
+                let home = home.map(std::path::PathBuf::from);
+                integration::status(home.as_deref(), &[], json)
             }
         },
         Command::Decision { op } => {
@@ -891,6 +895,7 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                         p["agent_hint"] = json!(a);
                     }
                     let r = c.call("pane.spawn", p).await?;
+                    integration_notice(&r, json);
                     let id = r["pane"]["id"].as_str().unwrap_or("?").to_string();
                     emit(json, &r, format!("pane {id}"));
                     Ok(())
@@ -909,6 +914,7 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                         p["argv"] = json!(cmd);
                     }
                     let r = c.call("pane.split", p).await?;
+                    integration_notice(&r, json);
                     let nid = r["pane"]["id"].as_str().unwrap_or("?").to_string();
                     emit(json, &r, format!("pane {nid}"));
                     Ok(())
@@ -1019,11 +1025,20 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                 }
                 PaneOp::Resume { id } => {
                     let r = c.call("pane.resume", json!({"pane_id": id})).await?;
+                    integration_notice(&r, json);
                     let pid = r["pane"]["id"].as_str().unwrap_or("?").to_string();
                     emit(json, &r, format!("resumed {pid}"));
                     Ok(())
                 }
             }
+        }
+    }
+}
+
+fn integration_notice(result: &Value, json: bool) {
+    if !json {
+        if let Some(notice) = result["integration"]["notice"].as_str() {
+            eprintln!("{notice}");
         }
     }
 }

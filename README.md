@@ -13,7 +13,7 @@ executable plugins) are done.
 ```bash
 cargo build --release
 ./target/debug/signaltty daemon          # start the session server
-./target/debug/signaltty integration install all   # hook shims (codex/claude/opencode/cursor)
+./target/debug/signaltty integration install claude # optional: agents typed inside a shell
 ./target/debug/signaltty new --cwd ~/code/project -- codex
 ./target/debug/signaltty new --cwd ~/code/project -- claude
 ./target/debug/signaltty pane read <pane-id>
@@ -134,3 +134,8 @@ The server owns the processes, the terminal backend renders terminal
 state, agent adapters provide semantic agent state, notifications
 describe human attention, and the UI helps the user find the work
 that needs them.
+
+Direct Claude, Codex, OpenCode and Cursor launches configure their status hooks
+automatically, preserving existing configuration. Codex may still require native
+`/hooks` trust review. Setup problems appear as notices while the terminal remains
+usable. See [agent integration](docs/07-agents.md#automatic-configuration-adr-0013).

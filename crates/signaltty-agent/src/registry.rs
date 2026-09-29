@@ -75,7 +75,7 @@ mod tests {
         );
         assert_eq!(detect_kind(&argv(&["opencode"])), AgentKind::Opencode);
         assert_eq!(detect_kind(&argv(&["cursor-agent"])), AgentKind::Cursor);
-        assert_eq!(detect_kind(&argv(&["agent"])), AgentKind::Cursor);
+        assert_eq!(detect_kind(&argv(&["agent"])), AgentKind::Generic);
         assert_eq!(detect_kind(&argv(&["sh"])), AgentKind::Generic);
         assert_eq!(detect_kind(&argv(&[])), AgentKind::Generic);
     }

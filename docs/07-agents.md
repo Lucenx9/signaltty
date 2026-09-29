@@ -17,7 +17,7 @@ override heuristics. Unknown apps remain fully working terminals.
    byte stream server-side. Any CLI/script can emit them; zero config.
 4. **Foreground process info** — `/proc`: argv, cwd, child tree, CPU.
    Identifies *which* agent runs (`codex`, `claude`, `opencode`,
-   `cursor-agent`/`agent`) and whether it is forked/busy.
+   `cursor-agent`) and whether it is forked/busy.
 5. **Terminal state** — title (`OSC 0/1/2`), BEL, cursor, alt-screen.
    Cheap, no parsing of natural language.
 6. **Output heuristics** — last resort only (spinners, prompt shapes).
@@ -102,7 +102,7 @@ Adapters: `CodexAdapter`, `ClaudeCodeAdapter`, `OpenCodeAdapter`,
   opencode`. `session.status busy/idle` → working/done; idle →
   done+unread. `serve` API is the future native-integration path.
 
-### Cursor Agent (`cursor-agent` / `agent` alias)
+### Cursor Agent (`cursor-agent`)
 
 - Resume: `--resume [chatId]` (picker when bare), `--continue`;
   `--print --output-format json|stream-json` headless; `--model`,
@@ -178,3 +178,32 @@ as a plain terminal with `GenericTerminalAdapter`: title tracking,
 BEL → `unread`, exit code → `done`/`failed`, OSC notifications still
 honored. Zero-configuration agents (raw `claude` with no hooks) still
 get OSC + title + exit semantics.
+
+## Automatic configuration (ADR-0013)
+
+Starting a supported agent directly from the New Workspace dialog or `pane.spawn`,
+`pane.split`, `pane.resume` prepares its hook integration before the process starts.
+Preparation uses the actual executable basename, not `agent_hint` or detection
+manifests. The ambiguous `agent` command is generic by default: it may be Grok;
+known Cursor aliases can still be declared explicitly in detection manifests.
+
+Only the selected provider is configured. Existing shells and agents already
+running are not reconfigured; for agents typed inside a shell use
+`signaltty integration install <provider>` first, or start a new workspace with
+that agent selected. Restarting an agent may be needed after configuration.
+
+Shared installation merges owned command hooks, preserves foreign hooks/keys,
+refuses malformed files and unrelated OpenCode plugins, refreshes stale paths,
+and uses bounded advisory locking and atomic replacement. Uninstall removes
+only managed commands, including inside mixed groups. Claude `CLAUDE_CONFIG_DIR`,
+Codex `CODEX_HOME`, OpenCode `OPENCODE_CONFIG_DIR` and the default XDG OpenCode
+location are honored. Explicit CLI `--home` isolates provider home overrides;
+OpenCode still honors `XDG_CONFIG_HOME`.
+
+A setup failure keeps the terminal usable and returns `integration.status=error`
+with a notice shown in the GUI/CLI. Explicit Claude `--bare` or setting sources
+excluding `user`, and OpenCode `--pure`, return `disabled` without installing.
+Installation never enables a user's disabled hooks. `configured`/CLI `installed`
+mean files contain managed hooks, not that events have fired. For newly written
+Codex hooks the notice asks to review/trust them in `/hooks`; Signaltty does not
+alter `[hooks.state]`, grant trust or inject trust-bypass flags.

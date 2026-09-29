@@ -9,6 +9,7 @@ pub struct Config {
     pub history_tail_bytes: usize,
     pub plugin_dir: PathBuf,
     pub agents_dir: PathBuf,
+    pub integration_home: Option<PathBuf>,
 }
 
 impl Config {
@@ -19,6 +20,7 @@ impl Config {
             history_tail_bytes: 64 * 1024,
             plugin_dir: paths::plugin_dir(),
             agents_dir: paths::agents_dir(),
+            integration_home: std::env::var_os("SIGNALTTY_INTEGRATION_HOME").map(PathBuf::from),
         }
     }
 }

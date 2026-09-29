@@ -59,8 +59,8 @@ clients can `subscribe {from_seq}` to replay.
 | `tab.close` | `{tab_id}` | `{closed}` |
 | `tab.set_layout` | `{tab_id, layout}` | `{tab}` |
 | `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
-| `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?}` | `{pane}` |
-| `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane}` (new sibling) |
+| `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?}` | `{pane, integration?}` |
+| `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane, integration?}` (new sibling) |
 | `pane.get` | `{pane_id}` | `{pane}` |
 | `pane.input` | `{pane_id, data_b64}` | `{written}` |
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
@@ -69,7 +69,7 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.attach` | `{pane_id, cols?, rows?, mark_seen?}` | `{snapshot_b64, output_offset, size, live, ...}` then `pty.data` stream; the snapshot is replayable VT state (contents, colours, cursor, modes) (`mark_seen` default true; GUIs pass false and acknowledge on focus) |
 | `pane.detach` | `{pane_id}` | `{detached}` (also implicit on disconnect) |
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
-| `pane.resume` | `{pane_id}` | `{pane}` (spawns adapter resume argv; errors unless restored+resumable) |
+| `pane.resume` | `{pane_id}` | `{pane, integration?}` (spawns adapter resume argv; errors unless restored+resumable) |
 | `pane.mark_seen` | `{pane_id}` | `{pane}` (records reading; clears ordinary attention while preserving unanswered decisions and their required attention) |
 | `decision.answer` | `{pane_id, decision_id, option_id}` | `{answered, lifecycle?, attention?}` (delivers through the pane adapter's channel and consumes the id; stale/consumed ids → `NO_SUCH_DECISION`, unknown option or channelless adapter → `BAD_PARAMS`) |
 | `notify` | `{pane_id?, title, body?, severity?}` | `{notification}` |
@@ -96,6 +96,13 @@ rotation keeps one `.1` predecessor, 8 MiB cap each). `subscribe
 {from_seq}` backfills from the file when the in-memory ring (1024) has
 rotated or the server restarted — replays merge file + ring deduped by
 `seq` (cap 4096).
+
+`pane.spawn`, `pane.split` and `pane.resume` include an optional
+`integration {agent, status, changed, file?, notice?}` for direct supported-agent
+launches. Status is `configured`, `disabled`, or `error`. Configuration precedes
+process execution; a setup error does not prevent launch. Clients show `notice`
+when present. `configured` is not proof of provider trust or event delivery.
+Ordinary shell/arbitrary launches have no integration result.
 
 `pane.spawn` rejects an explicit tab from another workspace with `BAD_PARAMS`.
 A failed process launch leaves no automatic tab or pane. Ownership validation,

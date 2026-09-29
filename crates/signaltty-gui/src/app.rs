@@ -1328,8 +1328,18 @@ impl App {
         }
     }
 
+    fn show_integration_notice(&self, result: &Value) {
+        if let Some(notice) = result["integration"]["notice"].as_str() {
+            let toast = adw::Toast::new(notice);
+            toast.set_use_markup(false);
+            toast.set_timeout(10);
+            self.toasts.add_toast(toast);
+        }
+    }
+
     /// Focus a pane created by the last action once its widget exists.
     fn focus_created(&self, result: &Value, navigation: u64) {
+        self.show_integration_notice(result);
         let Some(id) = result["pane"]["id"].as_str().map(str::to_string) else {
             return;
         };
@@ -1647,12 +1657,13 @@ impl App {
     }
 
     async fn resume_pane_async(&self, pane_id: &str) {
-        if let Err(e) = self
+        match self
             .actor
             .call("pane.resume", json!({"pane_id": pane_id}))
             .await
         {
-            self.toast(&format!("Couldn't resume the session — {e}"));
+            Ok(result) => self.show_integration_notice(&result),
+            Err(e) => self.toast(&format!("Couldn't resume the session — {e}")),
         }
         self.refresh_pane_workspace_async(pane_id).await;
     }

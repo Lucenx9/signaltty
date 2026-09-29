@@ -58,3 +58,7 @@ non-secret config; never tokens/keys).
 - `snapshot_version` field; unknown future versions refuse to load
   with a clear error rather than misinterpreting.
 - Optional periodic snapshots every 60s regardless of activity.
+
+Official resume also restores the three allowlisted provider config-directory
+overrides in `agent.config_env`; missing fields in older snapshots default empty.
+No credentials or arbitrary environment values are persisted (ADR-0013).

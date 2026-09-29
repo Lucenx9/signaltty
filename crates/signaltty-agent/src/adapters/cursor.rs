@@ -18,7 +18,7 @@ pub struct CursorAdapter;
 
 impl AgentAdapter for CursorAdapter {
     fn identify(&self, proc: &ProcessInfo) -> bool {
-        matches!(proc.bin_name(), "cursor-agent" | "agent")
+        proc.bin_name() == "cursor-agent"
     }
 
     fn lifecycle_state(&self, ev: &AdapterEvent) -> LifecycleDecision {
@@ -84,7 +84,7 @@ impl AgentAdapter for CursorAdapter {
         AdapterMetadata {
             kind: AgentKind::Cursor,
             display_name: "Cursor Agent",
-            binaries: &["cursor-agent", "agent"],
+            binaries: &["cursor-agent"],
         }
     }
 }

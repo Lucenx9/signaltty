@@ -4,6 +4,7 @@ members = [
     "crates/signaltty-proto",
     "crates/signaltty-term",
     "crates/signaltty-agent",
+    "crates/signaltty-integration",
     "crates/signaltty-server",
     "crates/signaltty-plugin",
     "crates/signaltty-cli",
@@ -23,6 +24,7 @@ signaltty-core = { path = "crates/signaltty-core" }
 signaltty-proto = { path = "crates/signaltty-proto" }
 signaltty-term = { path = "crates/signaltty-term" }
 signaltty-agent = { path = "crates/signaltty-agent" }
+signaltty-integration = { path = "crates/signaltty-integration" }
 signaltty-plugin = { path = "crates/signaltty-plugin" }
 signaltty-testkit = { path = "crates/signaltty-testkit" }
 

@@ -35,8 +35,11 @@ for the MVP (no network listener).
   executes embedded commands.
 - **Hook payloads**: treated as untrusted JSON; size-capped (256 KiB),
   parsed strictly, unknown fields ignored; hook shims run with user
-  privileges and must be user-installed (installer never overwrites
-  user hook files — merges/appends with markers).
+  privileges. Direct supported agent launches configure their integration
+  automatically (ADR-0013); manual install remains available. The installer
+  preserves foreign keys/commands, refuses invalid configs and unrelated plugin
+  collisions, and serializes atomic updates with an advisory lock. Provider trust
+  and explicit disabled-hook settings are preserved.
 - **Terminal output**: the server's OSC scanner only *reads*; extracted
   strings go through the same sanitizer. VTE/GUI rendering of untrusted
   bytes is the widget's job (VTE already handles this).

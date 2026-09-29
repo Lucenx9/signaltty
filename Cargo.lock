@@ -1673,6 +1673,7 @@ dependencies = [
  "serde_json",
  "signaltty-agent",
  "signaltty-core",
+ "signaltty-integration",
  "signaltty-plugin",
  "signaltty-proto",
  "signaltty-testkit",
@@ -1709,6 +1710,16 @@ dependencies = [
  "signaltty-proto",
  "tokio",
  "vte4",
+]
+
+[[package]]
+name = "signaltty-integration"
+version = "0.1.0"
+dependencies = [
+ "nix 0.29.0",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1749,6 +1760,7 @@ dependencies = [
  "serde_json",
  "signaltty-agent",
  "signaltty-core",
+ "signaltty-integration",
  "signaltty-plugin",
  "signaltty-proto",
  "signaltty-term",

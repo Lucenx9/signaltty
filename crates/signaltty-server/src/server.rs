@@ -43,7 +43,8 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let store: SharedStore = Arc::new(std::sync::RwLock::new(Store::new()));
     let (bcast, _) = broadcast::channel::<StoredEvent>(4096);
     let persist_pending = Arc::new(AtomicBool::new(false));
-    let ptys = PtyManager::new(store.clone(), bcast.clone(), persist_pending.clone());
+    let ptys = PtyManager::new(store.clone(), bcast.clone(), persist_pending.clone())
+        .with_integration_home(config.integration_home.clone());
 
     // Restore previous snapshot (structure only — never processes).
     if let Some(loaded) = crate::persist::load(&config) {

@@ -206,3 +206,8 @@ dbus-run-session -- cargo test -p signaltty-gui event_batches -- --ignored --tes
 dbus-run-session -- cargo test -p signaltty-gui dialog_confirm -- --ignored --test-threads=1
 cargo clippy -p signaltty-gui --all-targets -- -D warnings
 ```
+
+Direct supported agent launches prepare status hooks before execution. Setup
+errors, disabled launch modes and newly configured Codex trust requirements
+use native `AdwToast` notices on create, split and resume; successful ordinary
+configuration does not add another status badge (ADR-0013).

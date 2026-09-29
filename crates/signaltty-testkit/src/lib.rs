@@ -37,6 +37,7 @@ pub fn bin_path(name: &str) -> PathBuf {
 pub struct TestServer {
     pub socket: PathBuf,
     pub state_dir: PathBuf,
+    pub integration_home: PathBuf,
     child: std::process::Child,
 }
 
@@ -59,6 +60,7 @@ impl TestServer {
         let base = std::env::temp_dir().join(ns);
         let socket = base.join("signaltty.sock");
         let state_dir = base.join("state");
+        let integration_home = base.join("home");
         std::fs::create_dir_all(&base).unwrap();
         let bin = bin_path("signaltty-server");
         let mut cmd = std::process::Command::new(bin);
@@ -72,6 +74,8 @@ impl TestServer {
         if let Some(dir) = agents_dir {
             cmd.arg("--agents-dir").arg(dir);
         }
+        cmd.env("SIGNALTTY_INTEGRATION_HOME", &integration_home)
+            .env("XDG_CONFIG_HOME", integration_home.join(".config"));
         let mut child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -96,6 +100,7 @@ impl TestServer {
         TestServer {
             socket,
             state_dir,
+            integration_home,
             child,
         }
     }
@@ -141,6 +146,8 @@ impl TestServer {
         let _ = self.child.wait();
         let bin = bin_path("signaltty-server");
         self.child = std::process::Command::new(bin)
+            .env("SIGNALTTY_INTEGRATION_HOME", &self.integration_home)
+            .env("XDG_CONFIG_HOME", self.integration_home.join(".config"))
             .arg("--socket")
             .arg(&self.socket)
             .arg("--state-dir")

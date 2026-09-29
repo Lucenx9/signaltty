@@ -529,3 +529,54 @@ async fn cli_plugin_list_run_json() {
     srv.shutdown().await;
     std::fs::remove_dir_all(&base).ok();
 }
+
+#[test]
+fn integration_rejects_invalid_configuration_without_rewriting() {
+    let home = std::env::temp_dir().join(format!("signaltty-invalid-hooks-{}", std::process::id()));
+    let file = home.join(".claude/settings.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    for original in ["{broken", "null", "[]", "{\"hooks\": false}"] {
+        std::fs::write(&file, original).unwrap();
+        let out = Command::new(bin_path("signaltty"))
+            .args(["integration", "install", "claude", "--home"])
+            .arg(&home)
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "invalid configuration accepted: {original}"
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    }
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn cli_new_preserves_automatic_setup_json_and_human_notice() {
+    use std::os::unix::fs::PermissionsExt;
+    let srv = TestServer::start().await;
+    let codex = srv.socket.parent().unwrap().join("codex");
+    std::fs::write(&codex, "#!/bin/sh\necho fixture-codex\n").unwrap();
+    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let result = cli_json(
+        &srv.socket,
+        &["new", "--cwd", "/tmp", "--", codex.to_str().unwrap()],
+    );
+    assert_eq!(result["integration"]["status"], "configured");
+    assert_eq!(result["integration"]["changed"], true);
+    assert!(result["integration"]["notice"]
+        .as_str()
+        .unwrap()
+        .contains("/hooks"));
+    std::fs::remove_file(srv.integration_home.join(".codex/hooks.json")).unwrap();
+    let output = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args(["new", "--cwd", "/tmp", "--"])
+        .arg(&codex)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr).unwrap().contains("/hooks"));
+    srv.shutdown().await;
+}

@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 signaltty-agent.workspace = true
+signaltty-integration.workspace = true
 signaltty-core.workspace = true
 signaltty-plugin.workspace = true
 signaltty-proto.workspace = true

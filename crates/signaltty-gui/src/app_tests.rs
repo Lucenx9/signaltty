@@ -711,3 +711,30 @@ fn delayed_new_tab_keeps_the_workspace_selected_after_the_action() {
     assert_eq!(selected_tab.as_deref(), Some("tab_b"));
     assert_eq!(current_pane.as_deref(), Some("pane_b"));
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn integration_setup_notice_is_visible_in_light_and_dark() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let style = adw::StyleManager::default();
+    let original = style.color_scheme();
+    for scheme in [adw::ColorScheme::ForceLight, adw::ColorScheme::ForceDark] {
+        style.set_color_scheme(scheme);
+        let (actor, _requests) = IpcHandle::test_channel();
+        let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+        let app = App::new(&application, actor, ui);
+        app.window.present();
+        let notice = "Codex: review and trust the Signaltty hooks in /hooks <literal>";
+        app.show_integration_notice(&json!({"integration":{"notice":notice}}));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !has_label(app.window.upcast_ref(), notice) {
+            assert!(Instant::now() < deadline, "integration notice not visible");
+            glib::MainContext::default().iteration(true);
+        }
+        app.window.destroy();
+    }
+    style.set_color_scheme(original);
+}

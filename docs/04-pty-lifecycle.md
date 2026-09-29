@@ -6,14 +6,17 @@ resize, signals, exit reaping, scrollback, and client attach/detach.
 ## Spawn
 
 1. Client sends `pane.spawn {workspace_id, tab, cwd, argv, env, cols, rows}`.
-2. Server `forkpty`-equivalents via `portable-pty`:
+2. For direct supported agents, server prepares semantic hooks through the
+   shared integration installer. Failure returns a setup notice and execution
+   continues; Codex trust remains provider-owned (ADR-0013).
+3. Server `forkpty`-equivalents via `portable-pty`:
    `openpty → fork → setsid → slave as controlling tty → exec argv`.
-3. Server registers pane, starts async reader tasks:
+4. Server registers pane, starts async reader tasks:
    - output pump: PTY master → scrollback ring + VT parser (screen
      model, OSC/title/BEL extraction) → broadcast to attached clients.
    - exit watcher: EOF + `waitpid` → mark `exited`, freeze scrollback,
      emit `pane.exited`.
-4. Server replies with the opaque `pane_id`.
+5. Server replies with the opaque `pane_id`.
 
 Environment: pane inherits a sanitized copy of the server environment
 plus per-request overrides. `TERM` defaults to `xterm-256color` unless

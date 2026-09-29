@@ -420,6 +420,9 @@ pub struct AgentInfo {
     pub resume_argv: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Non-secret provider config directories retained for an official resume.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub config_env: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

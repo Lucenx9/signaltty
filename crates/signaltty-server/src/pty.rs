@@ -58,6 +58,7 @@ pub struct PtyManager {
     handles: Arc<Mutex<HashMap<String, PtyHandle>>>,
     viewers: Arc<Mutex<HashMap<String, usize>>>,
     persist_pending: Arc<AtomicBool>,
+    integration_home: Option<std::path::PathBuf>,
 }
 
 impl PtyManager {
@@ -74,6 +75,49 @@ impl PtyManager {
             handles: Arc::new(Mutex::new(HashMap::new())),
             viewers: Arc::new(Mutex::new(HashMap::new())),
             persist_pending,
+            integration_home: None,
+        }
+    }
+
+    pub fn with_integration_home(mut self, home: Option<std::path::PathBuf>) -> Self {
+        self.integration_home = home;
+        self
+    }
+
+    fn prepare_integration(&self, req: &SpawnRequest) -> serde_json::Value {
+        use signaltty_integration::{reporter_executable, Hooks};
+        let kind = signaltty_agent::detect_kind(&req.argv);
+        let agent = kind.as_str();
+        if !signaltty_integration::AGENTS.contains(&agent) {
+            return serde_json::Value::Null;
+        }
+        let user_sources_excluded = req.argv.iter().enumerate().any(|(i, arg)| {
+            let sources = arg.strip_prefix("--setting-sources=").or_else(|| {
+                (arg == "--setting-sources")
+                    .then(|| req.argv.get(i + 1).map(String::as_str))
+                    .flatten()
+            });
+            sources.is_some_and(|s| !s.split(',').any(|source| source == "user"))
+        });
+        let disabled = (agent == "claude"
+            && (req.argv.iter().any(|a| a == "--bare") || user_sources_excluded))
+            || (agent == "opencode" && req.argv.iter().any(|a| a == "--pure"));
+        if disabled {
+            return serde_json::json!({"agent": agent, "status": "disabled", "changed": false,
+                "notice": format!("{agent}: this launch disables user hooks/plugins; status integration is unavailable.")});
+        }
+        let outcome = reporter_executable()
+            .and_then(|cli| Hooks::from_env(self.integration_home.as_deref(), cli))
+            .map(|hooks| hooks.with_overrides(&req.env, std::path::Path::new(&req.cwd)))
+            .and_then(|hooks| hooks.install(agent));
+        match outcome {
+            Ok(report) => {
+                let mut result = serde_json::to_value(report).unwrap();
+                result["status"] = serde_json::json!("configured");
+                result
+            }
+            Err(e) => serde_json::json!({"agent": agent, "status": "error", "changed": false,
+                "notice": format!("{agent} status setup failed: {e}. The terminal remains available.")}),
         }
     }
 
@@ -95,10 +139,11 @@ impl PtyManager {
         self.persist_pending.store(true, Ordering::Relaxed);
     }
 
-    pub fn spawn(&self, req: SpawnRequest) -> Result<Option<u32>, String> {
+    pub fn spawn(&self, req: SpawnRequest) -> Result<serde_json::Value, String> {
         if req.argv.is_empty() {
             return Err("argv must not be empty".to_string());
         }
+        let integration = self.prepare_integration(&req);
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySizeRaw {
@@ -171,7 +216,7 @@ impl PtyManager {
             .spawn(move || pump.run(pane_id, reader, child))
             .map_err(|e| format!("pump thread failed: {e}"))?;
 
-        Ok(child_pid)
+        Ok(integration)
     }
 
     fn run(
