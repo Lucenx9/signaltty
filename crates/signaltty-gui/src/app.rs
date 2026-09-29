@@ -96,6 +96,7 @@ pub struct App {
     /// The New Workspace dialog is single-instance: repeats of the
     /// action (or its accelerator) while it is open are ignored.
     new_ws_open: Cell<bool>,
+    close_ws_dialog: RefCell<Option<adw::AlertDialog>>,
     me: RefCell<Weak<App>>,
 }
 
@@ -236,6 +237,7 @@ impl App {
             dividers: crate::dividers::Dividers::new(),
             paned_widgets: RefCell::new(HashMap::new()),
             new_ws_open: Cell::new(false),
+            close_ws_dialog: RefCell::new(None),
             me: RefCell::new(Weak::new()),
         });
         app.me.replace(Rc::downgrade(&app));
@@ -296,6 +298,7 @@ impl App {
             &self.split_view,
             crate::actions::ActionHandlers {
                 new_workspace: method(App::action_new_workspace),
+                close_workspace: method(App::action_close_active_workspace),
                 new_tab: method(App::action_new_tab),
                 split_right: split(SplitDir::Right),
                 split_down: split(SplitDir::Down),
@@ -318,6 +321,12 @@ impl App {
                 if a.split_view.is_collapsed() {
                     a.split_view.set_show_sidebar(false);
                 }
+            }
+        });
+        let w = self.weak();
+        self.sidebar.set_on_close(move |ws_id| {
+            if let Some(a) = w.upgrade() {
+                a.action_close_workspace(&ws_id);
             }
         });
         // Track the tab the user is looking at, so refreshes never yank
@@ -1143,6 +1152,60 @@ impl App {
                 }
             },
         );
+    }
+
+    fn action_close_active_workspace(&self) {
+        if let Some(id) = self.active_ws_id() {
+            self.action_close_workspace(&id);
+        }
+    }
+
+    fn action_close_workspace(&self, id: &str) {
+        if self.close_ws_dialog.borrow().is_some() {
+            return;
+        }
+        let name = {
+            let model = self.model.borrow();
+            let Some(ws) = model.cache.workspaces.iter().find(|ws| ws.id == id) else {
+                return;
+            };
+            ws.name.clone()
+        };
+        let dialog = adw::AlertDialog::builder()
+            .heading(format!("Close {name}?"))
+            .body("Running terminals and agents in this workspace will stop.")
+            .build();
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("close", "Close Workspace");
+        dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+
+        let id = id.to_string();
+        let w = self.weak();
+        dialog.connect_response(Some("close"), move |_, _| {
+            if let Some(a) = w.upgrade() {
+                a.close_workspace(&id);
+            }
+        });
+        let w = self.weak();
+        dialog.connect_closed(move |_| {
+            if let Some(a) = w.upgrade() {
+                a.close_ws_dialog.borrow_mut().take();
+            }
+        });
+        self.close_ws_dialog.replace(Some(dialog.clone()));
+        dialog.present(Some(&self.window));
+    }
+
+    fn close_workspace(&self, id: &str) {
+        match self
+            .actor
+            .call("workspace.close", json!({"workspace_id": id}))
+        {
+            Ok(_) => self.refresh(),
+            Err(e) => self.toast(&format!("Couldn't close the workspace — {e}")),
+        }
     }
 
     fn active_ws_cwd(&self) -> Option<String> {

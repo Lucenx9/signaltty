@@ -95,6 +95,13 @@ instance and shared by Ctrl+Shift+N, the sidebar "+" and the empty
 state; the custom field toggles with plain visibility so nothing
 animates on keyboard navigation.
 
+Each sidebar row has a close button for its workspace. The primary menu's
+Close Workspace action targets the active workspace. Both show a single
+destructive confirmation that names the workspace and warns that its running
+terminals and agents will stop. Confirming calls the existing
+`workspace.close` method and refreshes the full workspace list. Cancel sends
+no request. A failed close leaves the row visible and shows a toast.
+
 Dividers persist: each `GtkPaned` reports to `tab.set_ratio` with its
 tree path once the drag rests 300 ms, never mid-drag. Reconciliation
 compares layout structure ignoring ratios, so a ratio-only echo moves

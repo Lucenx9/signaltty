@@ -63,6 +63,10 @@ To remove these files:
 ./contrib/install-desktop.sh uninstall
 ```
 
+To close a workspace, use the close button on its sidebar row, or select it
+and choose **Close Workspace** from the main menu. Confirming stops its
+running terminals and agents. Closing the GUI window leaves them running.
+
 GUI shortcuts (Ctrl+Shift, so plain Ctrl chords reach the terminal):
 
 | Keys | Action |

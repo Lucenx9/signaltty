@@ -40,6 +40,164 @@ fn has_label(widget: &gtk4::Widget, text: &str) -> bool {
     false
 }
 
+fn button_with_tooltip(widget: &gtk4::Widget, tooltip: &str) -> Option<gtk4::Button> {
+    if let Some(button) = widget.downcast_ref::<gtk4::Button>() {
+        if button.tooltip_text().as_deref() == Some(tooltip) {
+            return Some(button.clone());
+        }
+    }
+    let mut child = widget.first_child();
+    while let Some(widget) = child {
+        if let Some(button) = button_with_tooltip(&widget, tooltip) {
+            return Some(button);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
+fn respond(dialog: &adw::AlertDialog, response: &str) {
+    dialog.emit_by_name_with_details::<()>(
+        "response",
+        glib::Quark::from_str(response),
+        &[&response],
+    );
+    dialog.close();
+    while glib::MainContext::default().iteration(false) {}
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session (or xvfb-run)"]
+fn close_workspace_confirms_the_selected_target_and_refreshes() {
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let state = Arc::new(Mutex::new(BTreeMap::from([
+        ("a".to_string(), fixture("a")),
+        ("b".to_string(), fixture("b")),
+    ])));
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let server = state.clone();
+    let recorded = calls.clone();
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            match request {
+                ActorRequest::Call {
+                    method,
+                    params,
+                    reply,
+                } => {
+                    if method == "test.stop" {
+                        let _ = reply.send(Ok(Value::Null));
+                        break;
+                    }
+                    if method == "pane.resize" {
+                        let _ = reply.send(Ok(json!({})));
+                        continue;
+                    }
+                    recorded
+                        .lock()
+                        .unwrap()
+                        .push((method.clone(), params.clone()));
+                    let mut state = server.lock().unwrap();
+                    let result = match method.as_str() {
+                        "workspace.list" => Ok(json!({"workspaces": state.values()
+                            .map(|s| s["workspace"].clone()).collect::<Vec<_>>()})),
+                        "workspace.get" => state
+                            .get(params["workspace_id"].as_str().unwrap())
+                            .cloned()
+                            .ok_or("NO_SUCH_WORKSPACE".into()),
+                        "workspace.close" => state
+                            .remove(params["workspace_id"].as_str().unwrap())
+                            .map(|_| json!({"closed": true}))
+                            .ok_or("NO_SUCH_WORKSPACE".into()),
+                        _ => panic!("unexpected IPC {method}"),
+                    };
+                    let _ = reply.send(result);
+                }
+                ActorRequest::Attach { reply, .. } => {
+                    let _ = reply.send(Ok(SnapshotReply {
+                        snapshot: Vec::new(),
+                    }));
+                }
+                ActorRequest::Detach { .. } => {}
+            }
+        }
+    });
+    let (ui, _events) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.window.present();
+    app.refresh();
+    assert_sidebar(&app, &["a", "b"], "a");
+    calls.lock().unwrap().clear();
+
+    let close_b = button_with_tooltip(app.sidebar.widget.upcast_ref(), "Close b")
+        .expect("inactive workspace has a close button");
+    close_b.emit_clicked();
+    let dialog = app.close_ws_dialog.borrow().clone().expect("confirmation");
+    assert!(dialog.heading().unwrap().contains('b'));
+    assert_eq!(app.active_ws_id().as_deref(), Some("a"));
+    respond(&dialog, "cancel");
+    assert!(calls.lock().unwrap().is_empty());
+    assert_sidebar(&app, &["a", "b"], "a");
+
+    // A remote close can race with this confirmation. The failed call
+    // must leave the current sidebar intact.
+    state.lock().unwrap().remove("b");
+    close_b.emit_clicked();
+    let dialog = app.close_ws_dialog.borrow().clone().expect("confirmation");
+    respond(&dialog, "close");
+    assert_eq!(
+        calls.lock().unwrap()[0],
+        ("workspace.close".into(), json!({"workspace_id": "b"}))
+    );
+    assert_sidebar(&app, &["a", "b"], "a");
+    state.lock().unwrap().insert("b".into(), fixture("b"));
+    calls.lock().unwrap().clear();
+
+    close_b.emit_clicked();
+    let dialog = app.close_ws_dialog.borrow().clone().expect("confirmation");
+    close_b.emit_clicked();
+    assert_eq!(app.close_ws_dialog.borrow().as_ref(), Some(&dialog));
+    respond(&dialog, "close");
+    assert_eq!(
+        calls.lock().unwrap()[0],
+        ("workspace.close".into(), json!({"workspace_id": "b"}))
+    );
+    assert_sidebar(&app, &["a"], "a");
+    assert!(!state.lock().unwrap().contains_key("b"));
+    calls.lock().unwrap().clear();
+
+    app.window
+        .lookup_action("close-workspace")
+        .unwrap()
+        .activate(None);
+    let dialog = app
+        .close_ws_dialog
+        .borrow()
+        .clone()
+        .expect("menu confirmation");
+    respond(&dialog, "close");
+    assert_eq!(
+        calls.lock().unwrap()[0],
+        ("workspace.close".into(), json!({"workspace_id": "a"}))
+    );
+    assert!(state.lock().unwrap().is_empty());
+    assert!(app.active_ws_id().is_none());
+    assert_eq!(
+        app.content.visible_child_name().as_deref(),
+        Some("no-workspace")
+    );
+
+    app.actor.call("test.stop", json!({})).unwrap();
+    app.window.destroy();
+    drop(app);
+    worker.join().unwrap();
+}
+
 /// Sidebar rows in rendered order: (workspace id, selected).
 fn sidebar_order(app: &App) -> Vec<(String, bool)> {
     fn walk(widget: &gtk4::Widget, out: &mut Vec<(String, bool)>) {

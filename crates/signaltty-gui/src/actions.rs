@@ -19,6 +19,7 @@ use libadwaita as adw;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandlerKind {
     NewWorkspace,
+    CloseWorkspace,
     NewTab,
     SplitRight,
     SplitDown,
@@ -48,6 +49,13 @@ pub const ACTIONS: &[ActionDef] = &[
         label: Some("New Workspace"),
         section: 0,
         accel: Some("<Control><Shift>n"),
+    },
+    ActionDef {
+        name: "close-workspace",
+        handler: HandlerKind::CloseWorkspace,
+        label: Some("Close Workspace"),
+        section: 0,
+        accel: None,
     },
     ActionDef {
         name: "new-tab",
@@ -103,6 +111,7 @@ pub const ACTIONS: &[ActionDef] = &[
 /// App behavior behind the actions, one callback each.
 pub struct ActionHandlers {
     pub new_workspace: Box<dyn Fn()>,
+    pub close_workspace: Box<dyn Fn()>,
     pub new_tab: Box<dyn Fn()>,
     pub split_right: Box<dyn Fn()>,
     pub split_down: Box<dyn Fn()>,
@@ -115,6 +124,7 @@ impl ActionHandlers {
     fn get(&self, kind: HandlerKind) -> &dyn Fn() {
         match kind {
             HandlerKind::NewWorkspace => &self.new_workspace,
+            HandlerKind::CloseWorkspace => &self.close_workspace,
             HandlerKind::NewTab => &self.new_tab,
             HandlerKind::SplitRight => &self.split_right,
             HandlerKind::SplitDown => &self.split_down,

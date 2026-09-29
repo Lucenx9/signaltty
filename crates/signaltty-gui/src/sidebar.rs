@@ -132,12 +132,13 @@ struct Row {
     meta: gtk4::Label,
     lifecycle: LifecycleIndicator,
     badge: AttentionBadge,
+    close: gtk4::Button,
     /// Kept so the 30s tick can re-render time-derived text.
     summary: Option<WsSummary>,
 }
 
 impl Row {
-    fn new(id: &str) -> Row {
+    fn new(id: &str, on_close: &CloseCallback) -> Row {
         let label = |classes: &[&str]| {
             let l = gtk4::Label::new(None);
             l.set_xalign(0.0);
@@ -160,6 +161,16 @@ impl Row {
         let lifecycle = LifecycleIndicator::new();
         let badge = AttentionBadge::new();
         badge.widget.set_halign(gtk4::Align::End);
+        let close = gtk4::Button::from_icon_name("window-close-symbolic");
+        close.add_css_class("flat");
+        close.set_valign(gtk4::Align::Center);
+        let close_id = id.to_string();
+        let on_close = Rc::clone(on_close);
+        close.connect_clicked(move |_| {
+            if let Some(cb) = on_close.borrow().as_ref() {
+                cb(close_id.clone());
+            }
+        });
 
         let grid = gtk4::Grid::new();
         grid.set_column_spacing(10);
@@ -171,6 +182,7 @@ impl Row {
         grid.attach(&message, 1, 1, 1, 1);
         grid.attach(&badge.widget, 2, 1, 1, 1);
         grid.attach(&meta, 1, 2, 2, 1);
+        grid.attach(&close, 3, 0, 1, 3);
 
         let row = gtk4::ListBoxRow::new();
         row.set_widget_name(id);
@@ -184,6 +196,7 @@ impl Row {
             meta,
             lifecycle,
             badge,
+            close,
             summary: None,
         }
     }
@@ -193,6 +206,13 @@ impl Row {
         self.meta.set_text(&s.meta);
         self.lifecycle.set(s.lifecycle);
         self.badge.set(s.attention);
+        self.close
+            .set_tooltip_text(Some(&format!("Close {}", s.name)));
+        self.close
+            .update_property(&[gtk4::accessible::Property::Label(&format!(
+                "Close workspace {}",
+                s.name
+            ))]);
         self.summary = Some(s);
         self.refresh_time();
     }
@@ -210,12 +230,14 @@ impl Row {
 }
 
 type SelectCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
+type CloseCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
 
 pub struct Sidebar {
     pub widget: gtk4::ScrolledWindow,
     list: gtk4::ListBox,
     rows: RefCell<Vec<Row>>,
     on_select: SelectCallback,
+    on_close: CloseCallback,
 }
 
 impl Sidebar {
@@ -224,6 +246,7 @@ impl Sidebar {
         list.add_css_class("navigation-sidebar");
         list.set_selection_mode(gtk4::SelectionMode::Single);
         let on_select: SelectCallback = Rc::new(RefCell::new(None));
+        let on_close: CloseCallback = Rc::new(RefCell::new(None));
         {
             let on_select = Rc::clone(&on_select);
             list.connect_row_selected(move |_, row| {
@@ -241,11 +264,16 @@ impl Sidebar {
             list,
             rows: RefCell::new(Vec::new()),
             on_select,
+            on_close,
         }
     }
 
     pub fn set_on_select(&self, cb: impl Fn(String) + 'static) {
         *self.on_select.borrow_mut() = Some(Box::new(cb));
+    }
+
+    pub fn set_on_close(&self, cb: impl Fn(String) + 'static) {
+        *self.on_close.borrow_mut() = Some(Box::new(cb));
     }
 
     /// Reconcile rows with `items` (priority order), updating in
@@ -272,7 +300,7 @@ impl Sidebar {
                     rows.insert(i, row);
                 }
                 None => {
-                    let mut row = Row::new(&item.id);
+                    let mut row = Row::new(&item.id, &self.on_close);
                     row.update(item);
                     self.list.insert(&row.row, i as i32);
                     rows.insert(i, row);
