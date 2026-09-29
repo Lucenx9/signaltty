@@ -4,14 +4,16 @@
 //! See docs/07.
 
 pub mod adapters;
+pub mod manifest;
 pub mod registry;
 pub mod types;
 
 pub use adapters::{claude, codex, cursor, generic, opencode};
+pub use manifest::{detect_kind_with_overlays, parse_manifest, Manifest, OverlayAdapter};
 pub use registry::{adapter_for_kind, adapter_for_name, all_adapters, detect_kind};
 pub use types::{
-    AdapterEvent, AdapterMetadata, AnswerChannel, LifecycleDecision, NotificationDraft,
-    ProcessInfo, ResumeCommand,
+    AdapterEvent, AdapterMetadata, AgentAdapter, AnswerChannel, LifecycleDecision,
+    NotificationDraft, ProcessInfo, ResumeCommand,
 };
 
 /// Re-exported for byte-delivery call sites.
