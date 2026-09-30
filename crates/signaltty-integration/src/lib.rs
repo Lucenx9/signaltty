@@ -18,6 +18,7 @@ fn hook_events(agent: &str) -> &'static [&'static str] {
             "SessionStart",
             "UserPromptSubmit",
             "Notification",
+            "PermissionRequest",
             "Stop",
             "SessionEnd",
         ],
@@ -263,14 +264,22 @@ impl Hooks {
             .as_object_mut()
             .ok_or_else(|| Error("'hooks' must be an object".into()))?;
         let events = hook_events(agent);
-        let timeout = if agent == "codex" { 3 } else { 10 };
         for event in events {
+            let waiting = matches!(agent, "claude" | "codex") && *event == "PermissionRequest";
+            let timeout = if waiting {
+                125
+            } else if agent == "codex" {
+                3
+            } else {
+                10
+            };
+            let wait_flag = if waiting { " --wait-for-answer" } else { "" };
             let list = map.entry(*event).or_insert_with(|| json!([]));
             let arr = list
                 .as_array_mut()
                 .ok_or_else(|| Error(format!("hooks.{event} must be an array")))?;
             let desired = format!(
-                "{} hook-event --agent {agent} --event {event} --payload-stdin{MANAGED}",
+                "{} hook-event --agent {agent} --event {event} --payload-stdin{wait_flag}{MANAGED}",
                 shell_quote(&self.reporter.to_string_lossy())
             );
             let mut found = false;

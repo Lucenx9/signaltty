@@ -112,6 +112,10 @@ pub mod method {
     pub const WORKSPACE_CLOSE: &str = "workspace.close";
     pub const WORKSPACE_REFRESH_GIT: &str = "workspace.refresh_git";
     pub const WORKSPACE_DIFF: &str = "workspace.diff";
+    pub const WORKTREE_LIST: &str = "worktree.list";
+    pub const WORKTREE_CREATE: &str = "worktree.create";
+    pub const WORKTREE_OPEN: &str = "worktree.open";
+    pub const WORKTREE_REMOVE: &str = "worktree.remove";
     pub const TAB_CREATE: &str = "tab.create";
     pub const TAB_CLOSE: &str = "tab.close";
     pub const TAB_SET_LAYOUT: &str = "tab.set_layout";
@@ -152,6 +156,10 @@ pub mod method {
         WORKSPACE_CLOSE,
         WORKSPACE_REFRESH_GIT,
         WORKSPACE_DIFF,
+        WORKTREE_LIST,
+        WORKTREE_CREATE,
+        WORKTREE_OPEN,
+        WORKTREE_REMOVE,
         TAB_CREATE,
         TAB_CLOSE,
         TAB_SET_LAYOUT,
@@ -185,6 +193,7 @@ pub mod event {
     pub const WORKSPACE_CREATED: &str = "workspace.created";
     pub const WORKSPACE_UPDATED: &str = "workspace.updated";
     pub const WORKSPACE_CLOSED: &str = "workspace.closed";
+    pub const WORKTREE_CHANGED: &str = "worktree.changed";
     pub const TAB_CREATED: &str = "tab.created";
     pub const TAB_UPDATED: &str = "tab.updated";
     pub const TAB_CLOSED: &str = "tab.closed";
@@ -216,6 +225,7 @@ pub mod event {
         WORKSPACE_CREATED,
         WORKSPACE_UPDATED,
         WORKSPACE_CLOSED,
+        WORKTREE_CHANGED,
         TAB_CREATED,
         TAB_UPDATED,
         TAB_CLOSED,
@@ -308,8 +318,8 @@ mod tests {
             assert!(!name.is_empty());
         }
         for (list, len) in [
-            (method::ALL, 35usize),
-            (event::ALL, 28usize),
+            (method::ALL, 39usize),
+            (event::ALL, 29usize),
             (code::ALL, 15usize),
         ] {
             let set: HashSet<&&str> = list.iter().collect();

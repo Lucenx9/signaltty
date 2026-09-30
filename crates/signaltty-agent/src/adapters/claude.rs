@@ -38,6 +38,11 @@ impl AgentAdapter for ClaudeAdapter {
                 attention: None,
                 message: None,
             },
+            "PermissionRequest" => LifecycleDecision {
+                lifecycle: Some(Lifecycle::Blocked),
+                attention: Some(Attention::PermissionRequired),
+                message: Some("permission requested".into()),
+            },
             "Notification" => {
                 // idle_prompt (agent waiting on user) vs permission prompt.
                 let kind = ev.payload_str("notification_type").unwrap_or_default();

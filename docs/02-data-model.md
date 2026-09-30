@@ -35,6 +35,13 @@ Git context is a lightweight cached enrichment, refreshed on
 `pane.cwd` change, explicit `refresh`, and cheap filesystem events —
 never a Git client, never aggressive polling.
 
+Git worktree registrations are queried from Git rather than copied into the
+snapshot. A workspace's canonical `cwd` associates it with a checkout;
+`worktree.list` reports the open workspace IDs for each registered checkout.
+Create and open produce ordinary workspaces with stable handles. Closing a
+workspace preserves its checkout and branch. Removal is a separate operation
+and refuses the main checkout, dirty or locked checkouts, and open references.
+
 ## Tab
 
 One named layout inside a workspace (`agents`, `shell`, `tests`, `logs`).
@@ -108,6 +115,12 @@ One terminal/PTY + process. Survives client detach while the server lives.
 `CODEX_THREAD_ID`, hook JSON payloads, OpenCode plugin events, Cursor
 `hooks.json`), never from scraping terminal text when a better channel
 exists.
+
+Native PermissionRequest decisions have a transient server response route to
+their waiting reporter. The public decision is render data; its ID and live
+route jointly identify the request that an answer can resolve. Route loss,
+timeout, supersession, pane exit or session cancellation cannot grant access.
+A saved decision cannot restore the reporter connection or its answerability.
 
 ## Notification
 

@@ -37,6 +37,27 @@ pub struct WorkspaceId {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct WorktreeCreate {
+    pub workspace_id: String,
+    pub path: String,
+    pub branch: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorktreeOpen {
+    pub workspace_id: String,
+    pub path: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorktreeRemove {
+    pub workspace_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TabClose {
     pub tab_id: String,
     pub signal: Option<String>,
@@ -231,6 +252,9 @@ pub struct DecisionPayload {
 
 #[derive(Debug, Deserialize)]
 pub struct HookEvent {
+    #[serde(default)]
+    pub wait_for_answer: bool,
+    pub wait_timeout_s: Option<u64>,
     pub agent: String,
     #[serde(rename = "event")]
     pub hook: String,

@@ -62,3 +62,10 @@ non-secret config; never tokens/keys).
 Official resume also restores the three allowlisted provider config-directory
 overrides in `agent.config_env`; missing fields in older snapshots default empty.
 No credentials or arbitrary environment values are persisted (ADR-0013).
+
+Native permission waits are not persisted. A server restart cannot reconnect
+an old reporter or deliver an old approval. Restored decisions therefore have
+no live native answer channel; the provider owns any new permission prompt.
+Git worktree association is recovered from the persisted workspace cwd and
+Git's registrations. Closing or restoring a workspace never removes a checkout.
+Terminal search and pane zoom are client view state, not saved layout changes.

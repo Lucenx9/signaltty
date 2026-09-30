@@ -158,6 +158,11 @@ pub fn apply(store: &SharedStore, terms: &Mutex<HeadlessBackend>, mut loaded: Lo
     }
     let mut terms = terms.lock().unwrap();
     for mut pane in loaded.snapshot.panes {
+        if let Some(decision) = &mut pane.pending_decision {
+            if crate::approvals::Approvals::is_native(&decision.id) {
+                decision.answerable = false;
+            }
+        }
         let was_live = matches!(pane.live, LiveState::Live);
         if was_live {
             // The process is gone with the old server; keep the code

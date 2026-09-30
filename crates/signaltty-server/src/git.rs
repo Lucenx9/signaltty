@@ -6,6 +6,11 @@ use std::process::Command;
 use signaltty_core::model::GitInfo;
 
 fn git(cwd: &str, args: &[&str]) -> Option<String> {
+    let text = String::from_utf8(git_bytes(cwd, args)?).ok()?;
+    Some(text.strip_suffix('\n').unwrap_or(&text).to_owned())
+}
+
+fn git_bytes(cwd: &str, args: &[&str]) -> Option<Vec<u8>> {
     let out = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -15,7 +20,7 @@ fn git(cwd: &str, args: &[&str]) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    Some(out.stdout)
 }
 
 /// One changed file in a worktree diff. Untracked files carry no counts;
@@ -54,10 +59,13 @@ pub fn git_diff(cwd: &str) -> Option<WorktreeDiff> {
     let root = git(cwd, &["rev-parse", "--show-toplevel"])?;
     let _ = root;
     let branch = git(cwd, &["branch", "--show-current"]).filter(|b| !b.is_empty());
-    let numstat = git(cwd, &["diff", "--numstat", "HEAD"]).unwrap_or_default();
+    let base = git(cwd, &["rev-parse", "--verify", "HEAD"])
+        .or_else(|| git(cwd, &["hash-object", "-t", "tree", "--stdin"]))?;
+    let numstat = git_bytes(cwd, &["diff", "--numstat", "-z", "--no-renames", &base])?;
     let mut files = Vec::new();
-    for line in numstat.lines() {
-        let mut parts = line.split('\t');
+    for record in numstat.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let line = std::str::from_utf8(record).ok()?;
+        let mut parts = line.splitn(3, '\t');
         let (added_s, removed_s, path) = match (parts.next(), parts.next(), parts.next()) {
             (Some(a), Some(r), Some(p)) => (a, r, p),
             _ => continue,
@@ -71,21 +79,16 @@ pub fn git_diff(cwd: &str) -> Option<WorktreeDiff> {
             binary,
         });
     }
-    let status = git(
-        cwd,
-        &["status", "--porcelain=v1", "--untracked-files=normal"],
-    )
-    .unwrap_or_default();
-    for line in status.lines() {
-        if let Some(path) = line.strip_prefix("?? ") {
-            files.push(DiffFile {
-                path: path.to_string(),
-                added: 0,
-                removed: 0,
-                untracked: true,
-                binary: false,
-            });
-        }
+    let status =
+        git_bytes(cwd, &["ls-files", "--others", "--exclude-standard", "-z"]).unwrap_or_default();
+    for path in status.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        files.push(DiffFile {
+            path: std::str::from_utf8(path).ok()?.to_owned(),
+            added: 0,
+            removed: 0,
+            untracked: true,
+            binary: false,
+        });
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let mut dir_sums: std::collections::BTreeMap<String, (u64, u64)> =
@@ -189,6 +192,7 @@ mod tests {
         // Modify: +3/−1 on a.txt; append sub/b.txt (+1).
         std::fs::write(dir.join("a.txt"), "1\n2 changed\n3\n4\n5\n").unwrap();
         std::fs::write(dir.join("sub/b.txt"), "x\ny\n").unwrap();
+        std::fs::write(dir.join("bin.dat"), [0x00, 0x01, 0x02, 0x03, 0x04]).unwrap();
         std::fs::write(dir.join("new.txt"), "untracked\n").unwrap();
         dir
     }
@@ -227,6 +231,7 @@ mod tests {
         }
         let new = file("new.txt");
         assert!(new.untracked && !new.binary);
+        assert!(file("bin.dat").binary);
         // Dir rollup covers tracked counts only, sorted deterministically.
         let total_dirs: (u64, u64) = d
             .dirs
@@ -241,5 +246,67 @@ mod tests {
     #[test]
     fn diff_outside_a_repo_is_none() {
         assert_eq!(git_diff("/tmp"), None);
+    }
+
+    #[test]
+    fn diff_preserves_tabs_and_newlines_in_filenames() {
+        let dir = fixture_repo("names");
+        let tracked = "tracked\tfile\nname.txt";
+        let untracked = "new\tfile\nname.txt";
+        std::fs::write(dir.join(tracked), "old\n").unwrap();
+        for args in [
+            vec!["add", "--", tracked],
+            vec!["commit", "-qm", "unusual filename"],
+        ] {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        std::fs::write(dir.join(tracked), "new\nextra\n").unwrap();
+        std::fs::write(dir.join(untracked), "untracked\n").unwrap();
+        let diff = git_diff(dir.to_str().unwrap()).unwrap();
+        let file = diff
+            .files
+            .iter()
+            .find(|f| f.path == tracked)
+            .expect("literal tracked filename");
+        assert_eq!((file.added, file.removed), (2, 1));
+        assert!(diff
+            .files
+            .iter()
+            .any(|f| f.path == untracked && f.untracked));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn diff_in_unborn_repo_reports_staged_and_untracked_files() {
+        let dir = fixture_repo("unborn");
+        std::fs::remove_dir_all(dir.join(".git")).unwrap();
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["init", "-q"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["add", "a.txt"])
+            .status()
+            .unwrap()
+            .success());
+        let diff = git_diff(dir.to_str().unwrap()).expect("unborn repo has a working-tree diff");
+        let staged = diff.files.iter().find(|f| f.path == "a.txt").unwrap();
+        assert_eq!((staged.added, staged.removed), (5, 0));
+        assert!(diff
+            .files
+            .iter()
+            .any(|f| f.path == "new.txt" && f.untracked));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

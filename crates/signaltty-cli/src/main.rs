@@ -2,7 +2,9 @@ mod attach;
 mod client;
 mod daemon;
 mod integration;
+mod permission_hook;
 mod skill;
+mod worktree;
 
 use std::path::PathBuf;
 
@@ -53,6 +55,11 @@ enum Command {
         #[command(subcommand)]
         op: WorkspaceOp,
     },
+    /// Git worktree lifecycle.
+    Worktree {
+        #[command(subcommand)]
+        op: worktree::WorktreeOp,
+    },
     /// Tab operations.
     Tab {
         #[command(subcommand)]
@@ -94,6 +101,9 @@ enum Command {
         /// Read the hook payload JSON from stdin.
         #[arg(long)]
         payload_stdin: bool,
+        /// Wait for a native PermissionRequest answer; output provider JSON only.
+        #[arg(long)]
+        wait_for_answer: bool,
         #[arg(long)]
         message: Option<String>,
         #[arg(long)]
@@ -445,6 +455,10 @@ async fn run(args: Args) -> Result<(), CliError> {
             );
             Ok(())
         }
+        Command::Worktree { op } => {
+            let mut c = Client::connect(&socket).await?;
+            worktree::run(&mut c, op, json).await
+        }
         Command::Workspace { op } => {
             let mut c = Client::connect(&socket).await?;
             match op {
@@ -604,6 +618,7 @@ async fn run(args: Args) -> Result<(), CliError> {
             event,
             pane,
             payload_stdin,
+            wait_for_answer,
             message,
             title,
             severity,
@@ -644,7 +659,13 @@ async fn run(args: Args) -> Result<(), CliError> {
                     .map_err(|e| CliError::Usage(format!("invalid decision JSON: {e}")))?;
                 p["decision"] = v;
             }
+            if wait_for_answer {
+                p["wait_for_answer"] = json!(true);
+            }
             let r = c.call("hook-event", p).await?;
+            if wait_for_answer {
+                return permission_hook::print_verdict(&r);
+            }
             if json {
                 println!("{}", serde_json::to_string(&r).unwrap());
             } else {

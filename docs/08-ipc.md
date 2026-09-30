@@ -55,6 +55,10 @@ clients can `subscribe {from_seq}` to replay.
 | `workspace.close` | `{workspace_id, signal?}` | `{closed}` |
 | `workspace.refresh_git` | `{workspace_id}` | `{workspace}` |
 | `workspace.diff` | `{workspace_id}` | `{workspace_id, branch?, files[{path, added, removed, untracked, binary}], dirs[{dir, added, removed}], added, removed}` (worktree-vs-HEAD `git diff --numstat` as data; non-repo → `BAD_PARAMS`) |
+| `worktree.list` | `{workspace_id}` | `{worktrees:[{path, branch?, head?, main, bare, locked, prunable, workspace_id?}]}` (actual Git registrations and open workspace association) |
+| `worktree.create` | `{workspace_id, path, branch, name?}` | `{workspace, path, reused:false}` (absolute new checkout path, new branch at source HEAD; checkout retained if subsequent workspace binding fails) |
+| `worktree.open` | `{workspace_id, path, name?}` | `{workspace, path, reused}` (absolute registered checkout path, canonical-cwd workspace reuse) |
+| `worktree.remove` | `{workspace_id, path}` | `{removed:true, path}` (explicit non-force removal; main, dirty, locked and open-referenced checkouts refused; branch retained) |
 | `tab.create` | `{workspace_id, title?}` | `{tab}` |
 | `tab.close` | `{tab_id}` | `{closed}` |
 | `tab.set_layout` | `{tab_id, layout}` | `{tab}` |
@@ -71,7 +75,7 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
 | `pane.resume` | `{pane_id}` | `{pane, integration?}` (spawns adapter resume argv; errors unless restored+resumable) |
 | `pane.mark_seen` | `{pane_id}` | `{pane}` (records reading; clears ordinary attention while preserving unanswered decisions and their required attention) |
-| `decision.answer` | `{pane_id, decision_id, option_id}` | `{answered, lifecycle?, attention?}` (delivers through the pane adapter's channel and consumes the id; stale/consumed ids → `NO_SUCH_DECISION`, unknown option or channelless adapter → `BAD_PARAMS`) |
+| `decision.answer` | `{pane_id, decision_id, option_id}` | `{answered, lifecycle?, attention?}` (delivers through a live native permission waiter or the pane adapter's channel and consumes the id; stale/consumed ids → `NO_SUCH_DECISION`, unknown option or channelless adapter → `BAD_PARAMS`) |
 | `notify` | `{pane_id?, title, body?, severity?}` | `{notification}` |
 | `hook-event` | `{agent, event, pane_id?, client_pid?, payload?, message?, title?, severity?, decision?}` | `{accepted, agent, event, pane_id, lifecycle?, attention?}` (adapter classification; pane by explicit id or `client_pid` ancestry; `decision: {id, prompt, options[{id, label}]}` sets/supersedes the pane's pending decision, captured `answerable` iff the adapter has a channel) |
 | `report-session` | `{pane_id, agent_session_id, agent?}` | `{pane}` |
@@ -83,7 +87,24 @@ clients can `subscribe {from_seq}` to replay.
 
 `until`: `blocked | done | idle | failed | exited | seen | attention_cleared`.
 Glob subscriptions: `*`, `agent.*`, `pane.*`, `workspace.*`, `tab.*`,
-`attention.*`, `notification.*`, `decision.*`, `git.*`, `pty.*`.
+`attention.*`, `notification.*`, `decision.*`, `worktree.*`, `git.*`, `pty.*`.
+
+Worktree methods accept a source workspace ID or handle. Git owns registrations;
+these methods do not fetch a remote or delete a branch. Close the worktree
+workspace before removal. Live pane references return `PANES_ALIVE`; invalid,
+dirty, main, locked, or otherwise open targets return `BAD_PARAMS`. A path
+reservation prevents concurrent workspace creation or pane launch into a
+checkout being removed. Git operations have a bounded execution deadline.
+
+`hook-event` also accepts `wait_for_answer?:bool` and `wait_timeout_s?:1..120`.
+The waiting mode requires a supported native `PermissionRequest` payload with
+`session_id`, `tool_name` and object `tool_input`, and no explicit `decision`.
+It registers a live answer route, publishes generated Allow once/Deny choices
+and returns `{accepted:true, native_verdict}` when answered. Cancellation returns
+`native_verdict:null` and a reason. The default timeout is 120 seconds.
+This mode uses a dedicated single-flight connection; EOF, another request on
+that connection, or server shutdown cancels it. Ordinary reporting remains an
+immediate call. A timeout or cancelled reporter never means Allow.
 
 Every `workspace_id` param accepts a workspace id **or its handle**: ids
 match first, then handles (namespaces are disjoint — handles never contain
@@ -130,6 +151,7 @@ layout another client changed concurrently.
 
 ```text
 workspace.created  workspace.updated  workspace.closed
+worktree.changed
 tab.created        tab.updated        tab.closed
 pane.created       pane.updated       pane.exited        pane.closed
 pane.resized       pty.data           pty.snapshot
@@ -141,6 +163,12 @@ notification.created
 git.branch_changed
 server.will_shutdown
 ```
+
+`worktree.changed {operation, path, workspace_id}` records checkout creation,
+new workspace association or removal; `operation` is `create`, `open` or
+`remove`, and `workspace_id` identifies the source workspace. Creation remains
+observable if later convenience workspace binding fails and the checkout is
+retained. Reopening the same associated workspace is a no-op.
 
 `pty.data {pane_id, data_b64, output_offset}` streams only to connections
 that ran `pane.attach` for that pane. `output_offset` is the cumulative end

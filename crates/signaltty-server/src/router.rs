@@ -25,6 +25,8 @@ use crate::store::{SharedStore, StoredEvent};
 
 pub struct Ctx {
     pub store: SharedStore,
+    pub approvals: crate::approvals::Approvals,
+    pub worktrees: crate::worktrees::Worktrees,
     pub bcast: broadcast::Sender<StoredEvent>,
     pub ptys: PtyManager,
     pub config: Config,
@@ -133,6 +135,30 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::WORKSPACE_CLOSE => h_workspace_close(ctx, &req.params),
         method::WORKSPACE_REFRESH_GIT => h_workspace_refresh_git(ctx, &req.params),
         method::WORKSPACE_DIFF => h_workspace_diff(ctx, &req.params),
+        method::WORKTREE_LIST => match decode::<params::WorkspaceId>(&req.params) {
+            Ok(p) => crate::worktrees::list(ctx, p)
+                .await
+                .map(|v| (v, ConnEffect::default())),
+            Err(e) => Err(e),
+        },
+        method::WORKTREE_CREATE => match decode::<params::WorktreeCreate>(&req.params) {
+            Ok(p) => crate::worktrees::create(ctx, p)
+                .await
+                .map(|v| (v, ConnEffect::default())),
+            Err(e) => Err(e),
+        },
+        method::WORKTREE_OPEN => match decode::<params::WorktreeOpen>(&req.params) {
+            Ok(p) => crate::worktrees::open(ctx, p)
+                .await
+                .map(|v| (v, ConnEffect::default())),
+            Err(e) => Err(e),
+        },
+        method::WORKTREE_REMOVE => match decode::<params::WorktreeRemove>(&req.params) {
+            Ok(p) => crate::worktrees::remove(ctx, p)
+                .await
+                .map(|v| (v, ConnEffect::default())),
+            Err(e) => Err(e),
+        },
         method::TAB_CREATE => h_tab_create(ctx, &req.params),
         method::TAB_CLOSE => h_tab_close(ctx, &req.params),
         method::TAB_SET_LAYOUT => h_tab_set_layout(ctx, &req.params),
@@ -151,7 +177,11 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::PANE_MARK_SEEN => h_pane_mark_seen(ctx, &req.params),
         method::DECISION_ANSWER => h_decision_answer(ctx, &req.params),
         method::NOTIFY => h_notify(ctx, &req.params),
-        method::HOOK_EVENT => h_hook_event(ctx, &req.params),
+        method::HOOK_EVENT => match decode::<params::HookEvent>(&req.params) {
+            Ok(p) if p.wait_for_answer => return crate::approvals::wait(ctx, req).await,
+            Ok(_) => h_hook_event(ctx, &req.params),
+            Err(error) => Err(error),
+        },
         method::REPORT_SESSION => h_report_session(ctx, &req.params),
         method::SUBSCRIBE => h_subscribe(ctx, &req.params),
         method::WAIT => return h_wait(ctx, req, &req.params).await,
@@ -263,6 +293,7 @@ pub fn resolve_workspace(store: &crate::store::Store, handle_or_id: &str) -> Opt
 fn h_workspace_create(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::WorkspaceCreate = decode(params)?;
     let cwd = p.cwd.unwrap_or_else(default_cwd);
+    let _path_reference = ctx.worktrees.references.enter(&cwd)?;
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(bad_params(format!("cwd is not a directory: {cwd}")));
     }
@@ -698,6 +729,7 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
             (key.clone(), absolute.to_string_lossy().into_owned())
         })
         .collect();
+    let _path_reference = ctx.worktrees.references.enter(&cwd)?;
     let integration = ctx
         .ptys
         .spawn(SpawnRequest {
@@ -771,6 +803,7 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
     let now = Utc::now();
     let mut pane = Pane::new(ws_id, tab_id.clone(), cwd.clone(), argv.clone(), size, now);
     pane.agent.kind = ctx.detect_kind(&argv);
+    let _path_reference = ctx.worktrees.references.enter(&cwd)?;
     let integration = ctx
         .ptys
         .spawn(SpawnRequest {
@@ -1043,6 +1076,7 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
             pane.agent.config_env.clone(),
         )
     };
+    let _path_reference = ctx.worktrees.references.enter(&cwd)?;
     let integration = ctx
         .ptys
         .spawn(SpawnRequest {
@@ -1127,6 +1161,10 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
                 p.decision_id, pending.id
             ),
         ));
+    }
+    if crate::approvals::Approvals::is_native(&pending.id) {
+        return crate::approvals::answer(ctx, &p.pane_id, &p.decision_id, &p.option_id)
+            .map(|result| (result, ConnEffect::default()));
     }
     if !pending.options.iter().any(|o| o.id == p.option_id) {
         return Err(bad_params(format!("unknown option '{}'", p.option_id)));
@@ -1300,7 +1338,45 @@ fn h_notify(ctx: &Ctx, params: &Value) -> Handler {
 /// Explicit `message`/`severity` params still win over the adapter's
 /// notification draft when present.
 fn h_hook_event(ctx: &Ctx, params: &Value) -> Handler {
-    let p: params::HookEvent = decode(params)?;
+    h_hook_event_inner(ctx, params, false)
+}
+
+pub(crate) fn h_native_hook_event(ctx: &Ctx, params: &Value) -> Handler {
+    h_hook_event_inner(ctx, params, true)
+}
+
+fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler {
+    let mut p: params::HookEvent = decode(params)?;
+    if p.decision.is_none() && p.hook == "PermissionRequest" {
+        if let Ok(native) = signaltty_agent::permission::native_permission(&p.agent, &p.payload) {
+            p.decision = Some(params::DecisionPayload {
+                id: signaltty_core::new_notif_id().replacen("notif_", "permission_", 1),
+                prompt: native.prompt,
+                options: signaltty_agent::permission::permission_options()
+                    .into_iter()
+                    .map(|o| params::DecisionOptionPayload {
+                        id: o.id,
+                        label: o.label,
+                    })
+                    .collect(),
+            });
+        }
+    }
+    parse_severity(&p.severity)?;
+    if let Some(d) = &p.decision {
+        if d.prompt.trim().is_empty()
+            || d.options.is_empty()
+            || d.options
+                .iter()
+                .any(|o| o.id.is_empty() || o.label.is_empty())
+        {
+            return Err(bad_params("decision needs a prompt and named options"));
+        }
+        let ids: std::collections::HashSet<_> = d.options.iter().map(|o| &o.id).collect();
+        if ids.len() != d.options.len() {
+            return Err(bad_params("decision option IDs must be unique"));
+        }
+    }
     let agent = p.agent;
     let hook = p.hook;
     let adapter = ctx
@@ -1385,7 +1461,11 @@ fn h_hook_event(ctx: &Ctx, params: &Value) -> Handler {
                 "decision needs a prompt and at least one option",
             ));
         }
-        let answerable = adapter.answer_channel().is_some();
+        let answerable = if crate::approvals::Approvals::is_native(&payload.id) {
+            native_route && ctx.approvals.contains(&payload.id)
+        } else {
+            adapter.answer_channel().is_some()
+        };
         let record = signaltty_core::model::Decision {
             id: payload.id,
             prompt: payload.prompt,

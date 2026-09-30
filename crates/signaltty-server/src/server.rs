@@ -67,6 +67,8 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         .set_audit(crate::audit::AuditLog::open_or_disabled(&config.state_dir));
     let ctx = Arc::new(Ctx {
         store: store.clone(),
+        approvals: crate::approvals::Approvals::default(),
+        worktrees: crate::worktrees::Worktrees::default(),
         bcast,
         ptys: ptys.clone(),
         config: config.clone(),
@@ -262,7 +264,16 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                     send_line(writer.clone(), resp.to_line()).await?;
                     continue;
                 }
-                let (mut resp, effect) = dispatch(&ctx, &req).await;
+                let native_wait = req.method == signaltty_proto::method::HOOK_EVENT
+                    && req.params.get("wait_for_answer").and_then(serde_json::Value::as_bool) == Some(true);
+                let (mut resp, effect) = if native_wait {
+                    let mut next = String::new();
+                    tokio::select! {
+                        result = dispatch(&ctx, &req) => result,
+                        _ = reader.read_line(&mut next) => break,
+                        _ = ctx.shutdown.notified() => break,
+                    }
+                } else { dispatch(&ctx, &req).await };
                 // Register streaming before the final snapshot. Output is either
                 // covered by its offset or delivered after the response.
                 for pane_id in effect.attach {

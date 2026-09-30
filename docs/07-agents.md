@@ -220,3 +220,30 @@ Installation never enables a user's disabled hooks. `configured`/CLI `installed`
 mean files contain managed hooks, not that events have fired. For newly written
 Codex hooks the notice asks to review/trust them in `/hooks`; Signaltty does not
 alter `[hooks.state]`, grant trust or inject trust-bypass flags.
+
+## Native permission replies (ADR-0015)
+
+Managed Claude and Codex `PermissionRequest` hooks use a dedicated waiting
+reporter. It converts the provider's `session_id`, `tool_name` and `tool_input`
+into a structured prompt with **Allow once** and **Deny**. The GUI or CLI answer
+returns through the live reporter as `hookSpecificOutput.decision.behavior`,
+not as terminal keystrokes. Reporting-only requests have no native answer route
+and render read-only.
+
+The permission reporter has a 125-second provider timeout and a bounded
+120-second server wait. No answer, cancellation, supersession, disconnect or
+server restart produces no permission verdict, so the provider retains its own
+permission flow. Answers validate the request's current pane, session and
+deadline. The transport is transient and cannot be restored from an audit log.
+Ordinary status reporters retain their short timeouts and silent stdout.
+
+Current Codex 0.159.1 accepts the same narrow allow/deny output as Claude; its
+tagged hook engine honors configured timeouts without the earlier three-second
+limit. It rejects session permission updates, modified tool input and interrupt
+requests, so this integration offers no permanent **Always** policy. Hook trust
+remains Codex's own interactive review. The installer preserves foreign hooks
+and disabled settings as before.
+
+Sources: [Claude PermissionRequest reference](https://code.claude.com/docs/en/hooks#permissionrequest-decision-control),
+[Codex 0.159.1 permission execution](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/events/permission_request.rs),
+[Codex output parser](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/engine/output_parser.rs).
