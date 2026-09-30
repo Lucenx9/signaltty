@@ -1,0 +1,11 @@
+# Research and design synthesis
+
+2026-09-30. Local baseline2255f26. Two independent candidates grounded current source and proposed existing-boundary vs feature-owned designs. Chosen shape uses feature-owned approval/worktree/dialog modules, grafting the existing-boundary candidate's current Codex native verdict support and extension of hook-event instead of adding a parallel decision-request API. Existing action registry and keyed VTEs remain authoritative.
+
+Provider facts: Claude official [PermissionRequest reference](https://code.claude.com/docs/en/hooks#permissionrequest-decision-control) supports hookSpecificOutput.decision behavior allow/deny. Empty output returns to native permission flow. Suggestions are not literal TUI options. Codex installed0.159.1 [tagged PermissionRequest source](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/events/permission_request.rs) and [output parser](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/engine/output_parser.rs) support the same narrow verdict, rejecting updatedInput/updatedPermissions/interrupt=true. Current engine honors configured timeouts without old3s clamp;125s provider timeout with120s internal waiting permits interaction. Codex trust remains user-owned.
+
+Design alternatives rejected: blind numbered PTY answers for automatic native requests; verdict delivery via replayable audit events; separate broker daemon; storing zoom in server layout; parsing Git's quoted display filenames. Broker ownership protects disconnect, supersede and deadline races. Git NUL porcelain and argv protect unusual names.
+
+Defaults settled from accepted priorities: only Allow once/Deny, no permanent permission updates; main/dirty/live checkout removal refused; closing workspace keeps checkout; command palette reuses actions; literal terminal search; diff describes worktree against HEAD, never per-turn. No interview is needed for environment facts or defaults under the user's instruction to proceed.
+
+Independent cross-judge selected B for module depth/ownership, grafting A native Codex support, hook-event extension and path reservation, and rejected compensating checkout deletion. Scores A/B: approval4.5/4.5, deep interfaces4/5, Store/VTE5/5, removal4.5/3.5, provider evidence5/3.5. Parent agrees with this synthesis.
