@@ -1,6 +1,7 @@
 # signaltty verification map
 
 - [Approval](approvals.md): Next Attention, visible decision and answering.
+- [Local workflows](local-workflows.md): palette, rename, search, zoom, worktrees and change summaries.
 - [Workspace structure](structure.md): pane/tab ownership, split and close.
 - [Connection and window state](connections.md): responsive GTK, reconnect, activation and restore.
 

@@ -1,0 +1,31 @@
+    Checking signaltty-server v0.1.0 (/home/simone/git-misc/signaltty/crates/signaltty-server)
+   Compiling signaltty-gui v0.1.0 (/home/simone/git-misc/signaltty/crates/signaltty-gui)
+warning: file opened with `create`, but `truncate` behavior not defined
+   --> crates/signaltty-server/src/audit.rs:111:22
+    |
+111 |                     .create(true)
+    |                      ^^^^^^^^^^^^- help: add: `.truncate(true)`
+    |
+    = help: if you intend to overwrite an existing file entirely, call `.truncate(true)`
+    = help: if you instead know that you may want to keep some parts of the old file, call `.truncate(false)`
+    = help: alternatively, use `.append(true)` to append to the file instead of overwriting it
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#suspicious_open_options
+    = note: `#[warn(clippy::suspicious_open_options)]` on by default
+
+warning: consider using `sort_by_key`
+   --> crates/signaltty-server/src/router.rs:331:5
+    |
+331 |     v.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unnecessary_sort_by
+    = note: `#[warn(clippy::unnecessary_sort_by)]` on by default
+help: try
+    |
+331 -     v.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+331 +     v.sort_by_key(|a| a.created_at);
+    |
+
+warning: `signaltty-server` (lib) generated 2 warnings (run `cargo clippy --fix --lib -p signaltty-server -- ` to apply 1 suggestion)
+warning: `signaltty-server` (lib test) generated 2 warnings (2 duplicates)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.98s

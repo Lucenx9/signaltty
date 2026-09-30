@@ -28,7 +28,7 @@
 - [x] T015 Update docs/02-data-model.md, 06-gui-toolkit.md, 07-agents.md, 08-ipc.md, 09-persistence.md and README.md.
 - [x] T016 Run standards/spec and adversarial review over feature changes; resolve accepted findings.
 - [x] T017 Run build/fmt/clippy/workspace tests and relevant display tests; save inspected light/dark evidence in docs/qa/.
-- [ ] T018 Commit verified feature on current branch with area:what concern separation.
+- [x] T018 Commit verified feature on current branch with area:what concern separation.
 
 ## Dependencies and parallel ownership
 

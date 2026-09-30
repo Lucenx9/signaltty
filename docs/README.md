@@ -34,4 +34,5 @@ Docs index:
 - [Workspace visual hierarchy verification, 2026-09-30](qa/visual-hierarchy-2026-09-30.md)
 - [Automatic hook configuration verification, 2026-09-30](qa/automatic-hooks-2026-09-30.md)
 - [Codex pane runtime verification, 2026-09-30](qa/codex-pane-runtime-2026-09-30.md)
+- [Local agent workflow verification, 2026-09-30](qa/local-workflows-2026-09-30.md)
 - [ADRs](adr/)

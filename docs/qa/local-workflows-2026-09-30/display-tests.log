@@ -1,0 +1,353 @@
+app::tests::close_workspace_confirms_the_selected_target_and_refreshes
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.63s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test app::tests::close_workspace_confirms_the_selected_target_and_refreshes ... dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=391838 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=391850 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=391850 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:391850): xdg-desktop-portal-WARNING **: 02:50:59.345: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=391850 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=391850 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=391850 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:391838): Adwaita-WARNING **: 02:50:59.523: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[391577]: [session uid=1000 pid=391577 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.80s
+
+app::tests::delayed_new_tab_keeps_the_workspace_selected_after_the_action
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test app::tests::delayed_new_tab_keeps_the_workspace_selected_after_the_action ... dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=392119 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=392127 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=392127 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:392127): xdg-desktop-portal-WARNING **: 02:51:00.387: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=392127 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=392127 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=392127 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:392119): Adwaita-WARNING **: 02:51:00.629: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[392103]: [session uid=1000 pid=392103 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.31s
+
+app::tests::desktop_motion_preference_applies_at_startup_and_changes_live
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.93s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test app::tests::desktop_motion_preference_applies_at_startup_and_changes_live ... dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=393674 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=394266 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=394266 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:394266): xdg-desktop-portal-WARNING **: 02:51:02.738: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=394266 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=394266 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=394266 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[392797]: [session uid=1000 pid=392797 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:393674): Adwaita-WARNING **: 02:51:02.905: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.21s
+
+app::tests::event_batches_keep_sidebar_attention_tabs_and_notifications_consistent
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test app::tests::event_batches_keep_sidebar_attention_tabs_and_notifications_consistent ... dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=394630 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=394637 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=394637 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:394637): xdg-desktop-portal-WARNING **: 02:51:03.133: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=394637 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=394637 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=394637 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:394630): Adwaita-WARNING **: 02:51:03.297: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[394564]: [session uid=1000 pid=394564 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.37s
+
+app::tests::events_received_during_refresh_are_applied_in_the_next_batch
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test app::tests::events_received_during_refresh_are_applied_in_the_next_batch ... dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=394700 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=394707 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=394707 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:394707): xdg-desktop-portal-WARNING **: 02:51:03.648: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=394707 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=394707 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=394707 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:394700): Adwaita-WARNING **: 02:51:03.815: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[394696]: [session uid=1000 pid=394696 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.24s
+
+app::tests::integration_setup_notice_is_visible_in_light_and_dark
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test app::tests::integration_setup_notice_is_visible_in_light_and_dark ... dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=394770 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=394777 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=394777 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:394777): xdg-desktop-portal-WARNING **: 02:51:04.064: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=394777 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=394777 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=394777 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:394770): Adwaita-WARNING **: 02:51:04.230: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[394766]: [session uid=1000 pid=394766 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.73s
+
+app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls ... dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=394880 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=394887 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=394887 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:394887): xdg-desktop-portal-WARNING **: 02:51:04.978: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=394887 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=394887 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=394887 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:394880): Adwaita-WARNING **: 02:51:05.143: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[394876]: [session uid=1000 pid=394876 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+
+(process:394880): Adwaita-WARNING **: 02:51:06.174: AdwToastOverlay 0x7f479c252ec0 exceeds AdwApplicationWindow width: requested 362 px, 360 px available
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 1.35s
+
+app::tests::pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test app::tests::pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios ... dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=395019 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=395026 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=395026 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:395026): xdg-desktop-portal-WARNING **: 02:51:06.545: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=395026 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=395026 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=395026 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:395019): Adwaita-WARNING **: 02:51:06.713: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[395015]: [session uid=1000 pid=395015 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 1.13s
+
+app::tests::stalled_action_keeps_the_gtk_main_loop_responsive
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test app::tests::stalled_action_keeps_the_gtk_main_loop_responsive ... dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=395133 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=395140 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=395140 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:395140): xdg-desktop-portal-WARNING **: 02:51:07.859: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=395140 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=395140 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=395140 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:395133): Adwaita-WARNING **: 02:51:08.024: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[395129]: [session uid=1000 pid=395129 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.48s
+
+new_workspace::tests::dialog_confirm_emits_validated_request
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test new_workspace::tests::dialog_confirm_emits_validated_request ... dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=395373 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=395380 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=395380 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:395380): xdg-desktop-portal-WARNING **: 02:51:08.472: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=395380 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=395380 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=395380 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:395373): Adwaita-WARNING **: 02:51:08.637: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[395369]: [session uid=1000 pid=395369 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.35s
+
+terminal::tests::approval_question_and_choices_fit_a_narrow_pane
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test terminal::tests::approval_question_and_choices_fit_a_narrow_pane ... dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=395450 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=395457 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=395457 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:395457): xdg-desktop-portal-WARNING **: 02:51:08.991: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=395457 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=395457 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=395457 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:395450): Adwaita-WARNING **: 02:51:09.159: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[395446]: [session uid=1000 pid=395446 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.70s
+
+terminal::tests::keyboard_focus_renders_an_inactive_panes_controls
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test terminal::tests::keyboard_focus_renders_an_inactive_panes_controls ... dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=396368 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=396402 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=396402 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:396402): xdg-desktop-portal-WARNING **: 02:51:09.906: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=396402 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=396402 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=396402 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:396368): Adwaita-WARNING **: 02:51:10.077: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[396237]: [session uid=1000 pid=396237 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.84s
+
+terminal::tests::reduced_motion_removes_rendered_press_scaling
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test terminal::tests::reduced_motion_removes_rendered_press_scaling ... dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=397098 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=397105 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=397105 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:397105): xdg-desktop-portal-WARNING **: 02:51:10.928: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=397105 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=397105 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=397105 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:397098): Adwaita-WARNING **: 02:51:11.105: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[397082]: [session uid=1000 pid=397082 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.68s
+
+terminal::tests::terminal_search_is_literal_and_keeps_the_terminal
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-706ed37d3694ceb8)
+
+running 1 test
+test terminal::tests::terminal_search_is_literal_and_keeps_the_terminal ... dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=397332 comm="/home/simone/git-misc/signaltty/target/debug/deps/")
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=397339 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=397339 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/lib/xdg-desktop-portal:397339): xdg-desktop-portal-WARNING **: 02:51:11.787: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=397339 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kde' requested by ':1.3' (uid=1000 pid=397339 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kde'
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.kwallet' requested by ':1.3' (uid=1000 pid=397339 comm="/usr/lib/xdg-desktop-portal")
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:397332): Adwaita-WARNING **: 02:51:11.959: Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is unsupported. Please use AdwStyleManager:color-scheme instead.
+dbus-daemon[397328]: [session uid=1000 pid=397328 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.kwallet'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.71s
+

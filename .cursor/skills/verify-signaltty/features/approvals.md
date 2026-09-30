@@ -27,3 +27,15 @@ including pointer, reduced-motion and keyboard-focused activation.
 
 The cat fixture echoes terminal input; it is not a live provider session. Reading
 an approval preserves attention until an answer or agent transition resolves it.
+
+## Native permission route
+
+Run `cargo test -p signaltty-server --test native_permissions`. These tests install
+Claude/Codex reporters into temporary provider roots and execute their generated
+commands in real managed PTYs using documented PermissionRequest inputs. They
+observe exact Allow/Deny JSON on reporter stdout and no terminal input. Disconnect,
+deadline, supersession, session changes, exit, restart, concurrent answers and
+replayed render data cannot deliver a grant. Restored requests have no live channel.
+
+This proves the installed reporter/API contract, not a paid model's native TUI.
+Hooks still require the provider's normal trust configuration.

@@ -1,0 +1,7 @@
+{"case": "single_window_activation", "status": "PASS", "evidence": {"before": 1, "after": 1}}
+{"case": "approval_survives_focus_and_can_be_answered", "status": "PASS", "evidence": {"decision_before_answer": {"answerable": true, "id": "qa-approval", "options": [{"id": "allow", "label": "Allow"}, {"id": "deny", "label": "Deny"}], "prompt": "QA approval needed", "received_at": "2026-09-30T00:51:40.155037102Z"}, "attention": "permission_required"}}
+{"case": "reconnect_restores_terminal", "status": "PASS", "evidence": {"terminal_text": "1\n1\nQARECONNECTA\nQARECONNECTA\nQARECONNECTB\nQARECONNECTB\nQAONLINE\nQAONLINE\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"}}
+{"case": "stalled_server_keeps_gtk_responsive", "status": "PASS", "evidence": {"seconds": 0.00021394199939095415}}
+{"case": "split_and_close_after_recovery", "status": "PASS", "evidence": {"owned_panes": 2}}
+{"case": "restored_status_is_exited", "status": "PASS", "evidence": {"live": {"code": null, "state": "exited"}, "saved_lifecycle": "working", "ui_text": ["zsh", "Exited", "\n[process exited]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", "Approval", "/tmp/signaltty-gui-qa-czwk9u7b", "agents", "shell", "Restored", "now", "Exited", "/tmp/signaltty-gui-qa-czwk9u7b", "Codex", "Approval", "now", "Codex needs approval", "/tmp/signaltty-gui-qa-czwk9u7b", "Codex", "Reliability", "now", "Exited", "/tmp/signaltty-gui-qa-czwk9u7b", "Codex", "Workspaces", "Reconnected"]}}
+{"inspect_pid": 398321, "temp_dir": "/tmp/signaltty-gui-qa-czwk9u7b"}
