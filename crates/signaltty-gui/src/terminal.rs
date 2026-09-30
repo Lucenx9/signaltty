@@ -67,6 +67,8 @@ pub fn decision_render(decision: &Decision) -> DecisionRender {
     }
 }
 
+const PCRE2_MULTILINE: u32 = 0x00000400;
+
 type ActionCallback = Box<dyn Fn(&str, PaneAction)>;
 
 pub struct PaneCallbacks {
@@ -74,9 +76,17 @@ pub struct PaneCallbacks {
     pub on_action: ActionCallback,
 }
 
+struct TerminalSearch {
+    root: gtk4::Box,
+    entry: gtk4::SearchEntry,
+    message: gtk4::Label,
+    compiled: RefCell<String>,
+}
+
 pub struct PaneWidget {
     pub root: gtk4::Box,
     term: vte4::Terminal,
+    search: TerminalSearch,
     lifecycle: LifecycleIndicator,
     title: gtk4::Label,
     subtitle: gtk4::Label,
@@ -214,11 +224,49 @@ impl PaneWidget {
 
         root.append(&header);
         root.append(&decision_bar);
+        let search_root = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+        let search_controls = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        search_root.set_margin_start(8);
+        search_root.set_margin_end(8);
+        let search_entry = gtk4::SearchEntry::new();
+        search_entry.set_placeholder_text(Some("Find in terminal"));
+        search_entry.set_hexpand(true);
+        search_entry.set_width_chars(8);
+        let search_message = gtk4::Label::new(None);
+        search_message.add_css_class("dimmed");
+        search_message.set_wrap(true);
+        search_message.set_xalign(0.0);
+        let previous = gtk4::Button::from_icon_name("go-up-symbolic");
+        previous.set_tooltip_text(Some("Previous match (Shift+Enter)"));
+        let next = gtk4::Button::from_icon_name("go-down-symbolic");
+        next.set_tooltip_text(Some("Next match (Enter)"));
+        let close_search = gtk4::Button::from_icon_name("window-close-symbolic");
+        close_search.set_tooltip_text(Some("Close search (Escape)"));
+        for button in [&previous, &next, &close_search] {
+            button.add_css_class("flat");
+            if let Some(label) = button.tooltip_text() {
+                button.update_property(&[gtk4::accessible::Property::Label(&label)]);
+            }
+        }
+        search_controls.append(&search_entry);
+        search_controls.append(&previous);
+        search_controls.append(&next);
+        search_controls.append(&close_search);
+        search_root.append(&search_controls);
+        search_root.append(&search_message);
+        search_root.set_visible(false);
+        root.append(&search_root);
         root.append(&scroller);
 
         let w = Rc::new(PaneWidget {
             root,
             term,
+            search: TerminalSearch {
+                root: search_root,
+                entry: search_entry,
+                message: search_message,
+                compiled: RefCell::new(String::new()),
+            },
             lifecycle,
             title,
             subtitle,
@@ -236,6 +284,56 @@ impl PaneWidget {
             last_size: Cell::new((80, 24)),
         });
         w.apply_style();
+        w.term.search_set_wrap_around(true);
+        let weak = Rc::downgrade(&w);
+        w.search.entry.connect_changed(move |_| {
+            if let Some(w) = weak.upgrade() {
+                if w.search.root.is_visible() {
+                    w.set_search();
+                }
+            }
+        });
+        let weak = Rc::downgrade(&w);
+        next.connect_clicked(move |_| {
+            if let Some(w) = weak.upgrade() {
+                w.find(false);
+            }
+        });
+        let weak = Rc::downgrade(&w);
+        previous.connect_clicked(move |_| {
+            if let Some(w) = weak.upgrade() {
+                w.find(true);
+            }
+        });
+        let weak = Rc::downgrade(&w);
+        close_search.connect_clicked(move |_| {
+            if let Some(w) = weak.upgrade() {
+                w.close_search();
+            }
+        });
+        let weak = Rc::downgrade(&w);
+        w.search.entry.connect_stop_search(move |_| {
+            if let Some(w) = weak.upgrade() {
+                w.close_search();
+            }
+        });
+        let keys = gtk4::EventControllerKey::new();
+        let weak = Rc::downgrade(&w);
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
+            let Some(w) = weak.upgrade() else {
+                return gtk4::glib::Propagation::Proceed;
+            };
+            if key == gtk4::gdk::Key::Return || key == gtk4::gdk::Key::KP_Enter {
+                w.find(modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK));
+                gtk4::glib::Propagation::Stop
+            } else if key == gtk4::gdk::Key::Escape {
+                w.close_search();
+                gtk4::glib::Propagation::Stop
+            } else {
+                gtk4::glib::Propagation::Proceed
+            }
+        });
+        w.search.entry.add_controller(keys);
 
         // Input: VTE translates keys to bytes; forward to the server PTY.
         {
@@ -280,6 +378,66 @@ impl PaneWidget {
         // Snapshots and live bytes arrive through the same ordered UI queue.
         w.actor.attach(pane_id, 80, 24);
         w
+    }
+
+    pub fn present_search(&self) {
+        self.search.root.set_visible(true);
+        self.search.entry.grab_focus();
+    }
+
+    pub fn close_search(&self) {
+        self.search.root.set_visible(false);
+        self.term.search_set_regex(None, 0);
+        self.search.compiled.borrow_mut().clear();
+        self.term.unselect_all();
+        self.focus();
+    }
+
+    fn set_search(&self) -> bool {
+        let text = self.search.entry.text();
+        if !text.is_empty() && self.search.compiled.borrow().as_str() == text.as_str() {
+            return true;
+        }
+        if text.is_empty() {
+            self.term.search_set_regex(None, 0);
+            self.search.message.set_text("");
+            self.search.compiled.borrow_mut().clear();
+            return false;
+        }
+        let mut pattern = String::new();
+        for ch in text.chars() {
+            if "\\.^$|?*+()[]{}".contains(ch) {
+                pattern.push('\\');
+            }
+            pattern.push(ch);
+        }
+        match vte4::Regex::for_search(&pattern, PCRE2_MULTILINE) {
+            Ok(regex) => {
+                self.term.search_set_regex(Some(&regex), 0);
+                *self.search.compiled.borrow_mut() = text.to_string();
+                true
+            }
+            Err(_) => {
+                self.term.search_set_regex(None, 0);
+                self.search.message.set_text("Invalid search");
+                false
+            }
+        }
+    }
+
+    pub fn find(&self, previous: bool) -> bool {
+        if !self.set_search() {
+            return false;
+        }
+        let found = if previous {
+            self.term.search_find_previous()
+        } else {
+            self.term.search_find_next()
+        };
+        self.search
+            .message
+            .set_text(if found { "" } else { "No matches" });
+        found
     }
 
     /// Font + palette from the desktop; re-run when either changes.
@@ -339,6 +497,9 @@ impl PaneWidget {
     /// Report widget-driven size when it changed (called on a 250ms tick;
     /// gtk4 0.11 has no size-allocate signal). Last-writer-wins.
     pub fn sync_size(&self) {
+        if !self.root.is_mapped() {
+            return;
+        }
         let cols = self.term.column_count().clamp(20, 500) as u16;
         let rows = self.term.row_count().clamp(5, 200) as u16;
         if self.last_size.get() == (cols, rows) {
@@ -490,6 +651,42 @@ mod tests {
             answerable,
             received_at: chrono::Utc::now(),
         }
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn terminal_search_is_literal_and_keeps_the_terminal() {
+        libadwaita::init().unwrap();
+        let (actor, _requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "search",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let term = pane.term.clone();
+        let window = gtk4::Window::new();
+        window.set_child(Some(&pane.root));
+        window.present();
+        pane.feed(b"alpha [literal].* omega\r\nsecond [literal].*\r\n");
+        for _ in 0..20 {
+            while gtk4::glib::MainContext::default().iteration(false) {}
+        }
+        pane.present_search();
+        pane.search.entry.set_text("[literal].*");
+        assert!(pane.find(false));
+        assert!(pane.term.has_selection());
+        pane.search.entry.set_text("absent needle");
+        assert!(!pane.find(false));
+        assert_eq!(pane.search.message.text(), "No matches");
+        pane.close_search();
+        assert!(!pane.search.root.is_visible());
+        pane.search.entry.set_text("hidden query");
+        assert!(pane.term.search_get_regex().is_none());
+        assert_eq!(pane.term, term);
+        window.destroy();
     }
 
     #[test]

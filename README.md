@@ -75,8 +75,37 @@ GUI shortcuts (Ctrl+Shift, so plain Ctrl chords reach the terminal):
 | Ctrl+Shift+E / Ctrl+Shift+O | split right / split down |
 | Ctrl+Shift+W | close pane |
 | Ctrl+Shift+J | jump to the next pane that needs you |
+| Ctrl+Shift+P | command palette and workspace search |
+| Ctrl+Shift+R | rename the selected workspace |
+| Ctrl+Shift+F | search the active terminal, with next/previous matches |
+| Ctrl+Shift+Z | zoom the active pane, then restore its splits |
 | Alt+1…9, Ctrl+PgUp/PgDn | switch tabs |
 | F9 / F10 | toggle sidebar / main menu |
+
+The main menu also offers **Worktrees** and **Show Changes**. Worktrees lists
+Git's registered checkouts and opens each as a workspace. Create a checkout
+on a new branch to isolate another agent's edits. **Show Changes** displays
+working-tree changes against HEAD, with per-file counts and binary/untracked
+labels. Pane zoom changes only the view; saved divider ratios stay intact.
+
+The same checkout operations are available to scripts:
+
+```bash
+signaltty worktree list --workspace my-project
+signaltty worktree create --workspace my-project --path /absolute/feature --branch feature
+signaltty worktree open --workspace my-project --path /absolute/feature
+signaltty workspace close feature
+signaltty worktree remove --workspace my-project --path /absolute/feature
+```
+
+Closing a workspace preserves its checkout. Removal refuses the main checkout,
+dirty/locked checkouts and open workspace or live-process references; branches
+are kept. There is no force-removal fallback.
+
+Claude and current Codex permission hooks show **Allow once** and **Deny** in
+the existing pane bar. The choice returns as native hook JSON. Timeout or a
+cancelled reporter grants nothing and leaves permission handling to the agent.
+Codex still requires its normal hook trust review. See [agent integration](docs/07-agents.md#native-permission-replies-adr-0015).
 
 Server → Workspace → Tab → Pane. Lifecycle (unknown/working/blocked/
 done/idle/failed/exited) and attention (none/unread/input_required/

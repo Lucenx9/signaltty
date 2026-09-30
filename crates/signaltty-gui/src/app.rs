@@ -91,6 +91,8 @@ pub struct App {
     gui_tab: RefCell<Option<String>>,
     navigation: Cell<u64>,
     focused_pane: RefCell<Option<String>>,
+    zoom: RefCell<Option<(String, String)>>,
+    palette_dialog: RefCell<Option<adw::Dialog>>,
     /// Divider state machine (ratios, drags, echo suppression);
     /// widgets live separately in `paned_widgets`.
     dividers: crate::dividers::Dividers,
@@ -245,6 +247,8 @@ impl App {
             gui_tab: RefCell::new(None),
             navigation: Cell::new(0),
             focused_pane: RefCell::new(None),
+            zoom: RefCell::new(None),
+            palette_dialog: RefCell::new(None),
             dividers: crate::dividers::Dividers::new(),
             paned_widgets: RefCell::new(HashMap::new()),
             new_ws_open: Cell::new(false),
@@ -309,6 +313,12 @@ impl App {
             application,
             &self.split_view,
             crate::actions::ActionHandlers {
+                palette: method(App::action_palette),
+                rename_workspace: method(App::action_rename_workspace),
+                search_terminal: method(App::action_search_terminal),
+                zoom_pane: method(App::action_zoom_pane),
+                worktrees: method(App::action_worktrees),
+                show_changes: method(App::action_show_changes),
                 new_workspace: method(App::action_new_workspace),
                 close_workspace: method(App::action_close_active_workspace),
                 new_tab: method(App::action_new_tab),
@@ -355,6 +365,14 @@ impl App {
                         a.navigate();
                     }
                     *a.gui_tab.borrow_mut() = Some(id);
+                    if a.zoom
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|(tab, _)| Some(tab) != a.gui_tab.borrow().as_ref())
+                    {
+                        a.zoom.borrow_mut().take();
+                        a.render_tabs();
+                    }
                 }
             }
         });
@@ -551,6 +569,14 @@ impl App {
 
     /// A divider moved; hand the observation to the divider module.
     fn on_paned_position(&self, tab_id: &str, path: &[bool], paned: &gtk4::Paned) {
+        if self
+            .zoom
+            .borrow()
+            .as_ref()
+            .is_some_and(|(tid, _)| tid == tab_id)
+        {
+            return;
+        }
         let total = match paned.orientation() {
             gtk4::Orientation::Vertical => paned.height(),
             _ => paned.width(),
@@ -741,6 +767,20 @@ impl App {
                 self.content.set_visible_child_name("no-workspace");
             }
         }
+        {
+            let model = self.model.borrow();
+            for pane in model
+                .cache
+                .snapshots
+                .values()
+                .flat_map(|snapshot| &snapshot.panes)
+            {
+                if let Some(widget) = self.widgets.borrow().get(&pane.id) {
+                    widget.update_meta(pane);
+                }
+            }
+        }
+        self.prune_widgets(&self.collect_live_panes());
     }
 
     fn update_attention_button(&self, needing: &[Attention]) {
@@ -790,6 +830,9 @@ impl App {
         let snapshot = self.model.borrow().cache.snapshots.get(ws_id).cloned();
         let Some(snapshot) = snapshot else { return };
         let ws = snapshot.workspace;
+        if self.active_ws_id().as_deref() != Some(ws_id) {
+            self.zoom.borrow_mut().take();
+        }
         if user_navigation && self.active_ws_id().as_deref() != Some(ws_id) {
             self.navigate();
         }
@@ -877,7 +920,28 @@ impl App {
             self.drop_paneds(&id);
             self.tab_view.close_page(&page);
         }
-        for tab in &tabs {
+        if self.zoom.borrow().as_ref().is_some_and(|(tid, pid)| {
+            !tabs
+                .iter()
+                .any(|t| &t.id == tid && t.layout.as_ref().is_some_and(|l| l.panes().contains(pid)))
+        }) {
+            self.zoom.borrow_mut().take();
+        }
+        for source_tab in &tabs {
+            if let Some(layout) = &source_tab.layout {
+                for pane in layout.panes() {
+                    self.widget_for(&pane);
+                }
+            }
+            let mut projected = source_tab.clone();
+            if let Some((tid, pid)) = self.zoom.borrow().as_ref() {
+                if tid == &source_tab.id {
+                    projected.layout = Some(Layout::Pane {
+                        pane_id: pid.clone(),
+                    });
+                }
+            }
+            let tab = &projected;
             let existing = self
                 .tabs
                 .borrow()
@@ -1102,14 +1166,13 @@ impl App {
     }
 
     fn collect_live_panes(&self) -> HashSet<String> {
-        let m = self.model.borrow();
-        let mut out = HashSet::new();
-        for t in &m.tabs {
-            if let Some(l) = &t.layout {
-                out.extend(l.panes());
-            }
-        }
-        out
+        self.model
+            .borrow()
+            .cache
+            .snapshots
+            .values()
+            .flat_map(|snapshot| snapshot.panes.iter().map(|pane| pane.id.clone()))
+            .collect()
     }
 
     fn prune_widgets(&self, live: &HashSet<String>) {
@@ -1320,6 +1383,15 @@ impl App {
         if !same_ws {
             self.show_workspace_internal(&pane.workspace_id, false);
         }
+        if self
+            .zoom
+            .borrow()
+            .as_ref()
+            .is_some_and(|(tab, id)| tab != &pane.tab_id || id != pane_id)
+        {
+            self.zoom.borrow_mut().take();
+            self.render_tabs();
+        }
         *self.gui_tab.borrow_mut() = Some(pane.tab_id.clone());
         let page = self.tabs.borrow().get(&pane.tab_id).map(|e| e.page.clone());
         if let Some(page) = page {
@@ -1380,7 +1452,11 @@ impl App {
             .active_ws
             .as_ref()
             .and_then(|_| self.focused_pane.borrow().clone())
-            .filter(|id| m.panes.contains_key(id))
+            .filter(|id| {
+                m.panes
+                    .get(id)
+                    .is_some_and(|pane| self.gui_tab.borrow().as_ref() == Some(&pane.tab_id))
+            })
         {
             return Some(f);
         }
@@ -1392,6 +1468,142 @@ impl App {
                 .map(|l| l.panes())
                 .and_then(|mut v| v.pop())
         })
+    }
+
+    fn action_search_terminal(&self) {
+        if let Some(id) = self.current_pane_id() {
+            if let Some(widget) = self.widgets.borrow().get(&id) {
+                widget.present_search();
+            }
+        }
+    }
+
+    fn action_zoom_pane(&self) {
+        let Some(tab_id) = self.gui_tab.borrow().clone() else {
+            return;
+        };
+        if self.zoom.borrow_mut().take().is_none() {
+            let Some(pane) = self.current_pane_id() else {
+                return;
+            };
+            let in_tab = self.model.borrow().tabs.iter().any(|t| {
+                t.id == tab_id && t.layout.as_ref().is_some_and(|l| l.panes().contains(&pane))
+            });
+            if !in_tab {
+                return;
+            }
+            *self.zoom.borrow_mut() = Some((tab_id, pane));
+        }
+        self.render_tabs();
+        if let Some(id) = self.current_pane_id() {
+            if let Some(widget) = self.widgets.borrow().get(&id) {
+                widget.focus();
+            }
+        }
+    }
+
+    fn action_palette(&self) {
+        if self.palette_dialog.borrow().is_some() {
+            return;
+        }
+        let workspaces = self.model.borrow().cache.workspaces.clone();
+        let weak = self.weak();
+        let close_weak = self.weak();
+        let dialog = crate::palette::present(
+            &self.window,
+            &workspaces,
+            move |id| {
+                if let Some(app) = weak.upgrade() {
+                    app.show_workspace(id);
+                    if let Some(pane) = app.current_pane_id() {
+                        if let Some(widget) = app.widgets.borrow().get(&pane) {
+                            widget.focus();
+                        }
+                    }
+                }
+            },
+            move || {
+                if let Some(app) = close_weak.upgrade() {
+                    app.palette_dialog.borrow_mut().take();
+                    if let Some(id) = app.current_pane_id() {
+                        if let Some(w) = app.widgets.borrow().get(&id) {
+                            w.focus();
+                        }
+                    }
+                }
+            },
+        );
+        *self.palette_dialog.borrow_mut() = Some(dialog);
+    }
+
+    fn action_rename_workspace(&self) {
+        let Some(id) = self.active_ws_id() else {
+            return;
+        };
+        let Some(ws) = self
+            .model
+            .borrow()
+            .cache
+            .workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        crate::workspace_dialogs::rename(&self.window, self.actor.clone(), &ws);
+    }
+
+    fn action_worktrees(&self) {
+        let Some(id) = self.active_ws_id() else {
+            return;
+        };
+        let opened_at = self.navigation.get();
+        let weak = self.weak();
+        crate::workspace_dialogs::worktrees(&self.window, self.actor.clone(), &id, move |ws| {
+            let Some(app) = weak.upgrade() else { return };
+            if app.navigation.get() != opened_at {
+                app.refresh_later();
+                return;
+            }
+            let navigation = app.navigate();
+            app.run(move |app| async move {
+                let snapshot = app
+                    .actor
+                    .call("workspace.get", json!({"workspace_id": ws}))
+                    .await;
+                match snapshot {
+                    Ok(snapshot) => {
+                        if snapshot["panes"].as_array().is_some_and(|p| p.is_empty()) {
+                            match app
+                                .actor
+                                .call(
+                                    "pane.spawn",
+                                    json!({"workspace_id": ws, "argv": [user_shell()]}),
+                                )
+                                .await
+                            {
+                                Ok(v) => app.focus_created(&v, navigation),
+                                Err(e) => app
+                                    .toast(&format!("Workspace opened; couldn't start shell: {e}")),
+                            }
+                        }
+                        app.refresh_later();
+                        app.refresh_async().await;
+                        if app.navigation.get() == navigation {
+                            app.show_workspace_internal(&ws, false);
+                        }
+                    }
+                    Err(e) => app.toast(&e),
+                }
+            });
+        });
+    }
+
+    fn action_show_changes(&self) {
+        if let Some(id) = self.active_ws_id() {
+            crate::workspace_dialogs::changes(&self.window, self.actor.clone(), &id);
+        }
     }
 
     /// Open the New Workspace dialog (Ctrl+Shift+N, the sidebar "+"

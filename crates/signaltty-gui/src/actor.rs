@@ -14,6 +14,14 @@ use tokio::time::{timeout, Instant};
 use signaltty_proto::{Request, Response};
 
 const IPC_TIMEOUT: Duration = Duration::from_secs(3);
+const WORKTREE_TIMEOUT: Duration = Duration::from_secs(90);
+
+fn worktree_call(method: &str) -> bool {
+    matches!(
+        method,
+        "worktree.list" | "worktree.create" | "worktree.open" | "worktree.remove"
+    )
+}
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
 pub type UiTx = mpsc::UnboundedSender<UiEvent>;
@@ -77,7 +85,12 @@ impl IpcHandle {
                 method: method.into(),
                 params,
                 reply,
-                deadline: Instant::now() + IPC_TIMEOUT,
+                deadline: Instant::now()
+                    + if worktree_call(method) {
+                        WORKTREE_TIMEOUT
+                    } else {
+                        IPC_TIMEOUT
+                    },
             })
             .map_err(|_| "ipc actor gone".to_string())?;
         rx.await.map_err(|_| "ipc reply lost".to_string())?
@@ -279,7 +292,20 @@ async fn run_session(
             req = rx.recv() => match req {
                 None => return true,
                 Some(ActorRequest::Call { method, params, reply, deadline }) => {
-                    queued.push_back(QueuedCall { method, params, reply, deadline });
+                    if worktree_call(&method) {
+                        let socket = socket.clone();
+                        tokio::spawn(async move {
+                            let result = tokio::time::timeout_at(deadline, async {
+                                let mut connection = Conn::connect(&socket).await?;
+                                let id = connection.send(&method, params).await?;
+                                let response = read_response(&mut connection, &id).await.map_err(|e| format!("ipc worktree response lost; outcome unknown: {e}"))?;
+                                response_result(response)
+                            }).await.unwrap_or_else(|_| Err("ipc worktree request timed out; outcome unknown".into()));
+                            let _ = reply.send(result);
+                        });
+                    } else {
+                        queued.push_back(QueuedCall { method, params, reply, deadline });
+                    }
                 }
                 Some(ActorRequest::Attach { pane_id, cols, rows }) => {
                     attached.insert(pane_id.clone(), (cols, rows));
@@ -600,6 +626,41 @@ mod tests {
         assert!(
             matches!(next_event(&mut events).await, UiEvent::PtyData { data, .. } if data == b"LIVE")
         );
+    }
+
+    #[tokio::test]
+    async fn slow_worktree_uses_an_independent_connection_and_keeps_control_available() {
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.0).unwrap();
+        let (ui, _events) = mpsc::unbounded_channel();
+        let actor = spawn(socket.0.clone(), ui);
+        let (mut control, _sub) = connected(&listener).await;
+        let caller = actor.clone();
+        let worktree = tokio::spawn(async move {
+            caller
+                .call(
+                    "worktree.create",
+                    json!({"workspace_id": "a", "branch": "feature", "path": "/tmp/worktree"}),
+                )
+                .await
+        });
+        let mut dedicated = server_conn(&listener).await;
+        let creation = request(&mut dedicated).await;
+        assert_eq!(creation.method, "worktree.create");
+        let caller = actor.clone();
+        let fast = tokio::spawn(async move { caller.call("server.status", json!({})).await });
+        let status = request(&mut control).await;
+        assert_eq!(status.method, "server.status");
+        respond(&mut control, &status, json!({"ready": true})).await;
+        assert_eq!(fast.await.unwrap().unwrap()["ready"], true);
+        tokio::time::sleep(IPC_TIMEOUT + Duration::from_millis(100)).await;
+        respond(
+            &mut dedicated,
+            &creation,
+            json!({"workspace": {"id": "new"}}),
+        )
+        .await;
+        assert_eq!(worktree.await.unwrap().unwrap()["workspace"]["id"], "new");
     }
 
     #[tokio::test]

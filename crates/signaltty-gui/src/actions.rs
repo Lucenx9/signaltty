@@ -18,6 +18,12 @@ use libadwaita as adw;
 /// action bound to the split view; the rest take callbacks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandlerKind {
+    Palette,
+    RenameWorkspace,
+    SearchTerminal,
+    ZoomPane,
+    Worktrees,
+    ShowChanges,
     NewWorkspace,
     CloseWorkspace,
     NewTab,
@@ -43,6 +49,48 @@ pub struct ActionDef {
 }
 
 pub const ACTIONS: &[ActionDef] = &[
+    ActionDef {
+        name: "show-changes",
+        handler: HandlerKind::ShowChanges,
+        label: Some("Show Changes"),
+        section: 0,
+        accel: None,
+    },
+    ActionDef {
+        name: "worktrees",
+        handler: HandlerKind::Worktrees,
+        label: Some("Worktrees"),
+        section: 0,
+        accel: None,
+    },
+    ActionDef {
+        name: "zoom-pane",
+        handler: HandlerKind::ZoomPane,
+        label: Some("Zoom Pane"),
+        section: 1,
+        accel: Some("<Control><Shift>z"),
+    },
+    ActionDef {
+        name: "search-terminal",
+        handler: HandlerKind::SearchTerminal,
+        label: Some("Find in Terminal"),
+        section: 1,
+        accel: Some("<Control><Shift>f"),
+    },
+    ActionDef {
+        name: "rename-workspace",
+        handler: HandlerKind::RenameWorkspace,
+        label: Some("Rename Workspace"),
+        section: 0,
+        accel: Some("<Control><Shift>r"),
+    },
+    ActionDef {
+        name: "command-palette",
+        handler: HandlerKind::Palette,
+        label: Some("Commands and Workspaces"),
+        section: 0,
+        accel: Some("<Control><Shift>p"),
+    },
     ActionDef {
         name: "new-workspace",
         handler: HandlerKind::NewWorkspace,
@@ -110,6 +158,12 @@ pub const ACTIONS: &[ActionDef] = &[
 
 /// App behavior behind the actions, one callback each.
 pub struct ActionHandlers {
+    pub show_changes: Box<dyn Fn()>,
+    pub worktrees: Box<dyn Fn()>,
+    pub zoom_pane: Box<dyn Fn()>,
+    pub search_terminal: Box<dyn Fn()>,
+    pub rename_workspace: Box<dyn Fn()>,
+    pub palette: Box<dyn Fn()>,
     pub new_workspace: Box<dyn Fn()>,
     pub close_workspace: Box<dyn Fn()>,
     pub new_tab: Box<dyn Fn()>,
@@ -123,6 +177,12 @@ pub struct ActionHandlers {
 impl ActionHandlers {
     fn get(&self, kind: HandlerKind) -> &dyn Fn() {
         match kind {
+            HandlerKind::ShowChanges => &self.show_changes,
+            HandlerKind::Worktrees => &self.worktrees,
+            HandlerKind::ZoomPane => &self.zoom_pane,
+            HandlerKind::SearchTerminal => &self.search_terminal,
+            HandlerKind::RenameWorkspace => &self.rename_workspace,
+            HandlerKind::Palette => &self.palette,
             HandlerKind::NewWorkspace => &self.new_workspace,
             HandlerKind::CloseWorkspace => &self.close_workspace,
             HandlerKind::NewTab => &self.new_tab,

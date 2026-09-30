@@ -8,11 +8,13 @@ mod dividers;
 mod metrics;
 mod new_workspace;
 mod notif;
+mod palette;
 mod refresh;
 mod sidebar;
 mod status;
 mod terminal;
 mod util;
+mod workspace_dialogs;
 
 use gtk4::prelude::*;
 

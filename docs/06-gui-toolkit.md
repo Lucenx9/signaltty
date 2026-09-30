@@ -156,7 +156,7 @@ Initial load, reconnection and workspace creation/deletion read the full
 list. IPC replies are awaited on GTK's local executor, with no blocking
 main-thread receive. A refresh uses an owned cache copy behind a serial
 async lock, so no RefCell borrow crosses an await. Invalidations arriving
-in flight form the next batch. Socket operations and requests have three-second
+in flight form the next batch. Socket operations and ordinary requests have three-second
 deadlines; uncertain mutations are reported and never automatically replayed.
 
 Attach is enqueue-only. Initial and reconnect VT snapshots replace the existing
@@ -219,3 +219,51 @@ Direct supported agent launches prepare status hooks before execution. Setup
 errors, disabled launch modes and newly configured Codex trust requirements
 use native `AdwToast` notices on create, split and resume; successful ordinary
 configuration does not add another status badge (ADR-0013).
+
+
+## Local navigation and Git workflows
+
+The primary menu and command/workspace palette share the action registry.
+Ctrl+Shift+P opens the palette. It filters commands and cached workspace names
+and paths immediately, so typing and pressing Enter selects the current match.
+Up/Down selects a result; Enter invokes the existing action or switches the
+workspace. Escape restores terminal focus. Workspace switches keep already
+created VTE widgets attached to the output stream, including inactive workspaces;
+closing a pane or workspace prunes those widgets after the cache refresh.
+
+Ctrl+Shift+R opens Rename Workspace through the existing `workspace.rename`
+method. Empty names disable Rename; labels change while handles stay fixed.
+Ctrl+Shift+F opens literal search inside the focused pane. Enter/Shift+Enter and
+the next/previous buttons navigate VTE scrollback matches. Escape closes search,
+clears its regex and selection, and restores terminal focus. Search never sends
+text to the process. Its controls fit a 320px pane.
+
+Ctrl+Shift+Z temporarily shows the focused pane alone. Zoom projects the cached
+layout locally and retains every pane widget, including hidden siblings and
+their output. It never persists a divider change. Returning to the split uses
+the latest server layout and ratios; switching workspace/tab or focusing another
+pane restores the ordinary view. Hidden widgets do not send resize requests.
+
+Worktrees opens a native registered-checkout list with branch and open-workspace
+context. Create asks for an absolute path and a new branch; Open reuses an
+existing workspace when present. A newly opened empty workspace starts a shell
+through `pane.spawn`. Remove requires a separate destructive confirmation and
+keeps the branch. Open, main, locked, missing and bare checkouts cannot be
+removed from this dialog; the server also refuses dirty or live-referenced paths.
+Closing a workspace leaves its checkout intact. Git operations use a dedicated
+background IPC connection with a 90-second deadline, so approvals and normal
+control traffic keep flowing. An uncertain mutation is never automatically
+replayed.
+
+Show Changes reads `workspace.diff` only on open or explicit Refresh. Its heading
+says "Changes against HEAD" and shows aggregate file/line counts. Each tracked
+text file has its own added/removed counts; binary and untracked entries carry
+explicit labels. It does not imply a per-turn diff. Workspace names, paths and
+file names render literally, including `<`, `>` and `&`.
+
+The display tests `navigation_palette_fast_enter_and_git_dialogs_use_native_controls`,
+`pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios`, and
+`terminal_search_is_literal_and_keeps_the_terminal` exercise the actual controls.
+Set `SIGNALTTY_UI_EVIDENCE=/tmp/signaltty-local-workflows` on the first two to
+export light/dark palette, Git, search and zoom snapshots, including narrow Git
+dialogs. The fixtures use independent GTK windows and IPC channels.
