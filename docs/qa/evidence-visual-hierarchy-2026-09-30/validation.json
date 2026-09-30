@@ -1,0 +1,15 @@
+{
+  "workspace_tests_passed": 211,
+  "display_tests_passed": 11,
+  "build": "pass",
+  "fmt": "pass",
+  "clippy": "pass; two existing server warnings, no new warnings",
+  "native_scenes": [
+    "light",
+    "dark",
+    "360px light",
+    "360px dark",
+    "high contrast",
+    "Sans 18"
+  ]
+}

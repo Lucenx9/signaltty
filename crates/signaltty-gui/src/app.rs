@@ -737,6 +737,7 @@ impl App {
                 self.render_tabs();
                 self.title.set_title("signaltty");
                 self.title.set_subtitle("");
+                self.title.set_tooltip_text(None);
                 self.content.set_visible_child_name("no-workspace");
             }
         }
@@ -794,10 +795,12 @@ impl App {
         }
         self.title.set_title(&self.display_title(&ws));
         let place = tilde(&ws.cwd);
-        self.title.set_subtitle(&match &ws.git.branch {
-            Some(branch) => format!("{place} · {branch}"),
+        let context = match &ws.git.branch {
+            Some(branch) => format!("{branch} · {place}"),
             None => place,
-        });
+        };
+        self.title.set_subtitle(&context);
+        self.title.set_tooltip_text(Some(&context));
         let has_tabs = !snapshot.tabs.is_empty();
         {
             let mut m = self.model.borrow_mut();

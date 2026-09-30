@@ -76,10 +76,10 @@
 /* ---- sidebar -------------------------------------------------------- */
 
 /* Three quiet lines: the name carries weight, the headline reads as
- * secondary text, the place is a whisper. Colour is spent only on the
+ * secondary text, the place is quieter. Colour is spent only on the
  * status slot. */
 .workspace-row {
-  padding: 8px 2px 8px 6px;
+  padding: 6px 6px 10px 8px;
 }
 
 .workspace-row .workspace-name {
@@ -88,12 +88,12 @@
 
 .workspace-row .workspace-message {
   font-size: 0.93em;
-  color: alpha(currentColor, 0.78);
+  color: alpha(currentColor, 0.82);
 }
 
 .workspace-row .workspace-meta {
-  font-size: 0.85em;
-  color: alpha(currentColor, 0.65);
+  font-size: 0.9em;
+  color: alpha(currentColor, 0.72);
 }
 
 .navigation-sidebar > row:selected {
@@ -222,8 +222,10 @@
 }
 
 .pane-header {
-  min-height: 34px;
+  min-height: 38px;
   padding: 0 8px 0 12px;
+  background-color: alpha(var(--view-fg-color), 0.025);
+  box-shadow: inset 0 -1px var(--border-color);
 }
 
 .pane-title {
@@ -269,15 +271,15 @@
   padding: 6px 12px 10px 12px;
 }
 
-/* With several panes in a tab, the focused one is marked and the rest
- * recede — chrome only, never the terminal text. Specificity stays at
+/* With several panes in a tab, the focused one is marked without
+ * dimming other pane titles or output. Specificity stays at
  * two classes so every attention ring below (three) wins over focus:
  * what needs you outranks where you are. */
 .split .pane.focused {
   box-shadow: inset 0 0 0 1px alpha(var(--accent-bg-color), 0.7), 0 1px 3px alpha(black, 0.08);
 }
-.tab-page.split .pane:not(.focused) .pane-info {
-  opacity: 0.7;
+.split .pane.focused .pane-header {
+  background-color: alpha(var(--accent-bg-color), 0.07);
 }
 
 /* Attention rings — three classes beat the two-class focus rule
@@ -375,8 +377,14 @@ button.pill:focus-visible {
 .high-contrast .row-status {
   color: inherit;
 }
-.high-contrast .tab-page.split .pane:not(.focused) .pane-info {
+.high-contrast .pane-subtitle {
   opacity: 1;
+}
+.high-contrast .pane-header {
+  box-shadow: inset 0 -1px currentColor;
+}
+.high-contrast .split .pane.focused .pane-header {
+  box-shadow: inset 3px 0 var(--accent-color), inset 0 -1px currentColor;
 }
 .high-contrast .status-pill {
   box-shadow: inset 0 0 0 1px currentColor;

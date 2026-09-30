@@ -206,14 +206,16 @@ impl Row {
         });
         let grid = gtk4::Grid::new();
         grid.set_column_spacing(8);
-        grid.set_row_spacing(2);
+        grid.set_row_spacing(4);
         grid.add_css_class("workspace-row");
         grid.attach(&name, 0, 0, 1, 1);
         grid.attach(&status.widget, 1, 0, 1, 1);
-        grid.attach(&close, 2, 0, 1, 3);
-        grid.attach(&message, 0, 1, 2, 1);
-        grid.attach(&place, 0, 2, 1, 1);
-        grid.attach(&agents, 1, 2, 1, 1);
+        grid.attach(&close, 2, 0, 1, 1);
+        grid.attach(&message, 0, 1, 3, 1);
+        let metadata = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        metadata.append(&place);
+        metadata.append(&agents);
+        grid.attach(&metadata, 0, 2, 3, 1);
 
         let row = gtk4::ListBoxRow::new();
         row.set_widget_name(id);

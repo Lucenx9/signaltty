@@ -31,6 +31,7 @@ Docs index:
 - [16 — Visual references (Geist, Linear, Vercel)](16-visual-references.md)
 - [App verification, 2026-09-29](qa/2026-09-29.md)
 - [Native UI refinement verification, 2026-09-29–30](qa/ui-2026-09-29.md)
+- [Workspace visual hierarchy verification, 2026-09-30](qa/visual-hierarchy-2026-09-30.md)
 - [Automatic hook configuration verification, 2026-09-30](qa/automatic-hooks-2026-09-30.md)
 - [Codex pane runtime verification, 2026-09-30](qa/codex-pane-runtime-2026-09-30.md)
 - [ADRs](adr/)

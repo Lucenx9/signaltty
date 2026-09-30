@@ -77,6 +77,11 @@ you" label with a hairline below; with nothing waiting there are no
 section headers. The header's attention count is a pill tinted by the
 worst attention it counts, in the same colours.
 
+The close target reserves space on the name/status line only. Activity and
+the location/agent line span the row's full width, with roomier line spacing
+and readable secondary text. Workspace header context puts the branch before
+the directory; hovering the title exposes the complete context.
+
 Rules that keep it calm:
 
 - Widgets are reconciled in place (rows keyed by workspace id, tab
@@ -90,14 +95,17 @@ Rules that keep it calm:
   presses never scale. Native asynchronous state reveal remains toolkit-owned.
   The window follows GtkSettings animation preferences at startup and on
   changes, removing both interpolation and static press transforms.
-  High contrast removes muted sidebar text and inactive-pane chrome opacity.
+  High contrast removes muted sidebar text and pane subtitle opacity, and
+  strengthens header separators and the focused header's leading marker.
 - Workspace switches never animate pages: bulk tab replacement (close
   cascade + select) runs with the tab view hidden so one paint shows
   the final state. `AdwTabView` slides on programmatic selection and
   terminals smear through it — context jumps stay instant, tab browsing
   inside a workspace keeps the native slide.
-- In multi-pane tabs the focused card is outlined and the others'
-  status recedes; terminal text is never dimmed.
+- Pane headers have a quiet neutral surface and an inset separator above
+  output. In multi-pane tabs the focused card is outlined and its header
+  has a subtle accent wash, visible even when attention takes over the ring.
+  Inactive titles and terminal text stay readable without extra dimming.
 - Icons the GUI depends on are bundled (`data/icons`), not assumed
   from the icon theme.
 
