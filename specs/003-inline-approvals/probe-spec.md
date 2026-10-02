@@ -1,10 +1,16 @@
 # Feature Specification: Inline Approvals
 
+> Historical probe artifact. Prepared against commit `eaf8076` on 2026-10-02.
+> The updated repository already implements native permission replies through
+> [spec 013](../013-local-agent-workflows/spec.md) and
+> [ADR-0015](../../docs/adr/0015-local-agent-workflows.md).
+> This document records the probe design, not the current implementation contract.
+
 **Feature Branch**: `003-inline-approvals`
 
 **Created**: 2026-09-29
 
-**Status**: Design (implementation deferred — see Assumptions)
+**Status**: Design (Claude response channel verified; implementation pending)
 
 **Input**: User description: "docs/14 directive 2 requires inline approvals with no context-switch (cmux Feed: permission Once/Always/Deny, ExitPlanMode, AskUserQuestion); today the GUI only shows an 'Approval' pill and the user must answer inside the agent's TUI"
 
@@ -24,22 +30,21 @@ policies) is secondary.
 
 **Independent Test**: Fixture a pane with a pending decision; assert
 the decision bar renders prompt + options; click one; assert the
-answer reaches the pane (integration: bytes the agent accepts) and
-the bar clears when attention clears.
+answer reaches the adapter (integration: verdict the agent accepts) and
+the bar clears when the decision is consumed or retired.
 
 **Acceptance Scenarios**:
 
 1. **Given** a pane with attention `permission_required` and a pending
-   decision (prompt + options Once/Always/Deny), **When** the pane
-   renders, **Then** the question and three answers are visible
+   decision (prompt + verified options Once/Deny), **When** the pane
+   renders, **Then** the question and both answers are visible
    inline without focusing the terminal.
 2. **Given** a pending decision, **When** the user clicks "Once",
    **Then** the agent receives the equivalent of answering Once in
-   its own TUI, and the bar disappears when the agent resumes
-   (attention clears).
+   its own TUI, and the bar disappears when the decision is consumed.
 3. **Given** a pending decision, **When** the user ignores it and
-   answers inside the terminal instead, **Then** the bar clears on
-   the next attention-cleared event (no stuck UI, no double answer).
+   answers inside the terminal instead, **Then** forwarding that input
+   retires the actionable bar (no stuck UI, no double answer).
 
 ---
 
@@ -100,8 +105,8 @@ read-only rendering.
 
 ### Edge Cases
 
-- Decision arrives for an exited pane: stored, rendered read-only
-  (nothing can receive the answer).
+- An actionable hook request arrives for an exited pane: rejected with
+  `PANE_EXITED`. Observation-only messages may still render read-only.
 - Two decisions for one pane: latest wins; the older id is dropped
   with no error (agents supersede prompts).
 - Answer clicked twice (double click / two clients): second delivery
@@ -117,7 +122,9 @@ read-only rendering.
 
 - **FR-001**: The server MUST model at most one pending decision per
   pane (`{id, prompt, options[{id, label}], received_at}`), set by
-  `hook-event`, cleared when attention clears or the pane exits.
+  `hook-event`, cleared on decision resolution, supersession, response
+  transport loss, expiry, or pane exit. Focus, attachment, and
+  `pane.mark_seen` MUST NOT consume a pending decision.
 - **FR-002**: The server MUST expose one answering method
   (`decision.answer {pane_id, decision_id, option_id}`) that validates
   ids, delivers through the pane adapter's channel, and consumes the
@@ -128,10 +135,16 @@ read-only rendering.
   terminal when the bar toggles (structural reconcile).
 - **FR-004**: Adapters MUST declare their answer channel in code
   (`AgentAdapter::answer_channel`) with exactly one initial
-  implementation: whichever adapter probe succeeds first during the
-  plan phase; all others render read-only until probed.
+  implementation: Claude `PermissionRequest` hook verdicts for Bash
+  permissions, proven during the probe phase. Only verified options
+  and request kinds may be actionable. All others render read-only
+  until probed.
 - **FR-005**: Prose-only attention (no decision object) MUST NOT
   render option buttons anywhere.
+- **FR-006**: Forwarding actual user terminal input MUST retire the
+  pane's actionable decision before writing to the PTY and yield the
+  waiting hook without a verdict. Focus and resize MUST NOT trigger
+  this transition. Semantic completion also retires matching requests.
 
 ### Key Entities
 
@@ -154,36 +167,24 @@ read-only rendering.
 
 ## Assumptions
 
-- **Probe outcome (2026-09-29, implemented)**: Codex `TypeText`
-  (option number + Enter) is the first channel — fixture-verified
-  (bytes reach the PTY through `decision.answer`; see ADR-0008).
-  Live-TUI confirmation (click → real Codex resumes with that choice)
-  is follow-up work: approval prompts need an interactive session the
-  harness cannot drive. Original note preserved below:
-- **Deferred**: this spec ships as design only. Implementation waits
-  for the plan-phase adapter probes (which CLIs accept answers
-  non-interactively, and how) because FR-004 forbids guessing
-  channels. The probes are small (one evening against installed
-  CLIs) but must be empirical, not speculative.
-- Likely first channel candidates, in probe order: Claude Code
-  `PreToolUse` hook verdict (documented decision mechanism) →
-  Codex TUI typed answer (`1`/`2`/… + Enter over `pane.input`) →
-  opencode/cursor equivalents. Order may change on evidence.
+- **Probe completed, 2026-10-02**: Claude `PermissionRequest` verdicts
+  accepted and denied a harmless Bash command in interactive PTYs,
+  including two simultaneous signaltty panes. Terminal answers and
+  timeout fallback also worked. See [probe results](probe-results.md).
+  The response bridge and GUI remain unimplemented.
+- Claude can answer in the terminal while its hook remains alive.
+  Socket closure alone is insufficient to clear that decision.
+  Semantic completion and cancellation must also retire it; direct
+  terminal answers during long commands remain an implementation gate.
+- The initial scope is Once/Deny for Claude Bash permissions. This
+  narrows directive 2's example to the options empirically verified.
+  "Always" is omitted until its session policy semantics are proven;
+  it MUST NOT silently act like Once.
+- Codex app-server approvals, OpenCode, and Cursor channels remain
+  candidates, with no actionable answers until independently probed.
 - `decision.answer` delivery reuses the `pane.input` path when the
   channel is typed text (same bytes, same rate limits), and only
   then.
-- No Always/Deny persistence in v1: "Always" answers this session's
-  prompt once (true policy storage is a later spec).
-- Directive 2's ExitPlanMode/AskUserQuestion variants are the same
-  mechanism with different prompts — no separate UI.
-
-## Supplemental Claude live probe (2026-10-02)
-
-[Probe results](probe-results.md) and [structured evidence](probe-evidence.json)
-verify Claude PermissionRequest Once/Deny verdicts in real interactive PTYs,
-including two simultaneous signaltty panes. The probe also records direct
-terminal answers, timeout fallback, and late-verdict behavior. It used the
-`eaf8076` checkout and an external response file, so it does not independently
-verify the later native server bridge or GUI implementation. The historical
-[probe plan](probe-plan.md) and [probe specification](probe-spec.md) preserve
-its proposed design separately from the implemented plan.
+- ExitPlanMode and AskUserQuestion require distinct payload handling
+  and live probes. They are read-only in the initial scope; their
+  responses MUST NOT be guessed from the Bash permission verdict.

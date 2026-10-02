@@ -1,0 +1,217 @@
+{
+  "date": "2026-10-02",
+  "status": "response channel verified; production bridge not implemented",
+  "results": [
+    {
+      "case": "allow",
+      "exit_code": 0,
+      "answered": true,
+      "proof_exists": true,
+      "subtype": "success",
+      "is_error": false,
+      "result": "Done. The file `approval-proof.txt` has been created with the content \"approved\".",
+      "permission_denials": [],
+      "total_cost_usd": 0.0139468,
+      "evidence_case": "allow",
+      "cli_version": "2.1.287"
+    },
+    {
+      "case": "deny",
+      "exit_code": 0,
+      "answered": true,
+      "proof_exists": false,
+      "subtype": "success",
+      "is_error": false,
+      "result": "The command was denied by a hook. As requested, I'm not retrying or using other tools.",
+      "permission_denials": [
+        {
+          "tool_name": "Bash",
+          "tool_use_id": "toolu_01WQKn5SmaBSGTdTBCuwUcF5",
+          "tool_input": {
+            "command": "printf approved > approval-proof.txt",
+            "description": "Create approval-proof.txt file with \"approved\" content"
+          }
+        }
+      ],
+      "total_cost_usd": 0.0148158,
+      "evidence_case": "deny",
+      "cli_version": "2.1.287"
+    },
+    {
+      "case": "interactive-deny",
+      "action": "deny",
+      "hook_timeout_secs": 45,
+      "request": {
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_use_id": null,
+        "tool_input": {
+          "command": "printf approved > approval-proof.txt",
+          "description": "Create approval proof file"
+        }
+      },
+      "denial_visible": true,
+      "request_seen": true,
+      "proof_exists": false,
+      "hook_cancelled_before_cleanup": false,
+      "hook_returned_before_cleanup": true,
+      "elapsed_secs": 20.74,
+      "evidence_case": "interactive-deny-v2",
+      "cli_version_in_terminal": "2.1.288"
+    },
+    {
+      "case": "interactive-terminal",
+      "action": "terminal",
+      "hook_timeout_secs": 45,
+      "request": {
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_use_id": null,
+        "tool_input": {
+          "command": "printf approved > approval-proof.txt"
+        }
+      },
+      "proof_exists": true,
+      "request_seen": true,
+      "hook_cancelled_before_cleanup": false,
+      "hook_returned_before_cleanup": false,
+      "elapsed_secs": 9.24,
+      "evidence_case": "interactive-terminal-v2",
+      "cli_version_in_terminal": "2.1.288"
+    },
+    {
+      "case": "interactive-timeout",
+      "action": "timeout",
+      "hook_timeout_secs": 2,
+      "request": {
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_use_id": null,
+        "tool_input": {
+          "command": "printf approved > approval-proof.txt",
+          "description": "Write \"approved\" to a file named approval-proof.txt"
+        }
+      },
+      "proof_before_late_answer": false,
+      "proof_after_late_answer": false,
+      "proof_exists": true,
+      "request_seen": true,
+      "hook_cancelled_before_cleanup": true,
+      "hook_returned_before_cleanup": false,
+      "elapsed_secs": 15.2,
+      "evidence_case": "interactive-timeout-v2",
+      "cli_version_in_terminal": "2.1.288"
+    },
+    {
+      "case": "concurrent-allow",
+      "action": "allow",
+      "hook_timeout_secs": 45,
+      "request": {
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_use_id": null,
+        "tool_input": {
+          "command": "printf approved > approval-proof.txt",
+          "description": "Write \"approved\" to approval-proof.txt file"
+        }
+      },
+      "proof_exists": true,
+      "request_seen": true,
+      "hook_cancelled_before_cleanup": false,
+      "hook_returned_before_cleanup": true,
+      "elapsed_secs": 7.95,
+      "evidence_case": "concurrent-allow-v2",
+      "cli_version_in_terminal": "2.1.288"
+    },
+    {
+      "case": "interactive-terminal",
+      "action": "terminal",
+      "hook_timeout_secs": 45,
+      "request": {
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_use_id": null,
+        "tool_input": {
+          "command": "printf approved > approval-proof.txt",
+          "description": "Write \"approved\" to approval-proof.txt"
+        }
+      },
+      "proof_exists": true,
+      "hook_cancelled_after_terminal_answer": false,
+      "posttool_before_late_response": {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_use_id": "toolu_01KP9RqEz1t87mdksr5bWEu9",
+        "tool_input": {
+          "command": "printf approved > approval-proof.txt",
+          "description": "Write \"approved\" to approval-proof.txt"
+        }
+      },
+      "proof_survives_late_deny": true,
+      "request_seen": true,
+      "hook_cancelled_before_cleanup": false,
+      "hook_returned_before_cleanup": true,
+      "elapsed_secs": 12.34,
+      "evidence_case": "interactive-terminal-posttool",
+      "cli_version_in_terminal": "2.1.288"
+    },
+    {
+      "choice": "allow",
+      "request_seen": true,
+      "expected_pane": "pane_127da3251c72489a94c47b7f64294e62",
+      "request_pane": "pane_127da3251c72489a94c47b7f64294e62",
+      "socket_matches": true,
+      "proof_exists": true,
+      "hook_returned": true,
+      "denial_visible": false,
+      "passed": true,
+      "cli_version_in_terminal": "2.1.288",
+      "proof_contents": "approved",
+      "evidence_case": "signaltty-allow"
+    },
+    {
+      "choice": "deny",
+      "request_seen": true,
+      "expected_pane": "pane_448aff6adfab4a64b747882ecf4644ac",
+      "request_pane": "pane_448aff6adfab4a64b747882ecf4644ac",
+      "socket_matches": true,
+      "proof_exists": false,
+      "hook_returned": true,
+      "denial_visible": true,
+      "passed": true,
+      "cli_version_in_terminal": "2.1.288",
+      "proof_contents": null,
+      "evidence_case": "signaltty-deny"
+    },
+    {
+      "choice": "allow",
+      "request_seen": true,
+      "expected_pane": "pane_161b485b16d44723bf1a40a7df35c5e1",
+      "request_pane": "pane_161b485b16d44723bf1a40a7df35c5e1",
+      "socket_matches": true,
+      "proof_exists": true,
+      "hook_returned": true,
+      "denial_visible": false,
+      "cli_version": "2.1.288 (Claude Code)",
+      "proof_contents": "approved",
+      "unexpected_request": false,
+      "passed": true,
+      "evidence_case": "signaltty-reusable-probe-allow"
+    },
+    {
+      "choice": "deny",
+      "request_seen": true,
+      "expected_pane": "pane_31f41e5151fa48348f30f7f18030b0a8",
+      "request_pane": "pane_31f41e5151fa48348f30f7f18030b0a8",
+      "socket_matches": true,
+      "proof_exists": false,
+      "hook_returned": true,
+      "denial_visible": true,
+      "cli_version": "2.1.288 (Claude Code)",
+      "proof_contents": null,
+      "unexpected_request": false,
+      "passed": true,
+      "evidence_case": "signaltty-reusable-probe-deny"
+    }
+  ]
+}

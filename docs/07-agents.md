@@ -138,6 +138,16 @@ Adapters: `CodexAdapter`, `ClaudeCodeAdapter`, `OpenCodeAdapter`,
   server persists it but never auto-runs it: restore offers
   one-click/keypress resume per pane (LIVE/RESTORED/RESUMABLE/EXITED).
 
+## Claude permission-channel probe
+
+A live probe on 2026-10-02 verified Claude `PermissionRequest` Once/Deny
+verdicts, including two simultaneous signaltty panes. It also records terminal
+answers, timeout fallback, and ignored late verdicts. The experiment ran against
+`eaf8076` with a response file standing in for the GUI choice. It does not
+independently verify the subsequently implemented native response bridge.
+See [probe results](../specs/003-inline-approvals/probe-results.md) and the
+[repeatable experiment](../specs/003-inline-approvals/quickstart.md).
+
 ## Hook attribution (pane routing)
 
 `hook-event` resolves its pane in two steps: explicit `pane_id`
