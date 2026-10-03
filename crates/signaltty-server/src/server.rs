@@ -309,7 +309,16 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
             msg = rx.recv() => {
                 let ev = match msg {
                     Ok(ev) => ev,
-                    Err(broadcast::error::RecvError::Lagged(_)) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // A long `wait`/`hook-event` dispatch does not poll this
+                        // receiver. When nothing was deliverable, lag is harmless:
+                        // later subscriptions replay from their own fence.
+                        if state.subs.is_empty() && state.attached.is_empty() {
+                            rx = rx.resubscribe();
+                            continue;
+                        }
+                        break;
+                    }
                     Err(_) => break,
                 };
                 if ev.seq <= state.last_received { break; }
@@ -451,6 +460,44 @@ mod tests {
             .unwrap(),
             0
         );
+        task.await.unwrap().unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lagged_idle_connection_survives_and_serves_later_calls() {
+        let (ctx, base, _) = test_context();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let owned = ctx.clone();
+        let task =
+            tokio::spawn(
+                async move { handle_conn(owned, server).await.map_err(|e| e.to_string()) },
+            );
+        while ctx.bcast.receiver_count() != 1 {
+            tokio::task::yield_now().await;
+        }
+        // No subscriptions or attachments: this burst overflows the receiver
+        // without anything deliverable to this connection.
+        for _ in 0..32 {
+            ctx.store
+                .write()
+                .unwrap()
+                .emit("test.event", serde_json::Value::Null);
+        }
+        client.write_all(format!("{}\n",serde_json::json!({"protocol":signaltty_proto::PROTOCOL,"id":"s","method":"server.status","params":{}})).as_bytes()).await.unwrap();
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            reader.read_line(&mut line),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(resp["id"], "s");
+        assert_eq!(resp["ok"], true);
+        drop(reader);
         task.await.unwrap().unwrap();
         std::fs::remove_dir_all(base).unwrap();
     }
