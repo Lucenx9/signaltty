@@ -1,7 +1,7 @@
 # Feature Specification: Agent-ready repository
 
 **Branch**: `015-agent-ready-repository` | **Created**: 2026-10-03
-**Status**: Clarified
+**Status**: Implemented; see verification.md and PR checks
 **Input**: "Manda PR con tutto", following the repository assessment and primary-source research.
 
 ## User Scenarios & Testing

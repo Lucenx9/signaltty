@@ -28,7 +28,8 @@
   assertion once; 20 isolated repetitions passed. No retries or assertion suppression
   were added. The runner now explicitly builds binaries before integration tests.
 
-Host evidence: `target/agent-ready-evidence/`. CI retains its own artifact; local
+Final host evidence: `target/agent-ready-current/` (248 ordinary tests, 15 GTK tests,
+11 tooling tests). CI retains its own artifact outside the Cargo cache; local
 ephemeral paths are not a claim that evidence is committed or remotely available.
 
 ## Review and limitations
@@ -45,3 +46,16 @@ session and refused native QA before launching any application process.
 Real compositor interactions, paid-provider sessions, IME and the broader manual
 accessibility matrix are outside automated proof. The evaluation bank is supplied
 without trial results; repeated comparative agent runs are future measurement work.
+
+## Delivery
+
+[PR #1](https://github.com/Lucenx9/signaltty/pull/1) contains the implementation and
+tracks the hosted checks and final clean-container result. The PR is registered
+with the originating conversation. A focused second review found no remaining
+blockers after the accepted fixes.
+
+A fresh root container correctly exposed that permission-sensitive tests cannot
+run as root. The image now runs as Ubuntu's unprivileged user, and the runner rejects
+root test execution. Hosted cache reuse exposed an old evidence directory restored
+under target; CI now writes evidence into its uncached runner temporary directory.
+Neither failure was suppressed or retried automatically.
