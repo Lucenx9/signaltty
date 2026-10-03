@@ -32,7 +32,8 @@ impl AgentAdapter for OpencodeAdapter {
             "session.status" => match ev.payload_str("status").as_deref() {
                 Some("busy") => LifecycleDecision {
                     lifecycle: Some(Lifecycle::Working),
-                    attention: None,
+                    // A new turn started: drop the previous turn's attention.
+                    attention: Some(Attention::None),
                     message: None,
                 },
                 Some("idle") => LifecycleDecision {
@@ -114,6 +115,7 @@ mod tests {
         let a = OpencodeAdapter;
         let d = a.lifecycle_state(&ev("session.status", json!({"status": "busy"})));
         assert_eq!(d.lifecycle, Some(Lifecycle::Working));
+        assert_eq!(d.attention, Some(Attention::None));
         let d = a.lifecycle_state(&ev(
             "session.status",
             json!({"status": "idle", "session_id": "s"}),

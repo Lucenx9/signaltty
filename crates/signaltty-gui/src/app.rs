@@ -551,7 +551,7 @@ impl App {
                     .and_then(|l| serde_json::from_value::<Layout>(l.clone()).ok())
                     .and_then(|l| l.ratio_at_path(path))
                     .unwrap_or(ratio);
-                self.dividers.send_succeeded(tab_id, path, confirmed);
+                self.dividers.send_succeeded(tab_id, path, ratio, confirmed);
             }
             Err(_) => {
                 let alive = self

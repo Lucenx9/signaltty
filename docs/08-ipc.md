@@ -61,7 +61,7 @@ clients can `subscribe {from_seq}` to replay.
 | `worktree.open` | `{workspace_id, path, name?}` | `{workspace, path, reused}` (absolute registered checkout path, canonical-cwd workspace reuse) |
 | `worktree.remove` | `{workspace_id, path}` | `{removed:true, path}` (explicit non-force removal; main, dirty, locked and open-referenced checkouts refused; branch retained) |
 | `tab.create` | `{workspace_id, title?}` | `{tab}` |
-| `tab.close` | `{tab_id}` | `{closed}` |
+| `tab.close` | `{tab_id, signal?}` | `{closed}` |
 | `tab.set_layout` | `{tab_id, layout}` | `{tab}` |
 | `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
 | `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?}` | `{pane, integration?}` |
@@ -69,7 +69,7 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.get` | `{pane_id}` | `{pane, wait_baseline}` |
 | `pane.input` | `{pane_id, data_b64}` | `{written}` |
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
-| `pane.signal` | `{pane_id, signal, group?}` | `{sent}` |
+| `pane.signal` | `{pane_id, signal, group?}` | `{sent}` (`INT TERM KILL HUP QUIT WINCH USR1 USR2`, case-insensitive, optional `SIG`; any other name, here or in a `*.close` `signal`, → `BAD_PARAMS`) |
 | `pane.read` | `{pane_id, mode: "screen"\|"tail", lines?, strip_ansi?}` | `{text, truncated}` |
 | `pane.attach` | `{pane_id, cols?, rows?, mark_seen?}` | `{snapshot_b64, output_offset, size, live, ...}` then `pty.data` stream; the snapshot is replayable VT state (contents, colours, cursor, modes) (`mark_seen` default true; GUIs pass false and acknowledge on focus) |
 | `pane.detach` | `{pane_id}` | `{detached}` (also implicit on disconnect) |

@@ -347,9 +347,9 @@ impl PaneWidget {
 
         // Input: VTE translates keys to bytes; forward to the server PTY.
         {
-            let w = Rc::clone(&w);
-            let term = w.term.clone();
-            term.connect_commit(move |_, text: &str, _| {
+            let weak = Rc::downgrade(&w);
+            w.term.connect_commit(move |_, text: &str, _| {
+                let Some(w) = weak.upgrade() else { return };
                 if !w.live.get() {
                     return;
                 }
@@ -365,10 +365,10 @@ impl PaneWidget {
         }
         // Focus = explicit per-pane interaction: clear attention.
         {
-            let w = Rc::clone(&w);
+            let weak = Rc::downgrade(&w);
             let on_focus = cb.on_focus;
-            let term = w.term.clone();
-            term.connect_has_focus_notify(move |term| {
+            w.term.connect_has_focus_notify(move |term| {
+                let Some(w) = weak.upgrade() else { return };
                 if term.has_focus() {
                     w.send("pane.mark_seen", json!({"pane_id": w.pane_id}));
                     on_focus(&w.pane_id);
@@ -666,6 +666,27 @@ mod tests {
             answerable,
             received_at: chrono::Utc::now(),
         }
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn dropped_pane_widget_is_freed() {
+        libadwaita::init().unwrap();
+        let (actor, _requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "freed",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let weak = Rc::downgrade(&pane);
+        drop(pane);
+        assert!(
+            weak.upgrade().is_none(),
+            "terminal signal handlers keep the pane alive"
+        );
     }
 
     #[test]
