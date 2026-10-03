@@ -991,14 +991,18 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
     // Optional resize on attach = last-writer-wins arbitration.
     if let (Some(cols), Some(rows)) = (p.cols, p.rows) {
         let size = PtySize::clamp(cols, rows);
-        {
+        let pane = {
             let mut s = ctx.store.write().unwrap();
-            if let Some(p) = s.panes.get_mut(&id) {
-                p.pty_size = size;
-            }
-        }
+            let pane = s
+                .panes
+                .get_mut(&id)
+                .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?;
+            pane.pty_size = size;
+            pane.clone()
+        };
         let _ = ctx.ptys.resize(&id, size);
-        ctx.emit(event::PANE_RESIZED, json!({"pane_id": id}));
+        ctx.emit(event::PANE_RESIZED, json!({"pane": pane}));
+        ctx.mark_persist();
     }
     let pane = {
         let s = ctx.store.read().unwrap();

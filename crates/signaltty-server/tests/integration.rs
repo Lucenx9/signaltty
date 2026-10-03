@@ -2667,3 +2667,28 @@ async fn close_with_unknown_signal_is_rejected_and_keeps_child() {
     assert_eq!(processes_with_arg(&arg), 0, "child outlived its pane");
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn attach_to_missing_pane_emits_no_resize() {
+    let srv = TestServer::start().await;
+    let mut events = srv.client().await;
+    let mut c = srv.client().await;
+    events
+        .call("subscribe", json!({"events": ["*"]}))
+        .await
+        .unwrap();
+    let err = c
+        .call(
+            "pane.attach",
+            json!({"pane_id": "pane_missing", "cols": 100, "rows": 30}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("NO_SUCH_PANE"), "{err}");
+    c.call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let ev = events.read_events(1, Duration::from_secs(5)).await;
+    assert_eq!(ev[0]["event"], "workspace.created", "{}", ev[0]);
+    srv.shutdown().await;
+}
