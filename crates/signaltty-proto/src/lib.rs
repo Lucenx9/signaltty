@@ -258,6 +258,7 @@ pub mod event {
 
 // Error codes (docs/08).
 pub mod code {
+    pub const IDENTITY_CHANGED: &str = "IDENTITY_CHANGED";
     pub const BAD_PROTOCOL: &str = "BAD_PROTOCOL";
     pub const UNKNOWN_METHOD: &str = "UNKNOWN_METHOD";
     pub const BAD_PARAMS: &str = "BAD_PARAMS";
@@ -276,6 +277,7 @@ pub mod code {
 
     /// Every error code the server returns, in docs/08 order.
     pub const ALL: &[&str] = &[
+        IDENTITY_CHANGED,
         BAD_PROTOCOL,
         UNKNOWN_METHOD,
         BAD_PARAMS,
@@ -322,7 +324,7 @@ mod tests {
         for (list, len) in [
             (method::ALL, 40usize),
             (event::ALL, 29usize),
-            (code::ALL, 15usize),
+            (code::ALL, 16usize),
         ] {
             let set: HashSet<&&str> = list.iter().collect();
             assert_eq!(set.len(), list.len(), "no duplicates");

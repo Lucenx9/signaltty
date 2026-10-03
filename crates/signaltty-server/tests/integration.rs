@@ -836,6 +836,54 @@ async fn audit_replays_across_restart() {
 }
 
 #[tokio::test]
+async fn new_events_after_restart_advance_the_previous_cursor() {
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    c.call(
+        "notify",
+        json!({"pane_id": pane, "title": "before-restart"}),
+    )
+    .await
+    .unwrap();
+    let before = c.call("server.status", json!({})).await.unwrap()["seq"]
+        .as_u64()
+        .unwrap();
+    drop(c);
+    srv.restart().await;
+    let mut c = srv.client().await;
+    c.call("notify", json!({"pane_id": pane, "title": "after-restart"}))
+        .await
+        .unwrap();
+    let after = c.call("server.status", json!({})).await.unwrap()["seq"]
+        .as_u64()
+        .unwrap();
+    // Clean up the owned server even if the regression fails.
+    let mut sub = srv.client().await;
+    sub.call(
+        "subscribe",
+        json!({"events":["notification.created"], "from_seq":before}),
+    )
+    .await
+    .unwrap();
+    let replay = tokio::time::timeout(
+        Duration::from_secs(1),
+        sub.read_events(1, Duration::from_secs(2)),
+    )
+    .await;
+    srv.shutdown().await;
+    assert!(
+        after > before,
+        "new cursor {after} must advance old cursor {before}"
+    );
+    let replay = replay.expect("new event must replay after the old cursor");
+    assert_eq!(
+        replay[0]["payload"]["notification"]["title"],
+        "after-restart"
+    );
+}
+
+#[tokio::test]
 async fn workspace_diff_reports_numstat_and_rejects_non_repo() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-intdiff-{}-{}",
@@ -1218,6 +1266,222 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
     assert!(err.contains("already live"), "{err}");
     srv.shutdown().await;
     std::fs::remove_dir_all(agents).unwrap();
+}
+
+#[tokio::test]
+async fn baseline_wait_ignores_old_done_and_accepts_fast_new_work() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    c.call(
+        "hook-event",
+        json!({"agent":"codex", "event":"Stop", "pane_id":pane}),
+    )
+    .await
+    .unwrap();
+    let old = c.call("pane.get", json!({"pane_id":pane})).await.unwrap();
+    let baseline = old["wait_baseline"].clone();
+    if !baseline.is_object() {
+        srv.shutdown().await;
+        panic!("pane.get must expose a new-work baseline");
+    }
+    let stale = c
+        .call(
+            "wait",
+            json!({"pane_id":pane, "until":"done", "after":baseline, "timeout_s":0}),
+        )
+        .await;
+    assert!(stale.unwrap_err().starts_with("TIMEOUT"));
+    c.call(
+        "hook-event",
+        json!({"agent":"codex", "event":"UserPromptSubmit", "pane_id":pane}),
+    )
+    .await
+    .unwrap();
+    c.call(
+        "hook-event",
+        json!({"agent":"codex", "event":"Stop", "pane_id":pane}),
+    )
+    .await
+    .unwrap();
+    let result = c.call("wait", json!({"pane_id":pane, "until":["done", "blocked", "failed"], "after":baseline, "timeout_s":1})).await.unwrap();
+    assert_eq!(result["outcome"], "done");
+    assert!(
+        result["transition_seq"].as_u64().unwrap() > baseline["lifecycle_seq"].as_u64().unwrap()
+    );
+    let current = c
+        .call(
+            "wait",
+            json!({"pane_id":pane, "until":"done", "timeout_s":0}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(current["satisfied"], true);
+    let output = tokio::process::Command::new(signaltty_testkit::bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args(["--json", "wait", "--pane"])
+        .arg(&pane)
+        .args(["--until", "done,blocked,failed", "--after-baseline"])
+        .arg(baseline.to_string())
+        .args(["--timeout", "0"])
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["outcome"],
+        "done"
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn baseline_wait_remembers_brief_matching_transitions() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    c.call(
+        "hook-event",
+        json!({"pane_id":pane,"agent":"codex","event":"Stop"}),
+    )
+    .await
+    .unwrap();
+    let baseline =
+        c.call("pane.get", json!({"pane_id":pane})).await.unwrap()["wait_baseline"].clone();
+    for event in ["UserPromptSubmit", "PermissionRequest", "UserPromptSubmit"] {
+        c.call(
+            "hook-event",
+            json!({"pane_id":pane,"agent":"codex","event":event}),
+        )
+        .await
+        .unwrap();
+    }
+    let result = c
+        .call(
+            "wait",
+            json!({"pane_id":pane,"until":["done","blocked"],"after":baseline,"timeout_s":0}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["outcome"], "blocked");
+    assert_eq!(
+        result["lifecycle"], "working",
+        "current state is still reported separately"
+    );
+    assert!(c
+        .call(
+            "wait",
+            json!({"pane_id":pane,"until":"blocked","timeout_s":0})
+        )
+        .await
+        .unwrap_err()
+        .starts_with("TIMEOUT"));
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn baseline_wait_tracks_session_discovery_replacement_and_restart() {
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let initial =
+        c.call("pane.get", json!({"pane_id":pane})).await.unwrap()["wait_baseline"].clone();
+    c.call(
+        "report-session",
+        json!({"pane_id":pane,"agent":"codex","agent_session_id":"first"}),
+    )
+    .await
+    .unwrap();
+    c.call(
+        "hook-event",
+        json!({"pane_id":pane,"agent":"codex","event":"PermissionRequest"}),
+    )
+    .await
+    .unwrap();
+    let blocked = c.call("wait",json!({"pane_id":pane,"until":["done","blocked","failed"],"after":initial,"timeout_s":1})).await.unwrap();
+    assert_eq!(blocked["outcome"], "blocked");
+    let known = c.call("pane.get", json!({"pane_id":pane})).await.unwrap()["wait_baseline"].clone();
+    for session in ["second", "first"] {
+        c.call(
+            "report-session",
+            json!({"pane_id":pane,"agent":"codex","agent_session_id":session}),
+        )
+        .await
+        .unwrap();
+    }
+    let replaced = c
+        .call(
+            "wait",
+            json!({"pane_id":pane,"until":"blocked","after":known,"timeout_s":0}),
+        )
+        .await
+        .unwrap_err();
+    assert!(replaced.starts_with("IDENTITY_CHANGED"), "{replaced}");
+    for params in [
+        json!({"pane_id":pane,"until":[],"after":initial}),
+        json!({"pane_id":pane,"until":"done","after":true}),
+        json!({"pane_id":pane,"until":["done",7]}),
+    ] {
+        assert!(c
+            .call("wait", params)
+            .await
+            .unwrap_err()
+            .starts_with("BAD_PARAMS"));
+    }
+    let current =
+        c.call("pane.get", json!({"pane_id":pane})).await.unwrap()["wait_baseline"].clone();
+    srv.restart().await;
+    let mut c = srv.client().await;
+    let stale = c
+        .call(
+            "wait",
+            json!({"pane_id":pane,"until":"exited","after":current,"timeout_s":0}),
+        )
+        .await
+        .unwrap_err();
+    assert!(stale.starts_with("IDENTITY_CHANGED"), "{stale}");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn subscribe_declares_corrupt_history_and_cursor_ahead() {
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    c.call("notify", json!({"pane_id":pane,"title":"before"}))
+        .await
+        .unwrap();
+    let mut ahead = srv.client().await;
+    let result = ahead
+        .call("subscribe", json!({"from_seq":u64::MAX}))
+        .await
+        .unwrap();
+    assert_eq!(result["subscribed"], false);
+    assert_eq!(result["replay"]["status"], "cursor_ahead");
+    srv.restart().await;
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(srv.state_dir.join("audit.jsonl"))
+        .unwrap()
+        .write_all(b"{broken\n")
+        .unwrap();
+    let mut sub = srv.client().await;
+    let result = sub.call("subscribe", json!({"from_seq":0})).await.unwrap();
+    assert_eq!(result["subscribed"], false);
+    assert_eq!(result["replay"]["status"], "unavailable");
+    assert_eq!(result["replay"]["returned"], 0);
+    assert_eq!(result["replay"]["recovery"], "snapshot_then_resubscribe");
+    assert!(
+        sub.call("server.status", json!({})).await.is_err(),
+        "incomplete streams close after acknowledgment"
+    );
+    srv.shutdown().await;
 }
 
 #[tokio::test]
@@ -1909,6 +2173,14 @@ resume = ["sh", "-c", "echo resumed-stream; read line"]
         .call("pane.resume", json!({"pane_id": pane}))
         .await
         .unwrap();
+    let stale = control
+        .call(
+            "wait",
+            json!({"pane_id":pane,"until":"unknown","after":exited["wait_baseline"],"timeout_s":0}),
+        )
+        .await
+        .unwrap_err();
+    assert!(stale.starts_with("IDENTITY_CHANGED"), "{stale}");
     let streamed = attached.read_events(1, Duration::from_secs(3)).await;
     assert_eq!(streamed[0]["event"], "pty.data");
     use base64::Engine;

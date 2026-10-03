@@ -57,8 +57,8 @@ be reset merely by setting `--test-threads=1`. Native window renders emitted by
 existing tests go to `screenshots/`; inspect them before declaring a visual change
 complete. Ordinary tests alone are not the delivery gate.
 
-Clippy diagnostics are compared with `scripts/clippy-baseline.json`. The exception
-identifies the existing audit.rs warning by code, file, line and message. A new or
+Clippy diagnostics are compared with `scripts/clippy-baseline.json`. The list is currently empty; the legacy audit warning was fixed when the journal
+writer changed. Entries identify a warning by code, file, line and message. A new or
 moved warning fails. Review rather than regenerate the exception list; remove an
 entry when the warning is fixed. Dependency checks inspect resolved package names,
 including aliases and transitive normal/build dependencies. Source-level OS calls

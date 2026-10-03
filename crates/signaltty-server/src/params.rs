@@ -298,8 +298,24 @@ pub struct Subscribe {
 #[derive(Debug, Deserialize)]
 pub struct Wait {
     pub pane_id: String,
-    pub until: String,
+    pub until: WaitUntil,
     pub timeout_s: Option<u64>,
+    pub after: Option<crate::store::WaitBaseline>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum WaitUntil {
+    One(String),
+    Any(Vec<String>),
+}
+impl WaitUntil {
+    pub fn into_vec(self) -> Vec<String> {
+        match self {
+            Self::One(value) => vec![value],
+            Self::Any(values) => values,
+        }
+    }
 }
 
 // ---- shared value parsing (used by more than one handler) ----

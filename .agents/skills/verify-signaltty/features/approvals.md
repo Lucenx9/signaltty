@@ -7,13 +7,17 @@ Discovery, preserved decision on focus/attach, one-time choice delivery.
 ## How to get to it (user POV)
 
 An agent requests approval. Click the attention count or use Ctrl+Shift+J, then
-click Allow in the pane's inline decision bar.
+click Allow once in a native permission bar (Allow in the structured QA fixture).
 
 ## Driving it with GTK/IPC
 
-Run `python3 scripts/qa-gui-reliability.py`. It creates a Codex-hinted cat fixture,
-sends a production PermissionRequest hook, invokes `next-attention`, verifies the
-same decision/gate, clicks the AT-SPI Allow action and observes decision consumption.
+`python3 scripts/qa-gui-reliability.py` is designed to create a Codex-hinted cat
+fixture, send a production PermissionRequest hook, invoke `next-attention`, and
+test the same decision/gate by clicking the AT-SPI Allow action and observing
+decision consumption. The recorded AT-SPI run failed during desktop enumeration
+before its first assertion because the installed Python binding does not make
+`Atspi.Accessible` iterable, so the Allow-and-consumption result remains
+unverified (see `specs/016-agent-event-recovery/verification.md`).
 `decision_*` server tests additionally verify delivered bytes and stale answers.
 
 `qa-ui-scenes.py --width 360 --long-choice --output /tmp/approval.png` captures

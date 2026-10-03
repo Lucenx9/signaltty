@@ -104,8 +104,7 @@ impl Ctx {
     pub fn emit(&self, name: &str, payload: Value) {
         // The audit lives in Store::emit: every broadcast event is logged
         // at the single seam, whatever the caller.
-        let ev = self.store.write().unwrap().emit(name, payload);
-        let _ = self.bcast.send(ev);
+        self.store.write().unwrap().emit(name, payload);
     }
 }
 
@@ -114,7 +113,9 @@ pub struct ConnEffect {
     pub attach: Vec<String>,
     pub detach: Vec<String>,
     pub subscribe: Option<Vec<String>>,
-    pub replay_from: Option<u64>,
+    pub replay: Option<Vec<StoredEvent>>,
+    pub fence: Option<u64>,
+    pub close: bool,
 }
 
 type Handler = Result<(Value, ConnEffect), (String, String)>;
@@ -231,6 +232,7 @@ fn h_server_schema() -> Handler {
             "methods": method::ALL,
             "events": event::ALL,
             "codes": code::ALL,
+            "capabilities": {"subscribe_replay_coverage":true,"wait_baseline":true,"wait_multiple_outcomes":true},
         }),
         ConnEffect::default(),
     ))
@@ -372,16 +374,16 @@ fn h_workspace_rename(ctx: &Ctx, params: &Value) -> Handler {
     ws.name = name;
     ws.updated_at = Utc::now();
     let ws = ws.clone();
-    let ev = s.emit(event::WORKSPACE_UPDATED, json!({"workspace": ws}));
+    s.emit(event::WORKSPACE_UPDATED, json!({"workspace": ws}));
     drop(s);
-    let _ = ctx.bcast.send(ev);
+
     ctx.mark_persist();
     Ok((json!({"workspace": ws}), ConnEffect::default()))
 }
 
 fn close_pane_locked(ctx: &Ctx, s: &mut crate::store::Store, pane_id: &str, signal: Option<&str>) {
     ctx.ptys.destroy(pane_id, signal);
-    if let Some(pane) = s.panes.remove(pane_id) {
+    if let Some(pane) = s.remove_pane(pane_id) {
         if let Some(tab) = s.tabs.get_mut(&pane.tab_id) {
             if let Some(layout) = tab.layout.as_mut() {
                 let ids = layout.panes();
@@ -398,8 +400,6 @@ fn close_pane_locked(ctx: &Ctx, s: &mut crate::store::Store, pane_id: &str, sign
                     .and_then(|l| l.panes().into_iter().next());
             }
         }
-        let ev = s.emit(event::PANE_CLOSED, json!({"pane_id": pane_id}));
-        let _ = ctx.bcast.send(ev);
     }
 }
 
@@ -435,13 +435,12 @@ fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
     );
     for tab_id in tabs {
         if s.tabs.remove(&tab_id).is_some() {
-            let ev = s.emit(event::TAB_CLOSED, json!({"tab_id": tab_id}));
-            let _ = ctx.bcast.send(ev);
+            s.emit(event::TAB_CLOSED, json!({"tab_id": tab_id}));
         }
     }
-    let ev = s.emit(event::WORKSPACE_CLOSED, json!({"workspace_id": id}));
+    s.emit(event::WORKSPACE_CLOSED, json!({"workspace_id": id}));
     drop(s);
-    let _ = ctx.bcast.send(ev);
+
     ctx.mark_persist();
     Ok((json!({"closed": true}), ConnEffect::default()))
 }
@@ -572,9 +571,9 @@ fn h_tab_close(ctx: &Ctx, params: &Value) -> Handler {
         }
         ws.updated_at = Utc::now();
     }
-    let ev = s.emit(event::TAB_CLOSED, json!({"tab_id": id}));
+    s.emit(event::TAB_CLOSED, json!({"tab_id": id}));
     drop(s);
-    let _ = ctx.bcast.send(ev);
+
     ctx.mark_persist();
     Ok((json!({"closed": true}), ConnEffect::default()))
 }
@@ -612,9 +611,9 @@ fn h_tab_set_layout(ctx: &Ctx, params: &Value) -> Handler {
         .ok_or_else(|| (code::NO_SUCH_TAB.to_string(), id.clone()))?;
     tab.layout = Some(layout);
     let tab = tab.clone();
-    let ev = s.emit(event::TAB_UPDATED, json!({"tab": tab}));
+    s.emit(event::TAB_UPDATED, json!({"tab": tab}));
     drop(s);
-    let _ = ctx.bcast.send(ev);
+
     ctx.mark_persist();
     Ok((json!({"tab": tab}), ConnEffect::default()))
 }
@@ -642,9 +641,9 @@ fn h_tab_set_ratio(ctx: &Ctx, params: &Value) -> Handler {
         return Err(bad_params("path does not resolve to a split"));
     }
     let tab = tab.clone();
-    let ev = s.emit(event::TAB_UPDATED, json!({"tab": tab}));
+    s.emit(event::TAB_UPDATED, json!({"tab": tab}));
     drop(s);
-    let _ = ctx.bcast.send(ev);
+
     ctx.mark_persist();
     Ok((json!({"tab": tab}), ConnEffect::default()))
 }
@@ -763,8 +762,7 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
         ws.tabs.push(tab_id.clone());
         ws.active_tab_id = Some(tab_id.clone());
         s.tabs.insert(tab_id.clone(), tab.clone());
-        let ev = s.emit(event::TAB_CREATED, json!({"tab": tab}));
-        let _ = ctx.bcast.send(ev);
+        s.emit(event::TAB_CREATED, json!({"tab": tab}));
     }
     s.panes.insert(pane.id.clone(), pane.clone());
     let tab = s.tabs.get_mut(&tab_id).unwrap();
@@ -772,8 +770,8 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
         pane_id: pane.id.clone(),
     });
     tab.active_pane_id = Some(pane.id.clone());
-    let ev = s.emit(event::PANE_CREATED, json!({"pane": pane}));
-    let _ = ctx.bcast.send(ev);
+    s.publish_pane(&pane, false);
+
     drop(s);
     ctx.mark_persist();
     Ok((launch_result(&pane, integration), ConnEffect::default()))
@@ -849,11 +847,10 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
             tab.active_pane_id = Some(pane.id.clone());
             tab.clone()
         };
-        let ev = s.emit(event::TAB_UPDATED, json!({"tab": tab_snapshot}));
-        let _ = ctx.bcast.send(ev);
+        s.emit(event::TAB_UPDATED, json!({"tab": tab_snapshot}));
     }
-    let ev = s.emit(event::PANE_CREATED, json!({"pane": pane}));
-    let _ = ctx.bcast.send(ev);
+    s.publish_pane(&pane, false);
+
     drop(s);
     ctx.mark_persist();
     Ok((launch_result(&pane, integration), ConnEffect::default()))
@@ -866,7 +863,10 @@ fn h_pane_get(ctx: &Ctx, params: &Value) -> Handler {
         .panes
         .get(&id)
         .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id))?;
-    Ok((pane_result(pane), ConnEffect::default()))
+    Ok((
+        json!({"pane":pane,"wait_baseline":s.wait_baseline(&pane.id)}),
+        ConnEffect::default(),
+    ))
 }
 
 fn h_pane_input(ctx: &Ctx, params: &Value) -> Handler {
@@ -1016,9 +1016,7 @@ fn h_pane_attach(ctx: &Ctx, params: &Value) -> Handler {
     let pane = {
         let mut s = ctx.store.write().unwrap();
         if want_seen {
-            if let Some(ev) = s.mark_seen(&id, "attach") {
-                let _ = ctx.bcast.send(ev);
-            }
+            s.mark_seen(&id, "attach");
         }
         s.panes.get(&id).cloned().unwrap_or(pane)
     };
@@ -1105,22 +1103,19 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
             socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
         })
         .map_err(|e| (code::SPAWN_FAILED.to_string(), e))?;
-    let (pane, transition) = {
+    let pane = {
         {
             let pane = s.panes.get_mut(&id).unwrap();
             pane.live = LiveState::Live;
             pane.restore_state = RestoreState::Live;
             pane.last_activity_at = Utc::now();
         }
-        let transition = s.set_lifecycle(&id, Lifecycle::Unknown);
+        s.set_lifecycle(&id, Lifecycle::Unknown);
         let pane = s.panes.get(&id).cloned().unwrap();
-        (pane, transition)
+        pane
     };
-    if let Some(ev) = transition {
-        let _ = ctx.bcast.send(ev);
-    }
-    let ev = s.emit(event::PANE_CREATED, json!({"pane": pane, "resumed": true}));
-    let _ = ctx.bcast.send(ev);
+    s.publish_pane(&pane, true);
+
     drop(s);
     ctx.mark_persist();
     Ok((launch_result(&pane, integration), ConnEffect::default()))
@@ -1132,9 +1127,7 @@ fn h_pane_mark_seen(ctx: &Ctx, params: &Value) -> Handler {
     s.panes
         .get(&id)
         .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?;
-    if let Some(ev) = s.mark_seen(&id, "mark_seen") {
-        let _ = ctx.bcast.send(ev);
-    }
+    s.mark_seen(&id, "mark_seen");
     let pane_snapshot = s.panes.get(&id).cloned().unwrap();
     drop(s);
     ctx.mark_persist();
@@ -1207,23 +1200,20 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
                 (ev, cleared)
             })
     };
-    let Some((ev, cleared)) = consumed else {
+    let Some(_) = consumed else {
         return Err((
             code::NO_SUCH_DECISION.to_string(),
             format!("decision {} is stale", p.decision_id),
         ));
     };
-    let _ = ctx.bcast.send(ev);
-    if let Some(cleared) = cleared {
-        let _ = ctx.bcast.send(cleared);
-    }
+
     if let Err(e) = ctx.ptys.input(&p.pane_id, &bytes) {
         // The gate is consumed but the bytes never landed (the child
         // exited between the checks): loud error, user answers in-terminal.
-        let _ = ctx.bcast.send(ctx.store.write().unwrap().emit(
+        ctx.store.write().unwrap().emit(
             event::DECISION_CLEARED,
             json!({"pane_id": p.pane_id, "reason": "pane_exited"}),
-        ));
+        );
         return Err(if e == "pane has no live PTY" {
             (code::PANE_EXITED.to_string(), p.pane_id)
         } else {
@@ -1251,7 +1241,6 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
 /// raise attention, set last_message, emit. Returns the notification.
 pub fn push_notification(
     store: &SharedStore,
-    bcast: &broadcast::Sender<StoredEvent>,
     pane_id: &str,
     title: Option<&str>,
     body: &str,
@@ -1301,16 +1290,12 @@ pub fn push_notification(
             });
             p.last_activity_at = now;
         }
-        let ev = s.emit(event::NOTIFICATION_CREATED, json!({"notification": notif}));
-        let _ = bcast.send(ev);
+        s.emit(event::NOTIFICATION_CREATED, json!({"notification": notif}));
     }
-    let ev = store
+    store
         .write()
         .unwrap()
         .raise_attention(pane_id, severity.attention());
-    if let Some(ev) = ev {
-        let _ = bcast.send(ev);
-    }
     notif
 }
 
@@ -1337,15 +1322,7 @@ fn h_notify(ctx: &Ctx, params: &Value) -> Handler {
             return Err((code::NO_SUCH_PANE.to_string(), pane_id));
         }
     }
-    let notif = push_notification(
-        &ctx.store,
-        &ctx.bcast,
-        &pane_id,
-        Some(&title),
-        &body,
-        severity,
-        "cli",
-    );
+    let notif = push_notification(&ctx.store, &pane_id, Some(&title), &body, severity, "cli");
     ctx.mark_persist();
     Ok((json!({"notification": notif}), ConnEffect::default()))
 }
@@ -1438,36 +1415,31 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         let mut s = ctx.store.write().unwrap();
         if let Some(p) = s.panes.get_mut(&pid) {
             p.agent.kind = kind;
-            p.agent.agent_session_id = Some(sid);
             if resume.is_some() {
                 p.agent.resume_argv = resume;
             }
             p.last_activity_at = Utc::now();
         }
+        s.set_agent_session(&pid, sid);
     }
 
     // 2. Lifecycle + attention from the adapter, under one lock.
     let decision = adapter.lifecycle_state(&event);
-    let outbound = {
+    {
         let mut s = ctx.store.write().unwrap();
-        let mut outbound = Vec::new();
         if let Some(lifecycle) = decision.lifecycle {
-            outbound.extend(s.set_lifecycle(&pid, lifecycle));
+            s.set_lifecycle(&pid, lifecycle);
         }
         match decision.attention {
             Some(Attention::None) => {
-                if let Some(ev) = s.clear_attention(&pid, "hook") {
-                    outbound.push(ev);
-                }
-                outbound.extend(s.clear_decision(&pid, "attention_cleared"));
+                s.clear_attention(&pid, "hook");
+                s.clear_decision(&pid, "attention_cleared");
             }
-            Some(att) => outbound.extend(s.raise_attention(&pid, att)),
+            Some(att) => {
+                s.raise_attention(&pid, att);
+            }
             None => {}
         }
-        outbound
-    };
-    for ev in outbound {
-        let _ = ctx.bcast.send(ev);
     }
     // 2b. Structured decision ingest (directive 2): explicit data wins.
     // A decision payload sets/supersedes; without one, leaving `blocked`
@@ -1497,13 +1469,7 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             answerable,
             received_at: Utc::now(),
         };
-        let ev = {
-            let mut s = ctx.store.write().unwrap();
-            s.set_decision(&pid, record)
-        };
-        if let Some(ev) = ev {
-            let _ = ctx.bcast.send(ev);
-        }
+        ctx.store.write().unwrap().set_decision(&pid, record);
     } else {
         let moved_on = {
             let s = ctx.store.read().unwrap();
@@ -1512,13 +1478,7 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
                 .is_some_and(|pane| pane.lifecycle != Lifecycle::Blocked)
         };
         if moved_on {
-            let ev = {
-                let mut s = ctx.store.write().unwrap();
-                s.clear_decision(&pid, "moved_on")
-            };
-            if let Some(ev) = ev {
-                let _ = ctx.bcast.send(ev);
-            }
+            ctx.store.write().unwrap().clear_decision(&pid, "moved_on");
         }
     }
     if let Some(message) = decision.message {
@@ -1536,7 +1496,6 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             let severity = parse_severity(&p.severity)?;
             push_notification(
                 &ctx.store,
-                &ctx.bcast,
                 &pid,
                 p.title.as_deref(),
                 &body,
@@ -1547,7 +1506,6 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
     } else if let Some(draft) = adapter.notification_event(&event) {
         push_notification(
             &ctx.store,
-            &ctx.bcast,
             &pid,
             Some(&draft.title),
             draft.body.as_deref().unwrap_or(""),
@@ -1591,16 +1549,18 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
         .get_mut(&pane_id)
         .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), pane_id.clone()))?;
     pane.agent.kind = kind;
-    pane.agent.agent_session_id = Some(session_id.clone());
     // The adapter owns the official resume command for this id.
     pane.agent.resume_argv = ctx
         .adapter_for_kind(kind)
         .resume_capability(&session_id)
         .map(|r| r.argv);
-    let pane = pane.clone();
-    let ev = s.emit(event::PANE_UPDATED, json!({"pane": pane}));
+    let changed = s.set_agent_session(&pane_id, session_id).is_some();
+    let pane = s.panes[&pane_id].clone();
+    if !changed {
+        s.emit(event::PANE_UPDATED, json!({"pane":pane}));
+    }
     drop(s);
-    let _ = ctx.bcast.send(ev);
+
     ctx.mark_persist();
     Ok((pane_result(&pane), ConnEffect::default()))
 }
@@ -1610,14 +1570,21 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
 fn h_subscribe(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::Subscribe = decode(params)?;
     let events = p.events.unwrap_or_else(|| vec!["*".to_string()]);
-    let from_seq = p.from_seq;
-    let seq = ctx.store.read().unwrap().seq;
-    let effect = ConnEffect {
-        subscribe: Some(events),
-        replay_from: from_seq,
+    let s = ctx.store.read().unwrap();
+    let mut reply = json!({"subscribed":true,"seq":s.seq});
+    let mut effect = ConnEffect {
+        subscribe: Some(events.clone()),
+        fence: Some(s.seq),
         ..ConnEffect::default()
     };
-    Ok((json!({"subscribed": true, "seq": seq}), effect))
+    if let Some(from) = p.from_seq {
+        let (coverage, replay) = s.replay(from, &events);
+        effect.close = coverage["status"] != "complete";
+        reply["subscribed"] = json!(!effect.close);
+        reply["replay"] = coverage;
+        effect.replay = Some(replay);
+    }
+    Ok((reply, effect))
 }
 
 fn wait_satisfied(pane: &Pane, until: &str) -> bool {
@@ -1638,71 +1605,97 @@ fn wait_satisfied(pane: &Pane, until: &str) -> bool {
 }
 
 async fn h_wait(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
-    let effect = ConnEffect::default();
-    let respond = |r: Handler| match r {
-        Ok((v, _)) => (Response::ok(&req.id, v), ConnEffect::default()),
-        Err((c, m)) => (Response::err(&req.id, &c, m), effect),
+    let respond = |result: Result<Value, (String, String)>| {
+        (
+            match result {
+                Ok(value) => Response::ok(&req.id, value),
+                Err((code, message)) => Response::err(&req.id, &code, message),
+            },
+            ConnEffect::default(),
+        )
     };
     let p: params::Wait = match decode(params) {
         Ok(p) => p,
         Err(e) => return respond(Err(e)),
     };
-    let pane_id = p.pane_id;
-    let until = p.until;
-    if let Err(e) = validate_until(&until) {
-        return respond(Err(e));
+    let outcomes = p.until.into_vec();
+    if outcomes.is_empty() {
+        return respond(Err(bad_params("until must contain at least one outcome")));
     }
-    let timeout_s = p.timeout_s.unwrap_or(3600);
+    for outcome in &outcomes {
+        if let Err(e) = validate_until(outcome) {
+            return respond(Err(e));
+        }
+    }
+    if p.after
+        .as_ref()
+        .map(|a| a.pane_id != p.pane_id || a.process_instance.is_empty())
+        .unwrap_or(false)
     {
-        let s = ctx.store.read().unwrap();
-        if !s.panes.contains_key(&pane_id) {
-            return respond(Err((code::NO_SUCH_PANE.to_string(), pane_id)));
-        }
-        if let Some(p) = s.panes.get(&pane_id) {
-            if wait_satisfied(p, &until) {
-                return respond(Ok((
-                    json!({"satisfied": true, "lifecycle": p.lifecycle.as_str(), "attention": p.attention.as_str()}),
-                    ConnEffect::default(),
-                )));
-            }
-        }
+        return respond(Err(bad_params(
+            "baseline must identify this pane and its process",
+        )));
     }
+    // Subscribe first; all evaluations use authoritative progress, including lag.
     let mut rx = ctx.bcast.subscribe();
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_s);
+    let Some(deadline) = tokio::time::Instant::now()
+        .checked_add(std::time::Duration::from_secs(p.timeout_s.unwrap_or(3600)))
+    else {
+        return respond(Err(bad_params("wait timeout is too large")));
+    };
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
     loop {
+        {
+            let s = ctx.store.read().unwrap();
+            let Some(pane) = s.panes.get(&p.pane_id) else {
+                return respond(Err((code::NO_SUCH_PANE.into(), p.pane_id.clone())));
+            };
+            let current = s.wait_baseline(&p.pane_id);
+            if let Some(after) = &p.after {
+                let Some(current) = &current else {
+                    return respond(Err((
+                        code::IDENTITY_CHANGED.into(),
+                        "pane process is unavailable".into(),
+                    )));
+                };
+                if after.process_instance != current.process_instance
+                    || after.session_generation != current.session_generation
+                    || after
+                        .agent_session_id
+                        .as_ref()
+                        .map(|id| Some(id) != current.agent_session_id.as_ref())
+                        .unwrap_or(false)
+                {
+                    return respond(Err((
+                        code::IDENTITY_CHANGED.into(),
+                        "pane process or agent session changed".into(),
+                    )));
+                }
+                if after.lifecycle_seq > current.lifecycle_seq
+                    || after.attention_seq > current.attention_seq
+                {
+                    return respond(Err(bad_params("baseline transition is ahead of this pane")));
+                }
+            }
+            for outcome in &outcomes {
+                let transition = s.matching_transition(&p.pane_id, outcome).unwrap_or(0);
+                let satisfied = match &p.after {
+                    Some(after) => transition > after.threshold(outcome),
+                    None => wait_satisfied(pane, outcome),
+                };
+                if satisfied {
+                    return respond(Ok(
+                        json!({"satisfied":true,"outcome":outcome,"transition_seq":transition,"lifecycle":pane.lifecycle.as_str(),"attention":pane.attention.as_str()}),
+                    ));
+                }
+            }
+        }
         tokio::select! {
-            _ = tokio::time::sleep_until(deadline) => {
-                return (Response::err(&req.id, code::TIMEOUT, format!("timed out waiting for {until}")), ConnEffect::default());
-            }
-            _ = tick.tick() => {
-                let s = ctx.store.read().unwrap();
-                match s.panes.get(&pane_id) {
-                    None => return respond(Err((code::NO_SUCH_PANE.to_string(), pane_id))),
-                    Some(p) if wait_satisfied(p, &until) => {
-                        return respond(Ok((json!({"satisfied": true, "lifecycle": p.lifecycle.as_str(), "attention": p.attention.as_str()}), ConnEffect::default())));
-                    }
-                    _ => {}
-                }
-            }
-            msg = rx.recv() => {
-                match msg {
-                    Ok(ev) => {
-                        if ev.payload.get("pane_id").and_then(|v| v.as_str()) != Some(&pane_id) {
-                            continue;
-                        }
-                        let s = ctx.store.read().unwrap();
-                        match s.panes.get(&pane_id) {
-                            None => return respond(Err((code::NO_SUCH_PANE.to_string(), pane_id))),
-                            Some(p) if wait_satisfied(p, &until) => {
-                                return respond(Ok((json!({"satisfied": true, "lifecycle": p.lifecycle.as_str(), "attention": p.attention.as_str()}), ConnEffect::default())));
-                            }
-                            _ => {}
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(_) => return (Response::err(&req.id, code::INTERNAL, "event bus closed"), ConnEffect::default()),
-                }
+            biased;
+            _ = tokio::time::sleep_until(deadline) => return respond(Err((code::TIMEOUT.into(),format!("timed out waiting for {}",outcomes.join(","))))),
+            _ = tick.tick() => {},
+            event = rx.recv() => {
+                if matches!(event,Err(broadcast::error::RecvError::Closed)) { return respond(Err((code::INTERNAL.into(),"event bus closed".into()))); }
             }
         }
     }

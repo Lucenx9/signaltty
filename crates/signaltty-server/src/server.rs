@@ -60,11 +60,12 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let plugins = signaltty_plugin::PluginRegistry::load(config.plugin_dir.clone());
     let overlays = crate::router::load_overlays(&config.agents_dir);
-    // The audit lives in the store so every emit is logged at one seam.
+    let audit = crate::audit::AuditLog::open(&config.state_dir)?;
+    let sequence = crate::audit::EventSequence::open(&config.state_dir, audit.max_seq())?;
     store
         .write()
         .unwrap()
-        .set_audit(crate::audit::AuditLog::open_or_disabled(&config.state_dir));
+        .configure_events(audit, sequence, bcast.clone());
     let ctx = Arc::new(Ctx {
         store: store.clone(),
         approvals: crate::approvals::Approvals::default(),
@@ -114,9 +115,6 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 let events =
                     crate::procscan::scan(&ctx.store, &ctx.ptys.child_pids(), &ctx.overlays);
                 if !events.is_empty() {
-                    for ev in events {
-                        let _ = ctx.bcast.send(ev);
-                    }
                     ctx.mark_persist();
                 }
             }
@@ -211,6 +209,8 @@ struct ConnState {
     ptys: PtyManager,
     subs: Vec<String>,
     attached: HashSet<String>,
+    fence: u64,
+    last_received: u64,
 }
 
 impl Drop for ConnState {
@@ -230,6 +230,8 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
         ptys: ctx.ptys.clone(),
         subs: Vec::new(),
         attached: HashSet::new(),
+        fence: 0,
+        last_received: 0,
     };
 
     let send_line = |writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>, line: String| async move {
@@ -266,7 +268,7 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                 }
                 let native_wait = req.method == signaltty_proto::method::HOOK_EVENT
                     && req.params.get("wait_for_answer").and_then(serde_json::Value::as_bool) == Some(true);
-                let (mut resp, effect) = if native_wait {
+                let (mut resp, effect) = if native_wait || req.method == signaltty_proto::method::WAIT {
                     let mut next = String::new();
                     tokio::select! {
                         result = dispatch(&ctx, &req) => result,
@@ -295,29 +297,33 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                 if let Some(subs) = effect.subscribe {
                     state.subs = subs;
                 }
-                if let Some(from) = effect.replay_from {
-                    // Audit backfill (survives rotation + restart) merged
-                    // with the ring, deduped by seq (see audit.rs).
-                    let backlog = {
-                        let s = ctx.store.read().unwrap();
-                        let backfill = s.audit_since(from, crate::audit::REPLAY_CAP);
-                        let ring = s.events_since(from);
-                        crate::audit::merge_replay(backfill, ring)
-                    };
+                if let Some(fence) = effect.fence { state.fence = fence; }
+                if effect.close { break; }
+                if let Some(backlog) = effect.replay {
                     for ev in backlog {
-                        if state.subs.iter().any(|g| signaltty_proto::glob_matches(g, &ev.name)) {
-                            let msg = EventMsg::new(&ev.name, ev.seq, ev.payload);
-                            send_line(writer.clone(), msg.to_line()).await?;
-                        }
+                        let msg = EventMsg::new(&ev.name, ev.seq, ev.payload);
+                        send_line(writer.clone(), msg.to_line()).await?;
                     }
                 }
             }
             msg = rx.recv() => {
                 let ev = match msg {
                     Ok(ev) => ev,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // A long `wait`/`hook-event` dispatch does not poll this
+                        // receiver. When nothing was deliverable, lag is harmless:
+                        // later subscriptions replay from their own fence.
+                        if state.subs.is_empty() && state.attached.is_empty() {
+                            rx = rx.resubscribe();
+                            continue;
+                        }
+                        break;
+                    }
                     Err(_) => break,
                 };
+                if ev.seq <= state.last_received { break; }
+                state.last_received = ev.seq;
+                if ev.name != signaltty_proto::event::PTY_DATA && ev.seq <= state.fence { continue; }
                 let pane_id = ev.payload.get("pane_id").and_then(|v| v.as_str());
                 let for_attached = ev.name == signaltty_proto::event::PTY_DATA
                     && pane_id.map(|p| state.attached.contains(p)).unwrap_or(false);
@@ -339,6 +345,215 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
 mod tests {
     use super::*;
 
+    fn test_context() -> (Arc<Ctx>, std::path::PathBuf, String) {
+        let base = std::env::temp_dir().join(signaltty_core::ids::new_pane_id());
+        let config = Config {
+            socket_path: base.join("test.sock"),
+            state_dir: base.join("state"),
+            history_tail_bytes: 1024,
+            plugin_dir: base.join("plugins"),
+            agents_dir: base.join("agents"),
+            integration_home: Some(base.join("home")),
+        };
+        let mut store = Store::new();
+        let pane = signaltty_core::model::Pane::new(
+            "ws".into(),
+            "tab".into(),
+            "/tmp".into(),
+            vec!["sleep".into()],
+            signaltty_core::model::PtySize::default(),
+            chrono::Utc::now(),
+        );
+        let id = pane.id.clone();
+        store.panes.insert(id.clone(), pane);
+        let (bcast, _) = broadcast::channel(8);
+        let audit = crate::audit::AuditLog::open(&config.state_dir).unwrap();
+        let sequence = crate::audit::EventSequence::open(&config.state_dir, 0).unwrap();
+        store.configure_events(audit, sequence, bcast.clone());
+        let store = Arc::new(std::sync::RwLock::new(store));
+        let ptys = PtyManager::new(
+            store.clone(),
+            bcast.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let ctx = Arc::new(Ctx {
+            store,
+            bcast,
+            ptys,
+            config: config.clone(),
+            shutdown: Arc::new(tokio::sync::Notify::new()),
+            approvals: crate::approvals::Approvals::default(),
+            worktrees: crate::worktrees::Worktrees::default(),
+            plugins: signaltty_plugin::PluginRegistry::load(config.plugin_dir),
+            overlays: Vec::new(),
+        });
+        (ctx, base, id)
+    }
+
+    #[tokio::test]
+    async fn pending_wait_releases_receivers_on_eof_shutdown_and_another_request() {
+        for cause in ["eof", "shutdown", "request"] {
+            let (ctx, base, pane) = test_context();
+            let (mut client, server) = UnixStream::pair().unwrap();
+            let owned = ctx.clone();
+            let task =
+                tokio::spawn(
+                    async move { handle_conn(owned, server).await.map_err(|e| e.to_string()) },
+                );
+            let request = serde_json::json!({"protocol":signaltty_proto::PROTOCOL,"id":"wait","method":"wait","params":{"pane_id":pane,"until":"done","timeout_s":3600}});
+            client
+                .write_all(format!("{request}\n").as_bytes())
+                .await
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                while ctx.bcast.receiver_count() != 2 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            match cause {
+                "eof" => drop(client),
+                "shutdown" => ctx.shutdown.notify_waiters(),
+                _ => {
+                    client.write_all(b"{}\n").await.unwrap();
+                }
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(ctx.bcast.receiver_count(), 0, "{cause}");
+            std::fs::remove_dir_all(base).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn lagged_connection_closes_instead_of_skipping_events() {
+        let (ctx, base, _) = test_context();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let owned = ctx.clone();
+        let task =
+            tokio::spawn(
+                async move { handle_conn(owned, server).await.map_err(|e| e.to_string()) },
+            );
+        client.write_all(format!("{}\n",serde_json::json!({"protocol":signaltty_proto::PROTOCOL,"id":"s","method":"subscribe","params":{"events":["*"]}})).as_bytes()).await.unwrap();
+        let mut reader = BufReader::new(client);
+        let mut ack = String::new();
+        reader.read_line(&mut ack).await.unwrap();
+        // The current-thread runtime cannot drain the receiver during this burst.
+        for _ in 0..32 {
+            ctx.store
+                .write()
+                .unwrap()
+                .emit("test.event", serde_json::Value::Null);
+        }
+        let mut eof = String::new();
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                reader.read_line(&mut eof)
+            )
+            .await
+            .unwrap()
+            .unwrap(),
+            0
+        );
+        task.await.unwrap().unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lagged_idle_connection_survives_and_serves_later_calls() {
+        let (ctx, base, _) = test_context();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let owned = ctx.clone();
+        let task =
+            tokio::spawn(
+                async move { handle_conn(owned, server).await.map_err(|e| e.to_string()) },
+            );
+        while ctx.bcast.receiver_count() != 1 {
+            tokio::task::yield_now().await;
+        }
+        // No subscriptions or attachments: this burst overflows the receiver
+        // without anything deliverable to this connection.
+        for _ in 0..32 {
+            ctx.store
+                .write()
+                .unwrap()
+                .emit("test.event", serde_json::Value::Null);
+        }
+        client.write_all(format!("{}\n",serde_json::json!({"protocol":signaltty_proto::PROTOCOL,"id":"s","method":"server.status","params":{}})).as_bytes()).await.unwrap();
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            reader.read_line(&mut line),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(resp["id"], "s");
+        assert_eq!(resp["ok"], true);
+        drop(reader);
+        task.await.unwrap().unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn replay_to_live_handoff_delivers_each_event_once() {
+        let (ctx, base, _) = test_context();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let owned = ctx.clone();
+        let task =
+            tokio::spawn(
+                async move { handle_conn(owned, server).await.map_err(|e| e.to_string()) },
+            );
+        while ctx.bcast.receiver_count() != 1 {
+            tokio::task::yield_now().await;
+        }
+        for _ in 0..2 {
+            ctx.store
+                .write()
+                .unwrap()
+                .emit("test.event", serde_json::Value::Null);
+        }
+        client.write_all(format!("{}\n",serde_json::json!({"protocol":signaltty_proto::PROTOCOL,"id":"s","method":"subscribe","params":{"events":["test.*"],"from_seq":0}})).as_bytes()).await.unwrap();
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let ack: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(ack["result"]["replay"]["status"], "complete");
+        assert_eq!(ack["result"]["seq"], 2);
+        for seq in 1..=2 {
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(event["seq"], seq);
+        }
+        ctx.store
+            .write()
+            .unwrap()
+            .emit("test.event", serde_json::Value::Null);
+        line.clear();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            reader.read_line(&mut line),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()["seq"],
+            3
+        );
+        drop(reader);
+        task.await.unwrap().unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
     #[test]
     fn dropping_a_connection_unregisters_all_viewers_even_on_error() {
         let store = Arc::new(std::sync::RwLock::new(crate::store::Store::new()));
@@ -352,6 +567,8 @@ mod tests {
                 ptys: ptys.clone(),
                 subs: Vec::new(),
                 attached: HashSet::from(["pane".to_string()]),
+                fence: 0,
+                last_received: 0,
             };
         }
         assert_eq!(ptys.viewer_count("pane"), 1);

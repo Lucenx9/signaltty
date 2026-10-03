@@ -75,11 +75,19 @@ class QualityCommands(unittest.TestCase):
                        'line_start': 111, 'is_primary': True}]}}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'clippy.jsonl'
+            scripts = Path(directory) / 'scripts'
+            scripts.mkdir()
+            checker = scripts / 'check-quality.py'
+            checker.write_text((ROOT / 'scripts/check-quality.py').read_text())
+            (scripts / 'clippy-baseline.json').write_text(json.dumps([[
+                warning['message']['code']['code'],
+                warning['message']['spans'][0]['file_name'], 111,
+                warning['message']['message']]]))
             for line, expected in [(111, 0), (112, 1)]:
                 warning['message']['spans'][0]['line_start'] = line
                 path.write_text(json.dumps(warning) + '\n' + json.dumps(
                     {'reason': 'build-finished', 'success': True}) + '\n')
-                result = subprocess.run([sys.executable, str(ROOT / 'scripts/check-quality.py'),
+                result = subprocess.run([sys.executable, str(checker),
                                          'clippy', str(path)], capture_output=True, text=True)
                 self.assertEqual(result.returncode, expected)
 
