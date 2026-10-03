@@ -20,6 +20,8 @@ struct Surface {
     max_bytes: usize,
     /// Incomplete trailing line fragment.
     fragment: String,
+    /// Incomplete UTF-8 sequence cut by a PTY read boundary.
+    utf8_carry: Vec<u8>,
 }
 
 impl Surface {
@@ -33,12 +35,22 @@ impl Surface {
             max_lines: DEFAULT_SCROLLBACK_LINES,
             max_bytes: DEFAULT_SCROLLBACK_BYTES,
             fragment: String::new(),
+            utf8_carry: Vec::new(),
         }
     }
 
     fn feed(&mut self, data: &[u8]) {
         self.parser.process(data);
-        let text = String::from_utf8_lossy(data);
+        let mut bytes = std::mem::take(&mut self.utf8_carry);
+        bytes.extend_from_slice(data);
+        let carry = (1..=bytes.len().min(3))
+            .find(|&k| {
+                std::str::from_utf8(&bytes[bytes.len() - k..])
+                    .is_err_and(|e| e.valid_up_to() == 0 && e.error_len().is_none())
+            })
+            .unwrap_or(0);
+        self.utf8_carry = bytes.split_off(bytes.len() - carry);
+        let text = String::from_utf8_lossy(&bytes);
         for chunk in text.split_inclusive('\n') {
             if let Some(line) = chunk.strip_suffix('\n') {
                 self.fragment.push_str(line);
@@ -190,6 +202,18 @@ mod tests {
         assert!(b.snapshot("p").contains("hello"));
         let tail = b.tail("p", 10, false).unwrap();
         assert_eq!(tail, vec!["hello".to_string(), "world".to_string()]);
+    }
+
+    #[test]
+    fn tail_keeps_utf8_split_across_reads() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"caf\xc3");
+        b.feed_output("p", b"\xa9\n");
+        assert_eq!(
+            b.tail("p", 1, false).unwrap(),
+            vec!["caf\u{e9}".to_string()]
+        );
     }
 
     #[test]

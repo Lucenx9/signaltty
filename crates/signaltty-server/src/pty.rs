@@ -445,7 +445,7 @@ impl PtyManager {
     }
 }
 
-fn parse_signal(sig: &str) -> Result<nix::sys::signal::Signal, String> {
+pub(crate) fn parse_signal(sig: &str) -> Result<nix::sys::signal::Signal, String> {
     use nix::sys::signal::Signal::*;
     let s = sig.to_ascii_uppercase();
     let s = s.strip_prefix("SIG").unwrap_or(&s);

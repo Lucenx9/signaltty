@@ -45,14 +45,16 @@ impl OscScanner {
         while i < buf.len() {
             if buf[i] == ESC && i + 1 < buf.len() && buf[i + 1] == b']' {
                 match find_osc_end(&buf, i + 2) {
-                    Some((end, term_len)) => {
+                    Ok((end, term_len)) => {
                         let payload = &buf[i + 2..end];
                         if let Some(ev) = parse_osc(payload) {
                             events.push(ev);
                         }
                         i = end + term_len;
                     }
-                    None => break, // incomplete: carry rest
+                    // Aborted: drop it and rescan from the new OSC.
+                    Err(Some(next)) => i = next,
+                    Err(None) => break, // incomplete: carry rest
                 }
             } else if buf[i] == BEL {
                 events.push(OscEvent::Bell);
@@ -80,23 +82,24 @@ impl Default for OscScanner {
 }
 
 /// Find OSC terminator (BEL or ST=`ESC \`) from `from`. Returns
-/// (payload_end, terminator_len).
-fn find_osc_end(buf: &[u8], from: usize) -> Option<(usize, usize)> {
+/// (payload_end, terminator_len); `Err(Some(i))` when a new OSC at `i`
+/// aborts this one, `Err(None)` when the sequence is incomplete.
+fn find_osc_end(buf: &[u8], from: usize) -> Result<(usize, usize), Option<usize>> {
     let mut i = from;
     while i < buf.len() {
         if buf[i] == BEL {
-            return Some((i, 1));
+            return Ok((i, 1));
         }
         if buf[i] == ESC && i + 1 < buf.len() && buf[i + 1] == b'\\' {
-            return Some((i, 2));
+            return Ok((i, 2));
         }
         // A new OSC aborts the previous one (defensive).
         if buf[i] == ESC && i + 1 < buf.len() && buf[i + 1] == b']' {
-            return None;
+            return Err(Some(i));
         }
         i += 1;
     }
-    None
+    Err(None)
 }
 
 fn parse_osc(payload: &[u8]) -> Option<OscEvent> {
@@ -178,6 +181,22 @@ mod tests {
             out.extend(s.push(c));
         }
         out
+    }
+
+    #[test]
+    fn aborted_osc_does_not_starve_later_ones() {
+        let ev = scan(&[b"\x1b]9;cut\x1b]0;real-title\x07", b"\x1b]9;next\x07"]);
+        assert_eq!(
+            ev,
+            vec![
+                OscEvent::Title("real-title".into()),
+                OscEvent::Notify {
+                    title: None,
+                    body: "next".into(),
+                    source: "osc9"
+                },
+            ]
+        );
     }
 
     #[test]

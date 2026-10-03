@@ -12,6 +12,11 @@ const DETACH_KEY: u8 = 0x1d; // Ctrl+]
 pub async fn run(socket: &std::path::Path, pane_id: &str) -> Result<(), CliError> {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut client = Client::connect(socket).await?;
+    // Attach streams only `pty.data`; subscribe first so an exit racing
+    // the attach still arrives.
+    client
+        .call("subscribe", json!({"events": ["pane.exited"]}))
+        .await?;
     let attach = client
         .call(
             "pane.attach",
@@ -27,6 +32,9 @@ pub async fn run(socket: &std::path::Path, pane_id: &str) -> Result<(), CliError
             out.flush().await.map_err(|e| CliError::Io(e.to_string()))?;
         }
     }
+    if attach["live"]["state"] != "live" {
+        return Ok(());
+    }
 
     crossterm::terminal::enable_raw_mode().map_err(|e| CliError::Io(e.to_string()))?;
     let result = attach_loop(socket, pane_id, client).await;
@@ -40,7 +48,10 @@ async fn attach_loop(
     pane_id: &str,
     client: Client,
 ) -> Result<(), CliError> {
-    let (mut reader, _writer) = client.into_parts();
+    let (reader, _writer) = client.into_parts();
+    // `next_line` is cancel-safe; `read_line` would drop a partly received
+    // event whenever stdin wins the select below.
+    let mut lines = reader.lines();
     let mut input_client = Client::connect(socket).await?;
     let mut stdin = tokio::io::stdin();
     let mut winch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
@@ -49,7 +60,6 @@ async fn attach_loop(
     let mut in_buf = [0u8; 4096];
 
     loop {
-        let mut line = String::new();
         tokio::select! {
             n = stdin.read(&mut in_buf) => {
                 let n = n.map_err(|e| CliError::Io(e.to_string()))?;
@@ -66,11 +76,10 @@ async fn attach_loop(
                 }
                 send_input(&mut input_client, pane_id, chunk).await?;
             }
-            n = reader.read_line(&mut line) => {
-                let n = n.map_err(|e| CliError::Io(e.to_string()))?;
-                if n == 0 {
+            line = lines.next_line() => {
+                let Some(line) = line.map_err(|e| CliError::Io(e.to_string()))? else {
                     return Err(CliError::Io("server closed connection".to_string()));
-                }
+                };
                 let v: Value = serde_json::from_str(line.trim()).map_err(|e| CliError::Io(e.to_string()))?;
                 if v.get("type").and_then(|t| t.as_str()) != Some("event") {
                     continue;
@@ -86,7 +95,7 @@ async fn attach_loop(
                             }
                         }
                     }
-                    "pane.exited" => {
+                    "pane.exited" if payload["pane_id"] == pane_id => {
                         return Ok(());
                     }
                     _ => {}

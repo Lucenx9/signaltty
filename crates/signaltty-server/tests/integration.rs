@@ -2597,3 +2597,120 @@ async fn codex_unsupported_or_hanging_probe_keeps_original_launch_with_notice() 
         );
     }
 }
+
+#[tokio::test]
+async fn request_split_across_writes_survives_interleaved_events() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let srv = TestServer::start().await;
+    let mut other = srv.client().await;
+    let (r, mut w) = tokio::net::UnixStream::connect(&srv.socket)
+        .await
+        .unwrap()
+        .into_split();
+    let mut reader = BufReader::new(r);
+    let req = r#"{"protocol":"signaltty/1","id":"split","method":"server.status","params":{}}"#;
+    let (head, tail) = req.split_at(req.len() / 2);
+    w.write_all(head.as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Any broadcast wakes the connection's event branch mid-line.
+    other
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    w.write_all(format!("{tail}\n").as_bytes()).await.unwrap();
+    let mut line = String::new();
+    tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+        .await
+        .expect("response timeout")
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(resp["id"], "split", "{resp}");
+    assert_eq!(resp["ok"], true, "{resp}");
+    srv.shutdown().await;
+}
+
+fn processes_with_arg(arg: &str) -> usize {
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(|e| std::fs::read(e.ok()?.path().join("cmdline")).ok())
+        .filter(|cmd| cmd.split(|&b| b == 0).any(|a| a == arg.as_bytes()))
+        .count()
+}
+
+#[tokio::test]
+async fn close_with_unknown_signal_is_rejected_and_keeps_child() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let arg = format!(
+        "{}.{}",
+        90000 + std::process::id() % 9000,
+        std::process::id()
+    );
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", &arg]).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(processes_with_arg(&arg), 1);
+    let err = c
+        .call("pane.close", json!({"pane_id": pane, "signal": "BOGUS"}))
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("BAD_PARAMS"), "{err}");
+    let err = c
+        .call("pane.signal", json!({"pane_id": pane, "signal": "BOGUS"}))
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("BAD_PARAMS"), "{err}");
+    c.call("pane.close", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(processes_with_arg(&arg), 0, "child outlived its pane");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn attach_to_missing_pane_emits_no_resize() {
+    let srv = TestServer::start().await;
+    let mut events = srv.client().await;
+    let mut c = srv.client().await;
+    events
+        .call("subscribe", json!({"events": ["*"]}))
+        .await
+        .unwrap();
+    let err = c
+        .call(
+            "pane.attach",
+            json!({"pane_id": "pane_missing", "cols": 100, "rows": 30}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("NO_SUCH_PANE"), "{err}");
+    c.call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let ev = events.read_events(1, Duration::from_secs(5)).await;
+    assert_eq!(ev[0]["event"], "workspace.created", "{}", ev[0]);
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn concurrent_workspace_creates_get_distinct_handles() {
+    let srv = TestServer::start().await;
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let mut c = srv.client().await;
+        tasks.spawn(async move {
+            c.call("workspace.create", json!({"cwd": "/tmp", "name": "api"}))
+                .await
+                .unwrap()["workspace"]["handle"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        });
+    }
+    let mut handles = tasks.join_all().await;
+    handles.sort();
+    handles.dedup();
+    assert_eq!(handles.len(), 8, "{handles:?}");
+    srv.shutdown().await;
+}
