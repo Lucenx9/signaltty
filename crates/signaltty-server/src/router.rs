@@ -302,27 +302,26 @@ fn h_workspace_create(ctx: &Ctx, params: &Value) -> Handler {
     }
     let now = Utc::now();
     let name = p.name.unwrap_or_else(|| "workspace".to_string());
-    let handle = {
-        let s = ctx.store.read().unwrap();
-        unique_handle(&s, &signaltty_core::model::slugify(&name))
+    let git = crate::git::git_info(&cwd);
+    let ws = {
+        // Pick the handle under the insert's lock so concurrent creates
+        // cannot claim the same one.
+        let mut s = ctx.store.write().unwrap();
+        let ws = Workspace {
+            id: new_ws_id(),
+            handle: unique_handle(&s, &signaltty_core::model::slugify(&name)),
+            name,
+            git,
+            cwd,
+            tabs: Vec::new(),
+            active_tab_id: None,
+            auto_resume: false,
+            created_at: now,
+            updated_at: now,
+        };
+        s.workspaces.insert(ws.id.clone(), ws.clone());
+        ws
     };
-    let ws = Workspace {
-        id: new_ws_id(),
-        name,
-        handle,
-        git: crate::git::git_info(&cwd),
-        cwd,
-        tabs: Vec::new(),
-        active_tab_id: None,
-        auto_resume: false,
-        created_at: now,
-        updated_at: now,
-    };
-    ctx.store
-        .write()
-        .unwrap()
-        .workspaces
-        .insert(ws.id.clone(), ws.clone());
     ctx.emit(event::WORKSPACE_CREATED, json!({"workspace": ws}));
     ctx.mark_persist();
     Ok((json!({"workspace": ws}), ConnEffect::default()))

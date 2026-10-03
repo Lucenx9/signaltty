@@ -2692,3 +2692,25 @@ async fn attach_to_missing_pane_emits_no_resize() {
     assert_eq!(ev[0]["event"], "workspace.created", "{}", ev[0]);
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn concurrent_workspace_creates_get_distinct_handles() {
+    let srv = TestServer::start().await;
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let mut c = srv.client().await;
+        tasks.spawn(async move {
+            c.call("workspace.create", json!({"cwd": "/tmp", "name": "api"}))
+                .await
+                .unwrap()["workspace"]["handle"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        });
+    }
+    let mut handles = tasks.join_all().await;
+    handles.sort();
+    handles.dedup();
+    assert_eq!(handles.len(), 8, "{handles:?}");
+    srv.shutdown().await;
+}
