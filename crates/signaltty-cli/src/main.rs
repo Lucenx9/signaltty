@@ -377,6 +377,10 @@ async fn main() {
         eprintln!("signaltty: {e}");
         std::process::exit(1);
     }
+    // Exit without dropping the runtime: attach's pending stdin read sits on
+    // a blocking thread that would hold shutdown until the next keypress.
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    std::process::exit(0);
 }
 
 async fn run(args: Args) -> Result<(), CliError> {

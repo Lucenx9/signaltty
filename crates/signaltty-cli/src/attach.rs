@@ -12,6 +12,11 @@ const DETACH_KEY: u8 = 0x1d; // Ctrl+]
 pub async fn run(socket: &std::path::Path, pane_id: &str) -> Result<(), CliError> {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut client = Client::connect(socket).await?;
+    // Attach streams only `pty.data`; subscribe first so an exit racing
+    // the attach still arrives.
+    client
+        .call("subscribe", json!({"events": ["pane.exited"]}))
+        .await?;
     let attach = client
         .call(
             "pane.attach",
@@ -26,6 +31,9 @@ pub async fn run(socket: &std::path::Path, pane_id: &str) -> Result<(), CliError
                 .map_err(|e| CliError::Io(e.to_string()))?;
             out.flush().await.map_err(|e| CliError::Io(e.to_string()))?;
         }
+    }
+    if attach["live"]["state"] != "live" {
+        return Ok(());
     }
 
     crossterm::terminal::enable_raw_mode().map_err(|e| CliError::Io(e.to_string()))?;
@@ -87,7 +95,7 @@ async fn attach_loop(
                             }
                         }
                     }
-                    "pane.exited" => {
+                    "pane.exited" if payload["pane_id"] == pane_id => {
                         return Ok(());
                     }
                     _ => {}
