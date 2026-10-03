@@ -66,6 +66,7 @@ pub struct WorktreeRemove {
 #[derive(Debug, Deserialize)]
 pub struct TabClose {
     pub tab_id: String,
+    #[serde(default, deserialize_with = "de_opt_signal")]
     pub signal: Option<String>,
 }
 
@@ -95,6 +96,7 @@ pub struct WorkspaceRename {
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceClose {
     pub workspace_id: String,
+    #[serde(default, deserialize_with = "de_opt_signal")]
     pub signal: Option<String>,
 }
 
@@ -137,6 +139,20 @@ fn de_split_path<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<bool>, D::Error>
 #[derive(Debug, Deserialize)]
 #[serde(transparent)]
 pub struct Ratio(#[serde(deserialize_with = "de_ratio")] pub f32);
+
+/// Reject unknown names at decode: `close` must not drop a pane whose
+/// child it could not signal.
+fn de_signal<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let raw = String::deserialize(d)?;
+    crate::pty::parse_signal(&raw).map_err(serde::de::Error::custom)?;
+    Ok(raw)
+}
+
+fn de_opt_signal<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    #[derive(Deserialize)]
+    struct Signal(#[serde(deserialize_with = "de_signal")] String);
+    Ok(Option::<Signal>::deserialize(d)?.map(|s| s.0))
+}
 
 fn de_ratio<'de, D: Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
     let raw = f64::deserialize(d)?;
@@ -206,6 +222,7 @@ pub struct PaneResize {
 #[derive(Debug, Deserialize)]
 pub struct PaneSignal {
     pub pane_id: String,
+    #[serde(deserialize_with = "de_signal")]
     pub signal: String,
     pub group: Option<bool>,
 }
@@ -229,6 +246,7 @@ pub struct PaneAttach {
 #[derive(Debug, Deserialize)]
 pub struct PaneClose {
     pub pane_id: String,
+    #[serde(default, deserialize_with = "de_opt_signal")]
     pub signal: Option<String>,
 }
 

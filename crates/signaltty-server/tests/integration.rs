@@ -2629,3 +2629,41 @@ async fn request_split_across_writes_survives_interleaved_events() {
     assert_eq!(resp["ok"], true, "{resp}");
     srv.shutdown().await;
 }
+
+fn processes_with_arg(arg: &str) -> usize {
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(|e| std::fs::read(e.ok()?.path().join("cmdline")).ok())
+        .filter(|cmd| cmd.split(|&b| b == 0).any(|a| a == arg.as_bytes()))
+        .count()
+}
+
+#[tokio::test]
+async fn close_with_unknown_signal_is_rejected_and_keeps_child() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let arg = format!(
+        "{}.{}",
+        90000 + std::process::id() % 9000,
+        std::process::id()
+    );
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", &arg]).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(processes_with_arg(&arg), 1);
+    let err = c
+        .call("pane.close", json!({"pane_id": pane, "signal": "BOGUS"}))
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("BAD_PARAMS"), "{err}");
+    let err = c
+        .call("pane.signal", json!({"pane_id": pane, "signal": "BOGUS"}))
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("BAD_PARAMS"), "{err}");
+    c.call("pane.close", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(processes_with_arg(&arg), 0, "child outlived its pane");
+    srv.shutdown().await;
+}
