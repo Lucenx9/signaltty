@@ -18,16 +18,14 @@ rendering (collapse-and-count, per-turn diffs, verb-tense run states), and
 Linear-grade tokens through libadwaita patterns. A spec that contradicts a
 directive must justify the deviation in the spec itself.
 
-### III. Skills are load-bearing tooling
+### III. Skills follow the task
 
-The agent loads the phase's skills from `docs/15-agent-skills.md` before
-working, not after: Specify → `grill-with-docs`/`to-spec`; Plan →
-`architect`/`domain-modeling`/`codebase-design`; Tasks → `to-tickets`;
-Implement → `implement` + `tdd` + `karpathy-guidelines` + the applicable
-`principle-*`; Review → `code-review` + `interrogate` + `blast-radius`;
-Verify → `prove-it-works` + `create-verification-skill`;
-UI work → `frontend-design` + the emilkowalski set;
-stuck → `diagnosing-bugs`/`figure-it-out`.
+The agent loads the applicable workflow from `docs/15-agent-skills.md` before
+working. Select skills by the actual task and their stated scope. Generic review
+or publishing workflows do not require extra interviews or issue publication for
+an already authorized local change. Use the project's existing testing seams.
+The canonical verification guide is `.agents/skills/verify-signaltty/SKILL.md`.
+Add instructions for demonstrated failures and evaluate their effect on real tasks.
 If the skills are not installed in the current environment, run
 `scripts/setup-agent.sh all` first — it works from any checkout with only
 bash + git.
@@ -63,7 +61,10 @@ per-compositor special cases. Delete dead code in the same commit that kills it.
 
 - `cargo fmt --check`, `cargo clippy --workspace --all-targets` (zero new
   warnings), `cargo test --workspace` — all green before finishing.
-- Rust 1.85, edition 2021. Commits read `area: what`, one concern per commit.
+- `scripts/verify.sh full` is the shared local/CI gate, including isolated GTK tests,
+  architecture checks and the reviewed Clippy exception list.
+- Rust minimum 1.92, edition 2021; development toolchain is pinned separately.
+  Commits read `area: what`, one concern per commit.
 - GUI changes are verified with light + dark screenshots
   (`ADW_DEBUG_COLOR_SCHEME=prefer-light`) before finishing.
 
@@ -74,4 +75,9 @@ bump below, a migration note for in-flight specs, and an ADR when the change is
 load-bearing. All reviews verify compliance; complexity must be justified
 against Principle VII.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-29 | **Last Amended**: 2026-09-29
+Migration for in-flight specs: use the pinned development environment and full
+verification command before delivery. Historical Rust 1.85 claims do not apply to
+the current locked GUI dependency graph. Existing behavioral acceptance criteria
+remain binding. ADR-0017 records the tooling and routing changes.
+
+**Version**: 1.1.0 | **Ratified**: 2026-09-29 | **Last Amended**: 2026-10-03

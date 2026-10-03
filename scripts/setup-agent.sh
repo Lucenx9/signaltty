@@ -231,11 +231,12 @@ skills_install() { # --target --cache --dry-run
   echo "skills: $new new, $updated updated, $same unchanged (${#targets[@]} target(s))"
 }
 
-skills_check() { # --target
-  local target="auto"
+skills_check() { # --target --cache
+  local target="auto" cache="$CACHE_DEFAULT"
   while [ $# -gt 0 ]; do
     case "$1" in
       --target) target="$2"; shift 2 ;;
+      --cache) cache="$2"; shift 2 ;;
       *) die "unknown flag: $1" ;;
     esac
   done
@@ -253,6 +254,11 @@ skills_check() { # --target
       total=$((total + 1))
       if [ ! -f "$t/$dest/SKILL.md" ]; then
         echo "missing: $t/$dest"
+        missing=$((missing + 1))
+      elif [ ! -d "$cache/$_repo/$_src" ] ||
+           [ "$(git -C "$cache/$_repo" rev-parse HEAD 2>/dev/null)" != "$(pin_of "$_repo")" ] ||
+           ! diff -r -q "$cache/$_repo/$_src" "$t/$dest" >/dev/null 2>&1; then
+        echo "unverified revision or modified skill: $t/$dest (run skills install with the same --cache)"
         missing=$((missing + 1))
       fi
     done <<<"$SKILLS"

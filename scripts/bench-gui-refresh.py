@@ -15,6 +15,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from qa_evidence import preserve_logs
 
 
 def main():
@@ -124,6 +125,9 @@ def main():
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
+                server_log.flush()
+                gui_log.flush()
+                preserve_logs(root, 'refresh')
 
 
 if __name__ == "__main__":

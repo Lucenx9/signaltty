@@ -5,6 +5,14 @@ description: Verify signaltty's native GTK workspace, real PTYs and IPC reliabil
 
 ## Launch
 
+Use `scripts/verify.sh doctor` for prerequisites, `scripts/verify.sh fast` during
+development, and `scripts/verify.sh full` before submitting a PR. Full includes
+every ignored GTK test in a separate Xvfb/D-Bus process, server QA and the refresh
+benchmark. Each run prints a unique evidence directory with `summary.json`, logs
+and available native renders. Inspect those renders; a green run is not visual approval.
+`scripts/verify.sh desktop` additionally runs the native AT-SPI reliability probe.
+See [development and proof limits](../../../docs/17-agent-development.md).
+
 Run `cargo build --workspace`. The helpers below launch their own server using
 temporary socket/state/plugin/agent directories, wait for `server.status`, and
 clean up in `finally`. Do not launch a second GUI while a user's signaltty window
@@ -40,7 +48,9 @@ signaltty-gui <filter> -- --ignored --test-threads=1`.
 
 ## Evidence
 
-Save helper stdout JSONL under `docs/qa/` with the verification date and commit.
+The runner saves logs under `target/verification/`; CI uploads its evidence artifact.
+For durable release evidence, save selected helper stdout JSONL under `docs/qa/`
+with the verification date and commit.
 Proof includes the action and actual resulting state: decisions remain answerable,
 VTE contains outage and online markers exactly twice for the echoing cat fixture,
 GTK responds during SIGSTOP, and server ownership remains valid. Synthetic hooks

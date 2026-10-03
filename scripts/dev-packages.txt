@@ -1,0 +1,15 @@
+build-essential
+ca-certificates
+curl
+git
+pkg-config
+libgtk-4-dev
+libadwaita-1-dev
+libvte-2.91-gtk4-dev
+python3
+python3-gi
+gir1.2-atspi-2.0
+at-spi2-core
+dbus-x11
+xvfb
+xauth
