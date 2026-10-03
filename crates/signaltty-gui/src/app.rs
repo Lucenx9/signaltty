@@ -70,7 +70,9 @@ pub struct App {
     toasts: adw::ToastOverlay,
     banner: adw::Banner,
     split_view: adw::OverlaySplitView,
-    title: adw::WindowTitle,
+    title: gtk4::Label,
+    title_context: gtk4::Label,
+    title_mark: gtk4::Label,
     sidebar: Sidebar,
     tab_view: adw::TabView,
     content: gtk4::Stack,
@@ -120,26 +122,50 @@ impl App {
         // ---- sidebar ----
         let sidebar = Sidebar::new();
         let sidebar_header = adw::HeaderBar::new();
-        sidebar_header.set_title_widget(Some(&adw::WindowTitle::new("Workspaces", "")));
+        let wordmark = gtk4::Label::new(Some("signaltty"));
+        wordmark.add_css_class("wordmark");
+        sidebar_header.set_title_widget(Some(&gtk4::Box::new(gtk4::Orientation::Horizontal, 0)));
+        sidebar_header.pack_start(&wordmark);
         let btn_new_ws = gtk4::Button::from_icon_name("list-add-symbolic");
         btn_new_ws.set_tooltip_text(Some("New Workspace (Ctrl+Shift+N)"));
         btn_new_ws.update_property(&[gtk4::accessible::Property::Label("New Workspace")]);
         btn_new_ws.set_action_name(Some("win.new-workspace"));
-        sidebar_header.pack_start(&btn_new_ws);
+        sidebar_header.pack_end(&btn_new_ws);
         let sidebar_page = adw::ToolbarView::new();
         sidebar_page.add_top_bar(&sidebar_header);
         sidebar_page.set_content(Some(&sidebar.widget));
 
         // ---- content header ----
-        let title = adw::WindowTitle::new("signaltty", "");
+        // Left-aligned breadcrumb (Linear-style): mark · name · context.
+        let title = gtk4::Label::new(Some("signaltty"));
+        title.add_css_class("crumb-title");
+        title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        let title_context = gtk4::Label::new(None);
+        title_context.add_css_class("crumb-context");
+        title_context.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        let title_mark = sidebar::mark();
+        title_mark.set_visible(false);
+        let title_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        title_box.add_css_class("crumb");
+        title_box.append(&title_mark);
+        title_box.append(&title);
+        let crumb_sep = gtk4::Label::new(Some("/"));
+        crumb_sep.add_css_class("crumb-sep");
+        title_box.append(&crumb_sep);
+        title_mark
+            .bind_property("visible", &crumb_sep, "visible")
+            .sync_create()
+            .build();
+        title_box.append(&title_context);
         let header = adw::HeaderBar::new();
-        header.set_title_widget(Some(&title));
+        header.set_title_widget(Some(&gtk4::Box::new(gtk4::Orientation::Horizontal, 0)));
         let btn_sidebar = gtk4::ToggleButton::new();
         btn_sidebar.set_icon_name("sidebar-show-symbolic");
         btn_sidebar.set_tooltip_text(Some("Toggle Sidebar (F9)"));
         btn_sidebar.update_property(&[gtk4::accessible::Property::Label("Toggle Sidebar")]);
         btn_sidebar.set_action_name(Some("win.toggle-sidebar"));
         header.pack_start(&btn_sidebar);
+        header.pack_start(&title_box);
         let btn_menu = gtk4::MenuButton::new();
         btn_menu.set_icon_name("open-menu-symbolic");
         btn_menu.set_tooltip_text(Some("Main Menu"));
@@ -224,6 +250,8 @@ impl App {
             banner,
             split_view,
             title,
+            title_context,
+            title_mark,
             sidebar,
             tab_view,
             content,
@@ -763,9 +791,10 @@ impl App {
                     m.panes.clear();
                 }
                 self.render_tabs();
-                self.title.set_title("signaltty");
-                self.title.set_subtitle("");
-                self.title.set_tooltip_text(None);
+                self.title.set_text("signaltty");
+                self.title_mark.set_visible(false);
+                self.title_context.set_text("");
+                self.title_context.set_tooltip_text(None);
                 self.content.set_visible_child_name("no-workspace");
             }
         }
@@ -838,14 +867,16 @@ impl App {
         if user_navigation && self.active_ws_id().as_deref() != Some(ws_id) {
             self.navigate();
         }
-        self.title.set_title(&self.display_title(&ws));
+        self.title.set_text(&self.display_title(&ws));
+        sidebar::set_mark(&self.title_mark, &ws.id, &ws.name);
+        self.title_mark.set_visible(true);
         let place = tilde(&ws.cwd);
         let context = match &ws.git.branch {
             Some(branch) => format!("{branch} · {place}"),
             None => place,
         };
-        self.title.set_subtitle(&context);
-        self.title.set_tooltip_text(Some(&context));
+        self.title_context.set_text(&context);
+        self.title_context.set_tooltip_text(Some(&context));
         let has_tabs = !snapshot.tabs.is_empty();
         {
             let mut m = self.model.borrow_mut();

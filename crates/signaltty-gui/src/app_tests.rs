@@ -463,7 +463,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     drain_refresh(&app);
     assert_eq!(calls.lock().unwrap().len(), 3);
     assert_eq!(app.active_ws_id().as_deref(), Some("a"));
-    assert_eq!(app.title.title(), "a");
+    assert_eq!(app.title.text(), "a");
     assert!(!has_label(app.sidebar.widget.upcast_ref(), "b"));
     assert_sidebar(&app, &["a", "c"], "a");
     calls.lock().unwrap().clear();
