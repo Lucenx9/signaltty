@@ -604,8 +604,8 @@ impl PaneWidget {
 
 struct Scheme {
     foreground: &'static str,
-    /// Matches libadwaita's view background; used for reverse video
-    /// (the card itself paints the default background).
+    /// Matches the pane card (`.pane` in style.css, `.dark .pane` for
+    /// dark) so the grid never shows as a lighter slab inside the card.
     background: &'static str,
 }
 
@@ -616,7 +616,7 @@ const LIGHT: Scheme = Scheme {
 
 const DARK: Scheme = Scheme {
     foreground: "#deddda",
-    background: "#1d1d20",
+    background: "#111114",
 };
 
 /// GNOME palette (as in Console/Ptyxis): legible on both schemes.

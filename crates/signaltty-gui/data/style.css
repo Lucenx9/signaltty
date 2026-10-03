@@ -92,25 +92,82 @@
   background-color: alpha(currentColor, 0.04);
 }
 
+/* Workspace mark: the one place colour means "which project", not
+ * status — so its hues stay clear of green/amber/orange/red.
+ * Blue is left out: it is the accent, and "Working" speaks in it. */
+.ws-mark {
+  min-width: 20px;
+  min-height: 20px;
+  border-radius: 5px;
+  font-size: 0.66em;
+  font-weight: 700;
+}
+.ws-mark.tint-0 { color: var(--purple-5); background-color: alpha(var(--purple-3), 0.22); }
+.ws-mark.tint-1 { color: var(--brown-5); background-color: alpha(var(--brown-3), 0.25); }
+.ws-mark.tint-2 { color: mix(var(--purple-5), var(--brown-5), 0.5); background-color: alpha(mix(var(--purple-3), var(--brown-3), 0.5), 0.25); }
+.ws-mark.tint-3 { color: alpha(currentColor, 0.8); background-color: alpha(currentColor, 0.12); }
+.dark .ws-mark.tint-0 { color: var(--purple-1); background-color: alpha(var(--purple-3), 0.7); }
+.dark .ws-mark.tint-1 { color: var(--brown-1); background-color: alpha(var(--brown-2), 0.55); }
+.dark .ws-mark.tint-2 { color: mix(var(--purple-1), var(--brown-1), 0.5); background-color: alpha(mix(var(--purple-4), var(--brown-3), 0.5), 0.75); }
+.dark .ws-mark.tint-3 { color: var(--light-2); background-color: alpha(var(--light-3), 0.22); }
+.high-contrast .ws-mark { box-shadow: inset 0 0 0 1px currentColor; }
+
+/* Header breadcrumb: the name carries weight, context recedes. */
+.crumb {
+  margin-left: 6px;
+}
+.crumb-title {
+  font-weight: 600;
+}
+.crumb-sep {
+  color: alpha(currentColor, 0.35);
+}
+.crumb-context {
+  color: alpha(currentColor, 0.5);
+}
+
+.wordmark {
+  margin-left: 6px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Lower, flatter bars: icon buttons carry no slab until hovered. */
+toolbarview > .top-bar headerbar {
+  min-height: 40px;
+}
+toolbarview > .top-bar headerbar button.image-button,
+toolbarview > .top-bar headerbar menubutton > button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  background: none;
+}
+toolbarview > .top-bar headerbar button.image-button:hover,
+toolbarview > .top-bar headerbar menubutton > button:hover,
+toolbarview > .top-bar headerbar button.image-button:checked {
+  background-color: alpha(currentColor, 0.07);
+}
+
 .workspace-row .workspace-name {
   font-weight: 600;
 }
 
 .workspace-row .workspace-message {
   font-size: 0.93em;
-  color: alpha(currentColor, 0.82);
+  color: alpha(currentColor, 0.62);
 }
 
 .workspace-row .workspace-meta {
   font-size: 0.9em;
-  color: alpha(currentColor, 0.72);
+  color: alpha(currentColor, 0.42);
 }
 
 .navigation-sidebar > row:selected,
 .navigation-sidebar > row:selected:hover {
   background-color: alpha(currentColor, 0.08);
-  box-shadow: inset 0 0 0 1px alpha(currentColor, 0.07),
-              0 1px 2px alpha(black, 0.2);
+  box-shadow: inset 0 0 0 1px alpha(currentColor, 0.1);
 }
 
 /* Status stays visible beside the independent close target. */
@@ -146,9 +203,9 @@
 /* Section label over the rows that need you; a hairline closes it. */
 .sidebar-section {
   padding: 8px 18px 2px 18px;
-  font-size: 0.85em;
+  font-size: 0.8em;
   font-weight: 600;
-  color: alpha(currentColor, 0.65);
+  color: alpha(currentColor, 0.45);
 }
 .sidebar-section-rule {
   margin: 6px 18px;
@@ -210,7 +267,7 @@
 /* ---- tab page + panes ------------------------------------------------ */
 
 .tab-page {
-  padding: 8px;
+  padding: 4px 10px 10px;
 }
 
 /* Gaps between panes, not bars: the handle is transparent and wide
@@ -234,20 +291,20 @@
   box-shadow: inset 0 0 0 1px var(--border-color), 0 1px 3px alpha(black, 0.08);
 }
 
+/* The header is the card's first line, not a second toolbar. */
 .pane-header {
-  min-height: 38px;
+  min-height: 34px;
   padding: 0 8px 0 12px;
-  background-color: alpha(var(--view-fg-color), 0.025);
-  box-shadow: inset 0 -1px var(--border-color);
 }
 
 .pane-title {
-  font-weight: 600;
-  font-size: 0.9em;
+  font-weight: 500;
+  font-size: 0.85em;
+  color: alpha(currentColor, 0.72);
 }
 
 .pane-subtitle {
-  font-size: 0.9em;
+  font-size: 0.82em;
 }
 
 /* Pane actions surface on hover/focus; they stay in the layout so the
@@ -282,6 +339,7 @@
  * (the terminal leaves its default background clear). */
 .pane vte-terminal {
   padding: 6px 12px 10px 12px;
+  background-color: transparent;
 }
 
 /* With several panes in a tab, the focused one is marked without
@@ -408,10 +466,31 @@ button.pill:focus-visible {
 /* App mirrors AdwStyleManager:dark as a root class: the CSS media
  * query does not follow libadwaita's scheme on every desktop. */
 
-/* Sidebar recedes below the content so the panes read as the stage. */
-.dark .sidebar-pane,
-.dark .sidebar-pane .navigation-sidebar {
-  background-color: #18181b;
+/* Elevation by lightness, not shadow (docs/14 §7): the sidebar is the
+ * deepest plane, the content canvas one step up, pane cards another,
+ * each edged by a hairline. Redefining libadwaita's own variables keeps
+ * popovers, dialogs and buttons on the same scale. Cards stay a
+ * translucent film, as in libadwaita, so boxed lists still lift. */
+.dark {
+  --sidebar-bg-color: #0c0c0e;
+  --sidebar-backdrop-color: #0c0c0e;
+  --sidebar-border-color: alpha(white, 0.07);
+  --window-bg-color: #08080a;
+  --headerbar-bg-color: #08080a;
+  --headerbar-backdrop-color: #08080a;
+  --headerbar-shade-color: transparent;
+  --view-bg-color: #141418;
+  --card-bg-color: alpha(white, 0.06);
+  --popover-bg-color: #202024;
+  --dialog-bg-color: #18181c;
+  --border-color: alpha(white, 0.09);
+}
+.dark.high-contrast {
+  --border-color: alpha(currentColor, 0.55);
+  --headerbar-shade-color: alpha(currentColor, 0.55);
+}
+.dark .sidebar-pane headerbar {
+  background-color: var(--sidebar-bg-color);
 }
 
 .dark .status-pill.attention-permission,
@@ -421,7 +500,8 @@ button.pill:focus-visible {
 }
 
 .dark .pane {
-  box-shadow: inset 0 0 0 1px var(--border-color), 0 1px 3px alpha(black, 0.3);
+  background-color: #111114;
+  box-shadow: inset 0 0 0 1px var(--border-color);
 }
 
 /* Diff tags take their foreground from rooted probes so GTK resolves the
