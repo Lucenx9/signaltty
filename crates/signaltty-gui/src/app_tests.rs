@@ -1232,3 +1232,398 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
     worker.join().unwrap();
     app.window.destroy();
 }
+
+fn next_diff_call(
+    requests: &mut tokio::sync::mpsc::UnboundedReceiver<ActorRequest>,
+    expected_method: &str,
+) -> (Value, tokio::sync::oneshot::Sender<Result<Value, String>>) {
+    wait_ui(|| !requests.is_empty());
+    let ActorRequest::Call {
+        method,
+        params,
+        reply,
+        ..
+    } = requests.try_recv().unwrap()
+    else {
+        panic!("expected call")
+    };
+    assert_eq!(method, expected_method);
+    (params, reply)
+}
+
+fn numbered_diff_fixture(path: &str) -> Value {
+    json!({"path":path,"untracked":false,"content":{
+        "kind":"text","truncated":false,"notice":null,"hunks":[{
+            "old_start":1,"old_count":2,"new_start":1,"new_count":3,"heading":"@@ -1,2 +1,3 @@",
+            "lines":[
+                {"kind":"context","text":"let literal = \"<>&\";","old_line":1,"new_line":1},
+                {"kind":"removed","text":"old","old_line":2,"new_line":null},
+                {"kind":"added","text":"new","old_line":null,"new_line":2},
+                {"kind":"added","text":"extra","old_line":null,"new_line":3}
+            ]
+        },{
+            "old_start":20,"old_count":1,"new_start":21,"new_count":1,"heading":"@@ -20 +21 @@ second hunk",
+            "lines":[
+                {"kind":"removed","text":"before","old_line":20,"new_line":null},
+                {"kind":"added","text":"after","old_line":null,"new_line":21}
+            ]
+        }]
+    }})
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn file_diff_reader_uses_native_numbered_selectable_controls() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(920, 680);
+    let terminal = gtk4::Label::new(Some("Workspace terminals stay mounted"));
+    window.set_content(Some(&terminal));
+    window.present();
+    let (actor, mut requests) = IpcHandle::test_channel();
+    crate::workspace_dialogs::changes(&window, actor.clone(), "a");
+    let dialog = window.visible_dialog().unwrap();
+    let (_, reply) = next_diff_call(&mut requests, "workspace.diff");
+    let summary = json!({"added":2,"removed":1,"files":[
+        {"path":"src/<changed>&.rs","added":2,"removed":1,"binary":false,"untracked":false},
+        {"path":"notes/new <file>&.txt","added":0,"removed":0,"binary":false,"untracked":true},
+        {"path":"assets/banner.png","added":0,"removed":0,"binary":true,"untracked":false}
+    ]});
+    reply.send(Ok(summary.clone())).unwrap();
+    wait_ui(|| has_label(&dialog.child().unwrap(), "src/<changed>&.rs"));
+    assert!(
+        requests.is_empty(),
+        "opening summary must not automatically read a file"
+    );
+    let row = action_row_with_title(&dialog.child().unwrap(), "src/<changed>&.rs").unwrap();
+    let rows = find_widget::<gtk4::ListBox>(&dialog.child().unwrap()).unwrap();
+    let list_scroll = rows
+        .parent()
+        .unwrap()
+        .downcast::<gtk4::Viewport>()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .downcast::<gtk4::ScrolledWindow>()
+        .unwrap();
+    assert!(row.is_activatable());
+    rows.select_row(Some(&row));
+    assert!(row.grab_focus());
+    // This is the native GTK action bound to Enter on the focused list row.
+    rows.emit_activate_cursor_row();
+    let (params, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    assert_eq!(params["path"], "src/<changed>&.rs");
+    reply
+        .send(Ok(numbered_diff_fixture("src/<changed>&.rs")))
+        .unwrap();
+    let reader = find_widget::<gtk4::TextView>(&dialog.child().unwrap()).unwrap();
+    let reader_text = || {
+        reader
+            .buffer()
+            .text(
+                &reader.buffer().start_iter(),
+                &reader.buffer().end_iter(),
+                false,
+            )
+            .to_string()
+    };
+    wait_ui(|| reader_text().contains("after"));
+    assert!(!reader.is_editable());
+    assert!(reader.is_monospace());
+    assert!(reader.is_cursor_visible());
+    let text = reader_text();
+    assert!(text.contains(" 1   1    let literal = \"<>&\";"), "{text}");
+    assert!(text.contains(" 2      − old"), "{text}");
+    assert!(text.contains("     2  + new"), "{text}");
+    assert!(text.contains("20      − before"), "{text}");
+    assert!(text.contains("    21  + after"), "{text}");
+    assert!(has_label(&dialog.child().unwrap(), "Changes against HEAD"));
+    let buffer = reader.buffer();
+    buffer.select_range(&buffer.start_iter(), &buffer.end_iter());
+    reader.emit_copy_clipboard();
+    let copied = Rc::new(RefCell::new(None));
+    let capture = copied.clone();
+    reader
+        .clipboard()
+        .read_text_async(None::<&gio::Cancellable>, move |result| {
+            *capture.borrow_mut() = Some(result.unwrap().unwrap().to_string())
+        });
+    wait_ui(|| copied.borrow().is_some());
+    assert_eq!(copied.borrow().as_ref().unwrap(), &text);
+    buffer.place_cursor(&buffer.start_iter());
+    let style = adw::StyleManager::default();
+    let mut palettes = Vec::new();
+    for (theme, scheme) in [
+        ("light", adw::ColorScheme::ForceLight),
+        ("dark", adw::ColorScheme::ForceDark),
+    ] {
+        style.set_color_scheme(scheme);
+        if let Some(previous) = palettes.last() {
+            wait_ui(|| {
+                buffer
+                    .tag_table()
+                    .lookup("added")
+                    .unwrap()
+                    .foreground_rgba()
+                    .as_ref()
+                    != Some(previous)
+            });
+        }
+        capture_workflow(&window, &format!("file-diff-{theme}"));
+        let added = buffer
+            .tag_table()
+            .lookup("added")
+            .unwrap()
+            .foreground_rgba()
+            .unwrap();
+        let removed = buffer
+            .tag_table()
+            .lookup("removed")
+            .unwrap()
+            .foreground_rgba()
+            .unwrap();
+        assert_ne!(
+            added, removed,
+            "addition/removal colors must be distinct in {theme}"
+        );
+        assert_ne!(
+            added,
+            reader.color(),
+            "semantic foreground must be applied in {theme}"
+        );
+        palettes.push(added);
+    }
+    assert_ne!(
+        palettes[0], palettes[1],
+        "semantic diff colors must adapt to light and dark themes"
+    );
+    let reader_scroll = reader
+        .parent()
+        .unwrap()
+        .downcast::<gtk4::ScrolledWindow>()
+        .unwrap();
+    let scroll = list_scroll.vadjustment().value();
+    let navigation = find_widget::<adw::NavigationView>(&dialog.child().unwrap()).unwrap();
+    let back =
+        button_with_label(&navigation.visible_page().unwrap().child().unwrap(), "Back").unwrap();
+    back.emit_clicked();
+    assert_eq!(
+        rows.selected_row().unwrap(),
+        row.clone().upcast::<gtk4::ListBoxRow>()
+    );
+    assert_eq!(
+        dialog.focus().unwrap(),
+        row.clone().upcast::<gtk4::Widget>()
+    );
+    assert_eq!(list_scroll.vadjustment().value(), scroll);
+    assert!(requests.is_empty());
+    // The list and actual row survive refresh; only explicit activation reads.
+    let list_refresh = button_with_label(
+        &navigation.visible_page().unwrap().child().unwrap(),
+        "Refresh",
+    )
+    .unwrap();
+    list_refresh.emit_clicked();
+    let (_, reply) = next_diff_call(&mut requests, "workspace.diff");
+    reply.send(Ok(summary.clone())).unwrap();
+    wait_ui(|| {
+        has_label(
+            &dialog.child().unwrap(),
+            "Changes against HEAD · 3 files · +2 −1",
+        )
+    });
+    assert_eq!(
+        action_row_with_title(&dialog.child().unwrap(), "src/<changed>&.rs").unwrap(),
+        row
+    );
+    assert!(requests.is_empty());
+    // A pending read cannot overwrite B after Back and a new activation.
+    row.emit_by_name::<()>("activated", &[]);
+    let (_, old_reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    back.emit_clicked();
+    let new_row = action_row_with_title(&dialog.child().unwrap(), "notes/new <file>&.txt").unwrap();
+    new_row.emit_by_name::<()>("activated", &[]);
+    let (params, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    assert_eq!(params["path"], "notes/new <file>&.txt");
+    let new_diff = json!({"path":"notes/new <file>&.txt","untracked":true,"content":{
+        "kind":"text","truncated":true,"notice":"Preview truncated at 10,000 lines.","hunks":[{
+            "old_start":0,"old_count":0,"new_start":1,"new_count":10001,"heading":"@@ -0,0 +1,10001 @@",
+            "lines":[
+                {"kind":"added","text":"New content <>&","old_line":null,"new_line":1},
+                {"kind":"added","text":"More new content","old_line":null,"new_line":2}
+            ]
+        }]
+    }});
+    reply.send(Ok(new_diff)).unwrap();
+    wait_ui(|| {
+        has_label(
+            &dialog.child().unwrap(),
+            "Untracked · Preview truncated at 10,000 lines.",
+        )
+    });
+    old_reply
+        .send(Ok(
+            json!({"path":"src/<changed>&.rs","untracked":false,"content":{"kind":"binary"}}),
+        ))
+        .unwrap();
+    while glib::MainContext::default().iteration(false) {}
+    assert!(reader_text().contains("New content <>&"));
+    assert!(!has_label(
+        &dialog.child().unwrap(),
+        "Binary file changed. No text preview is available."
+    ));
+    capture_workflow(&window, "file-diff-incomplete");
+    // Refresh invalidates the displayed patch and its pending response.
+    new_row.emit_by_name::<()>("activated", &[]);
+    let (_, stale_refresh) = next_diff_call(&mut requests, "workspace.file_diff");
+    let refresh = button_with_label(
+        &navigation.visible_page().unwrap().child().unwrap(),
+        "Refresh",
+    )
+    .unwrap();
+    refresh.emit_clicked();
+    assert!(reader_text().is_empty());
+    let (_, reply) = next_diff_call(&mut requests, "workspace.diff");
+    reply.send(Ok(summary.clone())).unwrap();
+    let (_, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    reply.send(Ok(json!({"path":"notes/new <file>&.txt","untracked":true,"content":{"kind":"text","hunks":[],"truncated":false,"notice":"Empty untracked file."}}))).unwrap();
+    wait_ui(|| {
+        has_label(
+            &dialog.child().unwrap(),
+            "Untracked · Empty untracked file.",
+        )
+    });
+    stale_refresh
+        .send(Ok(numbered_diff_fixture("notes/new <file>&.txt")))
+        .unwrap();
+    while glib::MainContext::default().iteration(false) {}
+    assert!(reader_text().is_empty());
+    new_row.emit_by_name::<()>("activated", &[]);
+    let (_, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    reply
+        .send(Err("IO_ERROR: unreadable <file>&".into()))
+        .unwrap();
+    wait_ui(|| {
+        has_label(
+            &dialog.child().unwrap(),
+            "Couldn't read this file: IO_ERROR: unreadable <file>&. Refresh to try again.",
+        )
+    });
+    // Pending Back response is ignored while the list remains visible.
+    new_row.emit_by_name::<()>("activated", &[]);
+    let (_, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    back.emit_clicked();
+    reply
+        .send(Ok(numbered_diff_fixture("notes/new <file>&.txt")))
+        .unwrap();
+    while glib::MainContext::default().iteration(false) {}
+    assert!(reader_text().is_empty());
+    let binary = action_row_with_title(&dialog.child().unwrap(), "assets/banner.png").unwrap();
+    binary.emit_by_name::<()>("activated", &[]);
+    let (_, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    reply
+        .send(Ok(
+            json!({"path":"assets/banner.png","untracked":false,"content":{"kind":"binary"}}),
+        ))
+        .unwrap();
+    wait_ui(|| {
+        has_label(
+            &dialog.child().unwrap(),
+            "Binary file changed. No text preview is available.",
+        )
+    });
+    capture_workflow(&window, "file-diff-binary");
+    for (content, notice) in [
+        (
+            json!({"kind":"unchanged"}),
+            "This file no longer has changes against HEAD.",
+        ),
+        (
+            json!({"kind":"unavailable","reason":"Unsupported <file>& content."}),
+            "Unsupported <file>& content.",
+        ),
+    ] {
+        binary.emit_by_name::<()>("activated", &[]);
+        let (_, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+        reply
+            .send(Ok(
+                json!({"path":"assets/banner.png","untracked":false,"content":content}),
+            ))
+            .unwrap();
+        wait_ui(|| has_label(&dialog.child().unwrap(), notice));
+        assert!(reader_text().is_empty());
+    }
+
+    row.emit_by_name::<()>("activated", &[]);
+    let (_, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    reply
+        .send(Ok(numbered_diff_fixture("src/<changed>&.rs")))
+        .unwrap();
+    wait_ui(|| reader_text().contains("after"));
+    window.set_default_size(360, 680);
+    wait_ui(|| window.width() <= 400);
+    wait_ui(|| reader_scroll.width() <= 360);
+    assert!(back.width() > 0 && back.width() < 100);
+    capture_workflow(&window, "file-diff-narrow");
+    assert_eq!(window.content().unwrap(), terminal.upcast::<gtk4::Widget>());
+    // Closing an in-flight read neither resurrects it nor affects a new dialog.
+    row.emit_by_name::<()>("activated", &[]);
+    let (_, stale_closed) = next_diff_call(&mut requests, "workspace.file_diff");
+    let weak_reader = reader.downgrade();
+    let closed = Rc::new(Cell::new(false));
+    let closing = closed.clone();
+    dialog.connect_closed(move |_| closing.set(true));
+    dialog.close();
+    wait_ui(|| window.visible_dialog().is_none() && closed.get());
+    crate::workspace_dialogs::changes(&window, actor, "a");
+    let replacement = window.visible_dialog().unwrap();
+    let (_, reply) = next_diff_call(&mut requests, "workspace.diff");
+    reply
+        .send(Ok(json!({"added":0,"removed":0,"files":[]})))
+        .unwrap();
+    stale_closed
+        .send(Ok(numbered_diff_fixture("src/<changed>&.rs")))
+        .unwrap();
+    wait_ui(|| has_label(&replacement.child().unwrap(), "No working tree changes"));
+    assert!(!has_label(
+        &replacement.child().unwrap(),
+        "src/<changed>&.rs"
+    ));
+    reader.clipboard().set_text("");
+    reader.primary_clipboard().set_text("");
+    drop(buffer);
+    drop(reader_scroll);
+    drop(list_scroll);
+    drop(navigation);
+    drop(back);
+    drop(list_refresh);
+    drop(refresh);
+    drop(row);
+    drop(rows);
+    drop(new_row);
+    drop(binary);
+    drop(reader);
+    drop(dialog);
+    wait_ui(|| weak_reader.upgrade().is_none());
+    button_with_label(&replacement.child().unwrap(), "Refresh")
+        .unwrap()
+        .emit_clicked();
+    let (_, reply) = next_diff_call(&mut requests, "workspace.diff");
+    reply
+        .send(Ok(json!({"added":0,"removed":0,"files":[
+            {"path":"-option","added":0,"removed":0,"binary":false,"untracked":true}
+        ]})))
+        .unwrap();
+    wait_ui(|| has_label(&replacement.child().unwrap(), "-option"));
+    assert!(!has_label(
+        &replacement.child().unwrap(),
+        "No working tree changes"
+    ));
+    replacement.close();
+    window.destroy();
+    style.set_color_scheme(adw::ColorScheme::Default);
+}

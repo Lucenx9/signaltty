@@ -55,6 +55,7 @@ clients can `subscribe {from_seq}` to replay.
 | `workspace.close` | `{workspace_id, signal?}` | `{closed}` |
 | `workspace.refresh_git` | `{workspace_id}` | `{workspace}` |
 | `workspace.diff` | `{workspace_id}` | `{workspace_id, branch?, files[{path, added, removed, untracked, binary}], dirs[{dir, added, removed}], added, removed}` (worktree-vs-HEAD `git diff --numstat` as data; non-repo → `BAD_PARAMS`) |
+| `workspace.file_diff` | `{workspace_id, path}` | `{workspace_id, path, untracked, content}` (one literal root-relative filename; typed text hunks or binary/unchanged/unavailable state; current worktree against HEAD) |
 | `worktree.list` | `{workspace_id}` | `{worktrees:[{path, branch?, head?, main, bare, locked, prunable, workspace_id?}]}` (actual Git registrations and open workspace association) |
 | `worktree.create` | `{workspace_id, path, branch, name?}` | `{workspace, path, reused:false}` (absolute new checkout path, new branch at source HEAD; checkout retained if subsequent workspace binding fails) |
 | `worktree.open` | `{workspace_id, path, name?}` | `{workspace, path, reused}` (absolute registered checkout path, canonical-cwd workspace reuse) |
@@ -146,6 +147,34 @@ client can never collapse a pane. The echo is `tab.updated`, like
 `tab.set_layout`. GUIs persist dragged dividers through this method
 rather than `tab.set_layout`: a targeted update cannot overwrite a
 layout another client changed concurrently.
+
+`workspace.file_diff` reads one literal UTF-8 filename relative to the checkout
+root. It accepts workspace IDs or handles. Absolute, empty, NUL, `.`/`..` and
+Git-private paths return `BAD_PARAMS`; wildcard-looking names remain literal.
+Known tracked files, deletions and unignored untracked files are supported.
+The comparison includes staged and unstaged edits against HEAD, or an empty
+tree before the first commit. It uses three context lines, no rename detection,
+and no external diff or textconv. It emits no event and issues no Git mutation command.
+The application issues no edit/stage operation. As with the existing summary,
+tracked reads retain canonical clean/process conversions from trusted local Git
+configuration; those helpers can have their own effects. The Git process-group
+deadline bounds them. Inherited `GIT_DIFF_OPTS` cannot override the context.
+
+`content` is tagged by `kind`. Text contains `hunks`, `truncated` and optional
+`notice`. Each hunk has `old_start`, `old_count`, `new_start`, `new_count`,
+`heading` and `lines`. A line has literal `text`, optional `old_line`/`new_line`
+numbers and kind `context`, `added`, `removed` or `no_newline`. Other content
+kinds are `binary`, `unchanged` and `unavailable` with a literal `reason`.
+Metadata-only changes and empty new files can have text with no hunks and a
+notice. Untracked text is all additions and does not alter summary counts.
+
+Preview bytes are capped at 512 KiB and lines at 10,000; stderr is bounded.
+Truncated text retains complete lines and declares its incompleteness. Unsupported
+content has an explicit unavailable state. The total server read deadline is
+eight seconds (`TIMEOUT`); process/read failures use `IO_ERROR`. File acquisition
+does not follow symlinks to read external content. See
+[ADR-0016](adr/0016-file-diff-review.md) and the
+[selected-file contract](../specs/014-file-diff-review/contracts/ipc.md).
 
 ## Events (all carry `seq`)
 

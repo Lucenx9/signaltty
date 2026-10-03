@@ -37,6 +37,12 @@ pub struct WorkspaceId {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct WorkspaceFileDiff {
+    pub workspace_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct WorktreeCreate {
     pub workspace_id: String,
     pub path: String,

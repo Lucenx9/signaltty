@@ -57,11 +57,21 @@ pub struct WorktreeDiff {
 /// On demand only — never polled, never snapshotted.
 pub fn git_diff(cwd: &str) -> Option<WorktreeDiff> {
     let root = git(cwd, &["rev-parse", "--show-toplevel"])?;
-    let _ = root;
+    let cwd = root.as_str();
     let branch = git(cwd, &["branch", "--show-current"]).filter(|b| !b.is_empty());
     let base = git(cwd, &["rev-parse", "--verify", "HEAD"])
         .or_else(|| git(cwd, &["hash-object", "-t", "tree", "--stdin"]))?;
-    let numstat = git_bytes(cwd, &["diff", "--numstat", "-z", "--no-renames", &base])?;
+    let numstat = git_bytes(
+        cwd,
+        &[
+            "diff",
+            "--numstat",
+            "-z",
+            "--no-renames",
+            "--no-relative",
+            &base,
+        ],
+    )?;
     let mut files = Vec::new();
     for record in numstat.split(|b| *b == 0).filter(|r| !r.is_empty()) {
         let line = std::str::from_utf8(record).ok()?;
@@ -79,8 +89,17 @@ pub fn git_diff(cwd: &str) -> Option<WorktreeDiff> {
             binary,
         });
     }
-    let status =
-        git_bytes(cwd, &["ls-files", "--others", "--exclude-standard", "-z"]).unwrap_or_default();
+    let status = git_bytes(
+        cwd,
+        &[
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--full-name",
+            "-z",
+        ],
+    )
+    .unwrap_or_default();
     for path in status.split(|b| *b == 0).filter(|r| !r.is_empty()) {
         files.push(DiffFile {
             path: std::str::from_utf8(path).ok()?.to_owned(),

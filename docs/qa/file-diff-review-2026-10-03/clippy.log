@@ -1,0 +1,23 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Checking signaltty-proto v0.1.0 (/home/simone/code/signaltty/crates/signaltty-proto)
+    Checking signaltty-plugin v0.1.0 (/home/simone/code/signaltty/crates/signaltty-plugin)
+    Checking signaltty-testkit v0.1.0 (/home/simone/code/signaltty/crates/signaltty-testkit)
+    Checking signaltty-gui v0.1.0 (/home/simone/code/signaltty/crates/signaltty-gui)
+    Checking signaltty-server v0.1.0 (/home/simone/code/signaltty/crates/signaltty-server)
+warning: file opened with `create`, but `truncate` behavior not defined
+   --> crates/signaltty-server/src/audit.rs:111:22
+    |
+111 |                     .create(true)
+    |                      ^^^^^^^^^^^^- help: add: `.truncate(true)`
+    |
+    = help: if you intend to overwrite an existing file entirely, call `.truncate(true)`
+    = help: if you instead know that you may want to keep some parts of the old file, call `.truncate(false)`
+    = help: alternatively, use `.append(true)` to append to the file instead of overwriting it
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#suspicious_open_options
+    = note: `#[warn(clippy::suspicious_open_options)]` on by default
+
+    Checking signaltty-cli v0.1.0 (/home/simone/code/signaltty/crates/signaltty-cli)
+warning: `signaltty-server` (lib test) generated 1 warning (1 duplicate)
+warning: `signaltty-server` (lib) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.49s

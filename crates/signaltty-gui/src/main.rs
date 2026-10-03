@@ -4,6 +4,7 @@
 mod actions;
 mod actor;
 mod app;
+mod changes;
 mod dividers;
 mod metrics;
 mod new_workspace;

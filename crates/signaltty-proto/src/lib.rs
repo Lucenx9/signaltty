@@ -112,6 +112,7 @@ pub mod method {
     pub const WORKSPACE_CLOSE: &str = "workspace.close";
     pub const WORKSPACE_REFRESH_GIT: &str = "workspace.refresh_git";
     pub const WORKSPACE_DIFF: &str = "workspace.diff";
+    pub const WORKSPACE_FILE_DIFF: &str = "workspace.file_diff";
     pub const WORKTREE_LIST: &str = "worktree.list";
     pub const WORKTREE_CREATE: &str = "worktree.create";
     pub const WORKTREE_OPEN: &str = "worktree.open";
@@ -156,6 +157,7 @@ pub mod method {
         WORKSPACE_CLOSE,
         WORKSPACE_REFRESH_GIT,
         WORKSPACE_DIFF,
+        WORKSPACE_FILE_DIFF,
         WORKTREE_LIST,
         WORKTREE_CREATE,
         WORKTREE_OPEN,
@@ -318,7 +320,7 @@ mod tests {
             assert!(!name.is_empty());
         }
         for (list, len) in [
-            (method::ALL, 39usize),
+            (method::ALL, 40usize),
             (event::ALL, 29usize),
             (code::ALL, 15usize),
         ] {
@@ -333,6 +335,7 @@ mod tests {
             method::HOOK_EVENT,
             method::WAIT,
             method::FOCUS_NEXT_UNREAD,
+            method::WORKSPACE_FILE_DIFF,
         ] {
             assert!(method::ALL.contains(&must), "{must} listed");
         }

@@ -1,0 +1,9 @@
+    Blocking waiting for file lock on artifact directory
+   Compiling signaltty-server v0.1.0 (/home/simone/code/signaltty/crates/signaltty-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.22s
+     Running tests/file_diff.rs (target/debug/deps/file_diff-bd3e11e48499c55f)
+
+running 1 test
+test tracked_diff_combines_staged_and_unstaged_and_reads_deletion ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.32s

@@ -135,6 +135,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::WORKSPACE_CLOSE => h_workspace_close(ctx, &req.params),
         method::WORKSPACE_REFRESH_GIT => h_workspace_refresh_git(ctx, &req.params),
         method::WORKSPACE_DIFF => h_workspace_diff(ctx, &req.params),
+        method::WORKSPACE_FILE_DIFF => h_workspace_file_diff(ctx, &req.params).await,
         method::WORKTREE_LIST => match decode::<params::WorkspaceId>(&req.params) {
             Ok(p) => crate::worktrees::list(ctx, p)
                 .await
@@ -493,6 +494,22 @@ fn h_workspace_diff(ctx: &Ctx, params: &Value) -> Handler {
         )),
         None => Err(bad_params(format!("not a git repo: {cwd}"))),
     }
+}
+
+async fn h_workspace_file_diff(ctx: &Ctx, value: &Value) -> Handler {
+    let p = decode::<params::WorkspaceFileDiff>(value)?;
+    let (id, cwd) = {
+        let s = ctx.store.read().unwrap();
+        let id = resolve_workspace(&s, &p.workspace_id)
+            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.into(), p.workspace_id.clone()))?;
+        let cwd = s.workspaces[&id].cwd.clone();
+        (id, cwd)
+    };
+    let diff = crate::file_diff::read(&cwd, &p.path).await?;
+    Ok((
+        json!({"workspace_id":id,"path":diff.path,"untracked":diff.untracked,"content":diff.content}),
+        ConnEffect::default(),
+    ))
 }
 
 // ---- tabs ----

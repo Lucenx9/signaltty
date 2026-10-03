@@ -1,0 +1,419 @@
+   Compiling signaltty-proto v0.1.0 (/home/simone/code/signaltty/crates/signaltty-proto)
+   Compiling signaltty-plugin v0.1.0 (/home/simone/code/signaltty/crates/signaltty-plugin)
+   Compiling signaltty-testkit v0.1.0 (/home/simone/code/signaltty/crates/signaltty-testkit)
+   Compiling signaltty-gui v0.1.0 (/home/simone/code/signaltty/crates/signaltty-gui)
+   Compiling signaltty-server v0.1.0 (/home/simone/code/signaltty/crates/signaltty-server)
+   Compiling signaltty-cli v0.1.0 (/home/simone/code/signaltty/crates/signaltty-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.51s
+     Running unittests src/lib.rs (target/debug/deps/signaltty_agent-6bb2cf59a23d4a96)
+
+running 24 tests
+test adapters::claude::tests::resume_argv ... ok
+test adapters::claude::tests::notification_permission_is_stronger ... ok
+test adapters::claude::tests::notification_idle_blocks_on_input ... ok
+test adapters::codex::tests::codex_advertises_type_text_channel ... ok
+test adapters::codex::tests::permission_request_blocks_hard ... ok
+test adapters::codex::tests::identify ... ok
+test adapters::codex::tests::stop_means_done_unread_with_session ... ok
+test adapters::cursor::tests::resume_argv ... ok
+test adapters::codex::tests::prompt_submit_clears_attention ... ok
+test adapters::codex::tests::resume_argv ... ok
+test adapters::cursor::tests::session_start_reports_identity ... ok
+test adapters::cursor::tests::stop_completes ... ok
+test adapters::opencode::tests::status_busy_idle_cycle ... ok
+test adapters::opencode::tests::resume_argv ... ok
+test manifest::tests::lifecycle_overrides_field_by_field_with_builtin_fallthrough ... ok
+test manifest::tests::identify_merges_binaries_and_detection_prefers_overlays ... ok
+test manifest::tests::bad_kind_and_bad_enums_fail_loud ... ok
+test registry::tests::detection_prefers_specific ... ok
+test manifest::tests::valid_manifest_parses_with_unknown_fields_ignored ... ok
+test permission::tests::native_payload_and_verdict_match_the_documented_provider_contract ... ok
+test manifest::tests::session_key_resume_template_and_display_override ... ok
+test registry::tests::names_resolve ... ok
+test types::tests::type_text_answers_by_1_based_position ... ok
+test registry::tests::only_codex_advertises_a_channel ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/signaltty-f51008577f66bae6)
+
+running 2 tests
+test skill::tests::asset_carries_marker_and_gate_env ... ok
+test skill::tests::check_follows_signaltty_pane ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-33a46ee002a40f9c)
+
+running 11 tests
+test cli_integration_install_uninstall ... ok
+test cli_human_output_and_errors ... ok
+test cli_hook_event_and_resume ... ok
+test cli_decision_answer_flow ... ok
+test cli_integration_status_lists_manifests ... ok
+test cli_skill_cat_check_install ... ok
+test cli_new_preserves_automatic_setup_json_and_human_notice ... ok
+test cli_plugin_list_run_json ... ok
+test integration_rejects_invalid_configuration_without_rewriting ... ok
+test cli_status_and_new_json ... ok
+test cli_workspace_diff_reports_counts ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+
+     Running unittests src/lib.rs (target/debug/deps/signaltty_core-2b6c49e45defa7a0)
+
+running 28 tests
+test diff::tests::nul_content_is_binary_even_when_git_forces_text_output ... ok
+test diff::tests::new_text_is_additions_with_newline_and_empty_states ... ok
+test diff::tests::parser_numbers_hunks_and_missing_newline_without_reading_filename_headers ... ok
+test diff::tests::parser_reads_two_patch_sections_for_a_regular_file_becoming_a_symlink ... ok
+test ids::tests::ids_have_prefixes_and_unique ... ok
+test diff::tests::parser_rejects_invalid_ranges_counts_and_encoding ... ok
+test model::tests::clamp_ratio_keeps_dividers_sane ... ok
+test model::tests::layout_split_and_remove ... ok
+test model::tests::layout_validation_rejects_non_finite_ratios_without_mutation ... ok
+test model::tests::leaving_working_records_run_length ... ok
+test model::tests::decision_roundtrips_and_defaults_for_old_snapshots ... ok
+test model::tests::pane_mark_seen_keeps_lifecycle ... ok
+test model::tests::pane_new_titles_after_command ... ok
+test model::tests::pty_size_clamp_and_validate ... ok
+test model::tests::ratio_at_path_resolves_splits_only ... ok
+test model::tests::slugify_makes_stable_typable_handles ... ok
+test model::tests::same_structure_ignores_ratios_only ... ok
+test model::tests::split_equalizes_middle_of_run ... ok
+test model::tests::split_equalizes_nested_same_direction_columns ... ok
+test model::tests::split_equalizes_same_direction_run ... ok
+test model::tests::split_resets_dragged_ratios_in_run ... ok
+test model::tests::split_leaves_other_direction_ratios_alone ... ok
+test paths::tests::socket_env_override_wins ... ok
+test state::tests::attention_raise_is_max_by_severity ... ok
+test state::tests::attention_roundtrip ... ok
+test state::tests::lifecycle_roundtrip ... ok
+test state::tests::sidebar_rank_follows_directive_order ... ok
+test diff::tests::parser_limits_complete_lines_and_preserves_declared_ranges ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-f9e1ed2e264b74e5)
+
+running 64 tests
+test actions::tests::accels_are_unique ... ok
+test actions::tests::action_names_are_unique ... ok
+test actions::tests::every_action_is_reachable ... ok
+test actions::tests::menu_covers_exactly_the_labelled_actions ... ok
+test actions::tests::rendered_menu_matches_table ... ok
+test actor::tests::reconnect_replays_snapshot_before_live_data_without_duplicate_bytes ... ok
+test actor::tests::mismatched_response_discards_connection_before_the_next_call ... ok
+test actor::tests::missing_panes_are_not_reattached_again ... ok
+test actor::tests::stream_keeps_delivering_while_control_reply_is_stalled ... ok
+test app::tests::close_workspace_confirms_the_selected_target_and_refreshes ... ignored, requires a GTK display; run with dbus-run-session (or xvfb-run)
+test app::tests::delayed_new_tab_keeps_the_workspace_selected_after_the_action ... ignored, requires a GTK display; run with dbus-run-session
+test app::tests::desktop_motion_preference_applies_at_startup_and_changes_live ... ignored, requires a GTK display; run with dbus-run-session
+test app::tests::event_batches_keep_sidebar_attention_tabs_and_notifications_consistent ... ignored, requires a GTK display; run with dbus-run-session (or xvfb-run)
+test app::tests::events_received_during_refresh_are_applied_in_the_next_batch ... ignored, requires a GTK display; run with dbus-run-session
+test app::tests::file_diff_reader_uses_native_numbered_selectable_controls ... ignored, requires a GTK display; run with dbus-run-session
+test app::tests::integration_setup_notice_is_visible_in_light_and_dark ... ignored, requires a GTK display; run with dbus-run-session
+test app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls ... ignored, requires a GTK display; run with dbus-run-session
+test app::tests::pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios ... ignored, requires a GTK display; run with dbus-run-session
+test app::tests::stalled_action_keeps_the_gtk_main_loop_responsive ... ignored, requires a GTK display; run with dbus-run-session
+test dividers::tests::drag_back_to_server_value_clears_queue ... ok
+test dividers::tests::drag_sends_only_after_settle ... ok
+test dividers::tests::failed_send_retries_unless_stale ... ok
+test dividers::tests::fresh_divider_places_once_allocated ... ok
+test dividers::tests::suppressed_moves_are_not_drags ... ok
+test dividers::tests::tick_prunes_dead_widgets ... ok
+test dividers::tests::unsent_drag_wins_over_server_echo ... ok
+test new_workspace::tests::basename_falls_back_for_root_and_empty ... ok
+test new_workspace::tests::default_command_prefers_first_agent ... ok
+test new_workspace::tests::default_cwd_prefers_active_workspace_then_home ... ok
+test new_workspace::tests::dialog_confirm_emits_validated_request ... ignored, requires a GTK display; run with dbus-run-session (or xvfb-run)
+test new_workspace::tests::path_lookup_finds_executables_only ... ok
+test new_workspace::tests::registry_binaries_are_bare_names ... ok
+test new_workspace::tests::split_argv_handles_quotes_and_escapes ... ok
+test notif::tests::actions_map_to_events_and_unknown_maps_to_none ... ok
+test refresh::tests::batch_unions_workspaces_and_resolves_unknown_panes_only_once ... ok
+test refresh::tests::burst_reads_changed_workspaces_once_and_preserves_the_others ... ok
+test refresh::tests::create_then_close_in_one_frame_still_refreshes_the_owner ... ok
+test refresh::tests::failed_reads_preserve_cached_state_and_retry_on_next_event ... ok
+test refresh::tests::full_batch_supersedes_partial_work_and_removes_stale_indexes ... ok
+test refresh::tests::routes_all_workspace_payload_shapes_including_inactive_deletions ... ok
+test refresh::tests::unrelated_or_unroutable_events_do_not_read_workspaces ... ok
+test sidebar::tests::attention_severity_beats_lifecycle ... ok
+test sidebar::tests::creation_then_name_break_ties_deterministically ... ok
+test sidebar::tests::headline_prefers_message_then_run_state_then_lifecycle ... ok
+test sidebar::tests::lead_pane_is_the_longest_running_of_the_rolled_up_state ... ok
+test sidebar::tests::lifecycle_follows_directive_order_within_equal_attention ... ok
+test sidebar::tests::order_survives_activity_churn ... ok
+test sidebar::tests::restored_working_pane_cannot_supply_a_live_siblings_elapsed_time ... ok
+test sidebar::tests::sections_appear_only_around_rows_that_need_you ... ok
+test sidebar::tests::untimed_legacy_pane_never_shadows_a_timed_sibling ... ok
+test status::tests::every_attention_has_a_consistent_presentation ... ok
+test status::tests::restored_agent_state_does_not_report_a_running_process ... ok
+test status::tests::row_status_speaks_for_the_loudest_state_only ... ok
+test status::tests::run_label_switches_tense_in_place ... ok
+test terminal::tests::approval_question_and_choices_fit_a_narrow_pane ... ignored, requires a GTK display; run with dbus-run-session
+test terminal::tests::keyboard_focus_renders_an_inactive_panes_controls ... ignored, requires a GTK display; run with dbus-run-session
+test terminal::tests::reduced_motion_removes_rendered_press_scaling ... ignored, requires a GTK display; run with dbus-run-session
+test terminal::tests::render_lists_every_option_as_a_button ... ok
+test terminal::tests::render_without_channel_is_read_only_with_no_buttons ... ok
+test terminal::tests::terminal_search_is_literal_and_keeps_the_terminal ... ignored, requires a GTK display; run with dbus-run-session
+test util::tests::time_ago_buckets ... ok
+test actor::tests::file_diff_uses_independent_read_connection_and_keeps_control_available ... ok
+test actor::tests::slow_worktree_uses_an_independent_connection_and_keeps_control_available ... ok
+test actor::tests::stalled_mutation_times_out_and_is_never_retried ... ok
+
+test result: ok. 49 passed; 0 failed; 15 ignored; 0 measured; 0 filtered out; finished in 7.11s
+
+     Running unittests src/lib.rs (target/debug/deps/signaltty_integration-1869f49b5fc6d7f8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/configuration.rs (target/debug/deps/configuration-e0c6183ace18be8c)
+
+running 12 tests
+test foreign_opencode_plugin_is_never_overwritten_or_removed ... ok
+test malformed_and_wrong_shape_are_never_rewritten ... ok
+test cursor_and_opencode_refresh_stale_reporter_paths ... ok
+test a_compound_foreign_command_is_not_a_legacy_managed_hook ... ok
+test relative_provider_roots_resolve_against_launch_directory ... ok
+test refresh_and_uninstall_preserve_mixed_foreign_commands_and_metadata ... ok
+test encoded_reporter_path_executes_without_shell_interpretation ... ok
+test nonregular_configuration_is_rejected_without_blocking ... ok
+test uninstall_preserves_foreign_empty_events_and_group_metadata ... ok
+test symlink_target_is_updated_without_replacing_link ... ok
+test repeated_setup_is_byte_preserving_and_preserves_permissions ... ok
+test simultaneous_installations_merge_once_without_corruption ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src/lib.rs (target/debug/deps/signaltty_plugin-c26a67c99ef67fbb)
+
+running 5 tests
+test tests::defaults_apply ... ok
+test tests::parse_valid_manifest ... ok
+test tests::argv_resolution ... ok
+test tests::dir_name_must_match_manifest ... ok
+test tests::rejects_bad_manifests ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/signaltty_proto-9755e74d0cbfde6a)
+
+running 4 tests
+test tests::protocol_check ... ok
+test tests::glob_matching ... ok
+test tests::all_lists_cover_every_constant_without_duplicates ... ok
+test tests::response_roundtrip ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/signaltty_server-f9600cb754a81f48)
+
+running 31 tests
+test attrib::tests::ancestors_include_self_and_init ... ok
+test audit::tests::torn_lines_never_fail_replay ... ok
+test audit::tests::merge_dedupes_by_seq_and_caps ... ok
+test codex::tests::explicit_isolation_preserves_argv_without_probe ... ok
+test codex::tests::native_interactive_arguments ... ok
+test codex::tests::preserve_utilities_remote_and_unknown_options ... ok
+test audit::tests::append_read_and_rotation_bound_disk ... ok
+test attrib::tests::resolves_deepest_pane_child ... ok
+test git::tests::diff_outside_a_repo_is_none ... ok
+test params::tests::decision_payload_decode ... ok
+test params::tests::decode_ignores_unknown_fields ... ok
+test params::tests::decode_missing_required_is_bad_params ... ok
+test params::tests::decode_mistyped_optional_is_bad_params ... ok
+test params::tests::enums_reject_bad_variants ... ok
+test params::tests::ratio_clamps_to_stops ... ok
+test params::tests::severity_and_until_parse ... ok
+test params::tests::split_path_accepts_only_0_and_1 ... ok
+test procscan::tests::deepest_descendant_stops_at_non_shell ... ok
+test procscan::tests::own_process_reads_back ... ok
+test procscan::tests::unknown_pids_read_none ... ok
+test server::tests::dropping_a_connection_unregisters_all_viewers_even_on_error ... ok
+test store::tests::clear_attention_emits_only_when_set ... ok
+test store::tests::decision_lifecycle_created_answered_cleared ... ok
+test store::tests::next_unread_orders_by_severity_then_recency ... ok
+test store::tests::raise_attention_emits_created_then_updated ... ok
+test store::tests::set_lifecycle_emits_only_on_change ... ok
+test git::tests::diff_reports_numstat_untracked_and_binary ... ok
+test git::tests::diff_in_unborn_repo_reports_staged_and_untracked_files ... ok
+test git::tests::diff_preserves_tabs_and_newlines_in_filenames ... ok
+test worktrees::tests::cancelled_git_stops_checkout_hook_descendants ... ok
+test worktrees::tests::timed_out_git_reaps_parent_and_stops_checkout_hook_descendants ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.33s
+
+     Running unittests src/main.rs (target/debug/deps/signaltty_server-dd0c811fa9ef1aca)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/file_diff.rs (target/debug/deps/file_diff-3567511c51591716)
+
+running 10 tests
+test git_configuration_cannot_change_patch_syntax_or_run_diff_tools ... ok
+test new_binary_empty_and_unborn_files_have_truthful_content ... ok
+test literal_paths_and_subdirectory_workspaces_share_root_relative_names ... ok
+test symlinks_and_special_files_never_preview_external_contents ... ok
+test tracked_diff_combines_staged_and_unstaged_and_reads_deletion ... ok
+test preview_byte_and_line_limits_are_explicit_and_keep_complete_lines ... ok
+test tracked_diff_preserves_git_normalization_binary_attributes_and_clean_state ... ok
+test typed_path_validation_and_nonmembers_are_rejected ... ok
+test unreadable_untracked_regular_file_reports_io_error ... ok
+test git_deadline_kills_filter_descendants_and_other_control_calls_stay_responsive ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.31s
+
+     Running tests/integration.rs (target/debug/deps/integration-319f7c12e838502b)
+
+running 44 tests
+test attached_pane_streams_after_exit_and_resume_without_reattaching ... ok
+test attach_snapshot_and_stream_share_output_offsets ... ok
+test audit_replays_across_restart ... ok
+test automatic_setup_failure_is_visible_without_stopping_the_agent ... ok
+test automatic_hooks_are_loaded_before_spawn_and_split_and_drive_states ... ok
+test codex_local_runtime_routes_installed_hooks_to_each_pane ... ok
+test concurrent_spawn_and_close_do_not_leave_a_live_pane ... ok
+test decision_prose_supersede_and_clearing ... ok
+test decision_answer_delivers_bytes_and_consumes ... ok
+test decision_without_channel_is_read_only ... ok
+test closing_restored_legacy_layout_cleans_hidden_owned_panes ... ok
+test detach_reattach_keeps_process ... ok
+test detach_stops_streaming_without_stopping_the_process ... ok
+test failed_spawn_does_not_create_an_automatic_tab ... ok
+test explicit_launch_config_root_and_disabled_mode_are_respected ... ok
+test codex_unsupported_or_hanging_probe_keeps_original_launch_with_notice ... ok
+test hints_shells_and_ambiguous_aliases_do_not_authorize_setup ... ok
+test hook_event_claude_notification_and_cursor_stop ... ok
+test hook_event_drives_codex_lifecycle ... ok
+test layout_rejects_duplicate_panes_and_clamps_ratios ... ok
+test layout_replacement_cannot_hide_owned_panes ... ok
+test input_roundtrip_and_exit_code ... ok
+test malformed_ipc_and_versioning ... ok
+test manifest_overlay_detects_and_classifies ... ok
+test notify_attention_and_next_unread ... ok
+test osc777_from_pty_raises_notification ... ok
+test plugin_hook_fires_on_attention ... ok
+test plugin_reload_and_failure_isolation ... ok
+test resize_and_signal ... ok
+test report_session_builds_resume_and_pane_resume_spawns ... ok
+test restart_restores_structure_without_processes ... ok
+test schema_lists_every_dispatched_method ... ok
+test set_ratio_persists_divider_and_clamps ... ok
+test simultaneous_resume_requests_launch_only_one_child ... ok
+test spawn_detects_agent_kind ... ok
+test spawn_echo_and_read ... ok
+test spawn_rejects_a_tab_in_another_workspace ... ok
+test split_layout_and_concurrent_clients ... ok
+test untitled_hook_message_is_the_last_message_verbatim ... ok
+test workspace_diff_reports_numstat_and_rejects_non_repo ... ok
+test wait_until_blocked_via_hook ... ok
+test workspace_handles_collide_resolve_and_migrate ... ok
+test wait_timeout_and_seen ... ok
+test procscan_promotes_through_shell_and_follows_cwd ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.97s
+
+     Running tests/native_permissions.rs (target/debug/deps/native_permissions-9865fe45e6275ea0)
+
+running 7 tests
+test malformed_or_unrelated_native_wait_does_not_mutate_pane ... ok
+test replayed_render_data_cannot_claim_a_live_native_route ... ok
+test identity_change_and_concurrent_picks_cannot_deliver_old_grants ... ok
+test installed_reporters_return_once_and_deny_without_typing_terminal_input ... ok
+test unconnected_native_permission_is_read_only ... ok
+test shutdown_and_restart_cannot_restore_an_answer_channel ... ok
+test disconnect_timeout_supersede_and_session_loss_never_grant ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.36s
+
+     Running tests/worktrees.rs (target/debug/deps/worktrees-7ce818035ccdd228)
+
+running 7 tests
+test removal_sees_a_background_process_directory_before_periodic_refresh ... ok
+test worktree_checkout_isolated_reused_and_removed_without_branch_deletion ... ok
+test cli_worktree_commands_deliver_the_json_api_contract ... ok
+test removal_cannot_race_ordinary_workspace_creation_or_pane_launch ... ok
+test worktree_inputs_are_typed_and_foreign_paths_and_duplicate_branches_are_rejected ... ok
+test worktree_removal_refuses_open_live_dirty_main_and_locked_checkouts ... ok
+test worktree_open_accepts_external_detached_checkout_and_survives_restore ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+     Running unittests src/lib.rs (target/debug/deps/signaltty_term-a8aca322fbe569cc)
+
+running 14 tests
+test headless::tests::screen_and_tail ... ok
+test headless::tests::resize_keeps_scrollback ... ok
+test headless::tests::screen_state_replays_colours_and_line_starts ... ok
+test headless::tests::resize_keeps_the_visible_screen ... ok
+test osc::tests::ignores_other_sequences ... ok
+test osc::tests::osc777_with_title ... ok
+test osc::tests::osc99_kitty_lenient ... ok
+test osc::tests::osc9_bel_terminated ... ok
+test osc::tests::osc_title_and_bell ... ok
+test osc::tests::split_across_chunks ... ok
+test sanitize::tests::sanitize_kills_controls_and_caps ... ok
+test headless::tests::tail_strips_ansi ... ok
+test sanitize::tests::strips_csi_and_osc ... ok
+test headless::tests::scrollback_is_bounded ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/signaltty_testkit-20d5cccc08773dd7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests signaltty_agent
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests signaltty_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests signaltty_integration
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests signaltty_plugin
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests signaltty_proto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests signaltty_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests signaltty_term
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests signaltty_testkit
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

@@ -1,6 +1,7 @@
 //! Domain model: workspaces, tabs, panes, lifecycle, attention.
 //! Toolkit-free, async-free, OS-free. See docs/02 and docs/03.
 
+pub mod diff;
 pub mod error;
 pub mod ids;
 pub mod model;

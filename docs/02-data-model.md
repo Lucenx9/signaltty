@@ -42,6 +42,12 @@ Create and open produce ordinary workspaces with stable handles. Closing a
 workspace preserves its checkout and branch. Removal is a separate operation
 and refuses the main checkout, dirty or locked checkouts, and open references.
 
+Selected-file diffs are transient read results, not workspace snapshot fields.
+`signaltty_core::diff` defines typed text hunks with old/new line numbers and
+explicit binary, unchanged and unavailable content. The server compares current
+content against HEAD on demand; the GUI keeps selection and request generations
+only for the open dialog. See [ADR-0016](adr/0016-file-diff-review.md).
+
 ## Tab
 
 One named layout inside a workspace (`agents`, `shell`, `tests`, `logs`).

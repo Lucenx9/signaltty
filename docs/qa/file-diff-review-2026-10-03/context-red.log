@@ -1,0 +1,24 @@
+   Compiling signaltty-server v0.1.0 (/home/simone/code/signaltty/crates/signaltty-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.84s
+     Running tests/file_diff.rs (target/debug/deps/file_diff-bd3e11e48499c55f)
+
+running 1 test
+test tracked_diff_combines_staged_and_unstaged_and_reads_deletion ... FAILED
+
+failures:
+
+---- tracked_diff_combines_staged_and_unstaged_and_reads_deletion stdout ----
+
+thread 'tracked_diff_combines_staged_and_unstaged_and_reads_deletion' (3547247) panicked at crates/signaltty-server/tests/file_diff.rs:96:5:
+assertion `left == right` failed
+  left: Null
+ right: Object {"kind": String("context"), "new_line": Number(2), "old_line": Number(2), "text": String("two")}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tracked_diff_combines_staged_and_unstaged_and_reads_deletion
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.10s
+
+error: test failed, to rerun pass `-p signaltty-server --test file_diff`

@@ -15,6 +15,7 @@ use signaltty_proto::{Request, Response};
 
 const IPC_TIMEOUT: Duration = Duration::from_secs(3);
 const WORKTREE_TIMEOUT: Duration = Duration::from_secs(90);
+const FILE_DIFF_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn worktree_call(method: &str) -> bool {
     matches!(
@@ -86,7 +87,9 @@ impl IpcHandle {
                 params,
                 reply,
                 deadline: Instant::now()
-                    + if worktree_call(method) {
+                    + if method == signaltty_proto::method::WORKSPACE_FILE_DIFF {
+                        FILE_DIFF_TIMEOUT
+                    } else if worktree_call(method) {
                         WORKTREE_TIMEOUT
                     } else {
                         IPC_TIMEOUT
@@ -292,15 +295,16 @@ async fn run_session(
             req = rx.recv() => match req {
                 None => return true,
                 Some(ActorRequest::Call { method, params, reply, deadline }) => {
-                    if worktree_call(&method) {
+                    if worktree_call(&method) || method == signaltty_proto::method::WORKSPACE_FILE_DIFF {
+                        let read_only = method == signaltty_proto::method::WORKSPACE_FILE_DIFF;
                         let socket = socket.clone();
                         tokio::spawn(async move {
                             let result = tokio::time::timeout_at(deadline, async {
                                 let mut connection = Conn::connect(&socket).await?;
                                 let id = connection.send(&method, params).await?;
-                                let response = read_response(&mut connection, &id).await.map_err(|e| format!("ipc worktree response lost; outcome unknown: {e}"))?;
+                                let response = read_response(&mut connection, &id).await.map_err(|e| if read_only { format!("ipc file diff read failed: {e}") } else { format!("ipc worktree response lost; outcome unknown: {e}") })?;
                                 response_result(response)
-                            }).await.unwrap_or_else(|_| Err("ipc worktree request timed out; outcome unknown".into()));
+                            }).await.unwrap_or_else(|_| Err(if read_only { "ipc file diff read timed out" } else { "ipc worktree request timed out; outcome unknown" }.into()));
                             let _ = reply.send(result);
                         });
                     } else {
@@ -661,6 +665,43 @@ mod tests {
         )
         .await;
         assert_eq!(worktree.await.unwrap().unwrap()["workspace"]["id"], "new");
+    }
+
+    #[tokio::test]
+    async fn file_diff_uses_independent_read_connection_and_keeps_control_available() {
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.0).unwrap();
+        let (ui, _events) = mpsc::unbounded_channel();
+        let actor = spawn(socket.0.clone(), ui);
+        let (mut control, _sub) = connected(&listener).await;
+        let caller = actor.clone();
+        let read = tokio::spawn(async move {
+            caller
+                .call(
+                    "workspace.file_diff",
+                    json!({"workspace_id":"a", "path":"src/a.rs"}),
+                )
+                .await
+        });
+        let mut dedicated = server_conn(&listener).await;
+        let diff = request(&mut dedicated).await;
+        assert_eq!(diff.method, "workspace.file_diff");
+        let caller = actor.clone();
+        let fast = tokio::spawn(async move { caller.call("server.status", json!({})).await });
+        let status = request(&mut control).await;
+        respond(&mut control, &status, json!({"ready":true})).await;
+        assert_eq!(fast.await.unwrap().unwrap()["ready"], true);
+        tokio::time::sleep(IPC_TIMEOUT + Duration::from_millis(100)).await;
+        respond(&mut dedicated, &diff, json!({"path":"src/a.rs"})).await;
+        assert_eq!(read.await.unwrap().unwrap()["path"], "src/a.rs");
+        let caller = actor.clone();
+        let read = tokio::spawn(async move { caller.call("workspace.file_diff", json!({})).await });
+        let mut dedicated = server_conn(&listener).await;
+        let _ = request(&mut dedicated).await;
+        drop(dedicated);
+        let error = read.await.unwrap().unwrap_err();
+        assert!(error.contains("read"), "{error}");
+        assert!(!error.contains("outcome unknown"), "{error}");
     }
 
     #[tokio::test]

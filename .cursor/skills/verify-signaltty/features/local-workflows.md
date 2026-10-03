@@ -3,7 +3,7 @@
 ## Sub-features
 
 Command/workspace palette, workspace rename, literal terminal search, pane zoom,
-worktree create/open/remove and working-tree change summaries.
+worktree create/open/remove, working-tree change summaries and per-file diff review.
 
 ## How to get to it (user POV)
 
@@ -11,6 +11,8 @@ Use Ctrl+Shift+P for the palette, Ctrl+Shift+R to rename, Ctrl+Shift+F to search
 and Ctrl+Shift+Z to zoom. The window menu also exposes these commands, Worktrees
 and Show Changes. Worktree creation opens a shell workspace. Closing that
 workspace preserves its checkout; removal is a separate confirmation.
+In Show Changes, activate a file to read its numbered patch. Back returns to the
+preserved file list; Refresh reads current changes again.
 
 ## Driving it with GTK and real Git
 
@@ -23,6 +25,7 @@ Run each display test in its own process with `GTK_A11Y=none dbus-run-session --
 cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1`:
 
 - `app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls`
+- `app::tests::file_diff_reader_uses_native_numbered_selectable_controls`
 - `app::tests::pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios`
 - `terminal::tests::terminal_search_is_literal_and_keeps_the_terminal`
 
@@ -43,3 +46,14 @@ widgets without mutating real checkouts. Real filesystem effects are established
 separately by the server/CLI suite. The diff is against HEAD, not per-turn output;
 renames appear as deletion/addition. Removal is never forced and keeps branches.
 A provider's native model session requires a separate live verification.
+
+Selected-file IPC fixtures run with `cargo test -p signaltty-server --test file_diff`.
+They use real temporary repositories. The GUI file-diff display test uses the same
+production row/reader controls with delayed actor replies to prove stale-response
+handling. Under a headless environment, wrap its documented command with
+`xvfb-run -a`; export `SIGNALTTY_UI_EVIDENCE` to inspect light, dark and narrow
+reader captures. Binary, unavailable and truncated previews need explicit notices.
+The reader test also copies selected text through the actual isolated clipboard,
+returns focus to the selected row, loads the production stylesheet, checks semantic
+colors in both themes, and verifies closed reader widgets are released after their
+pending replies finish. The closed dialog releases its child from the native host.

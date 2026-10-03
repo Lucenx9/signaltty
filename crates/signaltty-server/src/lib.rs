@@ -5,6 +5,7 @@ pub mod attrib;
 pub mod audit;
 mod codex;
 pub mod config;
+pub mod file_diff;
 pub mod git;
 pub mod params;
 pub mod persist;

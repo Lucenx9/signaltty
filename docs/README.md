@@ -35,4 +35,5 @@ Docs index:
 - [Automatic hook configuration verification, 2026-09-30](qa/automatic-hooks-2026-09-30.md)
 - [Codex pane runtime verification, 2026-09-30](qa/codex-pane-runtime-2026-09-30.md)
 - [Local agent workflow verification, 2026-09-30](qa/local-workflows-2026-09-30.md)
+- [Per-file diff review verification, 2026-10-03](qa/file-diff-review-2026-10-03.md)
 - [ADRs](adr/)
