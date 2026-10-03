@@ -10,7 +10,7 @@
 - [x] T008 [US2] Cancel long waits on disconnect/shutdown and expose CLI contract.
 - [x] T009 Update protocol/agent docs and verification coverage.
 - [x] T010 Run full verification, inspect renders and review final diff.
-- [ ] T011 Commit, push, publish and link PR; inspect hosted checks.
+- [x] T011 Commit, push, publish and link PR; inspect hosted checks.
 
 T002 gates production code. T004 precedes T005; T006 precedes T007. T009 uses final
 interfaces. T010 gates T011. Root integrates changes; design/judge agents are read-only.

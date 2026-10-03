@@ -97,3 +97,11 @@ The reviewer confirmed this correction closes the final reported defect.
 
 Final unresolved findings: Standards 0; Spec 0. Each axis's highest initial severity
 was P1 (incorrect completeness claims), resolved and regression-tested.
+
+## Publication
+
+[PR #4](https://github.com/Lucenx9/signaltty/pull/4) targets `main` and is linked to
+the originating T3 thread. GitHub reported it mergeable at publication. Hosted
+`rust` and `minimum-rust` checks were running when first inspected; the PR shows
+their current status. CodeRabbit skipped its review under the repository's OSS
+policy; the independent reviews recorded above were performed locally.
