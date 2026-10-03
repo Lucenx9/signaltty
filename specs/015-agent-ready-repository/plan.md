@@ -24,8 +24,9 @@ Adopt the shell candidate's explicit full/desktop distinction and exact warning 
 - `.agents/skills/verify-signaltty`: canonical guide, linked from other skill harnesses.
 - `docs/17-agent-development.md`: environment, isolation, handoff, GUI rubric and evaluation bank.
 
-`fast` runs tooling tests, fmt, architecture, Clippy and ordinary workspace tests.
-`full` adds build, server probes, every discovered ignored GTK test in a separate
+`fast` runs tooling tests, fmt, architecture, Clippy, build and ordinary workspace tests.
+Build precedes tests because testkit locates the real target/debug executables.
+`full` adds server probes, every discovered ignored GTK test in a separate
 Xvfb/D-Bus process, and refresh benchmark. `desktop` additionally invokes the native
 accessibility probe; compositor-specific capture remains a documented explicit action.
 Each run has a fresh artifact directory, per-command logs and a JSON summary including

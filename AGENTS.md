@@ -32,8 +32,8 @@ Environment setup, worktree isolation, handoffs and proof limits are in
 System deps for the GUI: gtk4, libadwaita, vte (via pkg-config).
 
 ```sh
-scripts/verify.sh fast            # tooling, fmt, architecture, warning policy, workspace tests
-scripts/verify.sh full            # also build, server QA, isolated GTK tests and benchmark
+scripts/verify.sh fast            # tooling, fmt, architecture, warning policy, build/tests
+scripts/verify.sh full            # also server QA, isolated GTK tests and benchmark
 ```
 
 GUI tests needing a display are `#[ignore]`d; run them explicitly:

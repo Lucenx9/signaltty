@@ -24,6 +24,9 @@
   warning policy, server QA, 15 separate GTK tests and refresh benchmark.
 - Tooling CLI regressions cover failure propagation, cancellation and evidence retention.
 - Upstream skill check validated 72 installed skills against cached pinned sources.
+- A repeated host workspace run failed the pre-existing worktree event source-ID
+  assertion once; 20 isolated repetitions passed. No retries or assertion suppression
+  were added. The runner now explicitly builds binaries before integration tests.
 
 Host evidence: `target/agent-ready-evidence/`. CI retains its own artifact; local
 ephemeral paths are not a claim that evidence is committed or remotely available.

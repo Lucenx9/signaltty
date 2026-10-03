@@ -139,10 +139,11 @@ class Verification:
         records.write_text('\n'.join(line for line in diagnostics.read_text().splitlines()
                                      if line.startswith('{')) + '\n')
         self.run('warning-policy', [sys.executable, 'scripts/check-quality.py', 'clippy', str(records)])
+        # Testkit locates real target/debug executables, not the Cargo test binaries.
+        self.run('build', ['cargo', 'build', '--workspace', '--locked'])
         self.run('workspace-tests', ['cargo', 'test', '--workspace', '--locked'])
         if mode == 'fast':
             return
-        self.run('build', ['cargo', 'build', '--workspace', '--locked'])
         self.run('server-qa', [sys.executable, 'scripts/qa-server-edge-cases.py'])
         artifacts = self.run('gui-build', ['cargo', 'test', '-p', 'signaltty-gui', '--locked',
                                             '--no-run', '--message-format=json'])

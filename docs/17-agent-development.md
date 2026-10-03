@@ -34,8 +34,8 @@ packages receive updates; this setup is repeatable, not bit-for-bit reproducible
 | Command | Proof |
 |---|---|
 | `scripts/verify.sh doctor` | Rust/components, compiler, native package versions, Xvfb and D-Bus prerequisites |
-| `scripts/verify.sh fast` | Tooling regressions, formatting, architecture boundaries, warning policy, ordinary workspace tests |
-| `scripts/verify.sh full` | Fast plus build, real-server edge cases, every ignored GTK test and refresh benchmark |
+| `scripts/verify.sh fast` | Tooling regressions, formatting, architecture boundaries, warning policy, build and ordinary workspace tests |
+| `scripts/verify.sh full` | Fast plus real-server edge cases, every ignored GTK test and refresh benchmark |
 | `scripts/verify.sh desktop` | Full plus real desktop AT-SPI reliability probe |
 
 The runner uses this checkout's `target/`, overriding an inherited `CARGO_TARGET_DIR`
