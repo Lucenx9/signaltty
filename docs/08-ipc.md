@@ -61,7 +61,7 @@ clients can `subscribe {from_seq}` to replay.
 | `worktree.open` | `{workspace_id, path, name?}` | `{workspace, path, reused}` (absolute registered checkout path, canonical-cwd workspace reuse) |
 | `worktree.remove` | `{workspace_id, path}` | `{removed:true, path}` (explicit non-force removal; main, dirty, locked and open-referenced checkouts refused; branch retained) |
 | `tab.create` | `{workspace_id, title?}` | `{tab}` |
-| `tab.close` | `{tab_id}` | `{closed}` |
+| `tab.close` | `{tab_id, signal?}` | `{closed}` |
 | `tab.set_layout` | `{tab_id, layout}` | `{tab}` |
 | `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
 | `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?}` | `{pane, integration?}` |
