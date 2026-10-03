@@ -1215,7 +1215,7 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
         // exited between the checks): loud error, user answers in-terminal.
         ctx.store.write().unwrap().emit(
             event::DECISION_CLEARED,
-            json!({"pane_id": p.pane_id, "reason": "pane_exited"}),
+            json!({"pane_id": p.pane_id, "decision_id": p.decision_id, "reason": "pane_exited"}),
         );
         return Err(if e == "pane has no live PTY" {
             (code::PANE_EXITED.to_string(), p.pane_id)
