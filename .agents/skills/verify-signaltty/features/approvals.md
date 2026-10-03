@@ -7,7 +7,7 @@ Discovery, preserved decision on focus/attach, one-time choice delivery.
 ## How to get to it (user POV)
 
 An agent requests approval. Click the attention count or use Ctrl+Shift+J, then
-click Allow in the pane's inline decision bar.
+click Allow once in a native permission bar (Allow in the structured QA fixture).
 
 ## Driving it with GTK/IPC
 
