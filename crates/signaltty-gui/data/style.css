@@ -37,11 +37,23 @@
 .status-dot.lifecycle-blocked { background-color: var(--warning-bg-color); }
 .status-dot.lifecycle-failed { background-color: var(--error-bg-color); }
 
-.status-dot.attention-unread { background-color: var(--accent-bg-color); }
+.status-dot.attention-unread {
+  background-color: var(--accent-bg-color);
+  box-shadow: 0 0 0 2px alpha(var(--accent-bg-color), 0.25);
+}
 .status-dot.attention-input,
-.status-dot.attention-warning { background-color: var(--warning-bg-color); }
-.status-dot.attention-permission { background-color: var(--orange-3); }
-.status-dot.attention-error { background-color: var(--error-bg-color); }
+.status-dot.attention-warning {
+  background-color: var(--warning-bg-color);
+  box-shadow: 0 0 0 2px alpha(var(--warning-bg-color), 0.25);
+}
+.status-dot.attention-permission {
+  background-color: var(--orange-3);
+  box-shadow: 0 0 0 2px alpha(var(--orange-3), 0.25);
+}
+.status-dot.attention-error {
+  background-color: var(--error-bg-color);
+  box-shadow: 0 0 0 2px alpha(var(--error-bg-color), 0.25);
+}
 
 /* Spinner stand-in for the dot while an agent is working. */
 .status-spinner {
@@ -55,22 +67,26 @@
 .status-pill {
   padding: 1px 8px;
   border-radius: 999px;
-  font-size: 0.8em;
-  font-weight: 700;
+  font-size: 0.82em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .status-pill.attention-input,
 .status-pill.attention-warning {
   color: var(--warning-color);
   background-color: alpha(var(--warning-bg-color), 0.16);
+  box-shadow: inset 0 0 0 1px alpha(var(--warning-bg-color), 0.25);
 }
 .status-pill.attention-permission {
-  color: var(--orange-5);
+  color: mix(var(--orange-3), var(--window-fg-color), 0.4);
   background-color: alpha(var(--orange-3), 0.16);
+  box-shadow: inset 0 0 0 1px alpha(var(--orange-3), 0.25);
 }
 .status-pill.attention-error {
   color: var(--error-color);
   background-color: alpha(var(--error-bg-color), 0.16);
+  box-shadow: inset 0 0 0 1px alpha(var(--error-bg-color), 0.25);
 }
 
 /* ---- sidebar -------------------------------------------------------- */
@@ -84,30 +100,38 @@
 
 .workspace-row .workspace-name {
   font-weight: 600;
+  font-size: 1em;
 }
 
 .workspace-row .workspace-message {
-  font-size: 0.93em;
-  color: alpha(currentColor, 0.82);
+  font-size: 0.9em;
+  color: alpha(currentColor, 0.8);
 }
 
 .workspace-row .workspace-meta {
-  font-size: 0.9em;
-  color: alpha(currentColor, 0.72);
+  font-size: 0.82em;
+  color: alpha(currentColor, 0.65);
 }
 
 .navigation-sidebar > row:selected {
-  background-color: alpha(var(--accent-bg-color), 0.1);
-  box-shadow: inset 2px 0 var(--accent-bg-color);
+  background-color: alpha(currentColor, 0.09);
+  box-shadow: none;
+}
+
+.navigation-sidebar > row:selected:hover {
+  background-color: alpha(currentColor, 0.12);
 }
 
 /* Status stays visible beside the independent close target. */
 .row-status {
-  font-size: 0.8em;
+  font-size: 0.82em;
   color: alpha(currentColor, 0.65);
 }
 .row-status.speaking {
   font-weight: 600;
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  background-color: alpha(currentColor, 0.12);
 }
 
 .row-status-dot {
@@ -126,15 +150,16 @@
 .row-status.lifecycle-blocked,
 .row-status.attention-input,
 .row-status.attention-warning { color: var(--warning-color); }
-.row-status.attention-permission { color: var(--orange-5); }
+.row-status.attention-permission { color: mix(var(--orange-3), var(--window-fg-color), 0.4); }
 .row-status.lifecycle-failed,
 .row-status.attention-error { color: var(--error-color); }
 
 /* Section label over the rows that need you; a hairline closes it. */
 .sidebar-section {
   padding: 8px 18px 2px 18px;
-  font-size: 0.85em;
+  font-size: 0.82em;
   font-weight: 600;
+  letter-spacing: 0.03em;
   color: alpha(currentColor, 0.65);
 }
 .sidebar-section-rule {
@@ -183,7 +208,7 @@
   background-color: alpha(var(--warning-bg-color), 0.16);
 }
 .attention-button.attention-permission {
-  color: var(--orange-5);
+  color: mix(var(--orange-3), var(--window-fg-color), 0.4);
   background-color: alpha(var(--orange-3), 0.16);
 }
 .attention-button.attention-error {
@@ -217,8 +242,12 @@
   border-radius: 10px;
   /* Rings are inset shadows: they never change layout, so an attention
    * change never resizes the terminal underneath, and a split's GtkPaned
-   * (which clips each child to its allocation) can't cut them off. */
-  box-shadow: inset 0 0 0 1px var(--border-color), 0 1px 3px alpha(black, 0.08);
+   * (which clips each child to its allocation) can't cut them off.
+   * --card-shade-color automatically adapts depth in light and dark modes. */
+  box-shadow:
+    inset 0 0 0 1px var(--border-color),
+    0 1px 2px var(--card-shade-color),
+    0 2px 6px -1px var(--card-shade-color);
 }
 
 .pane-header {
@@ -234,7 +263,7 @@
 }
 
 .pane-subtitle {
-  font-size: 0.9em;
+  font-size: 0.82em;
 }
 
 /* Pane actions surface on hover/focus; they stay in the layout so the
@@ -276,7 +305,10 @@
  * two classes so every attention ring below (three) wins over focus:
  * what needs you outranks where you are. */
 .split .pane.focused {
-  box-shadow: inset 0 0 0 1px alpha(var(--accent-bg-color), 0.7), 0 1px 3px alpha(black, 0.08);
+  box-shadow:
+    inset 0 0 0 1.5px alpha(var(--accent-bg-color), 0.8),
+    0 1px 2px var(--card-shade-color),
+    0 2px 6px -1px var(--card-shade-color);
 }
 .split .pane.focused .pane-header {
   background-color: alpha(var(--accent-bg-color), 0.07);
@@ -285,46 +317,76 @@
 /* Attention rings — three classes beat the two-class focus rule
  * above however they are ordered, so a focused pane still shows
  * what needs you. Weight follows severity: unread is a hairline,
- * gates get a ring + glow. */
+ * gates get a ring + glow. Card drop elevation is preserved across all states. */
 .tab-page .pane.attention-unread {
-  box-shadow: inset 0 0 0 1px alpha(var(--accent-bg-color), 0.7), 0 1px 3px alpha(black, 0.08);
+  box-shadow:
+    inset 0 0 0 1px alpha(var(--accent-bg-color), 0.8),
+    0 1px 2px var(--card-shade-color),
+    0 2px 6px -1px var(--card-shade-color);
 }
 .tab-page .pane.attention-warning {
-  box-shadow: inset 0 0 0 1.5px var(--warning-bg-color), 0 1px 3px alpha(black, 0.08);
+  box-shadow:
+    inset 0 0 0 1.5px var(--warning-bg-color),
+    0 1px 2px var(--card-shade-color),
+    0 2px 6px -1px var(--card-shade-color);
 }
 .tab-page .pane.attention-input {
-  box-shadow: inset 0 0 0 2px var(--warning-bg-color), inset 0 0 14px alpha(var(--warning-bg-color), 0.2);
+  box-shadow:
+    inset 0 0 0 2px var(--warning-bg-color),
+    inset 0 0 14px alpha(var(--warning-bg-color), 0.2),
+    0 1px 2px var(--card-shade-color),
+    0 2px 6px -1px var(--card-shade-color);
 }
 .tab-page .pane.attention-permission {
-  box-shadow: inset 0 0 0 2px var(--orange-3), inset 0 0 16px alpha(var(--orange-3), 0.22);
+  box-shadow:
+    inset 0 0 0 2px var(--orange-3),
+    inset 0 0 16px alpha(var(--orange-3), 0.22),
+    0 1px 2px var(--card-shade-color),
+    0 2px 6px -1px var(--card-shade-color);
 }
 .tab-page .pane.attention-error {
-  box-shadow: inset 0 0 0 2px var(--error-bg-color), inset 0 0 16px alpha(var(--error-bg-color), 0.22);
+  box-shadow:
+    inset 0 0 0 2px var(--error-bg-color),
+    inset 0 0 16px alpha(var(--error-bg-color), 0.22),
+    0 1px 2px var(--card-shade-color),
+    0 2px 6px -1px var(--card-shade-color);
 }
 
 /* ---- inline decision bar ---------------------------------------------- */
 
 /* The question sits where the user already looks: below the header,
- * above the terminal. One hairline separates it from the header; the
- * terminal grid below never moves except by the bar's own height. */
+ * above the terminal. The header's bottom hairline separates it cleanly
+ * without doubling borders; the terminal grid below never moves except
+ * by the bar's own height. The tint follows the pane's urgency. */
 .decision-bar {
-  padding: 10px 12px 12px;
-  border-top: 1px solid var(--border-color);
-  border-bottom: 1px solid var(--border-color);
-  background-color: alpha(var(--accent-bg-color), 0.06);
+  padding: 10px 14px 12px;
+  border: none;
+  box-shadow: inset 0 -1px var(--border-color);
+  background-color: alpha(var(--accent-bg-color), 0.07);
 }
+.tab-page .pane.attention-input .decision-bar {
+  background-color: alpha(var(--warning-bg-color), 0.1);
+}
+.tab-page .pane.attention-permission .decision-bar {
+  background-color: alpha(var(--orange-3), 0.1);
+}
+.tab-page .pane.attention-error .decision-bar {
+  background-color: alpha(var(--error-bg-color), 0.1);
+}
+
 .decision-prompt {
   font-weight: 600;
   font-size: 0.9em;
 }
 .decision-options button {
-  min-height: 28px;
-  padding: 3px 12px;
+  min-height: 30px;
+  padding: 4px 14px;
   border-radius: 8px;
   font-size: 0.9em;
+  box-shadow: inset 0 0 0 1px alpha(currentColor, 0.12);
 }
 .decision-hint {
-  font-size: 0.85em;
+  font-size: 0.82em;
 }
 
 /* ---- pressable pills -------------------------------------------------- */
@@ -388,20 +450,6 @@ button.pill:focus-visible {
 }
 .high-contrast .status-pill {
   box-shadow: inset 0 0 0 1px currentColor;
-}
-
-/* ---- dark ------------------------------------------------------------ */
-
-@media (prefers-color-scheme: dark) {
-  .status-pill.attention-permission,
-  .row-status.attention-permission,
-  .attention-button.attention-permission {
-    color: var(--orange-2);
-  }
-
-  .pane {
-    box-shadow: inset 0 0 0 1px var(--border-color), 0 1px 3px alpha(black, 0.3);
-  }
 }
 
 /* Diff tags take their foreground from rooted probes so GTK resolves the

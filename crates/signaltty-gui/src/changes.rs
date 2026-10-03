@@ -269,7 +269,11 @@ impl ChangesDialog {
                     ("removed", &this.removed_color),
                 ] {
                     if let Some(tag) = this.reader.buffer().tag_table().lookup(tag) {
-                        tag.set_foreground_rgba(Some(&probe.color()));
+                        let color = probe.color();
+                        tag.set_foreground_rgba(Some(&color));
+                        let mut bg = color;
+                        bg.set_alpha(0.08);
+                        tag.set_paragraph_background_rgba(Some(&bg));
                     }
                 }
             }
