@@ -403,6 +403,7 @@ impl App {
         sm.connect_dark_notify(move |_| {
             if let Some(a) = w.upgrade() {
                 a.restyle_terminals();
+                a.sync_desktop_preferences();
             }
         });
         let w = self.weak();
@@ -462,6 +463,7 @@ impl App {
                 "high-contrast",
                 adw::StyleManager::default().is_high_contrast(),
             ),
+            ("dark", adw::StyleManager::default().is_dark()),
         ] {
             if enabled {
                 self.window.add_css_class(class);

@@ -405,22 +405,23 @@ button.pill:focus-visible {
 
 /* ---- dark ------------------------------------------------------------ */
 
-@media (prefers-color-scheme: dark) {
-  /* Sidebar recedes below the content so the panes read as the stage. */
-  .sidebar-pane,
-  .sidebar-pane .navigation-sidebar {
-    background-color: #18181b;
-  }
+/* App mirrors AdwStyleManager:dark as a root class: the CSS media
+ * query does not follow libadwaita's scheme on every desktop. */
 
-  .status-pill.attention-permission,
-  .row-status.attention-permission,
-  .attention-button.attention-permission {
-    color: var(--orange-2);
-  }
+/* Sidebar recedes below the content so the panes read as the stage. */
+.dark .sidebar-pane,
+.dark .sidebar-pane .navigation-sidebar {
+  background-color: #18181b;
+}
 
-  .pane {
-    box-shadow: inset 0 0 0 1px var(--border-color), 0 1px 3px alpha(black, 0.3);
-  }
+.dark .status-pill.attention-permission,
+.dark .row-status.attention-permission,
+.dark .attention-button.attention-permission {
+  color: var(--orange-2);
+}
+
+.dark .pane {
+  box-shadow: inset 0 0 0 1px var(--border-color), 0 1px 3px alpha(black, 0.3);
 }
 
 /* Diff tags take their foreground from rooted probes so GTK resolves the
