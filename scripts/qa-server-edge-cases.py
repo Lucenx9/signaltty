@@ -13,6 +13,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from qa_evidence import preserve_logs
 
 
 def main():
@@ -119,6 +120,8 @@ def main():
                 except subprocess.TimeoutExpired:
                     os.killpg(server.pid, signal.SIGKILL)
                     server.wait()
+                log.flush()
+                preserve_logs(root, 'server')
     print(json.dumps(dict(failed=len(failures), cases=failures)))
     return 1 if failures else 0
 

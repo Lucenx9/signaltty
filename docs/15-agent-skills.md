@@ -25,25 +25,39 @@ opencode|gemini|copilot|muse`). Spec-kit sources are vendored verbatim under
 skills are shallow-cloned at pinned revs into
 `$XDG_CACHE_HOME/signaltty/upstream` (override `--cache`).
 
-## Phase routing
+`skills check` compares installed contents with the cached pinned revision, not
+just file presence. With a custom cache pass `skills check --cache DIR` explicitly.
+If the cache is unavailable, verification fails and asks for installation again;
+the check does not fetch or modify installed skills.
 
-Load the phase's skills **before** working, not after.
+## Task routing
 
-| Phase | Command | Skills |
+Load the workflow for the current task, then read additional references only when
+that workflow needs them. Already clarified requirements and existing test seams
+remain valid across phases; do not repeat interviews or publish issues just because
+a generic skill includes those steps.
+
+| Task | Load first | Add when needed |
 |---|---|---|
-| Discover | read code, `research` | `research` (primary sources → repo Markdown), `how` + `why`, `recall` (context rebuild) |
-| Specify | `/speckit-specify`, `/speckit-clarify` | `grill-with-docs` (interview → ADRs + glossary), `to-spec`, `domain-modeling` (terms), `constitution` gates the bar (`docs/14`) |
-| Plan | `/speckit-plan` | `architect` (types/signatures first), `domain-modeling`, `codebase-design`, `exhaust-the-design-space`, `wayfinder` (multi-session) |
-| Tasks | `/speckit-tasks` | `to-tickets` (tracer bullets + blocking edges), `sequence-verifiable-units` |
-| Implement | `/speckit-implement` | `implement` + `tdd` + `karpathy-guidelines`, principles: `fix-root-causes`, `type-system-discipline`, `model-the-domain`, `boundary-discipline`, `laziness-protocol`, `subtract-before-you-add`, `minimize-reader-load`, `build-the-lever`, `make-operations-idempotent`, `migrate-callers-then-delete-legacy-apis`, `separate-before-serializing-shared-state`, `redesign-from-first-principles`, `foundational-thinking`, `outcome-oriented-execution`, `never-block-on-the-human`, `experience-first` |
-| Review | `/speckit-analyze`, PR | `code-review`, `interrogate`, `no-comments`, `blast-radius`, `attack-the-premise` |
-| Verify | gates green | `prove-it-works`, `create-verification-skill` (+ `maintain-verification-skill`), `test-behavior-not-implementation` |
-| UI/Visual | any GUI work | `frontend-design`, `emil-design-eng`, `apple-design`, `animation-vocabulary`, `find-animation-opportunities`, `review-animations`, `improve-animations`, `emilkowalski-prototype` vs `prototype`; bar is `docs/14` §6–7, verified light + dark |
-| Debug | red loop | `diagnosing-bugs`, `figure-it-out`, `resolving-merge-conflicts`, `pstack-tdd`/`pstack-teach` |
-| Parallel | fan-out | `arena` (competing candidates), `swarm` (workers → one report), `guard-the-context-window`, `show-me-your-work` |
-| Docs | write/edit | `writing-for-agents` (AGENTS.md/skills), `technical-writing`, `doc` rows in `docs/` + ADR |
-| Meta | improve the system | `skill-creator`, `reflect`, `improve-codebase-architecture`, `encode-lessons-in-structure`, `handoff` |
-| Router | unsure | `ask-matt`; plain-language check: `bro` |
+| Investigate a question | `research` or `how` | `why` for an architectural decision |
+| Specify a feature | `/speckit-specify`, `/speckit-clarify` | `domain-modeling` for new concepts; interview only unresolved requirements |
+| Design a substantial change | `/speckit-plan`, `architect` | `codebase-design` for module boundaries |
+| Break down work | `/speckit-tasks` | `to-tickets` only when publishing tickets is requested |
+| Implement | `implement`, `tdd`, `karpathy-guidelines` | A `principle-*` skill addressing the concrete design or failure |
+| Review a diff | `code-review` | `interrogate` for adversarial review; `blast-radius` for cross-module risk |
+| Verify a change | project `verify-signaltty`, `principle-prove-it-works` | `maintain-verification-skill` when coverage changes |
+| Change GTK visuals | `frontend-design`, `emil-design-eng` | Motion/prototype skills only for those changes; apply `docs/17` visual rubric |
+| Diagnose a failure | `diagnosing-bugs` | `figure-it-out` when no narrower workflow applies |
+| Write documentation | `technical-writing` | `writing-for-agents` for instructions or skills |
+
+The canonical project verification skill is
+[`.agents/skills/verify-signaltty`](../.agents/skills/verify-signaltty/SKILL.md).
+Claude, Cursor and Copilot have relative links to the same source; other harnesses
+can follow the pointer in `AGENTS.md`. It is repository-owned and is not replaced
+by the upstream skill installer. `scripts/verify.sh fast` checks those links.
+
+See [agent development](17-agent-development.md) for environment setup, worktree
+isolation, handoffs and the task bank used to evaluate changes to this routing.
 
 ## Sources and curation
 

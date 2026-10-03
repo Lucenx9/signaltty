@@ -2,20 +2,34 @@ name: ci
 
 on: [push, pull_request]
 
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     runs-on: ubuntu-26.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: System deps (GUI crate only)
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y --no-install-recommends
-          libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev pkg-config
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Prepare reference environment
+        run: scripts/setup-dev.sh --system
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets
-      - run: cargo test --workspace
+      - run: scripts/verify.sh full --output "$RUNNER_TEMP/signaltty-evidence"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification
+          path: ${{ runner.temp }}/signaltty-evidence
+          if-no-files-found: warn
+  minimum-rust:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/setup-dev.sh --system
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - run: cargo +1.92.0 check --workspace --all-targets --locked

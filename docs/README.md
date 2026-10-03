@@ -29,6 +29,8 @@ Docs index:
 - [14 — Product direction (cmux + herdr, t3code visual bar)](14-product-direction.md)
 - [15 — Agent skills (install + phase routing)](15-agent-skills.md)
 - [16 — Visual references (Geist, Linear, Vercel)](16-visual-references.md)
+- [17 — Agent development and verification](17-agent-development.md)
+- [Agent-ready repository research, 2026-10-03](research/2026-10-03-agent-ready-repository.md)
 - [App verification, 2026-09-29](qa/2026-09-29.md)
 - [Native UI refinement verification, 2026-09-29–30](qa/ui-2026-09-29.md)
 - [Workspace visual hierarchy verification, 2026-09-30](qa/visual-hierarchy-2026-09-30.md)

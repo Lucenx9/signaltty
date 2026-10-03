@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from qa_evidence import preserve_logs
 
 import gi
 
@@ -94,6 +95,12 @@ def main():
     args = parser.parse_args()
     binaries = Path(__file__).resolve().parents[1] / "target/debug"
     bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+    owned = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus',
+                         'org.freedesktop.DBus', 'NameHasOwner',
+                         GLib.Variant('(s)', ('dev.signaltty.gui',)),
+                         GLib.VariantType.new('(b)'), Gio.DBusCallFlags.NONE, 3000, None)
+    if owned.unpack()[0]:
+        raise RuntimeError('A signaltty GUI already owns this desktop session; close it before native QA.')
     results = []
     with tempfile.TemporaryDirectory(prefix="signaltty-gui-qa-") as tmp:
         root = Path(tmp)
@@ -276,6 +283,7 @@ def main():
                 relay.close()
             log.close()
             gui_log.close()
+            preserve_logs(root, 'accessibility')
 
 
 if __name__ == "__main__":
