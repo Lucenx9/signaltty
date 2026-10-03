@@ -355,23 +355,29 @@
 /* ---- inline decision bar ---------------------------------------------- */
 
 /* The question sits where the user already looks: below the header,
- * above the terminal. The header's bottom hairline separates it cleanly
- * without doubling borders; the terminal grid below never moves except
- * by the bar's own height. The tint follows the pane's urgency. */
+ * above the terminal. It is a card, not a flat band: an inset hairline
+ * (so a clipped edge still reads) plus a soft shade drop. Margin keeps
+ * that drop inside the pane, which clips overflow. The tint follows
+ * the pane's urgency and stays on Adwaita tokens. */
 .decision-bar {
-  padding: 10px 14px 12px;
+  margin: 8px 10px 4px;
+  padding: 10px 12px;
   border: none;
-  box-shadow: inset 0 -1px var(--border-color);
-  background-color: alpha(var(--accent-bg-color), 0.07);
+  border-radius: 12px;
+  background-color: mix(var(--card-bg-color), var(--accent-bg-color), 0.08);
+  box-shadow:
+    inset 0 0 0 1px var(--border-color),
+    0 1px 2px var(--shade-color),
+    0 6px 12px -8px var(--shade-color);
 }
 .tab-page .pane.attention-input .decision-bar {
-  background-color: alpha(var(--warning-bg-color), 0.1);
+  background-color: mix(var(--card-bg-color), var(--warning-bg-color), 0.1);
 }
 .tab-page .pane.attention-permission .decision-bar {
-  background-color: alpha(var(--orange-3), 0.1);
+  background-color: mix(var(--card-bg-color), var(--orange-3), 0.1);
 }
 .tab-page .pane.attention-error .decision-bar {
-  background-color: alpha(var(--error-bg-color), 0.1);
+  background-color: mix(var(--card-bg-color), var(--error-bg-color), 0.1);
 }
 
 /* A gate tints the header with its own hue, so header and question read
@@ -390,25 +396,41 @@
   font-weight: 600;
   font-size: 0.9em;
 }
-/* Answers sit on the tinted bar as raised surface chips (hairline +
- * small drop), not gray fills that muddy into the tint. */
+/* Secondary answers stay raised surface chips. Exactly one button,
+ * Allow once, uses the accent as the suggested action. */
 .decision-options button {
   min-height: 30px;
   padding: 4px 14px;
   border-radius: 8px;
   font-size: 0.9em;
   font-weight: 500;
+}
+.decision-options button:not(.suggested-action) {
   background-color: var(--view-bg-color);
   color: var(--view-fg-color);
   box-shadow:
     inset 0 0 0 1px alpha(currentColor, 0.14),
     0 1px 2px var(--card-shade-color);
 }
-.decision-options button:hover {
+.decision-options button:not(.suggested-action):hover {
   background-color: mix(var(--view-bg-color), var(--view-fg-color), 0.05);
 }
-.decision-options button:active {
+.decision-options button:not(.suggested-action):active {
   background-color: mix(var(--view-bg-color), var(--view-fg-color), 0.1);
+}
+.decision-options button.suggested-action {
+  font-weight: 600;
+  background-color: var(--accent-bg-color);
+  color: var(--accent-fg-color);
+  box-shadow:
+    inset 0 0 0 1px alpha(var(--accent-fg-color), 0.16),
+    0 1px 2px var(--shade-color);
+}
+.decision-options button.suggested-action:hover {
+  background-color: mix(var(--accent-bg-color), var(--window-fg-color), 0.08);
+}
+.decision-options button.suggested-action:active {
+  background-color: mix(var(--accent-bg-color), var(--window-fg-color), 0.14);
 }
 .decision-hint {
   font-size: 0.82em;
@@ -469,6 +491,9 @@ button.pill:focus-visible {
 }
 .high-contrast .pane-header {
   box-shadow: inset 0 -1px currentColor;
+}
+.high-contrast .decision-bar {
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 .high-contrast .split .pane.focused .pane-header {
   box-shadow: inset 3px 0 var(--accent-color), inset 0 -1px currentColor;

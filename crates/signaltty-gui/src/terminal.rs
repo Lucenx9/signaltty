@@ -67,6 +67,16 @@ pub fn decision_render(decision: &Decision) -> DecisionRender {
     }
 }
 
+/// The one suggested answer on a gate: allow once. Session-scoped allow
+/// and deny stay secondary so the bar has a single primary.
+fn decision_is_primary(id: &str, label: &str) -> bool {
+    let id = id.trim();
+    let label = label.trim();
+    id.eq_ignore_ascii_case("once")
+        || label.eq_ignore_ascii_case("allow once")
+        || label.eq_ignore_ascii_case("once")
+}
+
 const PCRE2_MULTILINE: u32 = 0x00000400;
 
 type ActionCallback = Box<dyn Fn(&str, PaneAction)>;
@@ -568,6 +578,7 @@ impl PaneWidget {
                     while let Some(child) = self.decision_options.first_child() {
                         self.decision_options.remove(&child);
                     }
+                    let mut primary_used = false;
                     for (option_id, label) in &rendered.options {
                         let text = gtk4::Label::new(Some(label));
                         text.set_wrap(true);
@@ -576,6 +587,10 @@ impl PaneWidget {
                         let button = gtk4::Button::new();
                         button.set_child(Some(&text));
                         button.add_css_class("pill");
+                        if !primary_used && decision_is_primary(option_id, label) {
+                            button.add_css_class("suggested-action");
+                            primary_used = true;
+                        }
                         button.update_property(&[gtk4::accessible::Property::Label(label)]);
                         button.set_tooltip_text(Some(label));
                         button.set_focus_on_click(false);
@@ -702,6 +717,16 @@ mod tests {
             ]
         );
         assert!(!r.read_only);
+    }
+
+    #[test]
+    fn allow_once_is_the_only_primary_answer() {
+        assert!(decision_is_primary("once", "Allow once"));
+        assert!(decision_is_primary("once", "Once"));
+        assert!(decision_is_primary("other", "Allow once"));
+        assert!(!decision_is_primary("always", "Allow for this session"));
+        assert!(!decision_is_primary("session", "Allow for this session"));
+        assert!(!decision_is_primary("deny", "Deny"));
     }
 
     #[test]
