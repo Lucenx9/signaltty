@@ -437,7 +437,11 @@ fn deliver_event(
         return true;
     };
     if let Some(end) = payload.get("output_offset").and_then(Value::as_u64) {
-        let seen = offsets.entry(pane_id.to_string()).or_default();
+        let Some(seen) = offsets.get_mut(pane_id) else {
+            // The attach snapshot has not established a baseline yet; it
+            // covers any output sent before its response.
+            return true;
+        };
         if end <= *seen {
             return true;
         }
@@ -677,6 +681,32 @@ mod tests {
         );
         assert!(
             matches!(next_event(&mut events).await, UiEvent::PtyData { data, .. } if data == b"LIVE")
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_attach_output_is_ignored_until_snapshot_sets_the_offset() {
+        use base64::Engine;
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.0).unwrap();
+        let (ui, mut events) = mpsc::unbounded_channel();
+        let actor = spawn(socket.0.clone(), ui);
+        let (_control, mut sub) = connected(&listener).await;
+        actor.attach("pane-test", 80, 24);
+        // The attach request proves the pane is already marked attached while
+        // its offset baseline is still missing.
+        let attach = request(&mut sub).await;
+        assert_eq!(attach.method, "pane.attach");
+        // Bytes 3..8 sent before the snapshot must not read as a gap: the
+        // snapshot covers them.
+        data(&mut sub, "defgh", 8).await;
+        respond(&mut sub,&attach,json!({"snapshot_b64":base64::engine::general_purpose::STANDARD.encode("abcdefgh"),"output_offset":8})).await;
+        assert!(
+            matches!(next_event(&mut events).await, UiEvent::PtySnapshot { data, .. } if data == b"abcdefgh")
+        );
+        data(&mut sub, "abcdefghIJ", 10).await;
+        assert!(
+            matches!(next_event(&mut events).await, UiEvent::PtyData { data, .. } if data == b"IJ")
         );
     }
 
