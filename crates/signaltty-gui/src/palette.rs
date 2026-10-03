@@ -21,6 +21,7 @@ struct Choice {
     target: Target,
 }
 
+/// Presents the command and workspace palette dialog over the specified application window.
 pub fn present(
     window: &adw::ApplicationWindow,
     workspaces: &[Workspace],

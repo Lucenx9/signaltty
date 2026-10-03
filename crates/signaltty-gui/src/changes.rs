@@ -260,6 +260,7 @@ impl ChangesDialog {
         self.navigation.visible_page().as_ref() == Some(&self.reader_page)
     }
 
+    /// Updates syntax tag foreground and subtle paragraph background colors based on CSS probe widgets.
     fn update_colors(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
         gtk4::glib::idle_add_local_once(move || {
