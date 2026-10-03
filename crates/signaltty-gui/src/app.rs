@@ -6,7 +6,7 @@
 //! AdwOverlaySplitView
 //! ├─ sidebar  AdwToolbarView: [+ Workspaces] / workspace rows
 //! └─ content  AdwToolbarView
-//!    ├─ header  [sidebar] workspace · path       [● 2] [tab+] [menu]
+//!    ├─ header  [sidebar] workspace · agent      [● 2] [tab+] [menu]
 //!    ├─ banner  (server connection lost)
 //!    ├─ AdwTabBar (autohides with one tab)
 //!    └─ AdwTabView → per tab: Bin.tab-page → Paned splits → pane cards
@@ -837,13 +837,16 @@ impl App {
             self.navigate();
         }
         self.title.set_title(&self.display_title(&ws));
+        // The permanent line is the workspace and its agents. The
+        // filesystem path (and branch) is a tooltip, not a second title.
+        let agents = sidebar::summarize(&ws, &snapshot.panes).agents;
+        self.title.set_subtitle(&agents);
         let place = tilde(&ws.cwd);
-        let context = match &ws.git.branch {
+        let tooltip = match ws.git.branch.as_deref().filter(|b| !b.trim().is_empty()) {
             Some(branch) => format!("{branch} · {place}"),
             None => place,
         };
-        self.title.set_subtitle(&context);
-        self.title.set_tooltip_text(Some(&context));
+        self.title.set_tooltip_text(Some(&tooltip));
         let has_tabs = !snapshot.tabs.is_empty();
         {
             let mut m = self.model.borrow_mut();
