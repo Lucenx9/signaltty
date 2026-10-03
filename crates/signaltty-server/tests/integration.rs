@@ -2597,3 +2597,35 @@ async fn codex_unsupported_or_hanging_probe_keeps_original_launch_with_notice() 
         );
     }
 }
+
+#[tokio::test]
+async fn request_split_across_writes_survives_interleaved_events() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let srv = TestServer::start().await;
+    let mut other = srv.client().await;
+    let (r, mut w) = tokio::net::UnixStream::connect(&srv.socket)
+        .await
+        .unwrap()
+        .into_split();
+    let mut reader = BufReader::new(r);
+    let req = r#"{"protocol":"signaltty/1","id":"split","method":"server.status","params":{}}"#;
+    let (head, tail) = req.split_at(req.len() / 2);
+    w.write_all(head.as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Any broadcast wakes the connection's event branch mid-line.
+    other
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    w.write_all(format!("{tail}\n").as_bytes()).await.unwrap();
+    let mut line = String::new();
+    tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+        .await
+        .expect("response timeout")
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(resp["id"], "split", "{resp}");
+    assert_eq!(resp["ok"], true, "{resp}");
+    srv.shutdown().await;
+}

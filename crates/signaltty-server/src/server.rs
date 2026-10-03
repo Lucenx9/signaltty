@@ -223,7 +223,9 @@ impl Drop for ConnState {
 
 async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn std::error::Error>> {
     let (read_half, write_half) = stream.into_split();
-    let mut reader = BufReader::new(read_half);
+    // `next_line` is cancel-safe; `read_line` would drop a partly received
+    // request whenever an event wins the select below.
+    let mut lines = BufReader::new(read_half).lines();
     let writer = Arc::new(Mutex::new(write_half));
     let mut rx = ctx.bcast.subscribe();
     let mut state = ConnState {
@@ -240,13 +242,11 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
     };
 
     loop {
-        let mut line = String::new();
         tokio::select! {
-            n = reader.read_line(&mut line) => {
-                let n = n?;
-                if n == 0 {
+            line = lines.next_line() => {
+                let Some(line) = line? else {
                     break; // EOF = implicit detach.
-                }
+                };
                 if line.len() > MAX_LINE_BYTES {
                     let resp = Response::err("?", code::RATE_LIMITED, "line too large");
                     send_line(writer.clone(), resp.to_line()).await?;
@@ -269,10 +269,9 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                 let native_wait = req.method == signaltty_proto::method::HOOK_EVENT
                     && req.params.get("wait_for_answer").and_then(serde_json::Value::as_bool) == Some(true);
                 let (mut resp, effect) = if native_wait || req.method == signaltty_proto::method::WAIT {
-                    let mut next = String::new();
                     tokio::select! {
                         result = dispatch(&ctx, &req) => result,
-                        _ = reader.read_line(&mut next) => break,
+                        _ = lines.next_line() => break,
                         _ = ctx.shutdown.notified() => break,
                     }
                 } else { dispatch(&ctx, &req).await };
