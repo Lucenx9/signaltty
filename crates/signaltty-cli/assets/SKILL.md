@@ -18,7 +18,7 @@ once, then ask the server for the rest.
 ## Learn the contract at runtime
 
 ```sh
-signaltty schema          # methods, events, error codes (cheap, always fresh)
+signaltty schema          # methods, events, error codes, optional capabilities
 signaltty pane get "$SIGNALTTY_PANE"
 ```
 
@@ -31,7 +31,8 @@ fields are ignored by the server; mistyped ones are `BAD_PARAMS`.
 - `signaltty pane input ID (--data "…" | --stdin)` — type into a pane.
 - `signaltty notify --pane ID --title T [--body B] [--severity info|warning|error]`
 - `signaltty wait --pane ID --until blocked|done|idle|failed|exited|seen --timeout 300`
-  — **wait instead of polling**. A primary agent fans out with `pane.spawn`,
+  — matches current state immediately when already satisfied. Repeat `--until` or
+  use `--until done,blocked,failed` for alternative outcomes. A primary agent fans out with `pane.spawn`,
   `wait`s, then collects with `pane read`. That is the orchestration loop.
 - `signaltty decision answer --pane ID --decision DID --option OID` —
   answer a structured approval (`pending_decision` in `pane get`).
@@ -58,3 +59,25 @@ B=$(signaltty --json pane spawn --workspace "$WS" --agent claude -- claude -p "r
 signaltty wait --pane "$A" --until done --timeout 1800
 signaltty pane read "$A" --mode tail --lines 50
 ```
+
+## Reuse a pane for new work
+
+Capture the server's baseline before input, then wait for a newer matching transition:
+
+```sh
+baseline=$(signaltty --json pane get "$A" | jq -c .wait_baseline)
+signaltty pane input "$A" --data "$prompt"
+signaltty --json wait --pane "$A" --until done,blocked,failed \
+  --after-baseline "$baseline" --timeout 1800
+```
+
+An earlier Done cannot satisfy this wait, and fast completion before wait arrival
+still succeeds. Repeated same-state hooks do not prove new work. `IDENTITY_CHANGED`
+means the process/session was replaced; inspect the pane and capture a new baseline
+for future work. Never resubmit input automatically after a disconnected request.
+Serialize concurrent submissions to one pane when you need exact turn attribution.
+
+Event clients inspect `subscribe.replay.status`: incomplete history returns no replay
+and closes the stream. Subscribe afresh before reading authoritative workspace state
+and attaching panes. EOF/lag/byte gaps require that recovery; snapshots restore the
+current screen. Prefer the bounded `wait` API over maintaining terminal streams.

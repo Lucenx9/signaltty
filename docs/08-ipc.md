@@ -66,7 +66,7 @@ clients can `subscribe {from_seq}` to replay.
 | `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
 | `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?}` | `{pane, integration?}` |
 | `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane, integration?}` (new sibling) |
-| `pane.get` | `{pane_id}` | `{pane}` |
+| `pane.get` | `{pane_id}` | `{pane, wait_baseline}` |
 | `pane.input` | `{pane_id, data_b64}` | `{written}` |
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
 | `pane.signal` | `{pane_id, signal, group?}` | `{sent}` |
@@ -80,13 +80,34 @@ clients can `subscribe {from_seq}` to replay.
 | `notify` | `{pane_id?, title, body?, severity?}` | `{notification}` |
 | `hook-event` | `{agent, event, pane_id?, client_pid?, payload?, message?, title?, severity?, decision?}` | `{accepted, agent, event, pane_id, lifecycle?, attention?}` (adapter classification; pane by explicit id or `client_pid` ancestry; `decision: {id, prompt, options[{id, label}]}` sets/supersedes the pane's pending decision, captured `answerable` iff the adapter has a channel) |
 | `report-session` | `{pane_id, agent_session_id, agent?}` | `{pane}` |
-| `subscribe` | `{events?: ["agent.*","attention.*",…], from_seq?}` | `{subscribed, seq}` then event stream |
-| `wait` | `{pane_id, until, timeout_s?}` | `{satisfied, state}` or `TIMEOUT` |
+| `subscribe` | `{events?: ["agent.*","attention.*",…], from_seq?}` | `{subscribed, seq, replay?}` then complete replay/live stream |
+| `wait` | `{pane_id, until: string|string[], after?: wait_baseline, timeout_s?}` | `{satisfied, outcome, transition_seq, lifecycle, attention}` or `TIMEOUT` / `IDENTITY_CHANGED` |
 | `focus.next_unread` | — | `{pane_id?}` (severity→recency order) |
 | `plugin.list` | — | `{dir, plugins[], failures[]}` (hooks with runs/errors/last_error; see 13) |
 | `plugin.reload` | — | same as `plugin.list` after re-scan (stats reset) |
 
-`until`: `blocked | done | idle | failed | exited | seen | attention_cleared`.
+`until` accepts any lifecycle or attention state, plus `seen` and
+`attention_cleared`; a nonempty array matches any alternative in caller order.
+Without `after`, an already matching current state succeeds immediately.
+
+`pane.get` adds `wait_baseline {pane_id, process_instance, agent_session_id,
+session_generation, lifecycle_seq, attention_seq}`. Capture it **before** submitting
+new work and pass the whole object as `wait.after`. A matching outcome requires a
+newer transition on its own axis; attention changes cannot validate an old Done.
+Fast work completed before wait arrival still matches, including brief outcomes
+that have already moved on. `outcome`/`transition_seq` identify the matched transition;
+`lifecycle`/`attention` report the current pane state. Repeated same-state hooks
+do not create a new transition. A baseline does not identify individual concurrent
+input writers; serialize submissions when turn attribution matters.
+
+Process replacement (resume or server restart) and known session replacement return
+`IDENTITY_CHANGED` before considering state. Exit retains process identity so
+`until:exited` can succeed. First session discovery is allowed; subsequent replacement,
+even replacement back to the original value, invalidates the baseline. Missing panes
+remain `NO_SUCH_PANE`; malformed/ahead baselines and empty outcomes are `BAD_PARAMS`.
+Wait uses a dedicated single-flight connection: EOF, another request on that connection
+or shutdown cancels it immediately. Runtime schema advertises these capabilities.
+See [ADR-0018](adr/0018-event-recovery-and-work-baselines.md).
 Glob subscriptions: `*`, `agent.*`, `pane.*`, `workspace.*`, `tab.*`,
 `attention.*`, `notification.*`, `decision.*`, `worktree.*`, `git.*`, `pty.*`.
 
@@ -112,12 +133,35 @@ match first, then handles (namespaces are disjoint — handles never contain
 `_`). Handles are immutable slugs derived at create (`My API!!` →
 `my-api`, collisions → `my-api-2`); renames change only the name.
 
-Every broadcast event except `pty.data` appends to
-`$XDG_STATE_HOME/signaltty/audit.jsonl` (`{seq, event, payload, at}`;
-rotation keeps one `.1` predecessor, 8 MiB cap each). `subscribe
-{from_seq}` backfills from the file when the in-memory ring (1024) has
-rotated or the server restarted — replays merge file + ring deduped by
-`seq` (cap 4096).
+Every state event appends to `$XDG_STATE_HOME/signaltty/audit.jsonl`
+(`{seq, event, payload, at}`; rotation keeps one `.1` predecessor, 8 MiB threshold
+each plus the crossing record). The audit record is synced before publication.
+`event-sequence.json` reserves blocks of 4096 numbers using synced temporary write,
+rename and parent-directory sync before issuance. Restart skips unused reservations;
+PTY output and filtering also leave valid numeric holes. Journal/reservation write
+failure stops the server; corrupt reservations fail startup. Snapshot durability is
+separate. A legacy audit seeds the first reservation from its maximum retained number;
+uncertain legacy/corrupt history requires recovery.
+
+`subscribe {from_seq}` captures file/ring history, coverage and the handoff fence in
+one Store read. The in-memory ring retains 1024 state events. Replay filters before
+its 4096-event cap, deduplicates by `seq`, and returns in ascending order before live
+events. The reply adds `replay {status, requested_after, retained_after, through,
+returned, recovery?}`. `complete` proves all matching state events in
+`(requested_after, through]`; numeric adjacency is not evidence of completeness.
+`history_lost`, `truncated`, `unavailable` and `cursor_ahead` return
+`subscribed:false`, zero replay frames and `recovery:snapshot_then_resubscribe`, then
+close the connection. Retention metadata is persisted before discarding a generation and records expected
+file lengths before publication. Missing or truncated generations invalidate proof;
+uncertainty is checked before rotation and survives restart. Legacy journals remain
+unavailable for disk completeness; the new runtime ring proves recent intervals.
+
+On incomplete replay, open a fresh subscription **before** fetching current workspace
+state and attaching panes. Queued state events through the handoff fence are suppressed.
+Lag or out-of-order live delivery closes the stream; a disconnected client must refresh
+state and reattach rather than assume no changes. GUI recovery keeps terminal widgets,
+preserves PTY size and restores the current visible screen. It does not promise offline
+scrollback. Mutating requests are never automatically resubmitted.
 
 `pane.spawn`, `pane.split` and `pane.resume` include an optional
 `integration {agent, status, changed, file?, notice?}` for direct supported-agent
@@ -204,7 +248,8 @@ that ran `pane.attach` for that pane. `output_offset` is the cumulative end
 byte offset of this output chunk. The attach reply carries the offset covered
 by its snapshot, acquired atomically with terminal state. Streaming registration
 precedes the final snapshot, and its response precedes subsequent stream events.
-Clients discard or trim output already covered by that snapshot. Offsets are
+Clients discard or trim output already covered by that snapshot. A forward byte
+gap requires reattach/reconnect before feeding more bytes. Offsets are
 per-pane for the lifetime of the server and are not persisted. Repeated attach
 on one connection registers one viewer; detach removes it and preserves the
 process. Viewer registration survives a child exit and `pane.resume`, so
@@ -214,7 +259,7 @@ All other events go to `subscribe`rs by glob match.
 ## Error codes
 
 `BAD_PROTOCOL, UNKNOWN_METHOD, BAD_PARAMS, NO_SUCH_{SERVER,WORKSPACE,TAB,PANE},
-NO_SUCH_DECISION, PANE_EXITED, PANES_ALIVE, SPAWN_FAILED, IO_ERROR, TIMEOUT,
+NO_SUCH_DECISION, PANE_EXITED, PANES_ALIVE, SPAWN_FAILED, IO_ERROR, TIMEOUT, IDENTITY_CHANGED,
 RATE_LIMITED, FORBIDDEN, INTERNAL`.
 
 `decision.created {pane_id, decision, prev?}` fires on set (a supersede folds

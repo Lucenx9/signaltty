@@ -413,9 +413,9 @@ async fn bind_workspace(
     store
         .workspaces
         .insert(workspace.id.clone(), workspace.clone());
-    let ev = store.emit(event::WORKSPACE_CREATED, json!({"workspace":workspace}));
+    store.emit(event::WORKSPACE_CREATED, json!({"workspace":workspace}));
     drop(store);
-    let _ = ctx.bcast.send(ev);
+
     ctx.mark_persist();
     Ok(json!({"workspace":workspace,"path":cwd,"reused":false}))
 }

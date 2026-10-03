@@ -245,8 +245,8 @@ async fn run_session(
         let _ = ui.send(UiEvent::Reconnected);
     }
     let mut pending = HashMap::new();
-    for (pane_id, &(cols, rows)) in attached.iter() {
-        if send_attach(&mut sub, &mut pending, pane_id.clone(), cols, rows)
+    for pane_id in attached.keys() {
+        if send_attach(&mut sub, &mut pending, pane_id.clone(), None)
             .await
             .is_err()
         {
@@ -313,7 +313,7 @@ async fn run_session(
                 }
                 Some(ActorRequest::Attach { pane_id, cols, rows }) => {
                     attached.insert(pane_id.clone(), (cols, rows));
-                    if send_attach(&mut sub, &mut pending, pane_id, cols, rows).await.is_err() { return false; }
+                    if send_attach(&mut sub, &mut pending, pane_id, Some((cols, rows))).await.is_err() { return false; }
                 }
                 Some(ActorRequest::Detach { pane_id }) => {
                     attached.remove(&pane_id);
@@ -335,7 +335,7 @@ async fn run_session(
             line = sub.read_line() => {
                 let value: Value = match line.and_then(|line| serde_json::from_str(&line).map_err(|e| e.to_string())) { Ok(v) => v, Err(_) => return false };
                 if value.get("type").and_then(Value::as_str) == Some("event") {
-                    deliver_event(value, attached, &mut offsets, ui);
+                    if !deliver_event(value, attached, &mut offsets, ui) { return false; }
                     continue;
                 }
                 let response: Response = match serde_json::from_value(value) { Ok(r) => r, Err(_) => return false };
@@ -389,15 +389,14 @@ async fn send_attach(
     sub: &mut Conn,
     pending: &mut HashMap<String, Pending>,
     pane_id: String,
-    cols: u16,
-    rows: u16,
+    size: Option<(u16, u16)>,
 ) -> Result<(), String> {
-    let id = sub
-        .send(
-            "pane.attach",
-            json!({"pane_id":pane_id,"cols":cols,"rows":rows,"mark_seen":false}),
-        )
-        .await?;
+    let mut params = json!({"pane_id":pane_id,"mark_seen":false});
+    if let Some((cols, rows)) = size {
+        params["cols"] = json!(cols);
+        params["rows"] = json!(rows);
+    }
+    let id = sub.send("pane.attach", params).await?;
     pending.insert(
         id,
         Pending {
@@ -413,7 +412,7 @@ fn deliver_event(
     attached: &HashMap<String, (u16, u16)>,
     offsets: &mut HashMap<String, u64>,
     ui: &UiTx,
-) {
+) -> bool {
     let name = value
         .get("event")
         .and_then(Value::as_str)
@@ -422,27 +421,32 @@ fn deliver_event(
     let payload = value.get("payload").cloned().unwrap_or(Value::Null);
     if name != signaltty_proto::event::PTY_DATA {
         let _ = ui.send(UiEvent::ServerEvent { name, payload });
-        return;
+        return true;
     }
     let Some(pane_id) = payload.get("pane_id").and_then(Value::as_str) else {
-        return;
+        return true;
     };
     if !attached.contains_key(pane_id) {
-        return;
+        return true;
     }
     let Some(mut data) = payload
         .get("data_b64")
         .and_then(Value::as_str)
         .and_then(|s| base64_decode(s).ok())
     else {
-        return;
+        return true;
     };
     if let Some(end) = payload.get("output_offset").and_then(Value::as_u64) {
         let seen = offsets.entry(pane_id.to_string()).or_default();
         if end <= *seen {
-            return;
+            return true;
         }
-        let start = end.saturating_sub(data.len() as u64);
+        let Some(start) = end.checked_sub(data.len() as u64) else {
+            return false;
+        };
+        if start > *seen {
+            return false;
+        }
         let covered = seen.saturating_sub(start).min(data.len() as u64) as usize;
         data.drain(..covered);
         *seen = end;
@@ -453,6 +457,7 @@ fn deliver_event(
             data,
         });
     }
+    true
 }
 
 async fn read_response(conn: &mut Conn, expected_id: &str) -> Result<Response, String> {
@@ -626,6 +631,49 @@ mod tests {
         data(&mut sub, " GAP twoLIVE", 15).await;
         assert!(
             matches!(next_event(&mut events).await, UiEvent::PtySnapshot { data, .. } if data == b"one GAP two")
+        );
+        assert!(
+            matches!(next_event(&mut events).await, UiEvent::PtyData { data, .. } if data == b"LIVE")
+        );
+    }
+
+    #[tokio::test]
+    async fn forward_output_gap_reconnects_and_replaces_the_screen() {
+        use base64::Engine;
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.0).unwrap();
+        let (ui, mut events) = mpsc::unbounded_channel();
+        let actor = spawn(socket.0.clone(), ui);
+        let (_control, mut sub) = connected(&listener).await;
+        actor.attach("pane-test", 80, 24);
+        snapshot(&mut sub, "old", 3).await;
+        assert!(matches!(
+            next_event(&mut events).await,
+            UiEvent::PtySnapshot { .. }
+        ));
+
+        // Bytes 3..6 were lost. Feeding only "new" would preserve a wrong screen.
+        data(&mut sub, "new", 9).await;
+        assert!(matches!(
+            next_event(&mut events).await,
+            UiEvent::Disconnected
+        ));
+        let (_control, mut sub) = connected(&listener).await;
+        assert!(matches!(
+            next_event(&mut events).await,
+            UiEvent::Reconnected
+        ));
+        let attach = request(&mut sub).await;
+        assert!(
+            attach.params.get("cols").is_none(),
+            "recovery must preserve the latest PTY size"
+        );
+        assert!(attach.params.get("rows").is_none());
+        assert_eq!(attach.params["mark_seen"], false);
+        respond(&mut sub,&attach,json!({"snapshot_b64":base64::engine::general_purpose::STANDARD.encode("oldGAPnew"),"output_offset":9})).await;
+        data(&mut sub, "newLIVE", 13).await;
+        assert!(
+            matches!(next_event(&mut events).await, UiEvent::PtySnapshot { data, .. } if data == b"oldGAPnew")
         );
         assert!(
             matches!(next_event(&mut events).await, UiEvent::PtyData { data, .. } if data == b"LIVE")

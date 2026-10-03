@@ -1,3 +1,1 @@
-[
-  ["clippy::suspicious_open_options", "crates/signaltty-server/src/audit.rs", 111, "file opened with `create`, but `truncate` behavior not defined"]
-]
+[]

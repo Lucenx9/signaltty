@@ -134,8 +134,11 @@ enum Command {
     Wait {
         #[arg(long)]
         pane: String,
+        #[arg(long, required = true, value_delimiter = ',')]
+        until: Vec<String>,
+        /// JSON wait_baseline captured from pane get before submitting work.
         #[arg(long)]
-        until: String,
+        after_baseline: Option<String>,
         #[arg(long)]
         timeout: Option<u64>,
     },
@@ -768,10 +771,15 @@ async fn run(args: Args) -> Result<(), CliError> {
         Command::Wait {
             pane,
             until,
+            after_baseline,
             timeout,
         } => {
             let mut c = Client::connect(&socket).await?;
             let mut p = json!({"pane_id": pane, "until": until});
+            if let Some(baseline) = after_baseline {
+                p["after"] = serde_json::from_str(&baseline)
+                    .map_err(|e| CliError::Usage(format!("invalid wait baseline: {e}")))?;
+            }
             if let Some(t) = timeout {
                 p["timeout_s"] = json!(t);
             }
