@@ -282,7 +282,14 @@ impl Row {
             self.message.set_tooltip_text(Some(&headline));
         }
         let time = s.last_activity.map(time_ago).unwrap_or_default();
-        self.status.set(s.lifecycle, s.attention, &time);
+        // Attention dates from the last event; lifecycle from its change.
+        let began = if s.attention == Attention::None {
+            s.lifecycle_since
+        } else {
+            s.last_activity
+        };
+        let age = began.map(time_ago).unwrap_or_default();
+        self.status.set(s.lifecycle, s.attention, &time, &age);
     }
 }
 

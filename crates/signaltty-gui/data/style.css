@@ -119,6 +119,7 @@
   color: alpha(currentColor, 0.65);
 }
 .row-status.speaking {
+  font-size: 0.9em;
   font-weight: 600;
 }
 
