@@ -22,11 +22,13 @@ To build the same container without an editor:
 
 ```sh
 docker build -f .devcontainer/Dockerfile -t signaltty-dev .
-docker run --rm -v "$PWD:/workspace" -w /workspace signaltty-dev scripts/verify.sh doctor
+docker run --rm -v "$PWD:/workspace:ro" -w /workspace signaltty-dev scripts/verify.sh doctor --output /tmp/doctor-evidence
 ```
 
-The image runs as root; use a disposable checkout or a named workspace volume for
-builds to avoid changing ownership of host build artifacts. The Ubuntu tag and apt
+The image runs as the unprivileged `ubuntu` user. Permission-sensitive tests require
+an unprivileged user; running the suite as root changes their semantics. Use a
+disposable checkout or a named workspace volume when host user IDs differ.
+The Ubuntu tag and apt
 packages receive updates; this setup is repeatable, not bit-for-bit reproducible.
 
 ## Choose the verification scope
