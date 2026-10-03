@@ -31,6 +31,7 @@ Docs index:
 - [16 — Visual references (Geist, Linear, Vercel)](16-visual-references.md)
 - [17 — Agent development and verification](17-agent-development.md)
 - [Agent-ready repository research, 2026-10-03](research/2026-10-03-agent-ready-repository.md)
+- [cmux and Herdr source review, 2026-10-03](research/2026-10-03-cmux-herdr-code.md)
 - [App verification, 2026-09-29](qa/2026-09-29.md)
 - [Native UI refinement verification, 2026-09-29–30](qa/ui-2026-09-29.md)
 - [Workspace visual hierarchy verification, 2026-09-30](qa/visual-hierarchy-2026-09-30.md)
