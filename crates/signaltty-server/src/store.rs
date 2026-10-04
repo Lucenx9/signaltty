@@ -460,6 +460,16 @@ impl Store {
                 "prev": prev.map(|d| d.id),
             }),
         );
+
+        let task_id = self
+            .tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::Working)
+            .map(|t| t.id.clone());
+        if let Some(tid) = task_id {
+            self.task_input_required_on_decision(&tid, &decision.id);
+        }
+
         Some(ev)
     }
 
@@ -487,6 +497,16 @@ impl Store {
                 "option_id": option_id,
             }),
         );
+
+        let task_id = self
+            .tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::InputRequired)
+            .map(|t| t.id.clone());
+        if let Some(tid) = task_id {
+            self.task_resume_working(&tid);
+        }
+
         Some(ev)
     }
 
@@ -503,6 +523,22 @@ impl Store {
                 "reason": reason,
             }),
         );
+
+        // Pane death fails the task via the `task_fail` tail of `set_exited` /
+        // `remove_pane`; resuming here would emit a spurious working blip first.
+        if reason != "pane_exited" {
+            let task_id = self
+                .tasks
+                .values()
+                .find(|t| {
+                    t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::InputRequired
+                })
+                .map(|t| t.id.clone());
+            if let Some(tid) = task_id {
+                self.task_resume_working(&tid);
+            }
+        }
+
         Some(ev)
     }
 
@@ -730,6 +766,35 @@ impl Store {
             let prev_state = task.state;
             let now = Utc::now();
             task.transition_to(TaskState::Working, now).ok()?;
+            // The interrupt is resolved; its evidence is stale on a working task.
+            task.status_reason = None;
+            task.updated_at = now;
+            (task.clone(), prev_state)
+        };
+        Some(self.emit_task_updated(&task_clone, Some(prev_state)))
+    }
+
+    /// A pending decision blocks the worker: `working` → `input_required`
+    /// with the decision as evidence. Only fires from `working` (a `pending`
+    /// task's first submit is still in flight; terminal tasks never move).
+    pub fn task_input_required_on_decision(
+        &mut self,
+        task_id: &str,
+        decision_id: &str,
+    ) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            if task.state != TaskState::Working {
+                return None;
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::InputRequired, now).ok()?;
+            task.status_reason = Some(json!({
+                "reason": "decision_required",
+                "decision_id": decision_id,
+            }));
+            task.updated_at = now;
             (task.clone(), prev_state)
         };
         Some(self.emit_task_updated(&task_clone, Some(prev_state)))
