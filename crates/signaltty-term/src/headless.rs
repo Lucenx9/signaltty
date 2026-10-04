@@ -39,40 +39,51 @@ pub struct RenderedRead {
     pub truncated: bool,
 }
 
-/// Upper bound on how many rows one feed batch could have scrolled:
-/// newlines + explicit scroll controls (VT/FF/NEL/RI, CSI `S`/`T` with
-/// counts) + printable-cell rows + one slack. Deliberately generous — it
-/// only excludes shifts the batch could not have produced, so repetitive
-/// content cannot match a wild `k`.
-fn scroll_bound(batch: &[u8], cols: u16) -> usize {
-    let mut bound = 1; // slack for control-edge cases
+/// How far one batch could have moved the grid.
+///
+/// `linefeeds` counts motions that advance a row (LF/VT/FF/NEL, CSI `S`/`T`,
+/// and printable wraps). `bound` is that count plus one slack, and plus a
+/// large allowance for ED (`CSI J`), which blanks the screen without moving
+/// the cursor. Unevidenced scroll matches may use only `linefeeds` from the
+/// pre-batch cursor; the slack and an erase do not invent a scroll.
+#[derive(Clone, Copy)]
+struct ScrollBudget {
+    bound: usize,
+    linefeeds: usize,
+}
+
+fn scroll_budget(batch: &[u8], cols: u16) -> ScrollBudget {
+    let mut linefeeds = 0usize;
+    let mut clear = 0usize;
     let mut printable = 0usize;
     let mut i = 0;
     while i < batch.len() {
         let b = batch[i];
         match b {
-            b'\n' | b'\x0b' | b'\x0c' | b'\x84' => bound += 1,
+            b'\n' | b'\x0b' | b'\x0c' | b'\x84' => linefeeds += 1,
             b'\x1b' => {
                 let mut j = i + 1;
                 if j < batch.len() && batch[j] == b'E' {
-                    bound += 1; // NEL
+                    linefeeds += 1; // NEL
                     i = j;
-                } else {
-                    if j < batch.len() && batch[j] == b'[' {
+                } else if j < batch.len() && batch[j] == b'[' {
+                    j += 1;
+                    let mut val = 0usize;
+                    let mut digits = false;
+                    while j < batch.len() && batch[j].is_ascii_digit() {
+                        val = val
+                            .saturating_mul(10)
+                            .saturating_add((batch[j] - b'0') as usize);
+                        digits = true;
                         j += 1;
-                        let mut val = 0usize;
-                        let mut digits = false;
-                        while j < batch.len() && batch[j].is_ascii_digit() {
-                            val = val
-                                .saturating_mul(10)
-                                .saturating_add((batch[j] - b'0') as usize);
-                            digits = true;
-                            j += 1;
-                        }
-                        if j < batch.len() && (batch[j] == b'S' || batch[j] == b'T') {
-                            bound += if digits { val.max(1) } else { 1 };
-                            i = j;
-                        }
+                    }
+                    if j < batch.len() && (batch[j] == b'S' || batch[j] == b'T') {
+                        linefeeds += if digits { val.max(1) } else { 1 };
+                        i = j;
+                    } else if j < batch.len() && batch[j] == b'J' {
+                        // ED can blank every row. Not a cursor linefeed.
+                        clear = 4096;
+                        i = j;
                     }
                 }
             }
@@ -81,7 +92,11 @@ fn scroll_bound(batch: &[u8], cols: u16) -> usize {
         }
         i += 1;
     }
-    bound + printable / (cols.max(1) as usize)
+    linefeeds += printable / (cols.max(1) as usize);
+    ScrollBudget {
+        bound: linefeeds.saturating_add(1).saturating_add(clear),
+        linefeeds,
+    }
 }
 
 /// Fast byte: printable ASCII or a line-advancing control that vt100 maps
@@ -522,9 +537,10 @@ impl Surface {
                         self.feed_slow(&data[ss..start]);
                     }
                 }
-                let bound = scroll_bound(batch, self.cols);
+                let budget = scroll_budget(batch, self.cols);
+                let pre_row = self.parser.screen().cursor_position().0 as usize;
                 self.parser.process(batch);
-                self.reconcile(bound);
+                self.reconcile(budget, pre_row, margins);
                 for &sb in batch {
                     step_scan_byte(
                         sb,
@@ -576,10 +592,11 @@ impl Surface {
             let bytes = i + 1 - start;
             if cut || bytes >= max_bytes || i + 1 == data.len() {
                 let batch = &data[start..i + 1];
-                let bound = scroll_bound(batch, self.cols);
+                let budget = scroll_budget(batch, self.cols);
+                let pre_row = self.parser.screen().cursor_position().0 as usize;
                 self.parser.process(batch);
                 start = i + 1;
-                self.reconcile(bound);
+                self.reconcile(budget, pre_row, self.margins_sticky);
             }
         }
     }
@@ -616,9 +633,10 @@ impl Surface {
     //   bottom margin. Touched rows must hold ASCII (byte columns); any
     //   other row aborts the run to the slow path.
     // - Belt and braces: the simulated end cursor must equal the parser's
-    //   real cursor, or the run falls back to the legacy reconcile (which
-    //   reads grid truth). Debug builds additionally assert full grid sync
-    //   after every fast feed.
+    //   real cursor, or the run reconciles from grid truth once (never
+    //   re-feeds: the bytes are already consumed, so a second `process`
+    //   would duplicate them). Debug builds additionally assert full grid
+    //   sync after every fast feed.
     //
     // Intended behavior changes vs the legacy matcher (both unpinned by any
     // test, both fixes): repetitive streams no longer duplicate lines (the
@@ -626,10 +644,18 @@ impl Surface {
     // lines), and blank scrolled lines are captured as empty entries instead
     // of vanishing through the blank-scroll quirk.
 
-    /// Capture one plain-ASCII run from the input side. Returns false (the
-    /// caller runs the legacy reconcile over the same bytes) whenever any
-    /// precondition fails. The screen vec is untouched until the simulated
-    /// end cursor matches the parser's real cursor.
+    /// Capture one plain-ASCII run from the input side.
+    ///
+    /// Exactly-once contract: every byte is processed by the parser
+    /// exactly once. All bail-out checks that don't need post-state run
+    /// BEFORE `process` and return false (the parser is untouched, so the
+    /// caller may run the legacy path over the same bytes). Once `process`
+    /// runs this function never returns false: a cursor mismatch reconciles
+    /// from the grid once instead of re-feeding, so a second `process` of
+    /// the same bytes is impossible (a prior version processed first and
+    /// returned false afterwards, double-feeding the parser whenever a
+    /// touched row held non-ASCII text or the cursors diverged). The screen
+    /// vec is untouched until the run is committed or reconciled.
     fn try_fast(&mut self, run: &[u8]) -> bool {
         if run.is_empty() {
             return true;
@@ -647,11 +673,10 @@ impl Surface {
         if row >= rows || col > cols {
             return false;
         }
-        // Process first: the parser owns ground truth from here on.
-        self.parser.process(run);
-        let (end_row, end_col) = self.parser.screen().cursor_position();
         // Pure simulation over the cached screen (grid-synced by induction:
-        // every prior segment committed or reconciled exactly).
+        // every prior segment committed or reconciled exactly). Runs BEFORE
+        // `process` so every ASCII precondition bails with the parser
+        // untouched and the caller can safely take the legacy path.
         if !self.screen[row].text.is_ascii() {
             return false;
         }
@@ -709,18 +734,26 @@ impl Surface {
                 }
             }
         }
-        ops.push(FastOp::Refresh {
-            row,
-            text: match ascii_line(buf.as_slice()) {
-                Some(text) => text,
-                None => return false,
-            },
-        });
+        let final_text = match ascii_line(buf.as_slice()) {
+            Some(text) => text,
+            None => return false,
+        };
+        // Single parse of these bytes: the parser owns ground truth now.
+        self.parser.process(run);
+        let (end_row, end_col) = self.parser.screen().cursor_position();
         if row != end_row as usize || col != end_col as usize {
             // Model divergence (untracked mode or vt100 behavior change):
-            // fall back to grid truth. History is untouched so far.
-            return false;
+            // sync the ring from grid truth once. Never re-feed: the bytes
+            // are already consumed, and a second `process` would duplicate
+            // them in the grid. History is untouched so far.
+            let budget = scroll_budget(run, self.cols);
+            self.reconcile(budget, start_row as usize, self.margins_sticky);
+            return true;
         }
+        ops.push(FastOp::Refresh {
+            row,
+            text: final_text,
+        });
         for op in ops {
             match op {
                 FastOp::Refresh { row, text } => {
@@ -780,7 +813,7 @@ impl Surface {
             .collect()
     }
 
-    fn reconcile(&mut self, bound: usize) {
+    fn reconcile(&mut self, budget: ScrollBudget, pre_row: usize, in_region: bool) {
         let alt = self.parser.screen().alternate_screen();
         let grid = self.grid_text();
         let transitioned = alt != self.in_alt;
@@ -796,7 +829,7 @@ impl Surface {
         // On alt enter/exit the grids are unrelated buffers: refresh in
         // place so alt rows never leak into main-screen history.
         if !transitioned && !alt {
-            if let Some(k) = self.scroll_by(&grid, bound) {
+            if let Some(k) = self.scroll_by(&grid, budget, pre_row, in_region) {
                 self.apply_scroll(k, &grid);
                 return;
             }
@@ -818,12 +851,23 @@ impl Surface {
     /// partial scroll still needs a
     /// non-blank line on either side of the fold so an idle blank screen
     /// never churns history; a fully blanked grid over non-blank rows
-    /// counts as a full scroll-off (this preserves cleared content in
-    /// history instead of dropping it). An identical grid never scrolls
+    /// counts as a full scroll-off only when the batch's bound can explain
+    /// moving every row (an explicit clear — `scroll_budget` reports ED as
+    /// a large bound). A short overwrite that leaves the grid blank is an
+    /// in-place edit, not a scroll. An identical grid never scrolls
     /// (covers no-op feeds on uniform screens, which would otherwise flood
-    /// history).
-    fn scroll_by(&self, grid: &[String], bound: usize) -> Option<usize> {
+    /// history). `pre_row` is the cursor row before the batch: on the full
+    /// screen a linefeed scrolls only from the bottom row. Inside a scroll
+    /// region the bottom is not the screen bottom, so that cap is skipped.
+    fn scroll_by(
+        &self,
+        grid: &[String],
+        budget: ScrollBudget,
+        pre_row: usize,
+        in_region: bool,
+    ) -> Option<usize> {
         let n = grid.len();
+        let bound = budget.bound;
         if n == 0 || self.screen.len() != n {
             return None;
         }
@@ -868,16 +912,43 @@ impl Surface {
                 evidenced = Some(k);
             }
         }
-        if let Some(k) = evidenced.or(smallest) {
+        // A non-blank kept prefix proves the shift. Without that evidence,
+        // blanks match every `k`. Trust an unevidenced shift only when the
+        // cursor, plus this batch's linefeeds, could have reached the
+        // bottom and scrolled that far. An erase followed by LF from a
+        // higher row blanks the line in place.
+        let max_scroll = if in_region {
+            bound
+        } else {
+            pre_row
+                .saturating_add(budget.linefeeds)
+                .saturating_sub(n.saturating_sub(1))
+        };
+        if let Some(k) = evidenced.or(smallest.filter(|&k| k <= max_scroll && k < bound)) {
             return Some(k);
         }
-        if grid.iter().all(|l| l.is_empty()) && self.screen.iter().any(|l| !l.text.is_empty()) {
+        if bound >= n
+            && grid.iter().all(|l| l.is_empty())
+            && self.screen.iter().any(|l| !l.text.is_empty())
+        {
             return Some(n);
         }
         None
     }
 
     fn apply_scroll(&mut self, k: usize, grid: &[String]) {
+        // A full-screen clear matches `k == n` with an empty grid. Archive
+        // the non-blank lines only — blank padding must not flood history.
+        if k >= self.screen.len() && grid.iter().all(|l| l.is_empty()) {
+            for line in self.screen.drain(..) {
+                if !line.text.is_empty() {
+                    self.history.push_back(line);
+                }
+            }
+            self.fit_len(grid);
+            self.evict();
+            return;
+        }
         let k = k.min(self.screen.len());
         for line in self.screen.drain(..k) {
             self.history.push_back(line);
@@ -1514,6 +1585,267 @@ mod tests {
                 r.text.lines().collect::<Vec<_>>(),
                 expect.iter().map(String::as_str).collect::<Vec<_>>(),
                 "chunk={chunk}"
+            );
+        }
+    }
+
+    // ---- Exactly-once oracle: independent single vt100 parse ----
+
+    /// Fresh vt100 parser fed the FULL input stream exactly once (a single
+    /// `process` call). Never shares state with the Surface under test, so
+    /// any double-feed in the ring (parser or ring duplication) diverges
+    /// from it. The pre-existing `debug_assert_grid_sync` compares the ring
+    /// to the Surface's own (possibly double-fed) parser, so it cannot see
+    /// this class of bug; these helpers can.
+    fn oracle_parse(full: &[u8], cols: u16, rows: u16) -> vt100::Parser {
+        let mut p = vt100::Parser::new(rows, cols, 0);
+        p.process(full);
+        p
+    }
+
+    fn oracle_grid(full: &[u8], cols: u16, rows: u16) -> Vec<String> {
+        let p = oracle_parse(full, cols, rows);
+        let width = cols.max(1);
+        p.screen()
+            .rows(0, width)
+            .map(|r| r.trim_end().to_string())
+            .collect()
+    }
+
+    fn oracle_contents(full: &[u8], cols: u16, rows: u16) -> String {
+        oracle_parse(full, cols, rows).screen().contents()
+    }
+
+    /// Oracle ring text for inputs that never scroll: the oracle grid rows
+    /// with per-row trailing padding trimmed and trailing blank rows
+    /// dropped — the same normalization the ring applies (`grid_text` +
+    /// `screen_content_len`). (`vt100::Screen::contents` keeps trailing
+    /// padding spaces, so it cannot be compared to ring text directly.)
+    fn oracle_text(full: &[u8], cols: u16, rows: u16) -> String {
+        let grid = oracle_grid(full, cols, rows);
+        let mut n = grid.len();
+        while n > 0 && grid[n - 1].is_empty() {
+            n -= 1;
+        }
+        grid[..n].join("\n")
+    }
+
+    fn surface_screen_texts(b: &HeadlessBackend, id: &str) -> Vec<String> {
+        b.surfaces
+            .get(id)
+            .unwrap()
+            .screen
+            .iter()
+            .map(|l| l.text.clone())
+            .collect()
+    }
+
+    #[test]
+    fn fast_utf8_then_ascii_never_double_feeds() {
+        // Exact repro from review: "café" rides the slow path (non-ASCII)
+        // and leaves the cursor on a non-ASCII row; the following
+        // pure-ASCII run used to be processed by `try_fast` and then
+        // re-fed by `feed_slow`, duplicating the reads in both grid and
+        // ring ("café OK\nnext\n OK\nnext").
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", "café".as_bytes());
+        b.feed_output("p", " OK\r\nnext\r\n".as_bytes());
+        let full = "café OK\r\nnext\r\n";
+        assert_eq!(rendered_text(&b, "p"), "café OK\nnext");
+        assert_eq!(b.snapshot("p"), oracle_contents(full.as_bytes(), 80, 24));
+        assert_eq!(
+            surface_screen_texts(&b, "p"),
+            oracle_grid(full.as_bytes(), 80, 24)
+        );
+        // Same bytes in a single feed must agree too.
+        let mut one = HeadlessBackend::new();
+        one.create_surface("p", 80, 24);
+        one.feed_output("p", full.as_bytes());
+        assert_eq!(rendered_text(&one, "p"), "café OK\nnext");
+        assert_eq!(one.snapshot("p"), oracle_contents(full.as_bytes(), 80, 24));
+        assert_eq!(
+            surface_screen_texts(&one, "p"),
+            oracle_grid(full.as_bytes(), 80, 24)
+        );
+    }
+
+    #[test]
+    fn fast_ascii_crossing_utf8_row_never_double_feeds() {
+        // Later-row bail: cursor is on an ASCII row, the next row is
+        // non-ASCII. A plain run that line-feeds onto it used to be
+        // parsed, rejected, and parsed again.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"hello\r\ncaf\xc3\xa9\r\n");
+        b.feed_output("p", b"\x1b[H");
+        b.feed_output("p", b"Z\r\nMORE\r\n");
+        let full: &[u8] = b"hello\r\ncaf\xc3\xa9\r\n\x1b[HZ\r\nMORE\r\n";
+        assert_eq!(rendered_text(&b, "p"), "Zello\nMORE");
+        assert_eq!(b.snapshot("p"), oracle_contents(full, 80, 24));
+        assert_eq!(surface_screen_texts(&b, "p"), oracle_grid(full, 80, 24));
+    }
+
+    #[test]
+    fn fast_utf8_then_scrolled_ascii_appears_once() {
+        // Double-feeding a screenful of unique lines can leave the live
+        // grid looking like one pass. The ring must still hold each line
+        // once, and the live grid must match one vt100 parse.
+        let mut rest = Vec::new();
+        for i in 0..40 {
+            rest.extend(format!("row{i:02}\r\n").into_bytes());
+        }
+        let mut full = b"caf\xc3\xa9\r\n".to_vec();
+        full.extend_from_slice(&rest);
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"caf\xc3\xa9\r\n");
+        b.feed_output("p", &rest);
+        let tail = b.tail("p", 5000, false).unwrap();
+        assert_eq!(tail.iter().filter(|l| *l == "café").count(), 1);
+        for i in 0..40 {
+            let line = format!("row{i:02}");
+            assert_eq!(tail.iter().filter(|l| *l == &line).count(), 1, "{line}");
+        }
+        assert_eq!(b.snapshot("p"), oracle_contents(&full, 80, 24));
+        assert_eq!(surface_screen_texts(&b, "p"), oracle_grid(&full, 80, 24));
+    }
+
+    /// Deterministic PRNG (no external crate): the property test below must
+    /// be reproducible seed by seed.
+    struct FuzzRng(u64);
+    impl FuzzRng {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0 >> 33
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    /// One mixed stream that never wraps or scrolls, so the ring's full
+    /// text is exactly the independent parser's visible grid. Cursor
+    /// tracking mirrors vt100 for the bytes this emits (CR resets the
+    /// column, LF/VT/FF do not, wide characters take their display width).
+    fn mixed_utf8_stream(rng: &mut FuzzRng) -> Vec<u8> {
+        const COLS: usize = 80;
+        // Leave two rows unused so a line-feed never scrolls.
+        const MAX_ROW: usize = 22;
+        const ASCII_TOKENS: [&str; 8] = ["a", "ok", "Hi!", "line", "xyz", "123", "  ", "-x-"];
+        const UTF8_TOKENS: [(&str, usize); 6] = [
+            ("é", 1),
+            ("✓", 1),
+            ("你", 2),
+            ("🎉", 2),
+            ("café", 4),
+            ("über", 4),
+        ];
+        const ESC_TOKENS: [&str; 7] = [
+            "\x1b[31m", "\x1b[32m", "\x1b[1m", "\x1b[0m", "\x1b[K", "\x1b[2K", "\x07",
+        ];
+        let mut full = Vec::with_capacity(256);
+        let mut row = 0usize;
+        let mut col = 0usize;
+        let down = |full: &mut Vec<u8>, row: &mut usize, col: &mut usize, bare: bool| {
+            if *row + 1 >= MAX_ROW {
+                full.push(b'\r');
+                *col = 0;
+                return;
+            }
+            if bare {
+                full.push(b'\n');
+            } else {
+                full.extend_from_slice(b"\r\n");
+                *col = 0;
+            }
+            *row += 1;
+        };
+        for _ in 0..32 {
+            match rng.below(10) {
+                0..=3 => {
+                    let t = ASCII_TOKENS[rng.below(ASCII_TOKENS.len() as u64) as usize];
+                    if col + t.len() > COLS {
+                        down(&mut full, &mut row, &mut col, false);
+                    }
+                    full.extend_from_slice(t.as_bytes());
+                    col += t.len();
+                }
+                4..=5 => {
+                    let (t, w) = UTF8_TOKENS[rng.below(UTF8_TOKENS.len() as u64) as usize];
+                    if col + w > COLS {
+                        down(&mut full, &mut row, &mut col, false);
+                    }
+                    full.extend_from_slice(t.as_bytes());
+                    col += w;
+                }
+                6..=8 => match rng.below(6) {
+                    0..=2 => down(&mut full, &mut row, &mut col, false),
+                    3 => down(&mut full, &mut row, &mut col, true),
+                    4 => {
+                        // VT and FF are fast bytes and share vt100's `lf()`.
+                        if row + 1 >= MAX_ROW {
+                            full.push(b'\r');
+                            col = 0;
+                        } else {
+                            full.push(if rng.below(2) == 0 { 0x0b } else { 0x0c });
+                            row += 1;
+                        }
+                    }
+                    _ => {
+                        full.push(b'\r');
+                        col = 0;
+                    }
+                },
+                _ => {
+                    let t = ESC_TOKENS[rng.below(ESC_TOKENS.len() as u64) as usize];
+                    full.extend_from_slice(t.as_bytes());
+                }
+            }
+        }
+        full
+    }
+
+    #[test]
+    fn fast_ring_matches_independent_oracle_on_mixed_utf8_feeds() {
+        // Property-style: a few thousand deterministic streams of ASCII /
+        // UTF-8 (é, ✓, CJK, emoji) / CR / LF / VT / FF / ESC (SGR, EL, BEL),
+        // each split at random chunk boundaries. Nothing wraps or scrolls,
+        // so the ring's full text and the live screen must equal one
+        // independent vt100 parse of the concatenated bytes. `snapshot`
+        // is the surface parser: a double-feed diverges from the oracle
+        // even when the ring was reconciled against that double-feed.
+        const CASES: u64 = 3072;
+        for case in 0..CASES {
+            let mut rng = FuzzRng(case.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(0xD1CE));
+            let full = mixed_utf8_stream(&mut rng);
+            let mut b = HeadlessBackend::new();
+            b.create_surface("p", 80, 24);
+            let mut pos = 0;
+            while pos < full.len() {
+                let n = 1 + rng.below(12) as usize;
+                let end = (pos + n).min(full.len());
+                b.feed_output("p", &full[pos..end]);
+                pos = end;
+            }
+            let expect_grid = oracle_grid(&full, 80, 24);
+            assert_eq!(
+                b.snapshot("p"),
+                oracle_contents(&full, 80, 24),
+                "parser diverged from single-parse oracle (case={case} input={full:?})"
+            );
+            assert_eq!(
+                b.tail("p", 5000, false).unwrap().join("\n"),
+                oracle_text(&full, 80, 24),
+                "ring text diverged from single-parse oracle (case={case} input={full:?})"
+            );
+            assert_eq!(
+                surface_screen_texts(&b, "p"),
+                expect_grid,
+                "screen vec diverged from single-parse oracle (case={case} input={full:?})"
             );
         }
     }
