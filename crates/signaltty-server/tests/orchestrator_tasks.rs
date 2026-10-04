@@ -2131,6 +2131,11 @@ async fn discard_reaps_the_worker_process_group() {
     )
     .await
     .unwrap();
+    // Without procfs the check below would pass vacuously.
+    assert!(
+        std::path::Path::new("/proc/self/stat").exists(),
+        "procfs required"
+    );
     let alive = std::path::Path::new(&format!("/proc/{child}")).exists()
         && !std::fs::read_to_string(format!("/proc/{child}/stat"))
             .unwrap_or_default()
