@@ -72,7 +72,7 @@ async fn installed_reporters_return_once_and_deny_without_typing_terminal_input(
         let spawned = c
             .call(
                 "pane.spawn",
-                json!({"workspace_id":ws["workspace"]["id"],"argv":[provider]}),
+                json!({"workspace_id":ws["workspace"]["id"],"argv":[provider],"cols":240}),
             )
             .await
             .unwrap();

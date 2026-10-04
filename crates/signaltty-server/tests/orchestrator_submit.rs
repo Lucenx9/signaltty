@@ -260,6 +260,7 @@ async fn submit_agent_not_ready_on_worker_pane_with_pending_task() {
                 "repo": repo.path().to_string_lossy(),
                 "contract": {"objective": "pending objective"},
                 "label": "worker-pending-test",
+                "argv": ["sh"],
             }),
         )
         .await
@@ -467,6 +468,7 @@ async fn submit_follow_up_on_input_required_task_resumes_working() {
                 "repo": repo.path().to_string_lossy(),
                 "contract": {"objective": "input required follow up test"},
                 "label": "worker-input-req",
+                "argv": ["sh"],
             }),
         )
         .await

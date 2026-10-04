@@ -59,15 +59,17 @@ impl TestServer {
         let ns = format!("st-{}", unique());
         let temp_dir = std::env::temp_dir();
         // Keep unix domain socket path under SUN_LEN (108 bytes).
-        let base = if temp_dir.as_os_str().len() > 35 {
-            PathBuf::from("/tmp").join(ns)
+        let parent = if temp_dir.as_os_str().len() > 35 {
+            PathBuf::from("/tmp")
         } else {
             temp_dir
         };
+        let base = parent.join(ns);
         let socket = base.join("s.sock");
         let state_dir = base.join("state");
         let integration_home = base.join("home");
         std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&integration_home).unwrap();
         let bin = bin_path("signaltty-server");
         let mut cmd = std::process::Command::new(bin);
         cmd.arg("--socket")
@@ -81,7 +83,9 @@ impl TestServer {
             cmd.arg("--agents-dir").arg(dir);
         }
         cmd.env("SIGNALTTY_INTEGRATION_HOME", &integration_home)
-            .env("XDG_CONFIG_HOME", integration_home.join(".config"));
+            .env("XDG_CONFIG_HOME", integration_home.join(".config"))
+            .env("XDG_DATA_HOME", integration_home.join(".local/share"))
+            .env("HOME", &integration_home);
         let mut child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -154,6 +158,8 @@ impl TestServer {
         self.child = std::process::Command::new(bin)
             .env("SIGNALTTY_INTEGRATION_HOME", &self.integration_home)
             .env("XDG_CONFIG_HOME", self.integration_home.join(".config"))
+            .env("XDG_DATA_HOME", self.integration_home.join(".local/share"))
+            .env("HOME", &self.integration_home)
             .arg("--socket")
             .arg(&self.socket)
             .arg("--state-dir")
