@@ -185,6 +185,11 @@ async fn test_task_finish_merge_happy_path_and_disposition() {
     )
     .await
     .unwrap();
+    let diff = c
+        .call("task.diff", json!({ "task_id": &task_id }))
+        .await
+        .unwrap();
+    assert_eq!(diff["merge_preview"]["clean"], true, "{diff}");
 
     // Call task.finish with merge
     let finish_res = c
@@ -193,7 +198,6 @@ async fn test_task_finish_merge_happy_path_and_disposition() {
             json!({
                 "task_id": &task_id,
                 "mode": "merge",
-                "delete_branch": true,
             }),
         )
         .await
@@ -213,6 +217,35 @@ async fn test_task_finish_merge_happy_path_and_disposition() {
         !wt_path.exists(),
         "worktree must be removed after successful finish merge"
     );
+
+    // The closed worker leaves nothing in the attention list, even after
+    // the PTY's late exit lands.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let pane_id = start_res["pane"]["id"].as_str().unwrap();
+    let pending = c.call("attention.pending", json!({})).await.unwrap();
+    assert!(
+        !pending["panes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["pane_id"] == pane_id),
+        "finished worker still listed: {pending}"
+    );
+
+    // A merged task branch is deleted by default.
+    assert_eq!(finish_res["task"]["disposition"]["branch_deleted"], true);
+    let branch = finish_res["task"]["branch"].as_str().unwrap();
+    let out = std::process::Command::new("git")
+        .args([
+            "-C",
+            &repo.path().to_string_lossy(),
+            "branch",
+            "--list",
+            branch,
+        ])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).trim().is_empty());
 
     // Second finish must be refused
     let second_finish = c
@@ -286,6 +319,14 @@ async fn test_task_finish_merge_conflict_aborts_target_clean_and_names_files() {
     )
     .await
     .unwrap();
+
+    // The conflict is visible before finishing.
+    let diff = c
+        .call("task.diff", json!({ "task_id": &task_id }))
+        .await
+        .unwrap();
+    assert_eq!(diff["merge_preview"]["clean"], false, "{diff}");
+    assert_eq!(diff["merge_preview"]["conflicted"], json!(["conflict.txt"]));
 
     // Call task.finish with merge
     let finish_err = c

@@ -210,7 +210,10 @@ Mirror the `workspace.diff` / `workspace.file_diff` pair, with the task's
 0 — NOT worktree-vs-HEAD).
 
 - `task.diff {task_id}` → `{task_id, base_sha, files[…], dirs[…], added,
-  removed}` (tracked `git diff base_sha --numstat` + untracked via `ls-files`).
+  removed, merge_preview}`. `merge_preview` is `{target, clean, conflicted[]}`
+  from `git merge-tree --write-tree` of the committed branch tip into the
+  recorded target (uncommitted work is not in it), or `null` when git cannot
+  tell (no recorded target, git < 2.38) (tracked `git diff base_sha --numstat` + untracked via `ls-files`).
   Untracked line counts use a capped `O_NOFOLLOW` read (512 KiB, the same
   bound as `task.file_diff`) on a blocking thread. A symlink, fifo, directory,
   or file over that bound is `binary` with zero counts and its body is not
@@ -266,10 +269,11 @@ Merge (`src/workflow/merge.rs` rules, VERIFIED workmux):
 - Success: `merge: {target, sha}`; cleanup removes the task worktree
   (guarded to the recorded path + herdr leftover guard: delete a leftover dir
   only after git says not-a-worktree and the checkout still matches,
-  `src/worktree.rs`); branch deleted only when `delete_branch: true` AND
-  `!preexisting_branch` (t3code keeps branches for resume; claude-squad never
-  deletes pre-existing). Default keeps the branch (decision vs workmux
-  `keep_branch: false`: durable task records favor post-merge inspection).
+  `src/worktree.rs`); the task branch is deleted unless `delete_branch: false`
+  (CLI `--keep-branch`), and never when `preexisting_branch` (claude-squad
+  never deletes pre-existing). Default deletes, like workmux `keep_branch:
+  false`: the merged commits stay reachable from `merged_sha^2`, and kept
+  branches piled up by hand-cleanup in practice (revised after 018 audit).
 - Cleanup failure → success result with `cleanup_error` set (workmux `Ok` +
   `cleanup_error`); the merge is not rolled back in the report. t3code skips
   also apply: refuse cleanup while a foreign live pane's canonical cwd is
@@ -356,7 +360,7 @@ filter composing with `from_seq` replay (task-scoped subscribe/replay).
 | `signaltty task list [--context …] [--state …] [--json]` | `task.list` |
 | `signaltty task wait <id\|--context …> [--until settled] [--timeout …] [--json]` (default `settled` = terminal or `input_required`) | `task.wait` |
 | `signaltty task diff <id> [--json]` / `signaltty task file-diff <id> <path> [--json]` | `task.diff` / `task.file_diff` |
-| `signaltty task finish <id> --merge\|--discard [--target …] [--delete-branch] [--ignore-dirty] [--json]` | `task.finish` |
+| `signaltty task finish <id> --merge\|--discard [--target …] [--delete-branch\|--keep-branch] [--ignore-dirty] [--json]` | `task.finish` |
 | `signaltty task cancel <id> [--json]` | `task.cancel` |
 | `signaltty report --status … --summary … [--artifacts …] [--evidence …] [--task …] [--json]` (task resolved via `--task`, `$SIGNALTTY_TASK`, or `$SIGNALTTY_PANE`) | `task.report` |
 | `signaltty pane submit <id> --text/--stdin … [--submit-delay-ms …] [--stall-timeout …] [--json]` | `pane.submit` |

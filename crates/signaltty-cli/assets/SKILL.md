@@ -85,7 +85,9 @@ signaltty --json pane submit "$PA" --text "please report your result now"  # bac
 signaltty decision answer --pane "$PA" --decision DID --option OID  # permissions only
 # 4. Review each diff against its own base, then finish explicitly.
 signaltty --json task diff "$A"
-signaltty --json task finish "$A" --merge                  # or --discard; --delete-branch only for task branches
+signaltty --json task diff "$A" | jq .merge_preview      # {clean, conflicted}: order merges or re-run before finishing
+signaltty --json task finish "$A" --merge                  # deletes the task branch (--keep-branch to keep); or --discard
+# Finish outcome: .task.disposition.outcome (merged|discarded); .task.state keeps completed/failed.
 ```
 
 Rules: cap is 4 parallel tasks (over-cap → `RATE_LIMITED`, nothing
@@ -119,7 +121,7 @@ signaltty --json pane submit "$P3" --text "please report your result now"
 signaltty --json task wait --context "$CTX" --timeout 3600                     # all terminal
 for f in task1 task2 task3; do signaltty --json task diff "$(jq -r .task.id $f.json)"; done
 signaltty --json task finish "$(jq -r .task.id task1.json)" --merge
-signaltty --json task finish "$(jq -r .task.id task2.json)" --merge --delete-branch
+signaltty --json task finish "$(jq -r .task.id task2.json)" --merge --keep-branch
 signaltty --json task finish "$(jq -r .task.id task3.json)" --discard
 ```
 

@@ -260,8 +260,12 @@ enum TaskOp {
         discard: bool,
         #[arg(long)]
         target: Option<String>,
+        /// Delete the task branch (already the default for --merge; opt-in for --discard).
         #[arg(long)]
         delete_branch: bool,
+        /// Keep the task branch after --merge (--discard always keeps it unless --delete-branch).
+        #[arg(long, conflicts_with_all = ["delete_branch", "discard"])]
+        keep_branch: bool,
         #[arg(long)]
         ignore_dirty: bool,
     },
@@ -1651,6 +1655,7 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
             discard,
             target,
             delete_branch,
+            keep_branch,
             ignore_dirty,
         } => {
             let mode = if merge {
@@ -1667,8 +1672,8 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
             if let Some(t) = target {
                 p["target_ref"] = json!(t);
             }
-            if delete_branch {
-                p["delete_branch"] = json!(true);
+            if delete_branch || keep_branch {
+                p["delete_branch"] = json!(delete_branch);
             }
             if ignore_dirty {
                 p["ignore_dirty"] = json!(true);
