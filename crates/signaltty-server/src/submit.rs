@@ -4,13 +4,32 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use signaltty_core::model::LiveState;
 use signaltty_core::state::{Lifecycle, TaskState};
 use signaltty_proto::code;
 use tokio::sync::broadcast;
 
-use crate::params::{bad_params, ParamError};
+use crate::pty::PtyManager;
 use crate::router::Ctx;
+use crate::store::{SharedStore, StoredEvent};
+
+#[derive(Clone)]
+pub struct SubmitCtx {
+    pub store: SharedStore,
+    pub ptys: PtyManager,
+    pub bcast: broadcast::Sender<StoredEvent>,
+}
+
+impl From<&Ctx> for SubmitCtx {
+    fn from(ctx: &Ctx) -> Self {
+        Self {
+            store: ctx.store.clone(),
+            ptys: ctx.ptys.clone(),
+            bcast: ctx.bcast.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubmitOutcome {
@@ -19,6 +38,49 @@ pub struct SubmitOutcome {
     pub transition_seq: u64,
     pub lifecycle: String,
     pub attention: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubmitError {
+    pub code: String,
+    pub message: String,
+    pub details: Option<Value>,
+}
+
+impl SubmitError {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    pub fn with_details(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: Value,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            details: Some(details),
+        }
+    }
+}
+
+impl std::fmt::Display for SubmitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for SubmitError {}
+
+impl From<SubmitError> for (String, String) {
+    fn from(e: SubmitError) -> Self {
+        (e.code, e.message)
+    }
 }
 
 /// Gated prompt submission:
@@ -32,18 +94,22 @@ pub struct SubmitOutcome {
 /// 4. Write bracketed paste (`\x1b[200~text\x1b[201~`).
 /// 5. Sleep `submit_delay`.
 /// 6. Write `\r`.
-/// 7. Activity gate: wait up to `stall_timeout` for a newer `working` or `blocked` transition.
+/// 7. Activity gate (if `check_activity`): wait up to `stall_timeout` for a newer `working` or `blocked` transition.
 /// 8. If worker pane belongs to an `input_required` task, resume it to `working`.
 pub async fn submit_prompt(
-    ctx: &Ctx,
+    ctx: &SubmitCtx,
     pane_id: &str,
     text: &str,
     submit_delay: Duration,
     stall_timeout: Duration,
     allow_pending_task: bool,
-) -> Result<SubmitOutcome, ParamError> {
+    check_activity: bool,
+) -> Result<SubmitOutcome, SubmitError> {
     if text.is_empty() || text.len() > 32768 {
-        return Err(bad_params("text must be 1 .. 32768 bytes"));
+        return Err(SubmitError::new(
+            code::BAD_PARAMS,
+            "text must be 1 .. 32768 bytes",
+        ));
     }
 
     let baseline = {
@@ -51,11 +117,11 @@ pub async fn submit_prompt(
         let pane = s
             .panes
             .get(pane_id)
-            .ok_or_else(|| (code::NO_SUCH_PANE.into(), pane_id.to_string()))?;
+            .ok_or_else(|| SubmitError::new(code::NO_SUCH_PANE, pane_id.to_string()))?;
 
         if !matches!(pane.live, LiveState::Live) {
-            return Err((
-                code::PANE_EXITED.into(),
+            return Err(SubmitError::new(
+                code::PANE_EXITED,
                 format!("pane '{pane_id}' has exited"),
             ));
         }
@@ -65,28 +131,28 @@ pub async fn submit_prompt(
                 .values()
                 .any(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::Pending)
         {
-            return Err((
-                code::AGENT_NOT_READY.into(),
-                "worker pane task is still pending background submit".into(),
+            return Err(SubmitError::new(
+                code::AGENT_NOT_READY,
+                "worker pane task is still pending background submit",
             ));
         }
 
         match pane.lifecycle {
             Lifecycle::Working | Lifecycle::Blocked => {
-                return Err((
-                    code::AGENT_BUSY.into(),
+                return Err(SubmitError::new(
+                    code::AGENT_BUSY,
                     format!("agent is {}", pane.lifecycle.as_str()),
                 ));
             }
             Lifecycle::Unknown | Lifecycle::Failed => {
-                return Err((
-                    code::AGENT_NOT_READY.into(),
+                return Err(SubmitError::new(
+                    code::AGENT_NOT_READY,
                     format!("agent is {}", pane.lifecycle.as_str()),
                 ));
             }
             Lifecycle::Exited => {
-                return Err((
-                    code::PANE_EXITED.into(),
+                return Err(SubmitError::new(
+                    code::PANE_EXITED,
                     format!("pane '{pane_id}' has exited"),
                 ));
             }
@@ -100,14 +166,26 @@ pub async fn submit_prompt(
     let paste = format!("\x1b[200~{text}\x1b[201~");
     ctx.ptys
         .input(pane_id, paste.as_bytes())
-        .map_err(|e| (code::IO_ERROR.into(), format!("PTY input error: {e}")))?;
+        .map_err(|e| SubmitError::new(code::IO_ERROR, format!("PTY input error: {e}")))?;
 
     tokio::time::sleep(submit_delay).await;
 
     // Send Enter (\r)
     ctx.ptys
         .input(pane_id, b"\r")
-        .map_err(|e| (code::IO_ERROR.into(), format!("PTY input error: {e}")))?;
+        .map_err(|e| SubmitError::new(code::IO_ERROR, format!("PTY input error: {e}")))?;
+
+    if !check_activity {
+        let s = ctx.store.read().unwrap();
+        let pane = s.panes.get(pane_id).unwrap();
+        return Ok(SubmitOutcome {
+            submitted: true,
+            outcome: "submitted".to_string(),
+            transition_seq: baseline.as_ref().map(|b| b.lifecycle_seq).unwrap_or(0),
+            lifecycle: pane.lifecycle.as_str().to_string(),
+            attention: pane.attention.as_str().to_string(),
+        });
+    }
 
     // Activity gate
     let outcomes = ["working", "blocked"];
@@ -119,11 +197,11 @@ pub async fn submit_prompt(
         {
             let s = ctx.store.read().unwrap();
             let Some(pane) = s.panes.get(pane_id) else {
-                return Err((code::NO_SUCH_PANE.into(), pane_id.to_string()));
+                return Err(SubmitError::new(code::NO_SUCH_PANE, pane_id.to_string()));
             };
             if !matches!(pane.live, LiveState::Live) {
-                return Err((
-                    code::PANE_EXITED.into(),
+                return Err(SubmitError::new(
+                    code::PANE_EXITED,
                     format!("pane '{pane_id}' exited while waiting for activity"),
                 ));
             }
@@ -166,15 +244,16 @@ pub async fn submit_prompt(
         tokio::select! {
             biased;
             _ = tokio::time::sleep_until(deadline) => {
-                return Err((
-                    code::TIMEOUT.into(),
-                    "activity gate timed out waiting for working or blocked after submit".into(),
+                return Err(SubmitError::with_details(
+                    code::TIMEOUT,
+                    "activity gate timed out waiting for working or blocked after submit",
+                    serde_json::json!({"stage": "activity_gate"}),
                 ));
             }
             _ = tick.tick() => {}
             event = rx.recv() => {
                 if matches!(event, Err(broadcast::error::RecvError::Closed)) {
-                    return Err((code::INTERNAL.into(), "event bus closed".into()));
+                    return Err(SubmitError::new(code::INTERNAL, "event bus closed"));
                 }
             }
         }
