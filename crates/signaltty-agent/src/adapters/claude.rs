@@ -171,4 +171,12 @@ mod tests {
             vec!["claude", "--resume", "abc"]
         );
     }
+    #[test]
+    fn tool_use_and_subagent_hooks_do_not_clear_blocked_or_mutate_lifecycle() {
+        let a = ClaudeAdapter;
+        for hook in ["PreToolUse", "PostToolUse", "PreCompact", "SubagentStop"] {
+            let d = a.lifecycle_state(&ev(hook, json!({})));
+            assert_eq!(d.lifecycle, None, "{hook} must not change lifecycle");
+        }
+    }
 }
