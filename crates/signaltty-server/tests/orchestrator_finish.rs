@@ -66,7 +66,7 @@ async fn test_task_diff_and_file_diff_vs_base_sha_untracked_and_clean_index() {
 
     assert_eq!(diff_res["task_id"], task_id);
     assert_eq!(diff_res["base_sha"], base_sha);
-    assert_eq!(diff_res["files"], 2); // README.md and untracked.txt
+    assert_eq!(diff_res["files"].as_array().unwrap().len(), 2); // README.md and untracked.txt
     assert!(diff_res["added"].as_u64().unwrap() >= 3);
 
     // Verify git index was untouched (no `git add -N`)
