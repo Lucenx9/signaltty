@@ -25,6 +25,9 @@ struct Args {
     /// Maximum parallel running tasks (default: 4).
     #[arg(long = "max-tasks", alias = "max-parallel-tasks")]
     max_tasks: Option<usize>,
+    /// Worker silent watchdog timeout in seconds (default: 600).
+    #[arg(long = "worker-silent-timeout", alias = "worker-silent-timeout-s")]
+    worker_silent_timeout_s: Option<u64>,
 }
 
 #[tokio::main]
@@ -51,6 +54,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(m) = args.max_tasks {
         config.max_parallel_tasks = m;
+    }
+    if let Some(w) = args.worker_silent_timeout_s {
+        config.worker_silent_timeout_s = w;
     }
     serve(config).await
 }

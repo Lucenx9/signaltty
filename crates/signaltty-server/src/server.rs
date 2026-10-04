@@ -121,6 +121,59 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Silent-worker watchdog:
+    // If a task stays `working` with no hook activity and no PTY output
+    // for worker_silent_timeout_s, transition to `input_required` with
+    // {reason: "worker_silent"}
+    {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+            loop {
+                interval.tick().await;
+                let timeout_s = ctx.config.worker_silent_timeout_s;
+                if timeout_s == 0 {
+                    continue;
+                }
+                let now = chrono::Utc::now();
+                let silent_tasks: Vec<(String, String)> = {
+                    let s = ctx.store.read().unwrap();
+                    s.tasks
+                        .values()
+                        .filter_map(|t| {
+                            if t.state == signaltty_core::TaskState::Working {
+                                if let Some(pid) = &t.pane_id {
+                                    if let Some(p) = s.panes.get(pid) {
+                                        let elapsed = now
+                                            .signed_duration_since(p.last_activity_at)
+                                            .num_seconds();
+                                        if elapsed >= timeout_s as i64 {
+                                            return Some((t.id.clone(), pid.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                            None
+                        })
+                        .collect()
+                };
+
+                for (task_id, _pid) in silent_tasks {
+                    let mut s = ctx.store.write().unwrap();
+                    if let Some(t) = s.tasks.get(&task_id) {
+                        if t.state == signaltty_core::TaskState::Working {
+                            let evidence = serde_json::json!({
+                                "reason": "worker_silent",
+                                "timeout_s": timeout_s,
+                            });
+                            s.task_input_required_on_turn_end(&task_id, Some(evidence));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     // Debounced snapshot flusher.
     {
         let ctx = ctx.clone();

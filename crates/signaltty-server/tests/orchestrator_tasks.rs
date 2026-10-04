@@ -1617,7 +1617,7 @@ async fn test_silent_worker_watchdog_transitions_to_input_required() {
         .await
         .unwrap();
     assert_eq!(wait_settled["satisfied"], true);
-    assert_eq!(wait_settled["state"], "input_required");
+    assert_eq!(wait_settled["tasks"][0]["state"], "input_required");
 
     let task_get = c
         .call("task.get", json!({"task_id": task_id}))

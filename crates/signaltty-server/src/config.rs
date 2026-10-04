@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use signaltty_core::paths;
 
 pub const DEFAULT_MAX_PARALLEL_TASKS: usize = 4;
+pub const DEFAULT_WORKER_SILENT_TIMEOUT_S: u64 = 600;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -13,12 +14,18 @@ pub struct Config {
     pub agents_dir: PathBuf,
     pub integration_home: Option<PathBuf>,
     pub max_parallel_tasks: usize,
+    pub worker_silent_timeout_s: u64,
 }
 
 impl Config {
     pub fn from_env() -> Config {
         let max_parallel_tasks = parse_max_tasks(
             std::env::var("SIGNALTTY_MAX_PARALLEL_TASKS")
+                .ok()
+                .as_deref(),
+        );
+        let worker_silent_timeout_s = parse_worker_silent_timeout(
+            std::env::var("SIGNALTTY_WORKER_SILENT_TIMEOUT_S")
                 .ok()
                 .as_deref(),
         );
@@ -31,6 +38,7 @@ impl Config {
             agents_dir: paths::agents_dir(),
             integration_home: std::env::var_os("SIGNALTTY_INTEGRATION_HOME").map(PathBuf::from),
             max_parallel_tasks,
+            worker_silent_timeout_s,
         }
     }
 }
@@ -78,4 +86,9 @@ mod tests {
 
         std::env::remove_var("SIGNALTTY_MAX_PARALLEL_TASKS");
     }
+}
+
+pub fn parse_worker_silent_timeout(val: Option<&str>) -> u64 {
+    val.and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_WORKER_SILENT_TIMEOUT_S)
 }
