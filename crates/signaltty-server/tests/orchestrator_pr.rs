@@ -19,6 +19,8 @@ struct TestEnv {
     fake_bin: PathBuf,
     gh_log: PathBuf,
     gh_fixture: PathBuf,
+    _gh_counter: PathBuf,
+    gh_fail_url: PathBuf,
     bare_repo: PathBuf,
 }
 
@@ -30,6 +32,8 @@ impl TestEnv {
 
         let gh_log = base.join("gh.log");
         let gh_fixture = base.join("gh_fixture.json");
+        let _gh_counter = base.join("gh_counter.txt");
+        let gh_fail_url = base.join("gh_fail_url.txt");
         let bare_repo = base.join("bare.git");
 
         // Init bare git repo
@@ -48,10 +52,20 @@ if [ "$FAKE_GH_FAIL" = "1" ]; then
     exit 1
 fi
 if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
-    echo "https://github.com/o/r/pull/7"
+    COUNT=7
+    if [ -f "{counter}" ]; then
+        COUNT=$(cat "{counter}")
+        COUNT=$((COUNT + 1))
+    fi
+    echo "$COUNT" > "{counter}"
+    echo "https://github.com/o/r/pull/$COUNT"
     exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+    if [ -f "{fail_url}" ] && [ "$3" = "$(cat "{fail_url}")" ]; then
+        echo "simulated pr view failure for $3" >&2
+        exit 1
+    fi
     if [ -f "{fixture}" ]; then
         cat "{fixture}"
     else
@@ -63,7 +77,9 @@ echo "unknown fake gh invocation: $@" >&2
 exit 2
 "#,
             log = gh_log.display(),
-            fixture = gh_fixture.display()
+            fixture = gh_fixture.display(),
+            counter = _gh_counter.display(),
+            fail_url = gh_fail_url.display(),
         );
 
         let gh_path = fake_bin.join("gh");
@@ -76,6 +92,8 @@ exit 2
             fake_bin,
             gh_log,
             gh_fixture,
+            _gh_counter,
+            gh_fail_url,
             bare_repo,
         }
     }
@@ -569,6 +587,113 @@ async fn test_task_pr_open_gh_error_io_error_with_details() {
     assert!(
         err.contains("simulated gh failure"),
         "expected stderr in error message, got: {err}"
+    );
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_task_pr_refresh_all_skips_failing_pr() {
+    let env = TestEnv::new();
+    let original_path = std::env::var("PATH").unwrap();
+    let path_with_gh = format!("{}:{}", env.fake_bin.display(), original_path);
+
+    let srv = TestServer::start_with_env(&[("PATH", &path_with_gh)]).await;
+    let mut c = srv.client().await;
+    let repo = TempGitRepo::new();
+    env.attach_origin(repo.path());
+
+    // Task 1
+    let t1_res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Task 1 objective"},
+                "label": "Task 1",
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task1_id = t1_res["task"]["id"].as_str().unwrap().to_string();
+
+    c.call(
+        "task.report",
+        json!({
+            "task_id": &task1_id,
+            "status": "completed",
+            "summary": "Task 1 done",
+        }),
+    )
+    .await
+    .unwrap();
+
+    let pr1_res = c
+        .call("task.pr_open", json!({ "task_id": &task1_id }))
+        .await
+        .unwrap();
+    let pr1_url = pr1_res["task"]["pr"]["url"].as_str().unwrap().to_string();
+    assert_eq!(pr1_url, "https://github.com/o/r/pull/7");
+
+    // Task 2
+    let t2_res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Task 2 objective"},
+                "label": "Task 2",
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task2_id = t2_res["task"]["id"].as_str().unwrap().to_string();
+
+    c.call(
+        "task.report",
+        json!({
+            "task_id": &task2_id,
+            "status": "completed",
+            "summary": "Task 2 done",
+        }),
+    )
+    .await
+    .unwrap();
+
+    let pr2_res = c
+        .call("task.pr_open", json!({ "task_id": &task2_id }))
+        .await
+        .unwrap();
+    let pr2_url = pr2_res["task"]["pr"]["url"].as_str().unwrap().to_string();
+    assert_eq!(pr2_url, "https://github.com/o/r/pull/8");
+
+    // Make fake gh fail pr view for task 1's URL, succeed for task 2
+    fs::write(&env.gh_fail_url, &pr1_url).unwrap();
+
+    // Calling pr_refresh with no task_id should skip failing task 1 and return only task 2
+    let ref_all_res = c.call("task.pr_refresh", json!({})).await.unwrap();
+    let refreshed_tasks = ref_all_res["tasks"].as_array().unwrap();
+    assert_eq!(
+        refreshed_tasks.len(),
+        1,
+        "refresh-all should return only the good task"
+    );
+    assert_eq!(refreshed_tasks[0]["id"], task2_id);
+    assert_eq!(refreshed_tasks[0]["pr"]["url"], pr2_url);
+    assert!(refreshed_tasks[0]["pr"]["checked_at"].is_string());
+
+    // Explicit task_id for the failing PR still returns the error
+    let fail_err = c
+        .call("task.pr_refresh", json!({ "task_id": &task1_id }))
+        .await
+        .unwrap_err();
+    assert!(
+        fail_err.starts_with(code::IO_ERROR),
+        "expected IO_ERROR for explicit failing task, got: {fail_err}"
     );
 
     srv.shutdown().await;

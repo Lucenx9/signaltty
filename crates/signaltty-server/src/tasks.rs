@@ -2185,6 +2185,7 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
         );
     }
 
+    let is_single = p.task_id.is_some();
     let mut refreshed_pairs = Vec::new();
     for (tid, src_repo, mut pr) in targets {
         let gh_out = match run_cli(
@@ -2202,28 +2203,36 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
         {
             Ok(o) => o,
             Err((c, m, details)) => {
-                return if details.is_null() {
-                    (Response::err(&req.id, &c, m), ConnEffect::default())
+                if is_single {
+                    return if details.is_null() {
+                        (Response::err(&req.id, &c, m), ConnEffect::default())
+                    } else {
+                        (
+                            Response::err_with_details(&req.id, &c, m, details),
+                            ConnEffect::default(),
+                        )
+                    };
                 } else {
-                    (
-                        Response::err_with_details(&req.id, &c, m, details),
-                        ConnEffect::default(),
-                    )
-                };
+                    continue;
+                }
             }
         };
 
         let view_json: Value = match serde_json::from_slice(&gh_out.stdout) {
             Ok(v) => v,
             Err(e) => {
-                return (
-                    Response::err(
-                        &req.id,
-                        code::IO_ERROR,
-                        format!("failed to parse gh pr view JSON output: {e}"),
-                    ),
-                    ConnEffect::default(),
-                );
+                if is_single {
+                    return (
+                        Response::err(
+                            &req.id,
+                            code::IO_ERROR,
+                            format!("failed to parse gh pr view JSON output: {e}"),
+                        ),
+                        ConnEffect::default(),
+                    );
+                } else {
+                    continue;
+                }
             }
         };
 
