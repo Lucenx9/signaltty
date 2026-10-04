@@ -903,12 +903,12 @@ async fn cli_task_diff_and_finish() {
     let _ = std::process::Command::new("git")
         .arg("-C")
         .arg(&wt_path)
-        .args(&["add", "feature.txt"])
+        .args(["add", "feature.txt"])
         .output();
     let _ = std::process::Command::new("git")
         .arg("-C")
         .arg(&wt_path)
-        .args(&["commit", "-m", "feature added"])
+        .args(["commit", "-m", "feature added"])
         .output();
 
     // Report completed

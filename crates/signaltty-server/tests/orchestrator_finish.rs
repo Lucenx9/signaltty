@@ -198,7 +198,7 @@ async fn test_task_finish_merge_happy_path_and_disposition() {
         .await
         .unwrap();
 
-    assert_eq!(finish_res["task"]["disposition"], "merged");
+    assert_eq!(finish_res["task"]["disposition"]["outcome"], "merged");
     assert!(finish_res["merge"]["sha"].is_string());
     assert_eq!(finish_res["merge"]["target"], "main");
 
@@ -492,7 +492,7 @@ async fn test_task_finish_preexisting_branch_never_deleted() {
         .await
         .unwrap();
 
-    assert_eq!(finish_res["task"]["disposition"], "merged");
+    assert_eq!(finish_res["task"]["disposition"]["outcome"], "merged");
 
     // The preexisting branch MUST still exist
     let branch_out = repo.git(&["branch", "--list", "pre-existing-feature"]);
@@ -543,7 +543,7 @@ async fn test_task_finish_discard_scoping_and_disposition() {
         .await
         .unwrap();
 
-    assert_eq!(discard_res["task"]["disposition"], "discarded");
+    assert_eq!(discard_res["task"]["disposition"]["outcome"], "discarded");
     assert_eq!(discard_res["task"]["state"], "canceled");
 
     // Worktree removed
