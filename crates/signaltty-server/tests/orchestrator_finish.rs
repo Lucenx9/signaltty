@@ -1037,3 +1037,74 @@ async fn test_task_finish_merge_is_bounded_and_leaves_target_clean() {
     assert_eq!(task["task"]["disposition"]["outcome"], "none");
     srv.shutdown().await;
 }
+
+fn pid_alive(pid: i32) -> bool {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+}
+
+#[tokio::test]
+async fn test_task_finish_merge_reaps_the_worker_process_group_first() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let repo = TempGitRepo::new();
+    let pidfile = repo.path().join(".git/worker-child.pid");
+    // Ignores HUP/TERM so only a group KILL stops it.
+    let script = format!(
+        "trap '' HUP TERM; sleep 300 & echo $! > '{}'; wait",
+        pidfile.display()
+    );
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Reap"},
+                "argv": ["sh", "-c", script],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    let wt_path = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+    std::fs::write(wt_path.join("feature.txt"), "feature\n").unwrap();
+    for args in [
+        &["add", "feature.txt"][..],
+        &["commit", "-m", "feature"][..],
+    ] {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&wt_path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+    c.call(
+        "task.report",
+        json!({"task_id": &task_id, "status": "completed", "summary": "done"}),
+    )
+    .await
+    .unwrap();
+    let child_pid: i32 = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&pidfile) {
+                if let Ok(pid) = text.trim().parse() {
+                    return pid;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("worker child must start");
+    assert!(pid_alive(child_pid));
+
+    c.call("task.finish", json!({"task_id": &task_id, "mode": "merge"}))
+        .await
+        .unwrap();
+    assert!(
+        !pid_alive(child_pid),
+        "worker descendants must be reaped before task.finish returns"
+    );
+    srv.shutdown().await;
+}

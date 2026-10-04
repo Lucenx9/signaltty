@@ -1087,6 +1087,50 @@ pub async fn h_task_file_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Resp
     }
 }
 
+/// Kill the worker's process group and wait for it to be gone, so nothing can
+/// write to the worktree after the final checks. The pty child is a session
+/// leader, so its pgid is its pid. Does nothing for an already exited worker.
+async fn reap_worker(ctx: &Ctx, pane_id: &str) {
+    let pid = ctx.ptys.child_pids().get(pane_id).copied();
+    let _ = ctx.ptys.signal(pane_id, "KILL", true);
+    ctx.ptys.destroy(pane_id, Some("KILL"));
+    if let Some(pid) = pid {
+        let group = nix::unistd::Pid::from_raw(-(pid as i32));
+        for _ in 0..250 {
+            if nix::sys::signal::kill(group, None).is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    ctx.store.write().unwrap().set_exited(pane_id, Some(0));
+}
+
+/// Source worktree must hold no uncommitted work. A failed check is
+/// `IO_ERROR`, never "clean".
+fn source_clean(wt_str: &str) -> Result<(), (&'static str, String)> {
+    match crate::git::porcelain_clean(wt_str, &["status", "--porcelain"]) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err((
+            code::BAD_PARAMS,
+            "source worktree is dirty (uncommitted/staged/untracked changes would be lost)".into(),
+        )),
+        Err(e) => Err((code::IO_ERROR, format!("source dirt check failed: {e}"))),
+    }
+}
+
+fn branch_tip_of(src_str: &str, branch: &str) -> Option<String> {
+    match crate::git::git_output(
+        src_str,
+        &["rev-parse", "--verify", &format!("refs/heads/{branch}")],
+    ) {
+        Ok(out) if out.status.success() => {
+            Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        }
+        _ => None,
+    }
+}
+
 pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
     let p: params::TaskFinish = match decode(params) {
         Ok(p) => p,
@@ -1337,32 +1381,16 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         );
     }
 
-    // Check source worktree dirt. A failed check is IO_ERROR, never
-    // "clean": merging or deleting on an unverified tree could destroy
-    // uncommitted work.
+    // Stop and reap the worker before the final checks: a live worker could
+    // otherwise write or commit after them and lose that work to cleanup.
+    if let Some(ref pid) = pane_id {
+        reap_worker(ctx, pid).await;
+    }
+
+    // Check source worktree dirt (see `source_clean`).
     if !p.ignore_dirty.unwrap_or(false) {
-        match crate::git::porcelain_clean(&wt_str, &["status", "--porcelain"]) {
-            Ok(true) => {}
-            Ok(false) => {
-                return (
-                    Response::err(
-                        &req.id,
-                        code::BAD_PARAMS,
-                        "source worktree is dirty (uncommitted/staged/untracked changes would be lost)",
-                    ),
-                    ConnEffect::default(),
-                );
-            }
-            Err(e) => {
-                return (
-                    Response::err(
-                        &req.id,
-                        code::IO_ERROR,
-                        format!("source dirt check failed: {e}"),
-                    ),
-                    ConnEffect::default(),
-                );
-            }
+        if let Err((c, m)) = source_clean(&wt_str) {
+            return (Response::err(&req.id, c, m), ConnEffect::default());
         }
     }
 
@@ -1397,22 +1425,34 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
     // Resolve the task branch tip before merging so we can prove the
     // new HEAD descends from it afterwards (a merge that resolves to the
     // checked-out branch reports success without landing task commits).
-    let branch_tip = match crate::git::git_output(
-        &src_str,
-        &["rev-parse", "--verify", &format!("refs/heads/{branch}")],
-    ) {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
-        _ => {
-            return (
-                Response::err(
-                    &req.id,
-                    code::IO_ERROR,
-                    format!("task branch '{branch}' is missing in the source repo"),
-                ),
-                ConnEffect::default(),
-            );
-        }
+    let Some(branch_tip) = branch_tip_of(&src_str, &branch) else {
+        return (
+            Response::err(
+                &req.id,
+                code::IO_ERROR,
+                format!("task branch '{branch}' is missing in the source repo"),
+            ),
+            ConnEffect::default(),
+        );
     };
+
+    // Re-validate immediately before merging: nothing may have changed
+    // since the checks above.
+    if !p.ignore_dirty.unwrap_or(false) {
+        if let Err((c, m)) = source_clean(&wt_str) {
+            return (Response::err(&req.id, c, m), ConnEffect::default());
+        }
+    }
+    if branch_tip_of(&src_str, &branch).as_deref() != Some(branch_tip.as_str()) {
+        return (
+            Response::err(
+                &req.id,
+                code::IO_ERROR,
+                format!("task branch '{branch}' moved while finishing; retry task.finish"),
+            ),
+            ConnEffect::default(),
+        );
+    }
 
     // Execute merge under a deadline in its own process group: a stalled
     // hook or signing helper must not hold this handler (and its path lock)
@@ -1550,18 +1590,19 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         );
     }
 
-    // Close worker pane
-    if let Some(ref pid) = pane_id {
-        ctx.ptys.destroy(pid, Some("TERM"));
-        let mut s = ctx.store.write().unwrap();
-        s.set_exited(pid, Some(0));
-    }
-
-    // Clean up worktree (herdr-guarded: see remove_task_worktree).
-    let mut cleanup_error = remove_task_worktree(&src_str, &worktree_path);
+    // Re-validate before cleanup: only a checkout that still holds exactly
+    // what was merged may be removed. Otherwise keep it and say so; the next
+    // finish retries cleanup.
+    let unchanged = (p.ignore_dirty.unwrap_or(false) || source_clean(&wt_str).is_ok())
+        && branch_tip_of(&src_str, &branch).as_deref() == Some(branch_tip.as_str());
+    let mut cleanup_error = if unchanged {
+        remove_task_worktree(&src_str, &worktree_path)
+    } else {
+        Some("worktree changed after the merge (dirty or branch advanced); checkout kept".into())
+    };
 
     // Delete branch if requested and not pre-existing
-    let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch;
+    let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch && unchanged;
     if should_delete_branch {
         let b_out = crate::git::git_output(&src_str, &["branch", "-D", "--", &branch]);
         if let Ok(ref out) = b_out {

@@ -244,7 +244,10 @@ Merge (`src/workflow/merge.rs` rules, VERIFIED workmux):
   `git merge --abort`, verify target clean via porcelain, return
   `MERGE_CONFLICT` with `details.conflicted[]` (`git diff --diff-filter=U`,
   vibe-kanban `crates/git`) — target stays clean, resolution stays in the
-  source worktree. The merge runs in its own process group under a deadline
+  source worktree. `--merge` first kills and reaps the worker's process group,
+  then checks dirt and the branch tip, re-checks both right before the merge,
+  and again before cleanup (a changed checkout is kept with `cleanup_error`).
+  The merge runs in its own process group under a deadline
   (`merge_timeout_ms`, default 120 s, env `SIGNALTTY_MERGE_TIMEOUT_MS`); on
   expiry the group is killed, the target restored, and `TIMEOUT` returned with
   `details.{abort_ok,target_dirty}`. If `merge --abort` fails, or the post-abort porcelain
