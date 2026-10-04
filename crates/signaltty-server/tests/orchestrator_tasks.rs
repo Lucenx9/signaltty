@@ -1340,3 +1340,60 @@ async fn test_task_native_permission_block_and_answer() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_task_start_ref_safety_rejects_flag_injection_and_invalid_branches() {
+    let repo = TempGitRepo::new();
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    // 1. Branch starting with dash
+    let err = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Safety test"},
+                "branch": "--malicious-flag",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.starts_with(signaltty_proto::code::BAD_PARAMS));
+    assert!(err.contains("invalid branch"), "got {err}");
+
+    // 2. Base ref starting with dash
+    let err2 = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Safety test"},
+                "base_ref": "--upload-pack=cat",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err2.starts_with(signaltty_proto::code::BAD_PARAMS));
+    assert!(err2.contains("invalid base_ref"), "got {err2}");
+
+    // 3. Invalid branch per git check-ref-format (contains ..)
+    let err3 = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Safety test"},
+                "branch": "invalid..branch",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err3.starts_with(signaltty_proto::code::BAD_PARAMS));
+    assert!(err3.contains("invalid branch"), "got {err3}");
+
+    srv.shutdown().await;
+}
