@@ -291,7 +291,10 @@ pane row shows the task label and state in light and dark schemes.
   branch under a per-path lock, and spawn the worker pane there; default
   worktree path is `$XDG_DATA_HOME/signaltty/worktrees/<repo-dirname>-
   <short-hash-of-repo-path>/<sanitized-branch>` (fallback `~/.local/share`),
-  explicit `path` wins. Failures leave a failed task with evidence, never limbo.
+  explicit `path` wins. Failures after the worktree exists leave a failed task
+  with evidence (`stage`), never limbo; validation failures before it (bad
+  params, unresolvable base ref, unsendable contract) return a synchronous
+  error and create no task.
 - **FR-012**: `task.wait` MUST wait for one task or for all tasks in a context to
   reach the requested states (default `until: settled` = any terminal state OR
   `input_required`), with explicit timeout.

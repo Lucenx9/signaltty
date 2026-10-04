@@ -167,6 +167,7 @@ tasks). IDs are opaque `task_…` / `tctx_…` strings.
 | `status_reason?` | A2A-style evidence: `{stage, …}` for background/startup failures, `{reason: turn_ended_without_report, last_message?}`, `{reason: worker_silent, timeout_s}`, `{reason: decision_required, decision_id}` |
 | `finish_error?` | conflict files, or `{cleanup_error}` when removal fails after a disposition is recorded. A later finish retries cleanup while the worktree path remains |
 | `worker_pid?`, `worker_cmd?` | crash-vs-recycle evidence |
+| `client_request_id?` | caller idempotency key from `task.start` (persisted) |
 | `created_at`, `updated_at` | timestamps |
 
 ### TaskState
@@ -190,7 +191,10 @@ tasks). IDs are opaque `task_…` / `tctx_…` strings.
 | `working/input_required/pending → completed/failed/rejected` | `task.report` status (report on a terminal task is refused) |
 | `working/input_required/pending → failed` | worker pane death or restart recovery, with evidence, exactly once |
 
-There is no idempotency key on `task.start`: every call creates a new task.
+`task.start` takes an optional `client_request_id`: a retry with the same key
+returns the existing task and pane (the key is persisted, so this also holds
+across a server restart); without a key, or with a new one, every call
+creates a new task.
 `rejected` is worker-side ("finished but does not meet acceptance");
 user-side refusal of finished work is `disposition: discarded` on a
 `completed` task.

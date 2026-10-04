@@ -101,13 +101,16 @@ VERIFIED https://www.anthropic.com/engineering/multi-agent-research-system/).
 What the code does where it diverges from the proposal above — docs
 (`docs/02`, `docs/08`, skill, quickstart) describe this behavior:
 
-- No `client_request_id`: neither the spec contracts nor the code define an
-  idempotency key for `task.start`. Retries create new tasks; callers
-  de-duplicate via `task.list --context`.
-- Sync-error semantics: base-ref/empty-repo/worktree/spawn failures return
-  synchronous errors (`BAD_PARAMS`/`IO_ERROR`) and create no task. Only the
-  background ready-wait + prompt write produces `failed` tasks with `{stage:
-  ready_timeout|submit_refused, …}`. The accepted-research deltas all
+- `client_request_id` (optional) makes `task.start` idempotent: the same key
+  returns the existing task and pane, also across a restart. Without it,
+  retries create new tasks; callers can still de-duplicate via
+  `task.list --context`.
+- Sync-error semantics: validation before the worktree exists (bad params,
+  unresolvable base ref, unsendable contract) returns a synchronous error and
+  creates no task. After the checkout exists, workspace/tab/parent/spawn
+  failures and the background ready-wait + prompt write persist `failed`
+  tasks with `{stage: workspace|tab|parent|spawn|ready_timeout|
+  submit_refused|activity_gate, …}`. The accepted-research deltas all
   landed: hook-receiver drops (`harness_mismatch`, `unrecognized_hook`),
   the silent-worker watchdog (`worker_silent_timeout_s`, default 600 s, `0`
   disables), `last_assistant_message` flowing into pane `last_message` and
@@ -116,8 +119,8 @@ What the code does where it diverges from the proposal above — docs
   same paste/Enter delay as `pane.submit`) and runs the `pane.submit`
   activity gate. A newer `working` or `blocked` transition moves the task to
   `working`; a stall fails it with `{stage: activity_gate}`.
-- `pane.spawn` stores an unknown `parent_pane_id` as-is (root unset) rather
-  than refusing `NO_SUCH_PANE`.
+- `pane.spawn` refuses an unknown `parent_pane_id` with `NO_SUCH_PANE` and
+  creates no pane.
 - `Task.finish_error` stores conflict files (no disposition, so finish can
   be retried) and `{cleanup_error}` when removal fails after a disposition
   is recorded. The RPC still returns `cleanup_error` inline. A second finish

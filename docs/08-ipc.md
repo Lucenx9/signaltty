@@ -87,7 +87,7 @@ clients can `subscribe {from_seq}` to replay.
 | `task.start` | `{repo, contract: {objective, constraints?, output_format?, acceptance_criteria?}, agent?, label?, parent_pane_id?, context_id?, client_request_id?, base_ref?, fetch_first?, branch?, path?, ready_timeout_s?, stall_timeout_s?, submit_delay_ms?, argv?}` | `{task, pane}` (starts worker at `pending`; background ready-wait and prompt submit transitions to `working`; objective over 32 KiB, or a composed prompt over 32 KiB plus the fixed preamble, is `BAD_PARAMS` and creates no worktree; the same `client_request_id` returns the existing task and pane instead of creating another) |
 | `task.get` | `{task_id}` | `{task}` |
 | `task.list` | `{context_id?, state?, limit?}` | `{tasks: [...]}` |
-| `task.wait` | `{task_id?, context_id?, until?: string|string[], timeout_s?}` | `{satisfied, tasks: [...]}` (default `until: settled`) |
+| `task.wait` | `{task_id?, context_id?, until?: string\|string[], timeout_s?}` | `{satisfied, tasks: [...]}` (default `until: settled`) |
 | `task.cancel` | `{task_id}` | `{task}` |
 | `task.report` | `{task_id?, pane_id?, status: completed\|failed\|rejected, summary, artifacts?, evidence?}` (task resolved via explicit `task_id`, else the task owning `pane_id`; one of the two is required) | `{task}` (stores the result, emits `task.result` + `task.updated`; report on a terminal task → `BAD_PARAMS`) |
 | `task.diff` | `{task_id}` | `{task_id, base_sha, branch, files[...], dirs[...], added, removed}` (worktree-vs-recorded-base, tracked + untracked; no index mutation; untracked reads are capped, `O_NOFOLLOW`, and off the runtime thread — symlinks, fifos, and files over 512 KiB are binary with zero counts) |
@@ -112,8 +112,9 @@ waits for the worker pane to reach `idle`/`done` (default
 (default 300, the same paste/Enter delay as `pane.submit`), and runs the
 same activity gate: a newer `working` or `blocked` transition within
 `stall_timeout_s` (default 5) moves the task to `working`; a stall fails it
-with `{stage: activity_gate}`. There is no idempotency
-key: retries create new tasks. The merge target defaults to the recorded
+with `{stage: activity_gate}`. A repeated `client_request_id` returns the
+existing task and pane instead of creating another; without it retries
+create new tasks. The merge target defaults to the recorded
 `target_branch`; when the start ran on a detached HEAD an explicit
 `target_ref` is required at finish, and the resolved target must be the
 branch currently checked out in the source repo (`BAD_PARAMS` with
