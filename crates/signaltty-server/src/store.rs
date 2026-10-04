@@ -613,7 +613,7 @@ impl Store {
             let now = Utc::now();
             task.transition_to(TaskState::Failed, now).ok()?;
             if evidence.is_some() {
-                task.finish_error = evidence;
+                task.status_reason = evidence;
             }
             (task.clone(), prev_state)
         };
@@ -895,6 +895,7 @@ mod tests {
             state: TaskState::Pending,
             result: None,
             disposition: Disposition::default(),
+            status_reason: None,
             finish_error: None,
             worker_pid: None,
             worker_cmd: None,
@@ -1003,6 +1004,7 @@ mod tests {
             state: TaskState::Working,
             result: None,
             disposition: Disposition::default(),
+            status_reason: None,
             finish_error: None,
             worker_pid: None,
             worker_cmd: None,
@@ -1015,7 +1017,7 @@ mod tests {
         store.set_exited(&pane_id, Some(1));
         assert_eq!(store.tasks[&task_id].state, TaskState::Failed);
         assert_eq!(
-            store.tasks[&task_id].finish_error,
+            store.tasks[&task_id].status_reason,
             Some(serde_json::json!({"reason": "pane_exited", "exit_code": 1}))
         );
     }

@@ -31,6 +31,7 @@ Top-level entity in `signaltty-core/src/model.rs`, stored in
 | `state` | TaskState | A2A-aligned lifecycle below |
 | `result` | optional Result | Structured handoff, set once by report |
 | `disposition` | Disposition | Review outcome metadata (NOT lifecycle — terminal states stay immutable) |
+| `status_reason` | optional | A2A-style failure / interrupt evidence ({stage\|reason,...}, input_required evidence) |
 | `finish_error` | optional | Failed-finish evidence (conflict files, dirt, cleanup error) |
 | `worker_pid`, `worker_cmd` | optional | Crash-vs-recycle evidence (workmux `AgentState.pane_pid/command/boot_id`, `src/state/types.rs`) |
 | `created_at`, `updated_at` | timestamps | |

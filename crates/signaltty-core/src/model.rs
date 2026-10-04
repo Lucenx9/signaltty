@@ -901,6 +901,8 @@ pub struct Task {
     #[serde(default)]
     pub disposition: Disposition,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish_error: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker_pid: Option<u32>,
@@ -950,7 +952,7 @@ impl Task {
         }
         if self.state == TaskState::Working {
             self.state = TaskState::InputRequired;
-            self.finish_error = evidence;
+            self.status_reason = evidence;
             self.updated_at = now;
             return true;
         }
@@ -1387,6 +1389,7 @@ mod tests {
             state: TaskState::Pending,
             result: None,
             disposition: Disposition::default(),
+            status_reason: None,
             finish_error: None,
             worker_pid: None,
             worker_cmd: None,
@@ -1402,7 +1405,7 @@ mod tests {
         let reason = serde_json::json!({"reason": "turn_ended_without_report"});
         assert!(task.apply_turn_ended_without_report(Some(reason.clone()), now));
         assert_eq!(task.state, TaskState::InputRequired);
-        assert_eq!(task.finish_error, Some(reason));
+        assert_eq!(task.status_reason, Some(reason));
 
         // Follow-up: InputRequired -> Working
         assert!(task.transition_to(TaskState::Working, now).is_ok());

@@ -162,6 +162,7 @@ async fn snapshot_roundtrips_orchestrator_tasks_and_lineage() {
             branch_deleted: Some(false),
             at: Some(now),
         },
+        status_reason: None,
         finish_error: None,
         worker_pid: Some(1234),
         worker_cmd: Some(vec!["sh".into()]),
