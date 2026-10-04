@@ -14,6 +14,7 @@ mod preferences;
 mod refresh;
 mod sidebar;
 mod status;
+mod task_chip;
 mod terminal;
 mod util;
 mod workspace_dialogs;
