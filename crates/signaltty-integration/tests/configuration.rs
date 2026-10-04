@@ -140,15 +140,19 @@ fn opencode_plugin_default_export_satisfies_v1_and_v2_loaders() {
     let report = f.hooks.install("opencode").unwrap();
     assert!(report.changed);
     let source = fs::read_to_string(&report.file).unwrap();
-    // v2 loader: "Plugin must export a default definition with an id and an
-    // effect or setup function." v1 loader needs a callable default with
-    // server(). The conditional default below serves both hosts.
-    assert!(source.contains("export default"));
-    assert!(source.contains("export { SignalttyPlugin }"));
+    // V2 loader: "Plugin must export a default definition with an id and an
+    // effect or setup function." V1 (>= 1.18.29) calls `server()`. This is the
+    // documented dual entrypoint: `export default { ...Plugin.define({ id,
+    // setup }), server }`, with `define` inlined (identity on
+    // `@opencode/plugin` 2.0.22) so the single global file has no dependency.
+    assert!(source.contains("export default {"));
     assert!(source.contains("id: \"signaltty\""));
-    assert!(source.contains("server: SignalttyPlugin"));
-    assert!(source.contains("setup: setupSignaltty"));
-    assert!(source.contains("SIGNALTTY_OPENCODE_PLUGIN_API"));
+    assert!(source.contains("setup(ctx)"));
+    assert!(source.contains("async server()"));
+    assert!(source.contains("ctx.event.subscribe"));
+    // No bare import: the single global file must load with zero dependencies.
+    assert!(!source.contains("from \"@opencode/plugin\""));
+    assert!(!source.contains("from '@opencode/plugin'"));
 }
 
 #[test]
