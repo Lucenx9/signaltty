@@ -502,6 +502,18 @@ impl Store {
         self.emit(event::TASK_CREATED, json!({ "task": task_clone }))
     }
 
+    fn emit_task_updated(&mut self, task: &Task, prev_state: Option<TaskState>) -> StoredEvent {
+        let mut payload = json!({
+            "task_id": task.id,
+            "context_id": task.context_id,
+            "task": task,
+        });
+        if let Some(prev) = prev_state {
+            payload["prev_state"] = json!(prev.as_str());
+        }
+        self.emit(event::TASK_UPDATED, payload)
+    }
+
     pub fn task_background_ready(&mut self, task_id: &str) -> Option<StoredEvent> {
         let (task_clone, prev_state) = {
             let task = self.tasks.get_mut(task_id)?;
@@ -513,15 +525,7 @@ impl Store {
             task.transition_to(TaskState::Working, now).ok()?;
             (task.clone(), prev_state)
         };
-        let ev = self.emit(
-            event::TASK_UPDATED,
-            json!({
-                "task_id": task_clone.id,
-                "context_id": task_clone.context_id,
-                "task": task_clone,
-                "prev_state": prev_state.as_str(),
-            }),
-        );
+        let ev = self.emit_task_updated(&task_clone, Some(prev_state));
         Some(ev)
     }
 
@@ -555,15 +559,7 @@ impl Store {
                 "result": result,
             }),
         );
-        let update_ev = self.emit(
-            event::TASK_UPDATED,
-            json!({
-                "task_id": task_clone.id,
-                "context_id": task_clone.context_id,
-                "task": task_clone,
-                "prev_state": prev_state.as_str(),
-            }),
-        );
+        let update_ev = self.emit_task_updated(&task_clone, Some(prev_state));
         Ok((result_ev, update_ev))
     }
 
@@ -591,15 +587,7 @@ impl Store {
             })?;
             (task.clone(), prev_state)
         };
-        let ev = self.emit(
-            event::TASK_UPDATED,
-            json!({
-                "task_id": task_clone.id,
-                "context_id": task_clone.context_id,
-                "task": task_clone,
-                "prev_state": prev_state.as_str(),
-            }),
-        );
+        let ev = self.emit_task_updated(&task_clone, Some(prev_state));
         Ok(ev)
     }
 
@@ -617,15 +605,7 @@ impl Store {
             }
             (task.clone(), prev_state)
         };
-        let ev = self.emit(
-            event::TASK_UPDATED,
-            json!({
-                "task_id": task_clone.id,
-                "context_id": task_clone.context_id,
-                "task": task_clone,
-                "prev_state": prev_state.as_str(),
-            }),
-        );
+        let ev = self.emit_task_updated(&task_clone, Some(prev_state));
         Some(ev)
     }
 
@@ -651,14 +631,7 @@ impl Store {
             task.updated_at = Utc::now();
             task.clone()
         };
-        let ev = self.emit(
-            event::TASK_UPDATED,
-            json!({
-                "task_id": task_clone.id,
-                "context_id": task_clone.context_id,
-                "task": task_clone,
-            }),
-        );
+        let ev = self.emit_task_updated(&task_clone, None);
         Ok(ev)
     }
 
@@ -676,15 +649,7 @@ impl Store {
             }
             (task.clone(), prev_state)
         };
-        let ev = self.emit(
-            event::TASK_UPDATED,
-            json!({
-                "task_id": task_clone.id,
-                "context_id": task_clone.context_id,
-                "task": task_clone,
-                "prev_state": prev_state.as_str(),
-            }),
-        );
+        let ev = self.emit_task_updated(&task_clone, Some(prev_state));
         Some(ev)
     }
 
