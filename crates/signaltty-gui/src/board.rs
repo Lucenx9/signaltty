@@ -387,6 +387,7 @@ mod tests {
                 branch_deleted: None,
                 at: None,
             },
+            pr: None,
             status_reason: None,
             finish_error: None,
             worker_pid: None,

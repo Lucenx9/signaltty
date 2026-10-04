@@ -426,6 +426,7 @@ mod tests {
             state,
             result: None,
             disposition: Disposition::default(),
+            pr: None,
             status_reason: None,
             finish_error: None,
             worker_pid: None,

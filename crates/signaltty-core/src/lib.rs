@@ -14,10 +14,11 @@ pub use ids::{
     has_prefix, new_context_id, new_notif_id, new_pane_id, new_tab_id, new_task_id, new_ws_id,
 };
 pub use model::{
-    compose_worker_prompt, AgentInfo, AgentKind, Artifact, Contract, Decision, DecisionOption,
-    Disposition, DispositionOutcome, GitInfo, Layout, LiveState, Notification,
-    NotificationSeverity, Pane, PtySize, Relationship, RestoreState, SplitDir, Tab, Task,
-    TaskResult, TaskResultStatus, Workspace,
+    compose_worker_prompt, parse_review_decision, rollup_status_checks, AgentInfo, AgentKind,
+    Artifact, Contract, Decision, DecisionOption, Disposition, DispositionOutcome, GitInfo, Layout,
+    LiveState, Notification, NotificationSeverity, Pane, PrChecks, PrReview, PrState, PtySize,
+    Relationship, RestoreState, SplitDir, Tab, Task, TaskPr, TaskResult, TaskResultStatus,
+    Workspace,
 };
 pub use state::{Attention, Lifecycle, TaskState};
 pub use theme::{clamp_sidebar_width, Appearance, GuiPreference, Theme};

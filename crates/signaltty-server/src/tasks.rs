@@ -323,6 +323,7 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         state: TaskState::Pending,
         result: None,
         disposition: Disposition::default(),
+        pr: None,
         status_reason: None,
         finish_error: None,
         worker_pid: None,
