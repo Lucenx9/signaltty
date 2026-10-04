@@ -49,7 +49,7 @@ are new tasks in the same context.
 | `pending → working` | background ready-wait + submit accepted (server-owned; survives client disconnect; cancelled by cancel/discard/shutdown) |
 | `pending → failed` | spawn/submit/ready failure, with evidence (`{stage, …}`; restart recovery uses `stage: "restart"`) |
 | `pending/working/input_required → canceled` | `task.cancel`, or `finish --discard` from non-terminal |
-| `working ⇄ input_required` | worker blocked hook ⇄ answer/activity; ALSO `working → input_required` on worker lifecycle `done` with no report (`{reason: "turn_ended_without_report", last_message?}`), on silent-worker watchdog expiry (`{reason: "worker_silent", timeout_s}`), and `input_required → working` on an accepted follow-up submit |
+| `working ⇄ input_required` | worker blocked hook ⇄ answer/activity; ALSO `working → input_required` on worker lifecycle `done` with no report (`{reason: "turn_ended_without_report", last_message?}`), on silent-worker watchdog expiry (`{reason: "worker_silent", timeout_s}`), and `input_required → working` on an accepted follow-up submit. Only `done` ends a turn (`idle`, e.g. a late `SessionStart`, does not). A `Stop` that lands while the task is still `pending` (first submit in flight) or `input_required` (follow-up in flight) is applied when the submit commits: entering `working` with a `done` pane and no report parks the task in `input_required` with turn-end evidence in the same write. |
 | `working/input_required → completed/failed/rejected` | `task.report` status |
 | `working/input_required/pending → failed` | worker pane death, restart recovery (evidence, once) |
 

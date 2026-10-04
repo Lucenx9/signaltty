@@ -606,10 +606,36 @@ impl Store {
             let prev_state = task.state;
             let now = Utc::now();
             task.transition_to(TaskState::Working, now).ok()?;
+            // A Stop that landed before the submit committed leaves the pane
+            // lifecycle done with no report: park in input_required here, in
+            // the same write, instead of a working state nobody will end.
+            // Idle is not turn end.
+            if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
+                task.state = TaskState::InputRequired;
+                task.status_reason = Some(evidence);
+                task.updated_at = now;
+            }
             (task.clone(), prev_state)
         };
         let ev = self.emit_task_updated(&task_clone, Some(prev_state));
         Some(ev)
+    }
+
+    /// Evidence for a turn that ended with no report: the worker pane
+    /// lifecycle is already `done` while the task holds no result.
+    /// `None` when the pane is still live-turning, idle, or reported.
+    fn turn_end_evidence(panes: &HashMap<String, Pane>, task: &Task) -> Option<Value> {
+        if task.result.is_some() {
+            return None;
+        }
+        let pane = task.pane_id.as_deref().and_then(|pid| panes.get(pid))?;
+        if pane.lifecycle != Lifecycle::Done {
+            return None;
+        }
+        Some(json!({
+            "reason": "turn_ended_without_report",
+            "last_message": pane.last_message,
+        }))
     }
 
     pub fn task_report(
@@ -754,15 +780,23 @@ impl Store {
             if task.state != TaskState::InputRequired {
                 return None;
             }
-            let prev_state = task.state;
             let now = Utc::now();
-            task.transition_to(TaskState::Working, now).ok()?;
-            // The interrupt is resolved; its evidence is stale on a working task.
-            task.status_reason = None;
-            task.updated_at = now;
-            (task.clone(), prev_state)
+            // A follow-up whose Stop arrives before the resume commits must
+            // land: refresh the turn-end evidence instead of going working.
+            if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
+                task.status_reason = Some(evidence);
+                task.updated_at = now;
+                (task.clone(), None)
+            } else {
+                let prev_state = task.state;
+                task.transition_to(TaskState::Working, now).ok()?;
+                // The interrupt is resolved; its evidence is stale on a working task.
+                task.status_reason = None;
+                task.updated_at = now;
+                (task.clone(), Some(prev_state))
+            }
         };
-        Some(self.emit_task_updated(&task_clone, Some(prev_state)))
+        Some(self.emit_task_updated(&task_clone, prev_state))
     }
 
     /// A pending decision blocks the worker: `working` → `input_required`
@@ -1135,6 +1169,117 @@ mod tests {
         store.set_decision(&pane_id, decision());
         store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
         store.answer_decision(&pane_id, "d1", "once");
+        assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+    }
+
+    #[test]
+    fn background_ready_applies_turn_end_when_pane_already_done() {
+        use signaltty_core::model::{Contract, Relationship};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Done;
+        pane.last_message = Some("half an answer".to_string());
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+        let task_id = signaltty_core::ids::new_task_id();
+        let mk = |state: TaskState| Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id.clone()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "turn-end".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-t".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: None,
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        // Stop landed while the task was still pending: entering working
+        // must apply turn_ended_without_report in the same write.
+        store.task_create(mk(TaskState::Pending));
+        store.task_background_ready(&task_id).unwrap();
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(serde_json::json!({
+                "reason": "turn_ended_without_report",
+                "last_message": "half an answer",
+            }))
+        );
+        // A follow-up whose Stop arrives before the resume lands back in
+        // input_required with fresh turn-end evidence, not working.
+        store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
+        store.task_resume_working(&task_id).unwrap();
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        assert_eq!(
+            store.tasks[&task_id]
+                .status_reason
+                .as_ref()
+                .and_then(|v| v.get("reason")),
+            Some(&serde_json::json!("turn_ended_without_report"))
+        );
+    }
+
+    #[test]
+    fn background_ready_stays_working_when_pane_idle_or_live() {
+        use signaltty_core::model::{Contract, Relationship};
+        use std::path::PathBuf;
+
+        // Idle is not turn end: a task entering working with an idle pane
+        // stays working.
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Idle;
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+        let task_id = signaltty_core::ids::new_task_id();
+        store.task_create(Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "idle".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-i".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state: TaskState::Pending,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: None,
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        });
+        store.task_background_ready(&task_id).unwrap();
         assert_eq!(store.tasks[&task_id].state, TaskState::Working);
     }
 

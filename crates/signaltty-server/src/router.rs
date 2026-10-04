@@ -1572,7 +1572,9 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         }
         if let Some(lifecycle) = decision.lifecycle {
             s.set_lifecycle(&pid, lifecycle);
-            if matches!(lifecycle, Lifecycle::Idle | Lifecycle::Done) {
+            // Only `done` ends a turn. `idle` (e.g. SessionStart after the
+            // task is already working) is not turn end.
+            if lifecycle == Lifecycle::Done {
                 let target_task_id = s
                     .tasks
                     .values()
