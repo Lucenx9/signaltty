@@ -25,6 +25,7 @@ use signaltty_core::{Decision, Lifecycle, LiveState, Pane, Theme};
 use crate::actor::IpcHandle;
 use crate::sidebar::agent_name;
 use crate::status::{self, AttentionBadge, LifecycleIndicator};
+use crate::task_chip::{TaskChipView, TaskChipWidget};
 
 #[derive(Debug, Clone)]
 pub enum PaneAction {
@@ -100,6 +101,7 @@ pub struct PaneWidget {
     lifecycle: LifecycleIndicator,
     title: gtk4::Label,
     subtitle: gtk4::Label,
+    task_chip: TaskChipWidget,
     badge: AttentionBadge,
     resume: gtk4::Button,
     decision_bar: gtk4::Box,
@@ -131,6 +133,7 @@ impl PaneWidget {
         subtitle.set_xalign(0.0);
         subtitle.set_hexpand(true);
         let badge = AttentionBadge::new();
+        let task_chip = TaskChipWidget::new();
 
         let on_action = Rc::new(cb.on_action);
         let action_button = |icon: &str, tooltip: &str, action: PaneAction| {
@@ -189,6 +192,7 @@ impl PaneWidget {
         let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         header.add_css_class("pane-header");
         header.append(&info);
+        header.append(&task_chip.root);
         header.append(&badge.widget);
         header.append(&resume);
         header.append(&actions);
@@ -280,6 +284,7 @@ impl PaneWidget {
             lifecycle,
             title,
             subtitle,
+            task_chip,
             decision_bar,
             decision_prompt,
             decision_options,
@@ -562,6 +567,11 @@ impl PaneWidget {
         self.resume
             .set_visible(!live && pane.agent.resume_argv.is_some());
         self.sync_decision_bar(pane.pending_decision.as_ref());
+    }
+
+    /// Paint the worker chip in place. `None` hides it. Never touches the VTE.
+    pub fn set_task_chip(&self, view: Option<&TaskChipView>) {
+        self.task_chip.set(view);
     }
 
     /// Toggle the inline decision bar. Buttons rebuild only when the

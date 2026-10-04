@@ -138,6 +138,7 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
                             .remove(params["workspace_id"].as_str().unwrap())
                             .map(|_| json!({"closed": true}))
                             .ok_or("NO_SUCH_WORKSPACE".into()),
+                        "task.list" => Ok(json!({"tasks": []})),
                         _ => panic!("unexpected IPC {method}"),
                     };
                     let _ = reply.send(result);
@@ -297,6 +298,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
                             .find(|p| p["id"] == params["pane_id"])
                             .map(|p| json!({"pane": p}))
                             .ok_or("NO_SUCH_PANE".into()),
+                        "task.list" => Ok(json!({"tasks": []})),
                         _ => panic!("unexpected IPC {method}"),
                     };
                     let _ = reply.send(result);
@@ -312,8 +314,8 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     drain_refresh(&app);
     assert_eq!(
         calls.lock().unwrap().len(),
-        3,
-        "one list + one get per workspace"
+        4,
+        "one list + one get per workspace, plus task.list"
     );
     assert_eq!(app.active_ws_id().as_deref(), Some("a"));
     assert_sidebar(&app, &["a", "b"], "a");
@@ -452,7 +454,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
             .count(),
         1
     );
-    assert_eq!(calls.lock().unwrap().len(), 4);
+    assert_eq!(calls.lock().unwrap().len(), 5);
     assert!(has_label(app.sidebar.widget.upcast_ref(), "c"));
     assert!(!app.banner.is_revealed());
     assert_sidebar(&app, &["a", "c", "b"], "b");
@@ -461,7 +463,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     state.lock().unwrap().remove("b");
     emit(&app, "workspace.closed", json!({"workspace_id": "b"}));
     drain_refresh(&app);
-    assert_eq!(calls.lock().unwrap().len(), 3);
+    assert_eq!(calls.lock().unwrap().len(), 4);
     assert_eq!(app.active_ws_id().as_deref(), Some("a"));
     assert_eq!(app.title.text(), "a");
     assert!(!has_label(app.sidebar.widget.upcast_ref(), "b"));
@@ -1085,6 +1087,7 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
                         continue;
                     }
                     "pane.mark_seen" | "pane.resize" => json!({}),
+                    "task.list" => json!({"tasks": []}),
                     _ => panic!("unexpected request {method}"),
                 };
                 let _ = reply.send(Ok(value));
