@@ -733,13 +733,40 @@ pub async fn h_task_wait(ctx: &Ctx, req: &Request, params: &Value) -> (Response,
     }
 
     let until_list: Vec<String> = match p.until {
+        None => vec!["settled".to_string()],
         Some(Value::String(s)) => vec![s],
-        Some(Value::Array(arr)) => arr
-            .into_iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
-        _ => vec!["settled".to_string()],
+        Some(Value::Array(arr)) => {
+            let mut list = Vec::with_capacity(arr.len());
+            for v in arr {
+                match v {
+                    Value::String(s) => list.push(s),
+                    _ => {
+                        return (
+                            Response::err(&req.id, code::BAD_PARAMS, "until must be strings"),
+                            ConnEffect::default(),
+                        );
+                    }
+                }
+            }
+            list
+        }
+        Some(_) => {
+            return (
+                Response::err(&req.id, code::BAD_PARAMS, "until must be a string or array"),
+                ConnEffect::default(),
+            );
+        }
     };
+
+    if let Some(bad) = until_list
+        .iter()
+        .find(|u| !matches!(u.as_str(), "terminal" | "settled") && TaskState::parse(u).is_none())
+    {
+        return (
+            Response::err(&req.id, code::BAD_PARAMS, format!("bad 'until': {bad}")),
+            ConnEffect::default(),
+        );
+    }
 
     if until_list.is_empty() {
         return (

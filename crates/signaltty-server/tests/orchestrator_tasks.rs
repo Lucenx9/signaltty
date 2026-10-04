@@ -1882,3 +1882,36 @@ async fn task_start_background_submit_fails_activity_gate_on_stall() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn task_wait_unknown_until_is_bad_params() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "unknown until"},
+                "argv": ["sleep", "30"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    for until in [json!("nope"), json!(["working", "nope"])] {
+        let err = c
+            .call(
+                "task.wait",
+                json!({"task_id": task_id, "until": until, "timeout_s": 1}),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.starts_with(signaltty_proto::code::BAD_PARAMS),
+            "unknown until must be BAD_PARAMS, got {err}"
+        );
+    }
+    srv.shutdown().await;
+}

@@ -505,6 +505,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_task_wait_releases_receivers_on_eof() {
+        let (ctx, base, _pane) = test_context();
+        let task_id = {
+            let mut store = ctx.store.write().unwrap();
+            let now = chrono::Utc::now();
+            let id = signaltty_core::ids::new_task_id();
+            store.tasks.insert(
+                id.clone(),
+                signaltty_core::model::Task {
+                    id: id.clone(),
+                    context_id: signaltty_core::ids::new_context_id(),
+                    parent_task_id: None,
+                    pane_id: None,
+                    parent_pane_id: None,
+                    root_pane_id: None,
+                    relationship: signaltty_core::model::Relationship::Subagent,
+                    label: "wait-eof".into(),
+                    contract: signaltty_core::model::Contract::new("wait").unwrap(),
+                    agent: None,
+                    source_repo: std::path::PathBuf::from("/tmp/repo"),
+                    target_branch: Some("main".into()),
+                    worktree_path: std::path::PathBuf::from("/tmp/wt"),
+                    branch: "task-wait".into(),
+                    preexisting_branch: false,
+                    base_ref: "HEAD".into(),
+                    base_sha: "abc".into(),
+                    state: signaltty_core::state::TaskState::Pending,
+                    result: None,
+                    disposition: signaltty_core::model::Disposition::default(),
+                    status_reason: None,
+                    finish_error: None,
+                    worker_pid: None,
+                    worker_cmd: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+            );
+            id
+        };
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let owned = ctx.clone();
+        let task =
+            tokio::spawn(
+                async move { handle_conn(owned, server).await.map_err(|e| e.to_string()) },
+            );
+        let request = serde_json::json!({
+            "protocol": signaltty_proto::PROTOCOL,
+            "id": "wait",
+            "method": "task.wait",
+            "params": {"task_id": task_id, "until": "completed", "timeout_s": 3600}
+        });
+        client
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while ctx.bcast.receiver_count() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(client);
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(ctx.bcast.receiver_count(), 0);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
     async fn lagged_connection_closes_instead_of_skipping_events() {
         let (ctx, base, _) = test_context();
         let (mut client, server) = UnixStream::pair().unwrap();

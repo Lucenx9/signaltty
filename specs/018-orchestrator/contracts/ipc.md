@@ -171,7 +171,8 @@ Exactly one of `task_id` / `context_id`; `{…, until?, timeout_s?}` →
   completed/failed/canceled/rejected) and `settled` (`terminal` OR
   `input_required` — the orchestrator default: a worker that ended its turn
   without reporting needs the requester to act, so a wait that slept through it
-  would hang the loop). Default `settled`.
+  would hang the loop). Default `settled`. Any other value (or a
+  non-string) → `BAD_PARAMS`.
 - `context_id` waits until ALL tasks in the context match (covers "wait on
   all"); empty context matches immediately. Unknown task → `NO_SUCH_TASK`.
 - Connection-bound like `wait` (single-flight; EOF/shutdown cancels); does not
