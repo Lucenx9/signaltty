@@ -185,8 +185,11 @@ Mirror the `workspace.diff` / `workspace.file_diff` pair, with the task's
 0 — NOT worktree-vs-HEAD).
 
 - `task.diff {task_id}` → `{task_id, base_sha, files[…], dirs[…], added,
-  removed}` (tracked `git diff base_sha --numstat` + untracked via `ls-files`
-  + direct reads; untracked shown as all-additions).
+  removed}` (tracked `git diff base_sha --numstat` + untracked via `ls-files`).
+  Untracked line counts use a capped `O_NOFOLLOW` read (512 KiB, the same
+  bound as `task.file_diff`) on a blocking thread. A symlink, fifo, directory,
+  or file over that bound is `binary` with zero counts and its body is not
+  loaded. Untracked text is shown as all-additions.
 - `task.file_diff {task_id, path}` → same `content` shapes as
   `workspace.file_diff` (text hunks / binary / unchanged / unavailable).
 - MUST NOT run `git add -N` or any index mutation (decision vs claude-squad

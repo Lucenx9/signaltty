@@ -237,22 +237,9 @@ pub fn task_git_diff(
             Err(_) => continue,
         };
         let full_path = std::path::Path::new(cwd).join(path_str);
-        let (added, binary) = match std::fs::read(&full_path) {
-            Ok(bytes) => {
-                if bytes.contains(&0) {
-                    (0, true)
-                } else if bytes.is_empty() {
-                    (0, false)
-                } else {
-                    let mut lines = bytes.split(|b| *b == b'\n').count() as u64;
-                    if bytes.ends_with(b"\n") {
-                        lines = lines.saturating_sub(1);
-                    }
-                    (lines, false)
-                }
-            }
-            Err(_) => (0, false),
-        };
+        // Capped, non-following read. A symlink, fifo, or oversized file is
+        // binary with no line count so the runtime never loads the body.
+        let (added, binary) = untracked_line_stats(&full_path);
         files.push(DiffFile {
             path: path_str.to_string(),
             added,
@@ -301,6 +288,60 @@ pub fn task_git_diff(
         added,
         removed,
     })
+}
+
+/// Line count for one untracked path. Never follows symlinks, never reads
+/// past [`signaltty_core::diff::MAX_PREVIEW_BYTES`], and opens non-blocking
+/// so a fifo cannot stall the caller. Anything that is not a small regular
+/// text file is `(0, true)`.
+fn untracked_line_stats(path: &std::path::Path) -> (u64, bool) {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+
+    let bytes = match path.as_os_str().to_str() {
+        Some(s) => s.as_bytes(),
+        None => return (0, true),
+    };
+    let c_path = match std::ffi::CString::new(bytes) {
+        Ok(c) => c,
+        Err(_) => return (0, true),
+    };
+    let fd = unsafe {
+        nix::libc::open(
+            c_path.as_ptr(),
+            nix::libc::O_RDONLY
+                | nix::libc::O_NOFOLLOW
+                | nix::libc::O_NONBLOCK
+                | nix::libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return (0, true);
+    }
+    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let meta = match file.metadata() {
+        Ok(meta) => meta,
+        Err(_) => return (0, true),
+    };
+    let cap = signaltty_core::diff::MAX_PREVIEW_BYTES as u64;
+    if !meta.is_file() || meta.len() > cap {
+        return (0, true);
+    }
+    let mut body = Vec::new();
+    if file.take(cap + 1).read_to_end(&mut body).is_err() || body.len() as u64 > cap {
+        return (0, true);
+    }
+    if body.contains(&0) {
+        return (0, true);
+    }
+    if body.is_empty() {
+        return (0, false);
+    }
+    let mut lines = body.split(|b| *b == b'\n').count() as u64;
+    if body.ends_with(b"\n") {
+        lines = lines.saturating_sub(1);
+    }
+    (lines, false)
 }
 
 pub fn git_info(cwd: &str) -> GitInfo {
@@ -749,6 +790,64 @@ mod tests {
         assert!(!head_contains_branch_tip(dir_str, &tip));
         run(&["merge", "--no-ff", "--no-edit", "--", "task-x"]);
         assert!(head_contains_branch_tip(dir_str, &tip));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn untracked_symlink_oversize_and_fifo_are_not_loaded() {
+        let dir = fixture_repo("untracked-cap");
+        let dir_str = dir.to_str().unwrap();
+        let head = String::from_utf8(
+            Command::new("git")
+                .args(["-C", dir_str, "rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let head = head.trim();
+        std::fs::write(dir.join("note.txt"), "a\nb\n").unwrap();
+        std::os::unix::fs::symlink("note.txt", dir.join("link.txt")).unwrap();
+        std::fs::write(dir.join("big.txt"), vec![b'a'; 512 * 1024 + 1]).unwrap();
+        // git ls-files does not list a fifo, but it does list a symlink to one.
+        // Following that symlink is what blocks `std::fs::read`.
+        let pipe = dir.join("pipe");
+        let c_pipe = std::ffi::CString::new(pipe.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { nix::libc::mkfifo(c_pipe.as_ptr(), 0o644) }, 0);
+        std::os::unix::fs::symlink("pipe", dir.join("pipe-link")).unwrap();
+
+        let started = std::time::Instant::now();
+        let direct = untracked_line_stats(&pipe);
+        assert_eq!(direct, (0, true), "fifo must not be read, got {direct:?}");
+        let diff = task_git_diff(dir_str, head).unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "task diff blocked while classifying untracked files"
+        );
+        let file = |p: &str| {
+            diff.files
+                .iter()
+                .find(|f| f.path == p)
+                .unwrap_or_else(|| panic!("missing {p} in {diff:?}"))
+                .clone()
+        };
+        let note = file("note.txt");
+        assert!(note.untracked && !note.binary && note.added == 2);
+        let link = file("link.txt");
+        assert!(
+            link.untracked && link.binary && link.added == 0,
+            "symlink must not be followed, got {link:?}"
+        );
+        let big = file("big.txt");
+        assert!(
+            big.untracked && big.binary && big.added == 0,
+            "oversize untracked file must not be counted, got {big:?}"
+        );
+        let fifo = file("pipe-link");
+        assert!(
+            fifo.untracked && fifo.binary && fifo.added == 0,
+            "symlink to a fifo must not be followed, got {fifo:?}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

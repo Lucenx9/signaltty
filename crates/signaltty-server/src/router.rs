@@ -204,7 +204,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::ATTENTION_PENDING => {
             return crate::tasks::h_attention_pending(ctx, req, &req.params)
         }
-        method::TASK_DIFF => return crate::tasks::h_task_diff(ctx, req, &req.params),
+        method::TASK_DIFF => return crate::tasks::h_task_diff(ctx, req, &req.params).await,
         method::TASK_FILE_DIFF => {
             return crate::tasks::h_task_file_diff(ctx, req, &req.params).await
         }

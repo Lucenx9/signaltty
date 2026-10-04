@@ -901,7 +901,7 @@ pub fn h_attention_pending(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
     )
 }
 
-pub fn h_task_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+pub async fn h_task_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
     let p: params::TaskDiff = match decode(params) {
         Ok(p) => p,
         Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
@@ -924,7 +924,25 @@ pub fn h_task_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnE
         let wt = task.worktree_path.to_string_lossy().to_string();
         (wt, task.base_sha.clone())
     };
-    match crate::git::task_git_diff(&worktree_path, &base_sha) {
+    let base_for_diff = base_sha.clone();
+    let diff_result = tokio::task::spawn_blocking(move || {
+        crate::git::task_git_diff(&worktree_path, &base_for_diff)
+    })
+    .await;
+    let diff_result = match diff_result {
+        Ok(result) => result,
+        Err(e) => {
+            return (
+                Response::err(
+                    &req.id,
+                    code::IO_ERROR,
+                    format!("task diff task failed: {e}"),
+                ),
+                ConnEffect::default(),
+            );
+        }
+    };
+    match diff_result {
         Ok(diff) => (
             Response::ok(
                 &req.id,
