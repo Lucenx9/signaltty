@@ -84,6 +84,326 @@ fn scroll_bound(batch: &[u8], cols: u16) -> usize {
     bound + printable / (cols.max(1) as usize)
 }
 
+/// Fast byte: printable ASCII or a line-advancing control that vt100 maps
+/// to plain cursor motion with no mode dependence (CR resets col;
+/// LF/VT/FF all funnel into the same `lf()`).
+fn is_fast_byte(b: u8) -> bool {
+    matches!(b, 0x20..=0x7e | b'\r' | b'\n' | 0x0b | 0x0c)
+}
+
+/// A legacy batch is fast-eligible iff every byte is fast. (Ground state,
+/// clean UTF-8 and sticky modes are checked separately per batch.)
+fn batch_is_plain(batch: &[u8]) -> bool {
+    batch.iter().all(|&b| is_fast_byte(b))
+}
+
+/// Build a ring line from an ASCII row buffer, trimming trailing padding.
+/// Equivalent to `str::trim_end` here: the buffer holds ASCII printables
+/// and space padding only (tabs never lodge in grid cells as content).
+/// Returns None on non-ASCII content — the caller aborts to the slow path.
+fn ascii_line(buf: &[u8]) -> Option<String> {
+    let mut end = buf.len();
+    while end > 0 && buf[end - 1] == b' ' {
+        end -= 1;
+    }
+    String::from_utf8(buf[..end].to_vec()).ok()
+}
+
+/// vte ground-state model for fast-run eligibility. Mirrors the vte 0.11.1
+/// state table for the bytes that can appear in a feed: ESC aborts any
+/// state (Anywhere rule), CAN/SUB abort, C0 controls preserve state, C1
+/// bytes never change state (except 0x9c out of DCS/SOS), CSI completes on
+/// 0x40–0x7e, OSC completes on BEL, DCS/SOS complete on 0x9c or ST.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum ScanState {
+    #[default]
+    Ground,
+    Esc,
+    EscInter,
+    Csi,
+    Osc,
+    Dcs,
+}
+
+/// utf8parse 0.2.2 model (exact positional validity, not just a counter: a
+/// wrong-range continuation is an error back to Ground, which a counter
+/// would mistrack as still-pending).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum Utf8State {
+    #[default]
+    Ground,
+    Tail1,
+    Tail2,
+    Tail3,
+    NeedE0,
+    NeedED,
+    NeedF0,
+    NeedF4,
+}
+
+fn step_utf8(st: Utf8State, b: u8) -> Utf8State {
+    match st {
+        Utf8State::Ground | Utf8State::Tail1 => Utf8State::Ground,
+        Utf8State::Tail2 => {
+            if (0x80..=0xbf).contains(&b) {
+                Utf8State::Tail1
+            } else {
+                Utf8State::Ground
+            }
+        }
+        Utf8State::Tail3 => {
+            if (0x80..=0xbf).contains(&b) {
+                Utf8State::Tail2
+            } else {
+                Utf8State::Ground
+            }
+        }
+        Utf8State::NeedE0 => {
+            if (0xa0..=0xbf).contains(&b) {
+                Utf8State::Tail1
+            } else {
+                Utf8State::Ground
+            }
+        }
+        Utf8State::NeedED => {
+            if (0x80..=0x9f).contains(&b) {
+                Utf8State::Tail1
+            } else {
+                Utf8State::Ground
+            }
+        }
+        Utf8State::NeedF0 => {
+            if (0x90..=0xbf).contains(&b) {
+                Utf8State::Tail2
+            } else {
+                Utf8State::Ground
+            }
+        }
+        Utf8State::NeedF4 => {
+            if (0x80..=0x8f).contains(&b) {
+                Utf8State::Tail2
+            } else {
+                Utf8State::Ground
+            }
+        }
+    }
+}
+
+/// Partial CSI being accumulated for sticky-mode detection. Bounded state
+/// (saturating numbers, two stored params): carries cleanly across feeds.
+/// Disagreements with vte's param parsing on exotic shapes (leading colons
+/// and the like) always fall slow-ward, never fast.
+#[derive(Clone, Copy, Debug, Default)]
+struct CsiAccum {
+    private: bool,
+    inter: bool,
+    p0: u32,
+    p1: u32,
+    nparams: u8,
+    cur: u32,
+    has_cur: bool,
+    subs: u8,
+    first_sub: u32,
+    seen_6: bool,
+}
+
+impl CsiAccum {
+    fn digit(&mut self, d: u8) {
+        self.cur = self
+            .cur
+            .saturating_mul(10)
+            .saturating_add(d as u32)
+            .min(9999);
+        self.has_cur = true;
+    }
+
+    /// Close the current subparam (`:` separator, `;` separator, or the
+    /// final byte). Slots the first sub of each of the first two params
+    /// (vt100's DECSTBM canonicalization reads exactly those).
+    fn sub_close(&mut self) {
+        let val = if self.has_cur { self.cur } else { 0 };
+        if self.subs == 0 {
+            self.first_sub = val;
+            if self.nparams < 2 {
+                if self.nparams == 0 {
+                    self.p0 = val;
+                } else {
+                    self.p1 = val;
+                }
+            }
+        }
+        if self.has_cur {
+            self.subs = self.subs.saturating_add(1);
+        }
+        self.cur = 0;
+        self.has_cur = false;
+    }
+
+    /// Close the current `;`-separated param, recording an exact `[6]`
+    /// (mirrors decset's `&[6]` arm).
+    fn param_close(&mut self) {
+        self.sub_close();
+        if self.subs == 1 && self.first_sub == 6 {
+            self.seen_6 = true;
+        }
+        self.subs = 0;
+        self.first_sub = 0;
+        if self.nparams < 2 {
+            self.nparams += 1;
+        }
+    }
+}
+
+/// Carry from one feed to the next: everything the scanner needs to seed
+/// its left-to-right walk. All bounded, all Copy.
+#[derive(Clone, Copy, Debug, Default)]
+struct ParseCarry {
+    state: ScanState,
+    csi: CsiAccum,
+    utf8: Utf8State,
+}
+
+/// A fast run's pending commit, recorded purely then applied after the
+/// cursor check passes.
+#[allow(clippy::enum_variant_names)]
+enum FastOp {
+    Refresh { row: usize, text: String },
+    Scroll { line: String },
+}
+
+/// Advance the scan model by one slow byte. Fast bytes never reach here
+/// (they are state-preserving by construction).
+#[allow(clippy::too_many_arguments)]
+fn step_scan_byte(
+    b: u8,
+    rows: u16,
+    st: &mut ScanState,
+    csi: &mut CsiAccum,
+    utf8: &mut Utf8State,
+    margins: &mut bool,
+    origin: &mut bool,
+) {
+    // CAN/SUB abort any sequence (vte Anywhere rule).
+    if b == 0x18 || b == 0x1a {
+        *st = ScanState::Ground;
+        *utf8 = Utf8State::Ground;
+        return;
+    }
+    // UTF-8 layer first: vte checks Utf8 state before anything else, and a
+    // non-continuation byte is consumed as U+FFFD back to Ground (this
+    // swallows even ESC, so groundness must not be assumed after it).
+    if *utf8 != Utf8State::Ground {
+        *utf8 = step_utf8(*utf8, b);
+        return;
+    }
+    // ESC aborts any state (vte Anywhere rule).
+    if b == 0x1b {
+        *st = ScanState::Esc;
+        return;
+    }
+    match *st {
+        ScanState::Ground => match b {
+            0xc2..=0xdf => *utf8 = Utf8State::Tail1,
+            0xe0 => *utf8 = Utf8State::NeedE0,
+            0xe1..=0xec => *utf8 = Utf8State::Tail2,
+            0xed => *utf8 = Utf8State::NeedED,
+            0xee..=0xef => *utf8 = Utf8State::Tail2,
+            0xf0 => *utf8 = Utf8State::NeedF0,
+            0xf1..=0xf3 => *utf8 = Utf8State::Tail3,
+            0xf4 => *utf8 = Utf8State::NeedF4,
+            // Printables, C0 controls and C1 bytes: Print/Execute/ignore,
+            // all state-preserving.
+            _ => {}
+        },
+        ScanState::Esc => match b {
+            0x00..=0x17 | 0x19 | 0x1c..=0x1f | 0x7f | 0x80..=0x9f => {}
+            0x20..=0x2f => *st = ScanState::EscInter,
+            0x5b => {
+                *st = ScanState::Csi;
+                *csi = CsiAccum::default();
+            }
+            0x5d => *st = ScanState::Osc,
+            0x50 | 0x58 | 0x5e | 0x5f => *st = ScanState::Dcs,
+            // RIS rebuilds vt100's screen: sticky modes are gone.
+            0x63 => {
+                *st = ScanState::Ground;
+                *margins = false;
+                *origin = false;
+            }
+            _ => *st = ScanState::Ground,
+        },
+        ScanState::EscInter => {
+            if (0x30..=0x7e).contains(&b) {
+                *st = ScanState::Ground;
+            }
+        }
+        ScanState::Csi => match b {
+            0x30..=0x39 => csi.digit(b - b'0'),
+            0x3a => csi.sub_close(),
+            0x3b => csi.param_close(),
+            0x3c..=0x3f => csi.private = true,
+            0x20..=0x2f => csi.inter = true,
+            0x40..=0x7e => {
+                csi.param_close();
+                csi_dispatch_accum(csi, b, rows, margins, origin);
+                *st = ScanState::Ground;
+            }
+            // C0 controls execute without disturbing CSI; DEL and C1 bytes
+            // are ignored in CSI states (vte tables have no entries).
+            _ => {}
+        },
+        // BEL terminates OSC (vte OscString table). 0x9c notably does
+        // NOT (no table entry: consumed as data).
+        ScanState::Osc => {
+            if b == 0x07 {
+                *st = ScanState::Ground;
+            }
+        }
+        ScanState::Dcs => {
+            if b == 0x9c {
+                *st = ScanState::Ground;
+            }
+        }
+    }
+}
+
+/// Apply a completed CSI to the sticky flags.
+fn csi_dispatch_accum(
+    csi: &CsiAccum,
+    final_byte: u8,
+    rows: u16,
+    margins: &mut bool,
+    origin: &mut bool,
+) {
+    // vt100 ignores any dispatch with intermediates (`Some(i)` arm).
+    if csi.inter {
+        return;
+    }
+    match final_byte {
+        b'r' if !csi.private => {
+            // DECSTBM. Mirrors grid::set_scroll_region via decstbm: params
+            // default to full screen, and an inverted range resets to full.
+            let top = if csi.p0 == 0 { 1 } else { csi.p0 };
+            let bottom = if csi.p1 == 0 { rows as u32 } else { csi.p1 };
+            let rows_u = rows as u32;
+            // Full-screen params (or an inverted range, which vt100
+            // resets to full) deactivate the region; anything else sticks.
+            let full = top == 1 && bottom == rows_u;
+            let inverted = top.saturating_sub(1) >= bottom.saturating_sub(1);
+            *margins = !(full || inverted);
+        }
+        b'h' | b'l' if csi.private => {
+            // DECSET/DECRST `?6` (origin mode). Deliberately never cleared
+            // except by RIS: DECRC can restore a saved origin mode without
+            // a visible `6`, so clearing on `?6l` would be unsound.
+            if csi.seen_6 {
+                *origin = true;
+            }
+        }
+        _ => {}
+    }
+}
+
 struct Surface {
     parser: vt100::Parser,
     cols: u16,
@@ -101,6 +421,22 @@ struct Surface {
     /// or below it is pre-restart and reads as dropped.
     dropped_floor: u64,
     max_lines: usize,
+    /// Fast-path parser model. `feed()` carves plain-ASCII runs out of the
+    /// byte stream and captures their lines from the input side with zero
+    /// grid extraction; everything else goes through the legacy grid
+    /// reconcile below. The model mirrors the `vte` state machine (ground
+    /// detection) plus the two pieces of sticky `vt100` mode that affect
+    /// plain-text layout (scroll region, origin mode). See `feed`.
+    carry: ParseCarry,
+    /// True once any feed left the parser outside ground state or set a
+    /// sticky mode: while set, plain runs take the slow path. Cleared only
+    /// by RIS (`ESC c`, which rebuilds vt100's screen from scratch).
+    margins_sticky: bool,
+    origin_sticky: bool,
+    /// Set by `resize`: the grid was truncated/padded in place, so cached
+    /// row texts may be stale. Forces one slow reconcile (which resyncs via
+    /// `fit_len` + `refresh_in_place`); cleared there.
+    resized: bool,
 }
 
 impl Surface {
@@ -116,6 +452,10 @@ impl Surface {
             head: 0,
             dropped_floor: 0,
             max_lines: DEFAULT_SCROLLBACK_LINES,
+            carry: ParseCarry::default(),
+            margins_sticky: false,
+            origin_sticky: false,
+            resized: false,
         }
     }
 
@@ -123,18 +463,112 @@ impl Surface {
         if data.is_empty() {
             return;
         }
-        // Reconcile the rendered ring in small batches so a bulk scroll that
-        // lands in one PTY read is still captured line by line. Batches cut
-        // after every CR/LF: printing a line and scrolling it off are then
-        // reconciled as the two separate steps the terminal applied, which
-        // keeps strict scroll matching exact (a print+scroll in one step
-        // would hide the new line mid-grid and defeat the matcher).
-        // Splitting on CR/LF is UTF-8 safe (neither byte appears inside a
-        // multibyte sequence) and harmless to the parser, which is a byte
-        // state machine that resumes across `process` calls — even mid-OSC.
-        // The byte budget (~one visual row) bounds how much new content a
-        // single reconcile can carry, so wrap-driven scrolls stay inside
-        // the matcher's tail allowance.
+        // Degenerate sizes and single-row screens take the legacy path:
+        // the fast row model below needs at least two rows (a scroll must
+        // leave the completed row behind on the grid).
+        if self.rows < 2 || self.cols < 1 {
+            self.feed_slow(data);
+            #[cfg(debug_assertions)]
+            self.debug_assert_grid_sync();
+            return;
+        }
+        if self.screen.is_empty() {
+            // Factory-fresh parser: blank grid, cursor at (0,0). Size the
+            // screen vec blindly; simulation and reconciles fill it in.
+            for _ in 0..self.rows {
+                self.screen.push(RingLine {
+                    seq: 0,
+                    text: String::new(),
+                });
+            }
+        }
+        // Walk the feed on the legacy cut points (CR/LF + byte budget),
+        // classifying each batch: plain batches in Ground state fuse into
+        // pending fast spans (zero grid reads), anything else flushes the
+        // span and reconciles exactly as the legacy loop would. Slow batches
+        // are never split or fused, so every legacy reconcile observes the
+        // same grid state at the same byte offset as before.
+        let max_bytes = (self.cols as usize).max(64);
+        let mut st = self.carry.state;
+        let mut csi = self.carry.csi;
+        let mut utf8 = self.carry.utf8;
+        let mut margins = self.margins_sticky;
+        let mut origin = self.origin_sticky;
+        // Pending fast span [span_start..i+1): consecutive fast-eligible
+        // legacy batches, not yet fed to the parser.
+        let mut span_start: Option<usize> = None;
+        let mut start = 0usize;
+        for (i, &b) in data.iter().enumerate() {
+            let cut = b == b'\n' || b == b'\r';
+            let bytes = i + 1 - start;
+            if !(cut || bytes >= max_bytes || i + 1 == data.len()) {
+                continue;
+            }
+            let batch = &data[start..i + 1];
+            let eligible = st == ScanState::Ground
+                && utf8 == Utf8State::Ground
+                && !margins
+                && !origin
+                && batch_is_plain(batch);
+            if eligible {
+                // Fuse: fast bytes preserve all scan state, so stepping is
+                // skipped (and the span stays eligible by induction).
+                if span_start.is_none() {
+                    span_start = Some(start);
+                }
+            } else {
+                if let Some(ss) = span_start.take() {
+                    if !self.try_fast(&data[ss..start]) {
+                        self.feed_slow(&data[ss..start]);
+                    }
+                }
+                let bound = scroll_bound(batch, self.cols);
+                self.parser.process(batch);
+                self.reconcile(bound);
+                for &sb in batch {
+                    step_scan_byte(
+                        sb,
+                        self.rows,
+                        &mut st,
+                        &mut csi,
+                        &mut utf8,
+                        &mut margins,
+                        &mut origin,
+                    );
+                }
+            }
+            start = i + 1;
+        }
+        if let Some(ss) = span_start.take() {
+            if !self.try_fast(&data[ss..]) {
+                self.feed_slow(&data[ss..]);
+            }
+        }
+        self.carry = ParseCarry {
+            state: st,
+            csi,
+            utf8,
+        };
+        self.margins_sticky = margins;
+        self.origin_sticky = origin;
+        #[cfg(debug_assertions)]
+        self.debug_assert_grid_sync();
+    }
+
+    /// Legacy path, verbatim: reconcile the rendered ring in small batches
+    /// so a bulk scroll that lands in one PTY read is still captured line
+    /// by line. Batches cut after every CR/LF: printing a line and
+    /// scrolling it off are then reconciled as the two separate steps the
+    /// terminal applied, which keeps strict scroll matching exact (a
+    /// print+scroll in one step would hide the new line mid-grid and
+    /// defeat the matcher).
+    /// Splitting on CR/LF is UTF-8 safe (neither byte appears inside a
+    /// multibyte sequence) and harmless to the parser, which is a byte
+    /// state machine that resumes across `process` calls — even mid-OSC.
+    /// The byte budget (~one visual row) bounds how much new content a
+    /// single reconcile can carry, so wrap-driven scrolls stay inside
+    /// the matcher's tail allowance.
+    fn feed_slow(&mut self, data: &[u8]) {
         let max_bytes = (self.cols as usize).max(64);
         let mut start = 0usize;
         for (i, &b) in data.iter().enumerate() {
@@ -147,6 +581,192 @@ impl Surface {
                 start = i + 1;
                 self.reconcile(bound);
             }
+        }
+    }
+
+    // ---------------- fast path: input-side line capture ----------------
+    //
+    // Grid extraction (`grid_text`) costs ~42µs per 24-row screen; at ~26k
+    // CR/LF batches per MiB that dominated `feed()` (~1.1s/MiB vs ~13ms of
+    // raw vt100 parsing). The fast path carves plain-ASCII runs (printable
+    // ASCII + CR/LF/VT/FF, nothing else) out of the feed and captures their
+    // lines from the input side with zero grid reads. Everything else —
+    // escape sequences, controls, UTF-8, alt-screen, sticky modes — takes
+    // the legacy grid reconcile, verbatim.
+    //
+    // Soundness argument (all verified against vt100 0.15.2 + vte 0.11.1 +
+    // utf8parse 0.2.2 sources):
+    // - A fast run starts only in vte Ground state with no partial UTF-8
+    //   (the feed scan tracks both exactly, including carry across feeds;
+    //   ESC aborts any state, CAN/SUB abort, C0 controls preserve state,
+    //   C1 bytes never change state except ST-after-DCS/SOS, UTF-8 errors
+    //   consume one byte back to Ground). Fast bytes themselves are
+    //   state-preserving (Print/Execute), so groundness survives the run.
+    // - vt100 ignores the modes that would otherwise complicate plain-text
+    //   layout: no LNM (`lf` never resets col), no IRM (`sm`/`rm` are
+    //   no-ops), no wrap suppression (`?7` unhandled), no charset shifts
+    //   (SO/SI are no-ops). The two modes it honors and that affect plain
+    //   feeds — scroll region (`CSI r`) and origin mode (`CSI ? 6 h`) — are
+    //   tracked as sticky flags that force the slow path (cleared only by
+    //   RIS, which rebuilds the screen). Alt-screen is checked per run.
+    // - The row simulation mirrors vt100 exactly for ASCII: width-1 cells,
+    //   wrap when col == cols before a printable (same `col_wrap` rule; the
+    //   last-cell wrap flag only affects `contents()` joining, never rows),
+    //   CR resets col, LF/VT/FF increment the row with a scroll at the
+    //   bottom margin. Touched rows must hold ASCII (byte columns); any
+    //   other row aborts the run to the slow path.
+    // - Belt and braces: the simulated end cursor must equal the parser's
+    //   real cursor, or the run falls back to the legacy reconcile (which
+    //   reads grid truth). Debug builds additionally assert full grid sync
+    //   after every fast feed.
+    //
+    // Intended behavior changes vs the legacy matcher (both unpinned by any
+    // test, both fixes): repetitive streams no longer duplicate lines (the
+    // matcher's bound admitted a spurious k=2 scroll: 30×"y" became 41
+    // lines), and blank scrolled lines are captured as empty entries instead
+    // of vanishing through the blank-scroll quirk.
+
+    /// Capture one plain-ASCII run from the input side. Returns false (the
+    /// caller runs the legacy reconcile over the same bytes) whenever any
+    /// precondition fails. The screen vec is untouched until the simulated
+    /// end cursor matches the parser's real cursor.
+    fn try_fast(&mut self, run: &[u8]) -> bool {
+        if run.is_empty() {
+            return true;
+        }
+        if self.screen.len() != self.rows as usize || self.resized {
+            return false;
+        }
+        if self.in_alt || self.margins_sticky || self.origin_sticky {
+            return false;
+        }
+        let cols = self.cols as usize;
+        let rows = self.rows as usize;
+        let (start_row, start_col) = self.parser.screen().cursor_position();
+        let (mut row, mut col) = (start_row as usize, start_col as usize);
+        if row >= rows || col > cols {
+            return false;
+        }
+        // Process first: the parser owns ground truth from here on.
+        self.parser.process(run);
+        let (end_row, end_col) = self.parser.screen().cursor_position();
+        // Pure simulation over the cached screen (grid-synced by induction:
+        // every prior segment committed or reconciled exactly).
+        if !self.screen[row].text.is_ascii() {
+            return false;
+        }
+        let mut buf: Vec<u8> = self.screen[row].text.clone().into_bytes();
+        let mut ops: Vec<FastOp> = Vec::new();
+        macro_rules! complete_row {
+            () => {{
+                let line = match ascii_line(buf.as_slice()) {
+                    Some(line) => line,
+                    None => return false,
+                };
+                if row + 1 >= rows {
+                    ops.push(FastOp::Scroll { line });
+                    row = rows - 1;
+                    // The scrolled-in row is blank by terminal semantics
+                    // (vt100 inserts a fresh row); it must NOT be reloaded
+                    // from the screen vec, which still holds the pre-shift
+                    // bottom row until ops apply.
+                    buf = Vec::new();
+                } else {
+                    ops.push(FastOp::Refresh { row, text: line });
+                    row += 1;
+                    // No shift happened, so the cached row is valid.
+                    if !self.screen[row].text.is_ascii() {
+                        return false;
+                    }
+                    buf = self.screen[row].text.clone().into_bytes();
+                }
+                // col is intentionally preserved: vt100 has no LNM, so
+                // LF/VT/FF never touch the column (staircase is correct).
+            }};
+        }
+        for &b in run {
+            match b {
+                b'\r' => col = 0,
+                b'\n' | 0x0b | 0x0c => complete_row!(),
+                _ => {
+                    debug_assert!((0x20..=0x7e).contains(&b), "fast run holds printables only");
+                    if col >= cols {
+                        // vt100 `col_wrap`: wrap before writing when the
+                        // cursor sits past the last column.
+                        complete_row!();
+                        col = 0;
+                    }
+                    if col < buf.len() {
+                        // ASCII-only buffer: byte index == column.
+                        buf[col] = b;
+                    } else {
+                        while buf.len() < col {
+                            buf.push(b' ');
+                        }
+                        buf.push(b);
+                    }
+                    col += 1;
+                }
+            }
+        }
+        ops.push(FastOp::Refresh {
+            row,
+            text: match ascii_line(buf.as_slice()) {
+                Some(text) => text,
+                None => return false,
+            },
+        });
+        if row != end_row as usize || col != end_col as usize {
+            // Model divergence (untracked mode or vt100 behavior change):
+            // fall back to grid truth. History is untouched so far.
+            return false;
+        }
+        for op in ops {
+            match op {
+                FastOp::Refresh { row, text } => {
+                    let slot = &mut self.screen[row];
+                    if slot.text != text {
+                        self.head += 1;
+                        slot.seq = self.head;
+                        slot.text = text;
+                    }
+                }
+                FastOp::Scroll { line } => {
+                    let top = self.screen.remove(0);
+                    // The completed line stays visible one row up; sync its
+                    // text, bumping only on change (same rule as refresh).
+                    let staying = &mut self.screen[rows - 2];
+                    if staying.text != line {
+                        self.head += 1;
+                        staying.seq = self.head;
+                        staying.text = line;
+                    }
+                    self.history.push_back(top);
+                    // A scroll always inserts a blank row; the legacy path
+                    // mints it a fresh sequence unconditionally.
+                    self.head += 1;
+                    self.screen.push(RingLine {
+                        seq: self.head,
+                        text: String::new(),
+                    });
+                    self.evict();
+                }
+            }
+        }
+        true
+    }
+
+    /// Debug-only: the screen vec must mirror the grid exactly.
+    #[cfg(debug_assertions)]
+    fn debug_assert_grid_sync(&self) {
+        let grid = self.grid_text();
+        assert_eq!(
+            grid.len(),
+            self.screen.len(),
+            "screen vec length drifted from grid"
+        );
+        for (i, (g, s)) in grid.iter().zip(self.screen.iter()).enumerate() {
+            assert_eq!(g, &s.text, "screen vec row {i} drifted from grid");
         }
     }
 
@@ -165,6 +785,7 @@ impl Surface {
         let grid = self.grid_text();
         let transitioned = alt != self.in_alt;
         self.in_alt = alt;
+        self.resized = false;
         if grid.len() != self.screen.len() {
             // First feed, or a resize: fit lengths, then reconcile in
             // place (never guess a scroll across a size change).
@@ -390,6 +1011,7 @@ impl Surface {
         self.parser.set_size(rows, cols);
         self.cols = cols;
         self.rows = rows;
+        self.resized = true;
     }
 }
 
@@ -746,5 +1368,186 @@ mod tests {
         b.feed_output("p", b"keepme\r\n");
         b.resize("p", 100, 30);
         assert_eq!(b.tail("p", 5, true).unwrap(), vec!["keepme".to_string()]);
+    }
+
+    // ---- Fast path (input-side capture): behavior pins ----
+
+    #[test]
+    fn fast_repetitive_lines_captured_exactly() {
+        // The legacy matcher's scroll bound admitted a spurious k=2 shift
+        // on repetitive content (30x"y" became 41 lines). The fast path
+        // captures exactly.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        for _ in 0..30 {
+            b.feed_output("p", b"y\r\n");
+        }
+        let r = b.rendered("p", 0, 5000).unwrap();
+        assert_eq!(r.text.lines().count(), 30);
+        assert!(r.text.lines().all(|l| l == "y"));
+    }
+
+    #[test]
+    fn fast_blank_scroll_preserves_scrolled_line() {
+        // A blank LF on a full screen scrolls exactly one row: the top
+        // line must move to history, not vanish through the legacy
+        // matcher's blank-scroll quirk (which dropped it).
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        for i in 0..30 {
+            b.feed_output("p", format!("line{i}\r\n").as_bytes());
+        }
+        b.feed_output("p", b"\r\n");
+        let text = rendered_text(&b, "p");
+        assert!(
+            text.contains("line6"),
+            "scrolled-off top line kept: {text:?}"
+        );
+        assert_eq!(text.lines().count(), 30);
+    }
+
+    #[test]
+    fn fast_long_wrapped_line_bit_for_bit() {
+        // 500 ASCII chars = 6 full rows + 20 cells, no scroll on 24 rows.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        let line = "A".repeat(500);
+        b.feed_output("p", format!("{line}\r\n").as_bytes());
+        let tail = b.tail("p", 8, false).unwrap();
+        assert_eq!(tail.len(), 7);
+        for row in &tail[..6] {
+            assert_eq!(row, &"A".repeat(80));
+        }
+        assert_eq!(tail[6], "A".repeat(20));
+    }
+
+    #[test]
+    fn fast_staircase_n_without_r() {
+        // Bare LF never resets the column (vt100 has no LNM): cooked PTYs
+        // send CRLF, but raw printf output staircases like a real terminal.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"ab\ncd\n");
+        assert_eq!(
+            b.tail("p", 2, false).unwrap(),
+            vec!["ab".to_string(), "  cd".to_string()]
+        );
+    }
+
+    #[test]
+    fn fast_split_sequence_stays_sound() {
+        // An SGR split across feeds must not leak param bytes into content:
+        // the second feed's leading bytes complete the CSI, then "B" prints.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"A\x1b[31");
+        b.feed_output("p", b"mB\r\n");
+        assert_eq!(rendered_text(&b, "p"), "AB");
+    }
+
+    #[test]
+    fn fast_split_csi_across_feeds_recovers_ground() {
+        // ED split across feeds: completion dispatches, ground returns, and
+        // the following plain text takes the fast path again.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"keep\r\n\x1b[2");
+        b.feed_output("p", b"Jafter\r\n");
+        let text = rendered_text(&b, "p");
+        assert!(text.contains("after"), "{text:?}");
+        assert!(
+            !text.contains('J'),
+            "CSI final must dispatch, not print: {text:?}"
+        );
+    }
+
+    #[test]
+    fn fast_sticky_scroll_region_stays_correct() {
+        // A scroll region forces plain runs onto the slow path (grid
+        // truth). DECSTBM homes the cursor, so "b" overwrites "a": that
+        // overwrite proves the sticky flag engaged (the fast path would
+        // have placed "b" at row 1). RIS clears the flag again.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"a\r\n");
+        b.feed_output("p", b"\x1b[1;5r");
+        b.feed_output("p", b"b\r\n");
+        let text = rendered_text(&b, "p");
+        assert_eq!(text, "b", "{text:?}");
+        b.feed_output("p", b"\x1bc");
+        b.feed_output("p", b"c\r\n");
+        assert!(rendered_text(&b, "p").contains('c'));
+    }
+
+    #[test]
+    fn fast_sticky_origin_mode_stays_correct() {
+        // Origin-set homes the cursor, so "y" overwrites "x": same proof
+        // as above, the fast path would have read "x\\ny".
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"x\r\n");
+        b.feed_output("p", b"\x1b[?6h");
+        b.feed_output("p", b"y\r\n");
+        let text = rendered_text(&b, "p");
+        assert_eq!(text, "y", "{text:?}");
+    }
+
+    #[test]
+    fn fast_chunked_feeds_capture_exactly() {
+        // PTY reads split lines arbitrarily (odd chunk sizes realign digit
+        // widths mid-stream). Every line must land exactly once, in order,
+        // regardless of fragmentation. Regression test: a stale row-buffer
+        // reload after an in-span scroll once corrupted these.
+        for chunk in [2usize, 3, 7, 101] {
+            let mut data = Vec::new();
+            for i in 1..=300 {
+                data.extend_from_slice(format!("line{i}\r\n").as_bytes());
+            }
+            let mut b = HeadlessBackend::new();
+            b.create_surface("p", 80, 24);
+            for piece in data.chunks(chunk) {
+                b.feed_output("p", piece);
+            }
+            let r = b.rendered("p", 0, 100_000).unwrap();
+            let expect: Vec<String> = (1..=300).map(|i| format!("line{i}")).collect();
+            assert_eq!(
+                r.text.lines().collect::<Vec<_>>(),
+                expect.iter().map(String::as_str).collect::<Vec<_>>(),
+                "chunk={chunk}"
+            );
+        }
+    }
+
+    /// Release-mode perf gate for the rendered ring. Ignored by default
+    /// (timing-sensitive); run with
+    /// `cargo test --release -p signaltty-term -- --ignored fast_ring_perf`.
+    /// Bounds are generous (~20x above measured) so this only fires on a
+    /// real algorithmic regression back toward per-batch reconciliation.
+    #[test]
+    #[ignore = "release-only perf gate"]
+    fn fast_ring_perf_regression() {
+        use std::time::{Duration, Instant};
+        let budget = if cfg!(debug_assertions) {
+            Duration::from_secs(30)
+        } else {
+            Duration::from_secs(1)
+        };
+        let mut bulk = Vec::with_capacity(1024 * 1024);
+        let mut i = 0u32;
+        while bulk.len() < 1024 * 1024 {
+            bulk.extend_from_slice(format!("bulk line {i:08} {:*<60}\r\n", "").as_bytes());
+            i += 1;
+        }
+        bulk.truncate(1024 * 1024);
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        let t = Instant::now();
+        b.feed_output("p", &bulk);
+        assert!(
+            t.elapsed() < budget,
+            "1MiB bulk feed took {:?} (budget {budget:?})",
+            t.elapsed()
+        );
+        assert!(b.ring_len("p") > 0);
     }
 }
