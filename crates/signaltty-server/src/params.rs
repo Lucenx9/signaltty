@@ -200,6 +200,7 @@ pub struct PaneSpawn {
     pub parent_pane_id: Option<String>,
     pub label: Option<String>,
     pub relationship: Option<Relationship>,
+    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
