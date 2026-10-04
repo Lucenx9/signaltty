@@ -8,8 +8,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use signaltty_core::model::{Notification, Pane, Tab, Workspace};
-use signaltty_core::state::{Attention, Lifecycle};
+use signaltty_core::model::{
+    Disposition, DispositionOutcome, Notification, Pane, Tab, Task, TaskResult, Workspace,
+};
+use signaltty_core::state::{Attention, Lifecycle, TaskState};
+use signaltty_proto::{code, event};
 
 use crate::audit::{AuditLog, EventSequence};
 
@@ -55,6 +58,7 @@ pub struct Store {
     pub workspaces: HashMap<String, Workspace>,
     pub tabs: HashMap<String, Tab>,
     pub panes: HashMap<String, Pane>,
+    pub tasks: HashMap<String, Task>,
     pub notifications: VecDeque<Notification>,
     pub events: VecDeque<StoredEvent>,
     pub seq: u64,
@@ -72,6 +76,7 @@ impl Store {
             workspaces: HashMap::new(),
             tabs: HashMap::new(),
             panes: HashMap::new(),
+            tasks: HashMap::new(),
             notifications: VecDeque::new(),
             events: VecDeque::new(),
             seq: 0,
@@ -154,6 +159,18 @@ impl Store {
         self.set_lifecycle(pane_id, Lifecycle::Exited);
         self.raise_attention(pane_id, Attention::Unread);
         self.clear_decision(pane_id, "pane_exited");
+
+        let task_id = self
+            .tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id) && !t.state.is_terminal())
+            .map(|t| t.id.clone());
+        if let Some(tid) = task_id {
+            self.task_fail(
+                &tid,
+                Some(json!({"reason": "pane_exited", "exit_code": code})),
+            );
+        }
     }
 
     pub fn matching_transition(&self, pane_id: &str, outcome: &str) -> Option<u64> {
@@ -478,6 +495,210 @@ impl Store {
         }
         Some(ev)
     }
+
+    pub fn task_create(&mut self, task: Task) -> StoredEvent {
+        let task_clone = task.clone();
+        self.tasks.insert(task.id.clone(), task);
+        self.emit(event::TASK_CREATED, json!({ "task": task_clone }))
+    }
+
+    pub fn task_background_ready(&mut self, task_id: &str) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            if task.state != TaskState::Pending {
+                return None;
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::Working, now).ok()?;
+            (task.clone(), prev_state)
+        };
+        let ev = self.emit(
+            event::TASK_UPDATED,
+            json!({
+                "task_id": task_clone.id,
+                "context_id": task_clone.context_id,
+                "task": task_clone,
+                "prev_state": prev_state.as_str(),
+            }),
+        );
+        Some(ev)
+    }
+
+    pub fn task_report(
+        &mut self,
+        task_id: &str,
+        result: TaskResult,
+    ) -> Result<(StoredEvent, StoredEvent), (String, String)> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id).ok_or_else(|| {
+                (
+                    code::NO_SUCH_TASK.to_string(),
+                    format!("no such task '{task_id}'"),
+                )
+            })?;
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.apply_report(result.clone(), now).map_err(|e| {
+                (
+                    code::BAD_PARAMS.to_string(),
+                    format!("failed to apply task report: {e}"),
+                )
+            })?;
+            (task.clone(), prev_state)
+        };
+        let result_ev = self.emit(
+            event::TASK_RESULT,
+            json!({
+                "task_id": task_clone.id,
+                "context_id": task_clone.context_id,
+                "result": result,
+            }),
+        );
+        let update_ev = self.emit(
+            event::TASK_UPDATED,
+            json!({
+                "task_id": task_clone.id,
+                "context_id": task_clone.context_id,
+                "task": task_clone,
+                "prev_state": prev_state.as_str(),
+            }),
+        );
+        Ok((result_ev, update_ev))
+    }
+
+    pub fn task_cancel(&mut self, task_id: &str) -> Result<StoredEvent, (String, String)> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id).ok_or_else(|| {
+                (
+                    code::NO_SUCH_TASK.to_string(),
+                    format!("no such task '{task_id}'"),
+                )
+            })?;
+            if task.state.is_terminal() {
+                return Err((
+                    code::BAD_PARAMS.to_string(),
+                    format!("task is already terminal ({})", task.state.as_str()),
+                ));
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::Canceled, now).map_err(|e| {
+                (
+                    code::BAD_PARAMS.to_string(),
+                    format!("cannot cancel task: {e}"),
+                )
+            })?;
+            (task.clone(), prev_state)
+        };
+        let ev = self.emit(
+            event::TASK_UPDATED,
+            json!({
+                "task_id": task_clone.id,
+                "context_id": task_clone.context_id,
+                "task": task_clone,
+                "prev_state": prev_state.as_str(),
+            }),
+        );
+        Ok(ev)
+    }
+
+    pub fn task_fail(&mut self, task_id: &str, evidence: Option<Value>) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            if task.state.is_terminal() {
+                return None;
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::Failed, now).ok()?;
+            if evidence.is_some() {
+                task.finish_error = evidence;
+            }
+            (task.clone(), prev_state)
+        };
+        let ev = self.emit(
+            event::TASK_UPDATED,
+            json!({
+                "task_id": task_clone.id,
+                "context_id": task_clone.context_id,
+                "task": task_clone,
+                "prev_state": prev_state.as_str(),
+            }),
+        );
+        Some(ev)
+    }
+
+    pub fn task_finish_record(
+        &mut self,
+        task_id: &str,
+        disposition: Disposition,
+    ) -> Result<StoredEvent, (String, String)> {
+        let task_clone = {
+            let task = self.tasks.get_mut(task_id).ok_or_else(|| {
+                (
+                    code::NO_SUCH_TASK.to_string(),
+                    format!("no such task '{task_id}'"),
+                )
+            })?;
+            if task.disposition.outcome != DispositionOutcome::None {
+                return Err((
+                    code::BAD_PARAMS.to_string(),
+                    "task disposition has already been recorded".to_string(),
+                ));
+            }
+            task.disposition = disposition;
+            task.updated_at = Utc::now();
+            task.clone()
+        };
+        let ev = self.emit(
+            event::TASK_UPDATED,
+            json!({
+                "task_id": task_clone.id,
+                "context_id": task_clone.context_id,
+                "task": task_clone,
+            }),
+        );
+        Ok(ev)
+    }
+
+    pub fn task_input_required_on_turn_end(
+        &mut self,
+        task_id: &str,
+        evidence: Option<Value>,
+    ) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            let prev_state = task.state;
+            let now = Utc::now();
+            if !task.apply_turn_ended_without_report(evidence, now) {
+                return None;
+            }
+            (task.clone(), prev_state)
+        };
+        let ev = self.emit(
+            event::TASK_UPDATED,
+            json!({
+                "task_id": task_clone.id,
+                "context_id": task_clone.context_id,
+                "task": task_clone,
+                "prev_state": prev_state.as_str(),
+            }),
+        );
+        Some(ev)
+    }
+
+    pub fn task_for_pane(&self, pane_id: &str) -> Option<&Task> {
+        self.tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id))
+    }
+
+    pub fn task_for_pane_mut(&mut self, pane_id: &str) -> Option<&mut Task> {
+        self.tasks
+            .values_mut()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id))
+    }
 }
 
 #[cfg(test)]
@@ -642,5 +863,160 @@ mod tests {
         assert_eq!(e.name, "attention.cleared");
         assert!(store.clear_attention(&id, "test").is_none());
         assert!(store.clear_attention("pane_nope", "test").is_none());
+    }
+
+    #[test]
+    fn task_store_transition_methods_pair_mutate_and_emit() {
+        use signaltty_core::model::{Contract, Relationship, TaskResultStatus};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let now = Utc::now();
+        let contract = Contract::new("Do work").unwrap();
+        let task_id = signaltty_core::ids::new_task_id();
+        let task = Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some("p1".to_string()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "store-test".to_string(),
+            contract,
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: Some("main".to_string()),
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-1".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "1234abcd".to_string(),
+            state: TaskState::Pending,
+            result: None,
+            disposition: Disposition::default(),
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        // 1. Create
+        let ev = store.task_create(task);
+        assert_eq!(ev.name, "task.created");
+        assert!(store.tasks.contains_key(&task_id));
+
+        // 2. Background ready
+        let ev = store.task_background_ready(&task_id).unwrap();
+        assert_eq!(ev.name, "task.updated");
+        assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+
+        // 3. Turn end without report
+        let ev = store
+            .task_input_required_on_turn_end(
+                &task_id,
+                Some(serde_json::json!({"reason": "turn_ended_without_report"})),
+            )
+            .unwrap();
+        assert_eq!(ev.name, "task.updated");
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+
+        // 4. Report
+        let result = TaskResult {
+            status: TaskResultStatus::Completed,
+            summary: "Finished".to_string(),
+            artifacts: vec![],
+            evidence: None,
+            reported_at: Utc::now(),
+        };
+        let (res_ev, upd_ev) = store.task_report(&task_id, result).unwrap();
+        assert_eq!(res_ev.name, "task.result");
+        assert_eq!(upd_ev.name, "task.updated");
+        assert_eq!(store.tasks[&task_id].state, TaskState::Completed);
+
+        // Report on terminal task is refused
+        assert!(store
+            .task_report(
+                &task_id,
+                TaskResult {
+                    status: TaskResultStatus::Completed,
+                    summary: "Again".to_string(),
+                    artifacts: vec![],
+                    evidence: None,
+                    reported_at: Utc::now(),
+                }
+            )
+            .is_err());
+
+        // Cancel on terminal task is refused
+        assert!(store.task_cancel(&task_id).is_err());
+
+        // 5. Finish record
+        let disp = Disposition {
+            outcome: DispositionOutcome::Merged,
+            target_ref: Some("main".to_string()),
+            merged_sha: Some("sha".to_string()),
+            branch_deleted: Some(true),
+            at: Some(Utc::now()),
+        };
+        let ev = store.task_finish_record(&task_id, disp.clone()).unwrap();
+        assert_eq!(ev.name, "task.updated");
+        assert_eq!(
+            store.tasks[&task_id].disposition.outcome,
+            DispositionOutcome::Merged
+        );
+
+        // Second finish record refused
+        assert!(store.task_finish_record(&task_id, disp).is_err());
+    }
+
+    #[test]
+    fn pane_exit_fails_non_terminal_task() {
+        use signaltty_core::model::{Contract, Relationship};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let pane = pane_with(Attention::None, 0);
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+
+        let task_id = signaltty_core::ids::new_task_id();
+        let task = Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id.clone()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "exit-test".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-b".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state: TaskState::Working,
+            result: None,
+            disposition: Disposition::default(),
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.task_create(task);
+
+        // Pane exits with code 1
+        store.set_exited(&pane_id, Some(1));
+        assert_eq!(store.tasks[&task_id].state, TaskState::Failed);
+        assert_eq!(
+            store.tasks[&task_id].finish_error,
+            Some(serde_json::json!({"reason": "pane_exited", "exit_code": 1}))
+        );
     }
 }

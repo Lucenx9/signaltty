@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use signaltty_term::HeadlessBackend;
 
-use signaltty_core::model::{LiveState, Notification, Pane, RestoreState, Tab, Workspace};
+use signaltty_core::model::{LiveState, Notification, Pane, RestoreState, Tab, Task, Workspace};
 use signaltty_term::TerminalBackend;
 
 use crate::config::Config;
@@ -27,6 +27,8 @@ pub struct Snapshot {
     pub tabs: Vec<Tab>,
     pub panes: Vec<Pane>,
     pub notifications: Vec<Notification>,
+    #[serde(default)]
+    pub tasks: Vec<Task>,
 }
 
 /// Save snapshot + scrollback tails atomically. Quick enough to call
@@ -49,6 +51,7 @@ pub fn save(
             tabs: s.tabs.values().cloned().collect(),
             panes: s.panes.values().cloned().collect(),
             notifications: s.notifications.iter().cloned().collect(),
+            tasks: s.tasks.values().cloned().collect(),
         }
     };
 
@@ -185,6 +188,9 @@ pub fn apply(store: &SharedStore, terms: &Mutex<HeadlessBackend>, mut loaded: Lo
     }
     for n in loaded.snapshot.notifications {
         s.push_notification(n);
+    }
+    for task in loaded.snapshot.tasks {
+        s.tasks.insert(task.id.clone(), task);
     }
 }
 
