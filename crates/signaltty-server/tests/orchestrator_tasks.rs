@@ -2088,6 +2088,59 @@ async fn background_submit_outcome_reaches_the_snapshot() {
 }
 
 #[tokio::test]
+async fn discard_reaps_the_worker_process_group() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let pid_file = srv.state_dir.join("child.pid");
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "leave a child behind"},
+                "agent": "codex",
+                "argv": ["sh", "-c", format!(
+                    // Ignores SIGHUP like a `nohup` build: only a group kill reaps it.
+                    "trap '' HUP; sleep 300 & echo $! > {}; wait",
+                    pid_file.display()
+                )],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+
+    let mut child = None;
+    for _ in 0..50 {
+        if let Some(pid) = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|s| s.trim().parse::<i32>().ok())
+        {
+            child = Some(pid);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let child = child.expect("worker wrote its child pid");
+
+    c.call(
+        "task.finish",
+        json!({"task_id": task_id, "mode": "discard"}),
+    )
+    .await
+    .unwrap();
+    let alive = std::path::Path::new(&format!("/proc/{child}")).exists()
+        && !std::fs::read_to_string(format!("/proc/{child}/stat"))
+            .unwrap_or_default()
+            .contains(") Z ");
+    assert!(!alive, "worker child {child} survived discard");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn task_wait_unknown_until_is_bad_params() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;

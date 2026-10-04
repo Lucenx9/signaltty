@@ -1370,10 +1370,10 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
             }
         }
 
-        // Close worker pane if live
+        // Kill and reap the whole worker group: a TERM to the leader alone
+        // leaves its children writing in the worktree we remove next.
         if let Some(ref pid) = pane_id {
-            ctx.ptys.destroy(pid, Some("TERM"));
-            close_worker(&mut ctx.store.write().unwrap(), pid);
+            reap_worker(ctx, pid).await;
         }
 
         // Remove worktree (herdr-guarded: see remove_task_worktree).
