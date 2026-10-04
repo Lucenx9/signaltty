@@ -479,6 +479,8 @@ async fn submit_follow_up_on_input_required_task_resumes_working() {
 
     let driver = FakeAgentPane::new(&pane_id, "codex");
     driver.session_start(&mut c, repo.path()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
 
     // Wait until working
     let wait = c

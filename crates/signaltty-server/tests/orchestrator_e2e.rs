@@ -152,6 +152,11 @@ async fn orchestrator_deterministic_acceptance_scenario() {
     driver_a.session_start(&mut c, worktree_a).await.unwrap();
     driver_b.session_start(&mut c, worktree_b).await.unwrap();
     driver_c.session_start(&mut c, worktree_c).await.unwrap();
+    // After the paste baseline, UserPromptSubmit is the activity-gate signal.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    driver_a.prompt_submit(&mut c).await.unwrap();
+    driver_b.prompt_submit(&mut c).await.unwrap();
+    driver_c.prompt_submit(&mut c).await.unwrap();
 
     // The background ready-wait submits objectives and all three reach working.
     let wait_a = c
@@ -180,11 +185,6 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         .await
         .unwrap();
     assert_eq!(wait_c["satisfied"], true);
-
-    // 4. Workers turn working (UserPromptSubmit).
-    driver_a.prompt_submit(&mut c).await.unwrap();
-    driver_b.prompt_submit(&mut c).await.unwrap();
-    driver_c.prompt_submit(&mut c).await.unwrap();
 
     // Worker A makes changes and reports completed.
     std::fs::write(worktree_a.join("file_a.txt"), "hello from A\n").unwrap();
@@ -587,6 +587,8 @@ async fn test_restart_with_mixed_task_states_and_pane_kill_idempotent() {
 
     let driver_done = FakeAgentPane::new(&pane_done_id, "codex");
     driver_done.session_start(&mut c, &wt_done).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    driver_done.prompt_submit(&mut c).await.unwrap();
 
     let _ = c
         .call(
@@ -639,6 +641,8 @@ async fn test_restart_with_mixed_task_states_and_pane_kill_idempotent() {
         .session_start(&mut c, &wt_working)
         .await
         .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    driver_working.prompt_submit(&mut c).await.unwrap();
     let _ = c
         .call(
             "task.wait",
@@ -673,6 +677,8 @@ async fn test_restart_with_mixed_task_states_and_pane_kill_idempotent() {
 
     let driver_ir = FakeAgentPane::new(&pane_ir_id, "codex");
     driver_ir.session_start(&mut c, &wt_ir).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    driver_ir.prompt_submit(&mut c).await.unwrap();
     let _ = c
         .call(
             "task.wait",

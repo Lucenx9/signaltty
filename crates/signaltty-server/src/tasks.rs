@@ -582,7 +582,7 @@ pub(crate) fn spawn_background_submit(
             submit_delay,
             stall_timeout,
             true,
-            false,
+            true,
             submit_max_bytes,
         )
         .await;

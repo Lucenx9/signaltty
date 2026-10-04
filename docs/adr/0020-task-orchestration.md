@@ -113,9 +113,9 @@ What the code does where it diverges from the proposal above — docs
   disables), `last_assistant_message` flowing into pane `last_message` and
   turn-end evidence, ref-safety checks, and the composed worker preamble.
 - Background submit writes the prompt (`submit_delay_ms`, default 300, the
-  same paste/Enter delay as `pane.submit`) and
-  moves the task to `working` on a successful write; it does not run the
-  `pane.submit` activity gate.
+  same paste/Enter delay as `pane.submit`) and runs the `pane.submit`
+  activity gate. A newer `working` or `blocked` transition moves the task to
+  `working`; a stall fails it with `{stage: activity_gate}`.
 - `pane.spawn` stores an unknown `parent_pane_id` as-is (root unset) rather
   than refusing `NO_SUCH_PANE`.
 - `Task.finish_error` stores conflict files (no disposition, so finish can

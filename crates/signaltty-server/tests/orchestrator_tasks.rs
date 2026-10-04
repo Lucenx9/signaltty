@@ -262,9 +262,11 @@ async fn task_start_async_happy_path() {
     let wt_path = std::path::PathBuf::from(task["worktree_path"].as_str().unwrap());
     assert!(wt_path.exists());
 
-    // Fake agent drives worker to idle, then background submit moves task to working
+    // Idle, then a UserPromptSubmit after the paste baseline, so the activity gate passes.
     let driver = FakeAgentPane::new(&worker_pane_id, "codex");
     driver.session_start(&mut c, &wt_path).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
 
     let wait = c
         .call(
@@ -805,6 +807,8 @@ async fn task_start_counts_input_required_towards_cap() {
     let driver = FakeAgentPane::new(worker_pane, "codex");
     let wt = std::path::PathBuf::from(res0["task"]["worktree_path"].as_str().unwrap());
     driver.session_start(&mut c, &wt).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
 
     let wait = c
         .call(
@@ -1177,9 +1181,11 @@ async fn test_turn_ended_without_report_and_follow_up_submit_and_report() {
     let pane_id = res["pane"]["id"].as_str().unwrap().to_string();
     let wt_path = std::path::PathBuf::from(res["task"]["worktree_path"].as_str().unwrap());
 
-    // Fake agent drives worker to idle, then background submit moves task to working
+    // Idle, then a UserPromptSubmit after the paste baseline, so the activity gate passes.
     let driver = FakeAgentPane::new(&pane_id, "codex");
     driver.session_start(&mut c, &wt_path).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
 
     // Wait until working
     let wait = c
@@ -1504,6 +1510,8 @@ async fn test_last_message_capture_from_stop_and_permission_hooks() {
 
     let driver = FakeAgentPane::new(&pane_id, "codex");
     driver.session_start(&mut c, &wt_path).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
 
     let wait = c
         .call(
@@ -1593,6 +1601,8 @@ async fn test_silent_worker_watchdog_transitions_to_input_required() {
 
     let driver = FakeAgentPane::new(&pane_id, "codex");
     driver.session_start(&mut c, &wt_path).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
 
     let wait = c
         .call(
@@ -1719,6 +1729,7 @@ async fn task_start_honors_submit_delay_ms() {
         mid["task"]["state"], "pending",
         "submit_delay_ms must hold the first write"
     );
+    driver.prompt_submit(&mut c).await.unwrap();
 
     let wait = c
         .call(
@@ -1807,6 +1818,8 @@ async fn task_start_rejects_unsendable_contract_before_worktree() {
     let wt = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
     let driver = FakeAgentPane::new(&pane_id, "codex");
     driver.session_start(&mut c, &wt).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
     let wait = c
         .call(
             "task.wait",
@@ -1821,6 +1834,51 @@ async fn task_start_rejects_unsendable_contract_before_worktree() {
         .unwrap();
     assert_eq!(got["task"]["state"], "working");
     assert!(got["task"]["status_reason"].is_null());
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn task_start_background_submit_fails_activity_gate_on_stall() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "stall the activity gate"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "stall_timeout_s": 1,
+                "submit_delay_ms": 50,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap().to_string();
+    let wt = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt).await.unwrap();
+
+    let wait = c
+        .call(
+            "task.wait",
+            json!({"task_id": task_id, "until": "failed", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+    let got = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(got["task"]["state"], "failed");
+    assert_eq!(got["task"]["status_reason"]["stage"], "activity_gate");
 
     srv.shutdown().await;
 }
