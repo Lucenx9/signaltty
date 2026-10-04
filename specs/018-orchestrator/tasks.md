@@ -203,10 +203,10 @@ failed with evidence, checkouts preserved; pane exit fails task exactly once.
 **Independent Test**: worker pane row shows label + state; updates on
 `task.updated` without terminal rebuild; light + dark screenshots.
 
-- [ ] T027 [US7] Headless GUI tests for the task chip (present/absent/update)
+- [x] T027 [US7] Headless GUI tests for the task chip (present/absent/update)
   in `crates/signaltty-gui/src/sidebar.rs` (or `app_tests.rs` if the harness
   fits better — keep display tests out unless no other seam exists).
-- [ ] T028 [US7] `task.*` subscription + `task.get` cache + row chip render in
+- [x] T028 [US7] `task.*` subscription + `task.get` cache + row chip render in
   `crates/signaltty-gui/src/actor.rs` and
   `crates/signaltty-gui/src/sidebar.rs`.
 
