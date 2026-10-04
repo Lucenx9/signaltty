@@ -899,6 +899,16 @@ async fn cli_task_diff_and_finish() {
     assert_eq!(file_diff["path"], "feature.txt");
     assert_eq!(file_diff["untracked"], true);
 
+    // Text output reads the serialized line `kind` and hunk `heading`.
+    std::fs::write(wt_path.join("odd.txt"), "a\nb").unwrap();
+    let (ok, text) = cli(&srv.socket, &["task", "file-diff", &task_id, "odd.txt"]);
+    assert!(ok, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "untracked odd.txt");
+    assert!(lines[1].starts_with("@@ -0,0 +1,2 @@"), "{text}");
+    assert_eq!(&lines[2..], ["+a", "+b", "\\ No newline at end of file"]);
+    std::fs::remove_file(wt_path.join("odd.txt")).unwrap();
+
     // Commit change so worktree is clean for merge
     let _ = std::process::Command::new("git")
         .arg("-C")

@@ -1610,10 +1610,10 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
                         "text" => {
                             if let Some(hunks) = content.get("hunks").and_then(|h| h.as_array()) {
                                 for hunk in hunks {
-                                    if let Some(header) =
-                                        hunk.get("header").and_then(|h| h.as_str())
+                                    if let Some(heading) =
+                                        hunk.get("heading").and_then(|h| h.as_str())
                                     {
-                                        human.push_str(&format!("@@ {header} @@\n"));
+                                        human.push_str(&format!("{heading}\n"));
                                     }
                                     if let Some(lines) =
                                         hunk.get("lines").and_then(|l| l.as_array())
@@ -1623,11 +1623,14 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
                                                 .get("text")
                                                 .and_then(|t| t.as_str())
                                                 .unwrap_or("");
-                                            let origin = l
-                                                .get("origin")
-                                                .and_then(|o| o.as_str())
-                                                .unwrap_or(" ");
-                                            human.push_str(&format!("{origin}{text}\n"));
+                                            let prefix =
+                                                match l.get("kind").and_then(|k| k.as_str()) {
+                                                    Some("added") => "+",
+                                                    Some("removed") => "-",
+                                                    Some("no_newline") => "\\ ",
+                                                    _ => " ",
+                                                };
+                                            human.push_str(&format!("{prefix}{text}\n"));
                                         }
                                     }
                                 }
