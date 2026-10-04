@@ -236,9 +236,18 @@ async fn orchestrator_deterministic_acceptance_scenario() {
     });
     tokio::time::sleep(std::time::Duration::from_millis(60)).await;
 
-    let pending_att = c.call("attention.pending", json!({})).await.unwrap();
-    let items = pending_att["panes"].as_array().unwrap();
-    assert!(items.iter().any(|item| item["pane_id"] == pane_b_id));
+    // Poll until the blocked worker shows up (bounded; failure is explicit).
+    let mut found_b = false;
+    for _ in 0..100 {
+        let pending_att = c.call("attention.pending", json!({})).await.unwrap();
+        let items = pending_att["panes"].as_array().unwrap();
+        if items.iter().any(|item| item["pane_id"] == pane_b_id) {
+            found_b = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(found_b, "worker B must appear in attention.pending");
 
     let task_b_blocked = c
         .call("task.get", json!({"task_id": task_b_id}))
@@ -386,18 +395,28 @@ async fn orchestrator_deterministic_acceptance_scenario() {
     )
     .await
     .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    let read_2 = c
-        .call(
-            "pane.read",
-            json!({"pane_id": pane_a_id, "mode": "rendered", "after_seq": seq_1}),
-        )
-        .await
-        .unwrap();
+    // Poll for the PTY-echoed marker (bounded; failure is explicit).
+    let mut text_2 = String::new();
+    let mut read_2 = serde_json::json!({});
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        read_2 = c
+            .call(
+                "pane.read",
+                json!({"pane_id": pane_a_id, "mode": "rendered", "after_seq": seq_1}),
+            )
+            .await
+            .unwrap();
+        text_2 = read_2["text"].as_str().unwrap_or("").to_string();
+        if text_2.contains("incremental_output_a") {
+            break;
+        }
+    }
     assert_eq!(read_2["dropped"], false);
-    let text_2 = read_2["text"].as_str().unwrap_or("");
-    assert!(text_2.contains("incremental_output_a"));
+    assert!(
+        text_2.contains("incremental_output_a"),
+        "second read must contain only the new output"
+    );
     assert!(!text_2.contains("Worker A done"));
 
     // Needs-user attention listing is now empty.
@@ -756,7 +775,7 @@ async fn test_restart_with_mixed_task_states_and_pane_kill_idempotent() {
         .call("task.diff", json!({"task_id": task_done_id}))
         .await
         .unwrap();
-    let files_done = diff_done["diff"]["files"].as_array().unwrap();
+    let files_done = diff_done["files"].as_array().unwrap();
     assert!(files_done.iter().any(|f| f["path"] == "done.txt"));
 
     // 7b. Task Working: failed with restart stage/evidence, checkout preserved

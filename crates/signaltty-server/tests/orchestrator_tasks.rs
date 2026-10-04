@@ -323,7 +323,10 @@ async fn task_start_pane_closed_before_ready_fails_task_and_server_remains_respo
         .unwrap();
     assert_eq!(get["task"]["state"], "failed");
     assert!(!get["task"]["status_reason"].is_null());
-    assert_eq!(get["task"]["status_reason"]["stage"], "ready_timeout");
+    // Operator close is pane death (FR-019): the synchronous close fails the
+    // task with the proximate cause; the background ready-wait then no-ops
+    // on the terminal task instead of racing it with `ready_timeout`.
+    assert_eq!(get["task"]["status_reason"]["reason"], "pane_closed");
 
     srv.shutdown().await;
 }
