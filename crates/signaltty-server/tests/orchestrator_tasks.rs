@@ -283,6 +283,49 @@ async fn task_start_async_happy_path() {
 }
 
 #[tokio::test]
+async fn task_start_pane_closed_before_ready_fails_task_and_server_remains_responsive() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start_res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {
+                    "objective": "Task to exit early",
+                },
+                "label": "worker-exit",
+            }),
+        )
+        .await
+        .unwrap();
+
+    let task_id = start_res["task"]["id"].as_str().unwrap().to_string();
+    let worker_pane_id = start_res["pane"]["id"].as_str().unwrap().to_string();
+
+    // Close the pane before it becomes ready
+    c.call("pane.close", json!({"pane_id": worker_pane_id}))
+        .await
+        .unwrap();
+
+    // Give the background task a moment to detect and update
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // The server must NOT deadlock: it must answer subsequent calls
+    let get = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(get["task"]["state"], "failed");
+    assert!(!get["task"]["status_reason"].is_null());
+    assert_eq!(get["task"]["status_reason"]["stage"], "ready_timeout");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn task_start_rate_limited_over_cap() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;

@@ -2103,23 +2103,45 @@ async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Co
         let mut tick = tokio::time::interval(Duration::from_millis(50));
 
         loop {
-            {
+            enum Check {
+                Done,
+                PaneMissing,
+                PaneExited,
+                Ready,
+                Wait,
+            }
+            let check = {
                 let s = bg_submit_ctx.store.read().unwrap();
                 let Some(task) = s.tasks.get(&bg_task_id) else {
                     return;
                 };
                 if task.state != TaskState::Pending {
-                    return;
+                    Check::Done
+                } else {
+                    match s.panes.get(&bg_pane_id) {
+                        None => Check::PaneMissing,
+                        Some(pane) if !matches!(pane.live, LiveState::Live) => Check::PaneExited,
+                        Some(pane)
+                            if matches!(pane.lifecycle, Lifecycle::Idle | Lifecycle::Done) =>
+                        {
+                            Check::Ready
+                        }
+                        Some(_) => Check::Wait,
+                    }
                 }
-                let Some(pane) = s.panes.get(&bg_pane_id) else {
+            };
+
+            match check {
+                Check::Done => return,
+                Check::PaneMissing => {
                     let mut s = bg_submit_ctx.store.write().unwrap();
                     s.task_fail(
                         &bg_task_id,
                         Some(json!({"stage": "ready_timeout", "error": "pane missing"})),
                     );
                     return;
-                };
-                if !matches!(pane.live, LiveState::Live) {
+                }
+                Check::PaneExited => {
                     let mut s = bg_submit_ctx.store.write().unwrap();
                     s.task_fail(
                         &bg_task_id,
@@ -2127,9 +2149,8 @@ async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Co
                     );
                     return;
                 }
-                if matches!(pane.lifecycle, Lifecycle::Idle | Lifecycle::Done) {
-                    break;
-                }
+                Check::Ready => break,
+                Check::Wait => {}
             }
 
             tokio::select! {
