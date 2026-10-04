@@ -38,6 +38,8 @@ pub struct TestServer {
     pub socket: PathBuf,
     pub state_dir: PathBuf,
     pub integration_home: PathBuf,
+    /// Re-applied by `restart()` so overrides such as PATH survive it.
+    extra_envs: Vec<(String, String)>,
     child: std::process::Child,
 }
 
@@ -126,6 +128,10 @@ impl TestServer {
             socket,
             state_dir,
             integration_home,
+            extra_envs: extra_envs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             child,
         }
     }
@@ -175,6 +181,7 @@ impl TestServer {
             .env("XDG_CONFIG_HOME", self.integration_home.join(".config"))
             .env("XDG_DATA_HOME", self.integration_home.join(".local/share"))
             .env("HOME", &self.integration_home)
+            .envs(self.extra_envs.iter().map(|(k, v)| (k, v)))
             .arg("--socket")
             .arg(&self.socket)
             .arg("--state-dir")

@@ -2250,3 +2250,25 @@ async fn watchdog_transition_reaches_the_snapshot() {
     assert_eq!(task["state"], "input_required", "{task}");
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn restart_keeps_the_extra_environment() {
+    let repo = TempGitRepo::new();
+    let mut srv = TestServer::start_with_env(&[("SIGNALTTY_MAX_PARALLEL_TASKS", "1")]).await;
+    srv.restart().await;
+    let mut c = srv.client().await;
+    let task = |label: &str| {
+        json!({
+            "repo": repo.path().to_string_lossy(),
+            "contract": {"objective": label},
+            "argv": ["sleep", "30"],
+        })
+    };
+    c.call("task.start", task("first")).await.unwrap();
+    let err = c.call("task.start", task("second")).await.unwrap_err();
+    assert!(
+        err.starts_with(signaltty_proto::code::RATE_LIMITED),
+        "the restarted server lost its env (limit 4, not 1): {err}"
+    );
+    srv.shutdown().await;
+}
