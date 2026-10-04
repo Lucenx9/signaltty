@@ -1989,6 +1989,184 @@ fn worker_chip_sits_with_the_pane_title() {
     }
 }
 
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn task_board_shows_columns_and_navigates_to_pane() {
+    let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+    let config = std::env::temp_dir().join(format!("signaltty-board-scene-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    gtk4::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
+    let snapshot = chip_scene_snapshot();
+    {
+        let mut model = app.model.borrow_mut();
+        model.cache.workspaces = vec![snapshot.workspace.clone()];
+        model
+            .cache
+            .snapshots
+            .insert(snapshot.workspace.id.clone(), snapshot.clone());
+    }
+    app.show_workspace("fix");
+    app.window.set_default_size(1280, 800);
+    app.present();
+
+    // 1. Test empty state
+    gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-board", None).unwrap();
+    let dialog = app.window.visible_dialog().unwrap();
+    wait_ui(|| has_label(&dialog.child().unwrap(), "No tasks yet"));
+    capture_workflow(&app.window, "board-empty");
+    dialog.close();
+    wait_ui(|| app.window.visible_dialog().is_none());
+
+    // 2. Populate 4 tasks in the model
+    let now = chrono::Utc::now();
+    let now_str = now.to_rfc3339();
+    let older_str = (now - chrono::Duration::minutes(5)).to_rfc3339();
+    {
+        let mut model = app.model.borrow_mut();
+        let tasks = vec![
+            json!({
+                "id": "task_working_1",
+                "context_id": "ctx1",
+                "pane_id": "pane_fix",
+                "label": "Implement Task Board",
+                "contract": {"objective": "Build task board view"},
+                "agent": "codex",
+                "source_repo": "/tmp/repo",
+                "worktree_path": "/tmp/wt1",
+                "branch": "orch/board",
+                "base_ref": "main",
+                "base_sha": "0123456789abcdef",
+                "state": "working",
+                "disposition": {"outcome": "none"},
+                "created_at": older_str,
+                "updated_at": now_str,
+            }),
+            json!({
+                "id": "task_needs_you_1",
+                "context_id": "ctx2",
+                "pane_id": "pane_fix_2",
+                "label": "Permission required for network",
+                "contract": {"objective": "Fetch upstream assets"},
+                "agent": "claude",
+                "source_repo": "/tmp/repo",
+                "worktree_path": "/tmp/wt2",
+                "branch": "orch/assets",
+                "base_ref": "main",
+                "base_sha": "0123456789abcdef",
+                "state": "input_required",
+                "disposition": {"outcome": "none"},
+                "created_at": older_str,
+                "updated_at": now_str,
+            }),
+            json!({
+                "id": "task_in_review_1",
+                "context_id": "ctx3",
+                "pane_id": "pane_fix_3",
+                "label": "Add unit tests for CLI",
+                "contract": {"objective": "Write unit tests"},
+                "agent": "opencode",
+                "source_repo": "/tmp/repo",
+                "worktree_path": "/tmp/wt3",
+                "branch": "orch/tests",
+                "base_ref": "main",
+                "base_sha": "0123456789abcdef",
+                "state": "completed",
+                "disposition": {"outcome": "none"},
+                "created_at": older_str,
+                "updated_at": now_str,
+            }),
+            json!({
+                "id": "task_done_1",
+                "context_id": "ctx4",
+                "pane_id": "pane_fix_4",
+                "label": "Initial multiplexer core",
+                "contract": {"objective": "Multiplexer"},
+                "agent": "codex",
+                "source_repo": "/tmp/repo",
+                "worktree_path": "/tmp/wt4",
+                "branch": "orch/core",
+                "base_ref": "main",
+                "base_sha": "0123456789abcdef",
+                "state": "completed",
+                "disposition": {"outcome": "merged"},
+                "created_at": older_str,
+                "updated_at": older_str,
+            }),
+        ];
+
+        for t in &tasks {
+            assert!(model
+                .tasks
+                .apply_event(signaltty_proto::event::TASK_CREATED, &json!({"task": t}),));
+        }
+    }
+
+    let style = adw::StyleManager::default();
+    for (theme, scheme) in [
+        ("dark", adw::ColorScheme::ForceDark),
+        ("light", adw::ColorScheme::ForceLight),
+    ] {
+        style.set_color_scheme(scheme);
+        gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-board", None).unwrap();
+        let dialog = app.window.visible_dialog().unwrap();
+        wait_ui(|| has_label(&dialog.child().unwrap(), "Working · 1"));
+        assert!(has_label(&dialog.child().unwrap(), "Needs you · 1"));
+        assert!(has_label(&dialog.child().unwrap(), "In review · 1"));
+        assert!(has_label(&dialog.child().unwrap(), "Done · 1"));
+        assert!(has_label(&dialog.child().unwrap(), "Implement Task Board"));
+        assert!(has_label(
+            &dialog.child().unwrap(),
+            "Permission required for network"
+        ));
+        assert!(has_label(
+            &dialog.child().unwrap(),
+            "Add unit tests for CLI"
+        ));
+        assert!(has_label(
+            &dialog.child().unwrap(),
+            "Initial multiplexer core"
+        ));
+
+        capture_workflow(&app.window, &format!("board-{theme}"));
+        if theme == "dark" {
+            dialog.close();
+            wait_ui(|| app.window.visible_dialog().is_none());
+        } else {
+            // Test activating a card row to focus pane and close dialog
+            let row = find_widget::<gtk4::ListBoxRow>(&dialog.child().unwrap()).unwrap();
+            row.activate();
+            wait_ui(|| app.window.visible_dialog().is_none());
+        }
+    }
+
+    app.window.destroy();
+    match previous_config {
+        Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+        None => std::env::remove_var("XDG_CONFIG_HOME"),
+    }
+}
+
 fn chip_scene_snapshot() -> crate::refresh::Snapshot {
     let now = chrono::Utc::now().to_rfc3339();
     let mut value = fixture("fix");
