@@ -61,6 +61,16 @@ pub fn config_dir() -> PathBuf {
     }
 }
 
+pub fn data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
+        PathBuf::from(dir).join("signaltty")
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".local/share/signaltty")
+    } else {
+        PathBuf::from("/tmp/signaltty-data")
+    }
+}
+
 /// Directory scanned for plugin packages (`<name>/plugin.toml`).
 pub fn plugin_dir() -> PathBuf {
     std::env::var("SIGNALTTY_PLUGIN_DIR")
@@ -79,6 +89,13 @@ pub fn agents_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn data_dir_xdg_env_override_wins() {
+        std::env::set_var("XDG_DATA_HOME", "/tmp/custom-xdg-data");
+        assert_eq!(data_dir(), PathBuf::from("/tmp/custom-xdg-data/signaltty"));
+        std::env::remove_var("XDG_DATA_HOME");
+    }
 
     #[test]
     fn socket_env_override_wins() {

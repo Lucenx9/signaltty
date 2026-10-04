@@ -175,6 +175,108 @@ pub fn git_info(cwd: &str) -> GitInfo {
     }
 }
 
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::{Path, PathBuf};
+
+/// Resolve base_ref into a 40-character commit SHA.
+/// If fetch_first is true, runs `git fetch origin` first (best effort).
+pub fn resolve_base_ref(repo: &str, base_ref: &str, fetch_first: bool) -> Result<String, String> {
+    if fetch_first {
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["fetch", "origin"])
+            .output();
+    }
+    let ref_spec = format!("{base_ref}^{{commit}}");
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", &ref_spec])
+        .output()
+        .map_err(|e| format!("git rev-parse failed: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cannot resolve base_ref '{base_ref}' in repo '{repo}'"
+        ));
+    }
+    let sha = String::from_utf8(out.stdout)
+        .map_err(|e| format!("invalid utf-8 in rev-parse output: {e}"))?
+        .trim()
+        .to_string();
+    if sha.len() != 40 {
+        return Err(format!("expected 40-char SHA, got '{sha}'"));
+    }
+    Ok(sha)
+}
+
+/// Detect the currently checked-out branch in repo.
+/// Returns None if HEAD is detached or outside a branch.
+pub fn detect_target_branch(repo: &str) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["branch", "--show-current"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    if branch.is_empty() {
+        None
+    } else {
+        Some(branch)
+    }
+}
+
+/// Check if a local branch exists in the repository.
+pub fn branch_exists(repo: &str, branch: &str) -> bool {
+    let ref_spec = format!("refs/heads/{branch}");
+    Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", &ref_spec])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// Sanitize branch name for use as a directory component (slashes -> dashes, etc.).
+pub fn sanitize_branch_for_path(branch: &str) -> String {
+    branch
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Compute default worktree path under $XDG_DATA_HOME/signaltty/worktrees/<repo-name>-<short-hash>/<sanitized-branch>.
+pub fn default_worktree_path(repo: &str, branch: &str) -> PathBuf {
+    let repo_path = Path::new(repo);
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let repo_dirname = canonical
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("repo");
+    let mut hasher = DefaultHasher::new();
+    canonical.to_string_lossy().hash(&mut hasher);
+    let short_hash = format!("{:08x}", (hasher.finish() as u32));
+    let sanitized_branch = sanitize_branch_for_path(branch);
+
+    signaltty_core::paths::data_dir()
+        .join("worktrees")
+        .join(format!("{repo_dirname}-{short_hash}"))
+        .join(sanitized_branch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,5 +429,37 @@ mod tests {
             .iter()
             .any(|f| f.path == "new.txt" && f.untracked));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn base_ref_resolution_and_branch_helpers() {
+        let dir = fixture_repo("helpers");
+        let dir_str = dir.to_str().unwrap();
+
+        // resolve_base_ref
+        let head_sha = resolve_base_ref(dir_str, "HEAD", false).unwrap();
+        assert_eq!(head_sha.len(), 40);
+
+        // bad base_ref
+        assert!(resolve_base_ref(dir_str, "no-such-ref-12345", false).is_err());
+
+        // branch_exists
+        let current_branch = detect_target_branch(dir_str).unwrap();
+        assert!(branch_exists(dir_str, &current_branch));
+        assert!(!branch_exists(dir_str, "nonexistent-branch"));
+
+        // sanitize_branch_for_path
+        assert_eq!(
+            sanitize_branch_for_path("feature/my-task:v1"),
+            "feature-my-task-v1"
+        );
+
+        // default_worktree_path
+        let wt = default_worktree_path(dir_str, "feature/foo");
+        let wt_str = wt.to_string_lossy();
+        assert!(wt_str.contains("worktrees"));
+        assert!(wt_str.contains("feature-foo"));
+
+        std::fs::remove_dir_all(dir).ok();
     }
 }

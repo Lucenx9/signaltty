@@ -23,6 +23,17 @@ use crate::router::{resolve_workspace, unique_handle, Ctx};
 pub struct Worktrees {
     mutations: tokio::sync::Mutex<()>,
     pub references: PathReferences,
+    path_locks: Arc<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+impl Worktrees {
+    pub fn path_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.path_locks.lock().unwrap();
+        locks
+            .entry(path.to_path_buf())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
 }
 
 #[derive(Default)]
@@ -523,6 +534,64 @@ pub async fn remove(ctx: &Ctx, p: WorktreeRemove) -> Result<Value, ParamError> {
         json!({"operation":"remove","path":cwd,"workspace_id":ws.id}),
     );
     Ok(json!({"removed":true,"path":cwd}))
+}
+
+pub async fn create_task_worktree(
+    repo: &str,
+    worktree_path: &Path,
+    branch: &str,
+    base_sha: &str,
+    preexisting_branch: bool,
+) -> Result<(), ParamError> {
+    if worktree_path.exists() {
+        return Err(bad_params(format!(
+            "worktree path is already occupied: {}",
+            worktree_path.display()
+        )));
+    }
+    if let Some(parent) = worktree_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            (
+                code::IO_ERROR.into(),
+                format!("failed to create worktree parent dir: {e}"),
+            )
+        })?;
+    }
+    let path_str = worktree_path.to_string_lossy().to_string();
+    if preexisting_branch {
+        git(
+            repo,
+            &[
+                "worktree",
+                "add",
+                "--lock",
+                "--reason",
+                "managed by signaltty task",
+                "--",
+                &path_str,
+                branch,
+            ],
+        )
+        .await?;
+    } else {
+        git(
+            repo,
+            &[
+                "worktree",
+                "add",
+                "--lock",
+                "--reason",
+                "managed by signaltty task",
+                "-b",
+                branch,
+                "--",
+                &path_str,
+                base_sha,
+            ],
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
