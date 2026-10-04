@@ -34,6 +34,7 @@ use crate::notif::Notifier;
 use crate::refresh::{PendingRefresh, WorkspaceCache};
 use crate::sidebar::{self, Sidebar};
 use crate::status;
+use crate::task_chip::{self, TaskChipView, TaskIndex};
 use crate::terminal::{PaneAction, PaneCallbacks, PaneWidget};
 use crate::util::tilde;
 
@@ -43,6 +44,7 @@ mod tests;
 
 struct Model {
     cache: WorkspaceCache,
+    tasks: TaskIndex,
     active_ws: Option<String>,
     tabs: Vec<Tab>,
     panes: HashMap<String, Pane>,
@@ -261,6 +263,7 @@ impl App {
             notifier: Notifier::new(ui_tx),
             model: RefCell::new(Model {
                 cache: WorkspaceCache::default(),
+                tasks: TaskIndex::default(),
                 active_ws: None,
                 tabs: Vec::new(),
                 panes: HashMap::new(),
@@ -862,6 +865,93 @@ impl App {
             }
         }
         self.prune_widgets(&self.collect_live_panes());
+        if full {
+            self.seed_tasks().await;
+        }
+        self.paint_task_chips();
+    }
+
+    /// `task.list` on connect and reconnect. A list that races a newer
+    /// `task.updated` must not put a cleared chip back.
+    async fn seed_tasks(&self) {
+        let ticket = self.model.borrow().tasks.seed_ticket();
+        match self.actor.call("task.list", json!({"limit": 1000})).await {
+            Ok(value) => {
+                if let Some(tasks) = task_chip::parse_task_list(&value["tasks"]) {
+                    self.model.borrow_mut().tasks.complete_seed(ticket, tasks);
+                }
+            }
+            Err(e) => self.toast(&format!("Couldn't load tasks — {e}")),
+        }
+    }
+
+    /// Header and sidebar chips from the pane-keyed cache. The header
+    /// compares the task label with the pane title; the sidebar compares
+    /// it with the workspace name. Widgets already on screen are updated;
+    /// terminals are not rebuilt.
+    fn paint_task_chips(&self) {
+        let (by_pane, by_workspace) = {
+            let model = self.model.borrow();
+            let mut parent_labels: HashMap<String, String> = HashMap::new();
+            let mut pane_titles: HashMap<String, String> = HashMap::new();
+            let mut workspace_of: HashMap<String, String> = HashMap::new();
+            let mut workspace_names: HashMap<String, String> = HashMap::new();
+            for snapshot in model.cache.snapshots.values() {
+                workspace_names.insert(
+                    snapshot.workspace.id.clone(),
+                    snapshot.workspace.name.clone(),
+                );
+                for pane in &snapshot.panes {
+                    let parent = pane
+                        .label
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(pane.title.as_str());
+                    parent_labels.insert(pane.id.clone(), parent.to_string());
+                    pane_titles.insert(pane.id.clone(), pane.title.trim().to_string());
+                    workspace_of.insert(pane.id.clone(), snapshot.workspace.id.clone());
+                }
+            }
+            let mut by_pane: HashMap<String, TaskChipView> = HashMap::new();
+            let mut by_workspace: HashMap<String, Vec<TaskChipView>> = HashMap::new();
+            for task in model.tasks.iter() {
+                let Some(pane_id) = task.pane_id.as_deref() else {
+                    continue;
+                };
+                let parent = task
+                    .parent_pane_id
+                    .as_deref()
+                    .and_then(|id| parent_labels.get(id))
+                    .map(String::as_str);
+                let pane_name = pane_titles
+                    .get(pane_id)
+                    .map(String::as_str)
+                    .filter(|name| !name.is_empty());
+                by_pane.insert(
+                    pane_id.to_string(),
+                    task_chip::task_chip(task, parent, pane_name),
+                );
+                if let Some(ws) = workspace_of.get(pane_id) {
+                    let ws_name = workspace_names
+                        .get(ws)
+                        .map(String::as_str)
+                        .filter(|name| !name.is_empty());
+                    by_workspace
+                        .entry(ws.clone())
+                        .or_default()
+                        .push(task_chip::task_chip(task, parent, ws_name));
+                }
+            }
+            (by_pane, by_workspace)
+        };
+        {
+            let widgets = self.widgets.borrow();
+            for (id, widget) in widgets.iter() {
+                widget.set_task_chip(by_pane.get(id));
+            }
+        }
+        self.sidebar.set_task_chips(&by_workspace);
     }
 
     fn update_attention_button(&self, needing: &[Attention]) {
@@ -1318,12 +1408,16 @@ impl App {
             }
             UiEvent::ServerEvent { name, payload, .. } => {
                 crate::metrics::record("event", &name);
+                let task_changed = self.model.borrow_mut().tasks.apply_event(&name, &payload);
                 self.maybe_notify(&name, &payload);
                 self.pending_refresh.borrow_mut().on_event(
                     &self.model.borrow().cache,
                     &name,
                     &payload,
                 );
+                if task_changed {
+                    self.paint_task_chips();
+                }
                 self.schedule_refresh();
             }
         }

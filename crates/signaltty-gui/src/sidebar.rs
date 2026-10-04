@@ -8,7 +8,7 @@
 //!
 //! ```text
 //!  [AS] api-server            ◌ Working     mark · name · status slot
-//!  Bash(cargo test -p api)                  headline
+//!  [Task Working] Bash…                     task chips, then headline
 //!  feat/auth                     Claude     branch/dir · agents
 //! ```
 //!
@@ -25,6 +25,7 @@ use gtk4::prelude::*;
 use signaltty_core::{AgentKind, Attention, Lifecycle, Pane, Workspace};
 
 use crate::status::{self, StatusSlot};
+use crate::task_chip::{TaskChipView, TaskChipWidget};
 use crate::util::{tilde, time_ago};
 
 pub struct WsSummary {
@@ -219,6 +220,9 @@ struct Row {
     place: gtk4::Label,
     agents: gtk4::Label,
     close: gtk4::Button,
+    tasks: gtk4::Box,
+    chips: Vec<TaskChipWidget>,
+    chip_summary: String,
     /// Kept so the 30s tick can re-render time-derived text.
     summary: Option<WsSummary>,
 }
@@ -237,6 +241,11 @@ impl Row {
         let name = label(&["workspace-name"]);
         name.set_hexpand(true);
         let message = label(&["workspace-message"]);
+        message.set_hexpand(true);
+        let tasks = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        tasks.add_css_class("workspace-tasks");
+        tasks.set_valign(gtk4::Align::Center);
+        tasks.set_visible(false);
         let place = label(&["workspace-meta"]);
         place.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
         place.set_hexpand(true);
@@ -267,7 +276,10 @@ impl Row {
         grid.attach(&title, 0, 0, 1, 1);
         grid.attach(&status.widget, 1, 0, 1, 1);
         grid.attach(&close, 2, 0, 1, 1);
-        grid.attach(&message, 0, 1, 3, 1);
+        let activity = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        activity.append(&tasks);
+        activity.append(&message);
+        grid.attach(&activity, 0, 1, 3, 1);
         let metadata = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         metadata.append(&place);
         metadata.append(&agents);
@@ -286,8 +298,31 @@ impl Row {
             place,
             agents,
             close,
+            tasks,
+            chips: Vec::new(),
+            chip_summary: String::new(),
             summary: None,
         }
+    }
+
+    /// Reconcile worker chips on this row. Hidden when the workspace
+    /// has no task panes, so ordinary rows keep their three lines.
+    fn set_chips(&mut self, views: &[TaskChipView]) {
+        while self.chips.len() < views.len() {
+            let chip = TaskChipWidget::new();
+            self.tasks.append(&chip.root);
+            self.chips.push(chip);
+        }
+        for (i, chip) in self.chips.iter().enumerate() {
+            chip.set(views.get(i));
+        }
+        self.tasks.set_visible(!views.is_empty());
+        self.chip_summary = views
+            .iter()
+            .map(|view| view.accessible_name.clone())
+            .collect::<Vec<_>>()
+            .join("; ");
+        self.refresh_time();
     }
 
     fn update(&mut self, s: WsSummary) {
@@ -324,6 +359,7 @@ impl Row {
         let headline = s.headline(Utc::now());
         let description = [
             self.name.text().to_string(),
+            self.chip_summary.clone(),
             status::attention_tooltip(s.attention).to_string(),
             headline.clone(),
             s.place.clone(),
@@ -476,6 +512,18 @@ impl Sidebar {
         }
         // Section membership can change without a move.
         self.list.invalidate_headers();
+    }
+
+    /// Worker chips for workspaces that own task panes. Rows with no
+    /// entry hide the chip box. Updates the existing chips in place.
+    pub fn set_task_chips(
+        &self,
+        by_workspace: &std::collections::HashMap<String, Vec<TaskChipView>>,
+    ) {
+        let empty = Vec::new();
+        for row in self.rows.borrow_mut().iter_mut() {
+            row.set_chips(by_workspace.get(&row.id).unwrap_or(&empty));
+        }
     }
 
     /// Re-render relative times ("now" → "2m") between server events.

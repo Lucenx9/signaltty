@@ -13,8 +13,8 @@
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
-use signaltty_core::model::{Layout, NotificationSeverity, SplitDir};
-use signaltty_core::state::{Attention, Lifecycle};
+use signaltty_core::model::{Contract, Layout, NotificationSeverity, Relationship, SplitDir};
+use signaltty_core::state::{Attention, Lifecycle, TaskState};
 use signaltty_proto::code;
 
 pub type ParamError = (String, String);
@@ -183,6 +183,7 @@ impl SplitDirection {
 pub enum ReadMode {
     Screen,
     Tail,
+    Rendered,
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,6 +197,10 @@ pub struct PaneSpawn {
     pub cols: Option<u16>,
     pub rows: Option<u16>,
     pub agent_hint: Option<String>,
+    pub parent_pane_id: Option<String>,
+    pub label: Option<String>,
+    pub relationship: Option<Relationship>,
+    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -233,6 +238,7 @@ pub struct PaneRead {
     pub mode: Option<ReadMode>,
     pub strip_ansi: Option<bool>,
     pub lines: Option<u64>,
+    pub after_seq: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -311,6 +317,7 @@ pub struct ReportSession {
 pub struct Subscribe {
     pub events: Option<Vec<String>>,
     pub from_seq: Option<u64>,
+    pub task_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,6 +365,96 @@ pub fn validate_until(until: &str) -> Result<(), ParamError> {
         return Err(bad_params(format!("bad 'until': {until}")));
     }
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PaneSubmit {
+    pub pane_id: String,
+    pub text: String,
+    pub submit_delay_ms: Option<u64>,
+    pub stall_timeout_s: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskStart {
+    pub repo: String,
+    pub contract: Contract,
+    pub agent: Option<String>,
+    pub argv: Option<Vec<String>>,
+    pub label: Option<String>,
+    pub parent_pane_id: Option<String>,
+    pub context_id: Option<String>,
+    pub client_request_id: Option<String>,
+    pub relationship: Option<Relationship>,
+    pub base_ref: Option<String>,
+    pub fetch_first: Option<bool>,
+    pub branch: Option<String>,
+    pub path: Option<String>,
+    pub ready_timeout_s: Option<u64>,
+    pub stall_timeout_s: Option<u64>,
+    /// Paste-to-Enter delay for the background first submit. Default 300,
+    /// the same value as `pane.submit`.
+    pub submit_delay_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskGet {
+    pub task_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskList {
+    pub context_id: Option<String>,
+    pub state: Option<TaskState>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskCancel {
+    pub task_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskWait {
+    pub task_id: Option<String>,
+    pub context_id: Option<String>,
+    pub until: Option<Value>,
+    pub timeout_s: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskReport {
+    pub task_id: Option<String>,
+    pub pane_id: Option<String>,
+    pub status: signaltty_core::model::TaskResultStatus,
+    pub summary: String,
+    pub artifacts: Option<Vec<signaltty_core::model::Artifact>>,
+    pub evidence: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttentionPending {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskDiff {
+    pub task_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskFileDiff {
+    pub task_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskFinish {
+    pub task_id: String,
+    pub mode: String,
+    pub target_ref: Option<String>,
+    pub delete_branch: Option<bool>,
+    pub ignore_dirty: Option<bool>,
 }
 
 #[cfg(test)]

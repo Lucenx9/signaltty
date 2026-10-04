@@ -40,16 +40,29 @@ impl AgentAdapter for CodexAdapter {
                 attention: None,
                 message: None,
             },
-            "PermissionRequest" => LifecycleDecision {
-                lifecycle: Some(Lifecycle::Blocked),
-                attention: Some(Attention::PermissionRequired),
-                message: Some("approval requested".to_string()),
-            },
-            "Stop" | "agent-turn-complete" => LifecycleDecision {
-                lifecycle: Some(Lifecycle::Done),
-                attention: Some(Attention::Unread),
-                message: Some("turn complete".to_string()),
-            },
+            "SubagentStop" => LifecycleDecision::default(),
+            "PermissionRequest" => {
+                let msg = ev
+                    .payload_str("prompt")
+                    .or_else(|| ev.payload_str("tool_name"))
+                    .or_else(|| ev.payload_str("description"))
+                    .unwrap_or_else(|| "approval requested".to_string());
+                LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Blocked),
+                    attention: Some(Attention::PermissionRequired),
+                    message: Some(msg),
+                }
+            }
+            "Stop" | "agent-turn-complete" => {
+                let msg = ev
+                    .payload_str("last_assistant_message")
+                    .unwrap_or_else(|| "turn complete".to_string());
+                LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Done),
+                    attention: Some(Attention::Unread),
+                    message: Some(msg),
+                }
+            }
             "SessionEnd" => LifecycleDecision {
                 lifecycle: Some(Lifecycle::Done),
                 attention: Some(Attention::Unread),
@@ -69,7 +82,8 @@ impl AgentAdapter for CodexAdapter {
             "PermissionRequest" => Some(NotificationDraft {
                 title: "Codex needs approval".to_string(),
                 body: ev
-                    .payload_str("tool_name")
+                    .payload_str("prompt")
+                    .or_else(|| ev.payload_str("tool_name"))
                     .or_else(|| ev.payload_str("description")),
                 severity: NotificationSeverity::Warning,
             }),
@@ -189,5 +203,15 @@ mod tests {
             cwd: "/tmp".to_string(),
             pid: None
         }));
+    }
+    #[test]
+    fn tool_hooks_map_to_working_and_subagent_stop_changes_nothing() {
+        let a = CodexAdapter;
+        for hook in ["PreToolUse", "PostToolUse", "PreCompact", "PostCompact"] {
+            let d = a.lifecycle_state(&ev(hook, json!({})));
+            assert_eq!(d.lifecycle, Some(Lifecycle::Working), "{hook}");
+        }
+        let d = a.lifecycle_state(&ev("SubagentStop", json!({})));
+        assert_eq!(d.lifecycle, None);
     }
 }

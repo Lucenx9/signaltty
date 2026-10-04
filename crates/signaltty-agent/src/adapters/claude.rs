@@ -38,33 +38,49 @@ impl AgentAdapter for ClaudeAdapter {
                 attention: None,
                 message: None,
             },
-            "PermissionRequest" => LifecycleDecision {
-                lifecycle: Some(Lifecycle::Blocked),
-                attention: Some(Attention::PermissionRequired),
-                message: Some("permission requested".into()),
-            },
+            "SubagentStop" => LifecycleDecision::default(),
+            "PermissionRequest" => {
+                let msg = ev
+                    .payload_str("prompt")
+                    .or_else(|| ev.payload_str("message"))
+                    .unwrap_or_else(|| "permission requested".to_string());
+                LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Blocked),
+                    attention: Some(Attention::PermissionRequired),
+                    message: Some(msg),
+                }
+            }
             "Notification" => {
                 // idle_prompt (agent waiting on user) vs permission prompt.
                 let kind = ev.payload_str("notification_type").unwrap_or_default();
-                if kind.contains("permission") {
-                    LifecycleDecision {
-                        lifecycle: Some(Lifecycle::Blocked),
-                        attention: Some(Attention::PermissionRequired),
-                        message: Some("permission requested".to_string()),
+                let permission = kind.contains("permission");
+                let msg = ev.payload_str("message").unwrap_or_else(|| {
+                    if permission {
+                        "permission requested".to_string()
+                    } else {
+                        "input requested".to_string()
                     }
-                } else {
-                    LifecycleDecision {
-                        lifecycle: Some(Lifecycle::Blocked),
-                        attention: Some(Attention::InputRequired),
-                        message: Some("input requested".to_string()),
-                    }
+                });
+                LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Blocked),
+                    attention: Some(if permission {
+                        Attention::PermissionRequired
+                    } else {
+                        Attention::InputRequired
+                    }),
+                    message: Some(msg),
                 }
             }
-            "Stop" => LifecycleDecision {
-                lifecycle: Some(Lifecycle::Done),
-                attention: Some(Attention::Unread),
-                message: Some("turn complete".to_string()),
-            },
+            "Stop" => {
+                let msg = ev
+                    .payload_str("last_assistant_message")
+                    .unwrap_or_else(|| "turn complete".to_string());
+                LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Done),
+                    attention: Some(Attention::Unread),
+                    message: Some(msg),
+                }
+            }
             "SessionEnd" => LifecycleDecision {
                 lifecycle: Some(Lifecycle::Done),
                 attention: Some(Attention::Unread),
@@ -80,6 +96,13 @@ impl AgentAdapter for ClaudeAdapter {
 
     fn notification_event(&self, ev: &AdapterEvent) -> Option<NotificationDraft> {
         match ev.hook.as_str() {
+            "PermissionRequest" => Some(NotificationDraft {
+                title: "Claude needs approval".to_string(),
+                body: ev
+                    .payload_str("prompt")
+                    .or_else(|| ev.payload_str("message")),
+                severity: NotificationSeverity::Warning,
+            }),
             "Notification" => {
                 let kind = ev.payload_str("notification_type").unwrap_or_default();
                 let permission = kind.contains("permission");
@@ -170,5 +193,15 @@ mod tests {
             a.resume_capability("abc").unwrap().argv,
             vec!["claude", "--resume", "abc"]
         );
+    }
+    #[test]
+    fn tool_hooks_map_to_working_and_subagent_stop_changes_nothing() {
+        let a = ClaudeAdapter;
+        for hook in ["PreToolUse", "PostToolUse", "PreCompact"] {
+            let d = a.lifecycle_state(&ev(hook, json!({})));
+            assert_eq!(d.lifecycle, Some(Lifecycle::Working), "{hook}");
+        }
+        let d = a.lifecycle_state(&ev("SubagentStop", json!({})));
+        assert_eq!(d.lifecycle, None);
     }
 }

@@ -66,6 +66,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         .write()
         .unwrap()
         .configure_events(audit, sequence, bcast.clone());
+    crate::persist::recover_tasks(&store);
     let ctx = Arc::new(Ctx {
         store: store.clone(),
         approvals: crate::approvals::Approvals::default(),
@@ -117,6 +118,64 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 if !events.is_empty() {
                     ctx.mark_persist();
                 }
+            }
+        });
+    }
+
+    // Silent-worker watchdog:
+    // If a task stays `working` with no hook activity and no PTY output
+    // for worker_silent_timeout_s, transition to `input_required` with
+    // {reason: "worker_silent"}
+    {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+            loop {
+                interval.tick().await;
+                let timeout_s = ctx.config.worker_silent_timeout_s;
+                if timeout_s == 0 {
+                    continue;
+                }
+                let now = chrono::Utc::now();
+                let silent_tasks: Vec<(String, String)> = {
+                    let s = ctx.store.read().unwrap();
+                    s.tasks
+                        .values()
+                        .filter_map(|t| {
+                            if t.state == signaltty_core::TaskState::Working {
+                                if let Some(pid) = &t.pane_id {
+                                    if let Some(p) = s.panes.get(pid) {
+                                        let elapsed = now
+                                            .signed_duration_since(p.last_activity_at)
+                                            .num_seconds();
+                                        if elapsed >= timeout_s as i64 {
+                                            return Some((t.id.clone(), pid.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                            None
+                        })
+                        .collect()
+                };
+
+                if silent_tasks.is_empty() {
+                    continue;
+                }
+                let mut s = ctx.store.write().unwrap();
+                for (task_id, _pid) in silent_tasks {
+                    if let Some(t) = s.tasks.get(&task_id) {
+                        if t.state == signaltty_core::TaskState::Working {
+                            let evidence = serde_json::json!({
+                                "reason": "worker_silent",
+                                "timeout_s": timeout_s,
+                            });
+                            s.task_input_required_on_turn_end(&task_id, Some(evidence));
+                        }
+                    }
+                }
+                drop(s);
+                ctx.mark_persist();
             }
         });
     }
@@ -208,6 +267,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 struct ConnState {
     ptys: PtyManager,
     subs: Vec<String>,
+    task_ids: Option<Vec<String>>,
     attached: HashSet<String>,
     fence: u64,
     last_received: u64,
@@ -231,6 +291,7 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
     let mut state = ConnState {
         ptys: ctx.ptys.clone(),
         subs: Vec::new(),
+        task_ids: None,
         attached: HashSet::new(),
         fence: 0,
         last_received: 0,
@@ -268,7 +329,10 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                 }
                 let native_wait = req.method == signaltty_proto::method::HOOK_EVENT
                     && req.params.get("wait_for_answer").and_then(serde_json::Value::as_bool) == Some(true);
-                let (mut resp, effect) = if native_wait || req.method == signaltty_proto::method::WAIT {
+                let is_wait_call = native_wait
+                    || req.method == signaltty_proto::method::WAIT
+                    || req.method == signaltty_proto::method::TASK_WAIT;
+                let (mut resp, effect) = if is_wait_call {
                     tokio::select! {
                         result = dispatch(&ctx, &req) => result,
                         _ = lines.next_line() => break,
@@ -295,6 +359,9 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                 }
                 if let Some(subs) = effect.subscribe {
                     state.subs = subs;
+                }
+                if let Some(task_ids) = effect.task_ids {
+                    state.task_ids = Some(task_ids);
                 }
                 if let Some(fence) = effect.fence { state.fence = fence; }
                 if effect.close { break; }
@@ -327,7 +394,20 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                 let for_attached = ev.name == signaltty_proto::event::PTY_DATA
                     && pane_id.map(|p| state.attached.contains(p)).unwrap_or(false);
                 let for_sub = state.subs.iter().any(|g| signaltty_proto::glob_matches(g, &ev.name));
-                if for_attached || (for_sub && ev.name != signaltty_proto::event::PTY_DATA) {
+                let for_task = if let Some(ref tids) = state.task_ids {
+                    if ev.name.starts_with("task.") {
+                        ev.payload
+                            .get("task_id")
+                            .and_then(|v| v.as_str())
+                            .map(|tid| tids.iter().any(|t| t == tid))
+                            .unwrap_or(false)
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                };
+                if for_attached || (for_sub && for_task && ev.name != signaltty_proto::event::PTY_DATA) {
                     let msg = EventMsg::new(&ev.name, ev.seq, ev.payload);
                     if send_line(writer.clone(), msg.to_line()).await.is_err() {
                         break;
@@ -353,6 +433,10 @@ mod tests {
             plugin_dir: base.join("plugins"),
             agents_dir: base.join("agents"),
             integration_home: Some(base.join("home")),
+            max_parallel_tasks: crate::config::DEFAULT_MAX_PARALLEL_TASKS,
+            worker_silent_timeout_s: crate::config::DEFAULT_WORKER_SILENT_TIMEOUT_S,
+            merge_timeout_ms: crate::config::DEFAULT_MERGE_TIMEOUT_MS,
+            fetch_timeout_ms: crate::config::DEFAULT_FETCH_TIMEOUT_MS,
         };
         let mut store = Store::new();
         let pane = signaltty_core::model::Pane::new(
@@ -426,6 +510,80 @@ mod tests {
             assert_eq!(ctx.bcast.receiver_count(), 0, "{cause}");
             std::fs::remove_dir_all(base).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn pending_task_wait_releases_receivers_on_eof() {
+        let (ctx, base, _pane) = test_context();
+        let task_id = {
+            let mut store = ctx.store.write().unwrap();
+            let now = chrono::Utc::now();
+            let id = signaltty_core::ids::new_task_id();
+            store.tasks.insert(
+                id.clone(),
+                signaltty_core::model::Task {
+                    id: id.clone(),
+                    context_id: signaltty_core::ids::new_context_id(),
+                    parent_task_id: None,
+                    pane_id: None,
+                    parent_pane_id: None,
+                    root_pane_id: None,
+                    relationship: signaltty_core::model::Relationship::Subagent,
+                    label: "wait-eof".into(),
+                    contract: signaltty_core::model::Contract::new("wait").unwrap(),
+                    agent: None,
+                    source_repo: std::path::PathBuf::from("/tmp/repo"),
+                    target_branch: Some("main".into()),
+                    worktree_path: std::path::PathBuf::from("/tmp/wt"),
+                    branch: "task-wait".into(),
+                    preexisting_branch: false,
+                    base_ref: "HEAD".into(),
+                    base_sha: "abc".into(),
+                    state: signaltty_core::state::TaskState::Pending,
+                    result: None,
+                    disposition: signaltty_core::model::Disposition::default(),
+                    status_reason: None,
+                    finish_error: None,
+                    worker_pid: None,
+                    worker_cmd: None,
+                    client_request_id: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+            );
+            id
+        };
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let owned = ctx.clone();
+        let task =
+            tokio::spawn(
+                async move { handle_conn(owned, server).await.map_err(|e| e.to_string()) },
+            );
+        let request = serde_json::json!({
+            "protocol": signaltty_proto::PROTOCOL,
+            "id": "wait",
+            "method": "task.wait",
+            "params": {"task_id": task_id, "until": "completed", "timeout_s": 3600}
+        });
+        client
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while ctx.bcast.receiver_count() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(client);
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(ctx.bcast.receiver_count(), 0);
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[tokio::test]
@@ -565,6 +723,7 @@ mod tests {
             let _connection = ConnState {
                 ptys: ptys.clone(),
                 subs: Vec::new(),
+                task_ids: None,
                 attached: HashSet::from(["pane".to_string()]),
                 fence: 0,
                 last_received: 0,

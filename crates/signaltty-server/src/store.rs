@@ -8,8 +8,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use signaltty_core::model::{Notification, Pane, Tab, Workspace};
-use signaltty_core::state::{Attention, Lifecycle};
+use signaltty_core::model::{
+    Disposition, DispositionOutcome, Notification, Pane, Tab, Task, TaskResult, Workspace,
+};
+use signaltty_core::state::{Attention, Lifecycle, TaskState};
+use signaltty_proto::{code, event};
 
 use crate::audit::{AuditLog, EventSequence};
 
@@ -55,6 +58,7 @@ pub struct Store {
     pub workspaces: HashMap<String, Workspace>,
     pub tabs: HashMap<String, Tab>,
     pub panes: HashMap<String, Pane>,
+    pub tasks: HashMap<String, Task>,
     pub notifications: VecDeque<Notification>,
     pub events: VecDeque<StoredEvent>,
     pub seq: u64,
@@ -64,6 +68,7 @@ pub struct Store {
     publisher: Option<tokio::sync::broadcast::Sender<StoredEvent>>,
     ring_retained_after: u64,
     progress: HashMap<String, PaneProgress>,
+    pub task_reservations: usize,
 }
 
 impl Store {
@@ -72,6 +77,7 @@ impl Store {
             workspaces: HashMap::new(),
             tabs: HashMap::new(),
             panes: HashMap::new(),
+            tasks: HashMap::new(),
             notifications: VecDeque::new(),
             events: VecDeque::new(),
             seq: 0,
@@ -81,6 +87,7 @@ impl Store {
             publisher: None,
             ring_retained_after: 0,
             progress: HashMap::new(),
+            task_reservations: 0,
         }
     }
 
@@ -133,6 +140,18 @@ impl Store {
             signaltty_proto::event::PANE_CLOSED,
             json!({"pane_id":pane_id}),
         );
+        // Closing the worker pane fails its non-terminal task exactly once:
+        // `task_fail` is a no-op on terminal tasks, so whichever of
+        // `on_exit`/`remove_pane` runs first wins and the second is silent.
+        // (Discard/cancel transition first, so their closes are no-ops here.)
+        let task_id = self
+            .tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id) && !t.state.is_terminal())
+            .map(|t| t.id.clone());
+        if let Some(tid) = task_id {
+            self.task_fail(&tid, Some(json!({"reason": "pane_closed"})));
+        }
         Some(pane)
     }
 
@@ -154,6 +173,18 @@ impl Store {
         self.set_lifecycle(pane_id, Lifecycle::Exited);
         self.raise_attention(pane_id, Attention::Unread);
         self.clear_decision(pane_id, "pane_exited");
+
+        let task_id = self
+            .tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id) && !t.state.is_terminal())
+            .map(|t| t.id.clone());
+        if let Some(tid) = task_id {
+            self.task_fail(
+                &tid,
+                Some(json!({"reason": "pane_exited", "exit_code": code})),
+            );
+        }
     }
 
     pub fn matching_transition(&self, pane_id: &str, outcome: &str) -> Option<u64> {
@@ -194,7 +225,14 @@ impl Store {
         Some(self.emit(signaltty_proto::event::PANE_UPDATED, json!({"pane":pane})))
     }
 
-    pub fn replay(&self, after: u64, patterns: &[String]) -> (Value, Vec<StoredEvent>) {
+    /// `task_ids` scopes `task.*` events to those tasks; the filter runs before
+    /// the cap and the `returned` count so unrelated traffic cannot truncate.
+    pub fn replay(
+        &self,
+        after: u64,
+        patterns: &[String],
+        task_ids: Option<&[String]>,
+    ) -> (Value, Vec<StoredEvent>) {
         let history = self.audit.as_ref().map(AuditLog::history);
         let retained_after = history
             .as_ref()
@@ -230,6 +268,13 @@ impl Store {
                         && patterns
                             .iter()
                             .any(|g| signaltty_proto::glob_matches(g, &e.name))
+                        && task_ids.is_none_or(|tids| {
+                            !e.name.starts_with("task.")
+                                || e.payload
+                                    .get("task_id")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|tid| tids.iter().any(|t| t == tid))
+                        })
                 })
                 .collect();
             if events.len() > crate::audit::REPLAY_CAP {
@@ -334,6 +379,31 @@ impl Default for Store {
 
 pub type SharedStore = Arc<RwLock<Store>>;
 
+pub struct TaskReservation {
+    store: SharedStore,
+    active: bool,
+}
+
+impl TaskReservation {
+    pub fn commit(mut self, task: Task) -> StoredEvent {
+        let mut s = self.store.write().unwrap();
+        s.task_reservations = s.task_reservations.saturating_sub(1);
+        let ev = s.task_create(task);
+        self.active = false;
+        ev
+    }
+}
+
+impl Drop for TaskReservation {
+    fn drop(&mut self) {
+        if self.active {
+            if let Ok(mut s) = self.store.write() {
+                s.task_reservations = s.task_reservations.saturating_sub(1);
+            }
+        }
+    }
+}
+
 impl Store {
     /// Set lifecycle and publish its paired event only when changed.
     /// Callers hold the lock, so one event costs one lock cycle and the
@@ -404,6 +474,16 @@ impl Store {
                 "prev": prev.map(|d| d.id),
             }),
         );
+
+        let task_id = self
+            .tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::Working)
+            .map(|t| t.id.clone());
+        if let Some(tid) = task_id {
+            self.task_input_required_on_decision(&tid, &decision.id);
+        }
+
         Some(ev)
     }
 
@@ -431,10 +511,27 @@ impl Store {
                 "option_id": option_id,
             }),
         );
+
+        let task_id = self
+            .tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::InputRequired)
+            .map(|t| t.id.clone());
+        if let Some(tid) = task_id {
+            self.task_resume_working(&tid);
+        }
+
         Some(ev)
     }
 
     /// Drop the pending decision without answering. `None` when absent.
+    ///
+    /// Never resumes a worker task: only an explicit answer (via
+    /// `answer_decision`) or an accepted follow-up submit moves an
+    /// `input_required` task back to `working`. Timeout, disconnect
+    /// (`native_cancelled`) and turn-end (`moved_on`) drops park the task
+    /// in `input_required` so the stall is visible instead of silently
+    /// resuming unanswered work.
     pub fn clear_decision(&mut self, pane_id: &str, reason: &str) -> Option<StoredEvent> {
         let pane = self.panes.get_mut(pane_id)?;
         let dropped = pane.pending_decision.take()?;
@@ -478,6 +575,297 @@ impl Store {
         }
         Some(ev)
     }
+
+    pub fn reserve_task_slot(
+        store: &SharedStore,
+        max: usize,
+    ) -> Result<TaskReservation, (usize, usize)> {
+        let mut s = store.write().unwrap();
+        let active =
+            s.tasks.values().filter(|t| !t.state.is_terminal()).count() + s.task_reservations;
+        if active >= max {
+            return Err((active, max));
+        }
+        s.task_reservations += 1;
+        Ok(TaskReservation {
+            store: Arc::clone(store),
+            active: true,
+        })
+    }
+
+    pub fn task_create(&mut self, task: Task) -> StoredEvent {
+        let payload = json!({
+            "task_id": task.id,
+            "context_id": task.context_id,
+            "task": task,
+        });
+        self.tasks.insert(task.id.clone(), task);
+        self.emit(event::TASK_CREATED, payload)
+    }
+
+    fn emit_task_updated(&mut self, task: &Task, prev_state: Option<TaskState>) -> StoredEvent {
+        let mut payload = json!({
+            "task_id": task.id,
+            "context_id": task.context_id,
+            "task": task,
+        });
+        if let Some(prev) = prev_state {
+            payload["prev_state"] = json!(prev.as_str());
+        }
+        self.emit(event::TASK_UPDATED, payload)
+    }
+
+    pub fn task_background_ready(&mut self, task_id: &str) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            if task.state != TaskState::Pending {
+                return None;
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::Working, now).ok()?;
+            // A Stop that landed before the submit committed leaves the pane
+            // lifecycle done with no report: park in input_required here, in
+            // the same write, instead of a working state nobody will end.
+            // Idle is not turn end.
+            if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
+                task.state = TaskState::InputRequired;
+                task.status_reason = Some(evidence);
+                task.updated_at = now;
+            }
+            (task.clone(), prev_state)
+        };
+        let ev = self.emit_task_updated(&task_clone, Some(prev_state));
+        Some(ev)
+    }
+
+    /// Evidence for a turn that ended with no report: the worker pane
+    /// lifecycle is already `done` while the task holds no result.
+    /// `None` when the pane is still live-turning, idle, or reported.
+    fn turn_end_evidence(panes: &HashMap<String, Pane>, task: &Task) -> Option<Value> {
+        if task.result.is_some() {
+            return None;
+        }
+        let pane = task.pane_id.as_deref().and_then(|pid| panes.get(pid))?;
+        if pane.lifecycle != Lifecycle::Done {
+            return None;
+        }
+        Some(json!({
+            "reason": "turn_ended_without_report",
+            "last_message": pane.last_message,
+        }))
+    }
+
+    pub fn task_report(
+        &mut self,
+        task_id: &str,
+        result: TaskResult,
+    ) -> Result<(StoredEvent, StoredEvent), (String, String)> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id).ok_or_else(|| {
+                (
+                    code::NO_SUCH_TASK.to_string(),
+                    format!("no such task '{task_id}'"),
+                )
+            })?;
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.apply_report(result.clone(), now).map_err(|e| {
+                (
+                    code::BAD_PARAMS.to_string(),
+                    format!("failed to apply task report: {e}"),
+                )
+            })?;
+            (task.clone(), prev_state)
+        };
+        let result_ev = self.emit(
+            event::TASK_RESULT,
+            json!({
+                "task_id": task_clone.id,
+                "context_id": task_clone.context_id,
+                "result": result,
+            }),
+        );
+        let update_ev = self.emit_task_updated(&task_clone, Some(prev_state));
+        Ok((result_ev, update_ev))
+    }
+
+    pub fn task_cancel(&mut self, task_id: &str) -> Result<StoredEvent, (String, String)> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id).ok_or_else(|| {
+                (
+                    code::NO_SUCH_TASK.to_string(),
+                    format!("no such task '{task_id}'"),
+                )
+            })?;
+            if task.state.is_terminal() {
+                return Err((
+                    code::BAD_PARAMS.to_string(),
+                    format!("task is already terminal ({})", task.state.as_str()),
+                ));
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::Canceled, now).map_err(|e| {
+                (
+                    code::BAD_PARAMS.to_string(),
+                    format!("cannot cancel task: {e}"),
+                )
+            })?;
+            (task.clone(), prev_state)
+        };
+        let ev = self.emit_task_updated(&task_clone, Some(prev_state));
+        Ok(ev)
+    }
+
+    pub fn task_fail(&mut self, task_id: &str, evidence: Option<Value>) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            if task.state.is_terminal() {
+                return None;
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::Failed, now).ok()?;
+            if evidence.is_some() {
+                task.status_reason = evidence;
+            }
+            (task.clone(), prev_state)
+        };
+        let ev = self.emit_task_updated(&task_clone, Some(prev_state));
+        Some(ev)
+    }
+
+    pub fn task_finish_record(
+        &mut self,
+        task_id: &str,
+        disposition: Disposition,
+        finish_error: Option<Value>,
+    ) -> Result<StoredEvent, (String, String)> {
+        let task_clone = {
+            let task = self.tasks.get_mut(task_id).ok_or_else(|| {
+                (
+                    code::NO_SUCH_TASK.to_string(),
+                    format!("no such task '{task_id}'"),
+                )
+            })?;
+            if task.disposition.outcome != DispositionOutcome::None {
+                return Err((
+                    code::BAD_PARAMS.to_string(),
+                    "task disposition has already been recorded".to_string(),
+                ));
+            }
+            task.disposition = disposition;
+            task.finish_error = finish_error;
+            task.updated_at = Utc::now();
+            task.clone()
+        };
+        let ev = self.emit_task_updated(&task_clone, None);
+        Ok(ev)
+    }
+
+    /// Replace finish evidence and emit `task.updated` with `task_id`.
+    /// `None` clears a previous cleanup or conflict note. Does not change
+    /// disposition, so a recorded finish can retry cleanup.
+    pub fn task_set_finish_error(
+        &mut self,
+        task_id: &str,
+        finish_error: Option<Value>,
+    ) -> Result<StoredEvent, (String, String)> {
+        let task_clone = {
+            let task = self.tasks.get_mut(task_id).ok_or_else(|| {
+                (
+                    code::NO_SUCH_TASK.to_string(),
+                    format!("no such task '{task_id}'"),
+                )
+            })?;
+            task.finish_error = finish_error;
+            task.updated_at = Utc::now();
+            task.clone()
+        };
+        Ok(self.emit_task_updated(&task_clone, None))
+    }
+
+    pub fn task_input_required_on_turn_end(
+        &mut self,
+        task_id: &str,
+        evidence: Option<Value>,
+    ) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            let prev_state = task.state;
+            let now = Utc::now();
+            if !task.apply_turn_ended_without_report(evidence, now) {
+                return None;
+            }
+            (task.clone(), prev_state)
+        };
+        let ev = self.emit_task_updated(&task_clone, Some(prev_state));
+        Some(ev)
+    }
+
+    pub fn task_for_pane(&self, pane_id: &str) -> Option<&Task> {
+        self.tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id))
+    }
+
+    pub fn task_for_pane_mut(&mut self, pane_id: &str) -> Option<&mut Task> {
+        self.tasks
+            .values_mut()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id))
+    }
+
+    pub fn task_resume_working(&mut self, task_id: &str) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            if task.state != TaskState::InputRequired {
+                return None;
+            }
+            let now = Utc::now();
+            // A follow-up whose Stop arrives before the resume commits must
+            // land: refresh the turn-end evidence instead of going working.
+            if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
+                task.status_reason = Some(evidence);
+                task.updated_at = now;
+                (task.clone(), None)
+            } else {
+                let prev_state = task.state;
+                task.transition_to(TaskState::Working, now).ok()?;
+                // The interrupt is resolved; its evidence is stale on a working task.
+                task.status_reason = None;
+                task.updated_at = now;
+                (task.clone(), Some(prev_state))
+            }
+        };
+        Some(self.emit_task_updated(&task_clone, prev_state))
+    }
+
+    /// A pending decision blocks the worker: `working` → `input_required`
+    /// with the decision as evidence. Only fires from `working` (a `pending`
+    /// task's first submit is still in flight; terminal tasks never move).
+    pub fn task_input_required_on_decision(
+        &mut self,
+        task_id: &str,
+        decision_id: &str,
+    ) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            if task.state != TaskState::Working {
+                return None;
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::InputRequired, now).ok()?;
+            task.status_reason = Some(json!({
+                "reason": "decision_required",
+                "decision_id": decision_id,
+            }));
+            task.updated_at = now;
+            (task.clone(), prev_state)
+        };
+        Some(self.emit_task_updated(&task_clone, Some(prev_state)))
+    }
 }
 
 #[cfg(test)]
@@ -514,18 +902,42 @@ mod tests {
         }
         store.next_seq(); // PTY numbers are legitimate holes.
         store.emit("included", Value::Null);
-        let (coverage, events) = store.replay(0, &["included".into()]);
+        let (coverage, events) = store.replay(0, &["included".into()], None);
         assert_eq!(coverage["status"], "complete");
         assert_eq!(events.len(), 1);
-        let (coverage, events) = store.replay(0, &["*".into()]);
+        let (coverage, events) = store.replay(0, &["*".into()], None);
         assert_eq!(coverage["status"], "truncated");
         assert!(events.is_empty());
         assert_eq!(
-            store.replay(store.seq + 1, &["*".into()]).0["status"],
+            store.replay(store.seq + 1, &["*".into()], None).0["status"],
             "cursor_ahead"
         );
         store.audit = None;
-        assert_eq!(store.replay(0, &["*".into()]).0["status"], "unavailable");
+        assert_eq!(
+            store.replay(0, &["*".into()], None).0["status"],
+            "unavailable"
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn replay_applies_task_filter_before_cap_and_count() {
+        let d = std::env::temp_dir().join(signaltty_core::ids::new_pane_id());
+        let log = AuditLog::open(&d).unwrap();
+        let sequence = EventSequence::open(&d, 0).unwrap();
+        let (publisher, _) = tokio::sync::broadcast::channel(8);
+        let mut store = Store::new();
+        store.configure_events(log, sequence, publisher);
+        for _ in 0..=crate::audit::REPLAY_CAP {
+            store.emit("task.updated", json!({"task_id": "other"}));
+        }
+        store.emit("task.updated", json!({"task_id": "mine"}));
+        store.emit("pane.updated", Value::Null);
+        let mine = vec!["mine".to_string()];
+        let (coverage, events) = store.replay(0, &["*".into()], Some(&mine));
+        assert_eq!(coverage["status"], "complete");
+        assert_eq!(coverage["returned"], 2);
+        assert_eq!(events.len(), 2);
         std::fs::remove_dir_all(d).unwrap();
     }
 
@@ -642,5 +1054,435 @@ mod tests {
         assert_eq!(e.name, "attention.cleared");
         assert!(store.clear_attention(&id, "test").is_none());
         assert!(store.clear_attention("pane_nope", "test").is_none());
+    }
+
+    #[test]
+    fn task_store_transition_methods_pair_mutate_and_emit() {
+        use signaltty_core::model::{Contract, Relationship, TaskResultStatus};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let now = Utc::now();
+        let contract = Contract::new("Do work").unwrap();
+        let task_id = signaltty_core::ids::new_task_id();
+        let task = Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some("p1".to_string()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "store-test".to_string(),
+            contract,
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: Some("main".to_string()),
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-1".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "1234abcd".to_string(),
+            state: TaskState::Pending,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: None,
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            client_request_id: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        // 1. Create
+        let ev = store.task_create(task);
+        assert_eq!(ev.name, "task.created");
+        assert_eq!(ev.payload["task_id"], task_id.as_str());
+        assert_eq!(
+            ev.payload["context_id"],
+            store.tasks[&task_id].context_id.as_str()
+        );
+        assert!(store.tasks.contains_key(&task_id));
+
+        // 2. Background ready
+        let ev = store.task_background_ready(&task_id).unwrap();
+        assert_eq!(ev.name, "task.updated");
+        assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+
+        // 3. Turn end without report
+        let ev = store
+            .task_input_required_on_turn_end(
+                &task_id,
+                Some(serde_json::json!({"reason": "turn_ended_without_report"})),
+            )
+            .unwrap();
+        assert_eq!(ev.name, "task.updated");
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+
+        // 4. Report
+        let result = TaskResult {
+            status: TaskResultStatus::Completed,
+            summary: "Finished".to_string(),
+            artifacts: vec![],
+            evidence: None,
+            reported_at: Utc::now(),
+        };
+        let (res_ev, upd_ev) = store.task_report(&task_id, result).unwrap();
+        assert_eq!(res_ev.name, "task.result");
+        assert_eq!(upd_ev.name, "task.updated");
+        assert_eq!(store.tasks[&task_id].state, TaskState::Completed);
+
+        // Report on terminal task is refused
+        assert!(store
+            .task_report(
+                &task_id,
+                TaskResult {
+                    status: TaskResultStatus::Completed,
+                    summary: "Again".to_string(),
+                    artifacts: vec![],
+                    evidence: None,
+                    reported_at: Utc::now(),
+                }
+            )
+            .is_err());
+
+        // Cancel on terminal task is refused
+        assert!(store.task_cancel(&task_id).is_err());
+
+        // 5. Finish record
+        let disp = Disposition {
+            outcome: DispositionOutcome::Merged,
+            target_ref: Some("main".to_string()),
+            merged_sha: Some("sha".to_string()),
+            branch_deleted: Some(true),
+            at: Some(Utc::now()),
+        };
+        let ev = store
+            .task_finish_record(
+                &task_id,
+                disp.clone(),
+                Some(json!({ "cleanup_error": "left in place" })),
+            )
+            .unwrap();
+        assert_eq!(ev.name, "task.updated");
+        assert_eq!(ev.payload["task_id"], task_id);
+        assert_eq!(
+            store.tasks[&task_id].disposition.outcome,
+            DispositionOutcome::Merged
+        );
+        assert_eq!(
+            store.tasks[&task_id].finish_error.as_ref().unwrap()["cleanup_error"],
+            "left in place"
+        );
+
+        // Second finish record refused
+        assert!(store.task_finish_record(&task_id, disp, None).is_err());
+        // Cleanup evidence can still be replaced so a later finish can retry.
+        store.task_set_finish_error(&task_id, None).unwrap();
+        assert!(store.tasks[&task_id].finish_error.is_none());
+    }
+
+    #[test]
+    fn clear_decision_never_resumes_task_for_non_answer_reasons() {
+        use signaltty_core::model::{Contract, Decision, DecisionOption, Relationship};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let pane = pane_with(Attention::None, 0);
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+        let decision = || Decision {
+            id: "d1".to_string(),
+            prompt: "Allow?".to_string(),
+            options: vec![DecisionOption {
+                id: "once".into(),
+                label: "Once".into(),
+            }],
+            answerable: true,
+            received_at: Utc::now(),
+        };
+        let task_id = signaltty_core::ids::new_task_id();
+        let task = Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id.clone()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "decision-test".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-d".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state: TaskState::InputRequired,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: Some(serde_json::json!({"reason": "decision_required"})),
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            client_request_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.task_create(task);
+
+        // Non-answer drops (timeout, disconnect, turn end) must park the
+        // task in input_required, never resume it to working unanswered.
+        for reason in [
+            "native_cancelled",
+            "timeout",
+            "moved_on",
+            "attention_cleared",
+        ] {
+            store.set_decision(&pane_id, decision());
+            // set_decision only moves working -> input_required; force it here.
+            store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
+            store.clear_decision(&pane_id, reason);
+            assert_eq!(
+                store.tasks[&task_id].state,
+                TaskState::InputRequired,
+                "clear_decision({reason}) must not resume the task"
+            );
+        }
+        // The answer path still resumes.
+        store.set_decision(&pane_id, decision());
+        store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
+        store.answer_decision(&pane_id, "d1", "once");
+        assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+    }
+
+    #[test]
+    fn background_ready_applies_turn_end_when_pane_already_done() {
+        use signaltty_core::model::{Contract, Relationship};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Done;
+        pane.last_message = Some("half an answer".to_string());
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+        let task_id = signaltty_core::ids::new_task_id();
+        let mk = |state: TaskState| Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id.clone()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "turn-end".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-t".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: None,
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            client_request_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        // Stop landed while the task was still pending: entering working
+        // must apply turn_ended_without_report in the same write.
+        store.task_create(mk(TaskState::Pending));
+        store.task_background_ready(&task_id).unwrap();
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(serde_json::json!({
+                "reason": "turn_ended_without_report",
+                "last_message": "half an answer",
+            }))
+        );
+        // A follow-up whose Stop arrives before the resume lands back in
+        // input_required with fresh turn-end evidence, not working.
+        store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
+        store.task_resume_working(&task_id).unwrap();
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        assert_eq!(
+            store.tasks[&task_id]
+                .status_reason
+                .as_ref()
+                .and_then(|v| v.get("reason")),
+            Some(&serde_json::json!("turn_ended_without_report"))
+        );
+    }
+
+    #[test]
+    fn background_ready_stays_working_when_pane_idle_or_live() {
+        use signaltty_core::model::{Contract, Relationship};
+        use std::path::PathBuf;
+
+        // Idle is not turn end: a task entering working with an idle pane
+        // stays working.
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Idle;
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+        let task_id = signaltty_core::ids::new_task_id();
+        store.task_create(Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "idle".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-i".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state: TaskState::Pending,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: None,
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            client_request_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        });
+        store.task_background_ready(&task_id).unwrap();
+        assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+    }
+
+    #[test]
+    fn pane_exit_fails_non_terminal_task() {
+        use signaltty_core::model::{Contract, Relationship};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let pane = pane_with(Attention::None, 0);
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+
+        let task_id = signaltty_core::ids::new_task_id();
+        let task = Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id.clone()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "exit-test".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-b".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state: TaskState::Working,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: None,
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            client_request_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.task_create(task);
+
+        // Pane exits with code 1
+        store.set_exited(&pane_id, Some(1));
+        assert_eq!(store.tasks[&task_id].state, TaskState::Failed);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(serde_json::json!({"reason": "pane_exited", "exit_code": 1}))
+        );
+        // Exit repeated (close-after-exit): no second transition, reason stable.
+        store.set_exited(&pane_id, Some(1));
+        assert_eq!(store.tasks[&task_id].state, TaskState::Failed);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(serde_json::json!({"reason": "pane_exited", "exit_code": 1}))
+        );
+    }
+
+    #[test]
+    fn pane_close_fails_non_terminal_task_exactly_once() {
+        use signaltty_core::model::{Contract, Relationship};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let pane = pane_with(Attention::None, 0);
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+
+        let task_id = signaltty_core::ids::new_task_id();
+        let task = Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id.clone()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "close-test".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-b".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state: TaskState::Working,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: None,
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            client_request_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.task_create(task);
+
+        // Operator close fails the task once; exit racing after close is silent.
+        store.remove_pane(&pane_id);
+        assert_eq!(store.tasks[&task_id].state, TaskState::Failed);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(serde_json::json!({"reason": "pane_closed"}))
+        );
+        store.set_exited(&pane_id, Some(1));
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(serde_json::json!({"reason": "pane_closed"}))
+        );
     }
 }

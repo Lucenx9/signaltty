@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use signaltty_term::HeadlessBackend;
 
-use signaltty_core::model::{LiveState, Notification, Pane, RestoreState, Tab, Workspace};
+use signaltty_core::model::{LiveState, Notification, Pane, RestoreState, Tab, Task, Workspace};
 use signaltty_term::TerminalBackend;
 
 use crate::config::Config;
@@ -27,6 +27,8 @@ pub struct Snapshot {
     pub tabs: Vec<Tab>,
     pub panes: Vec<Pane>,
     pub notifications: Vec<Notification>,
+    #[serde(default)]
+    pub tasks: Vec<Task>,
 }
 
 /// Save snapshot + scrollback tails atomically. Quick enough to call
@@ -49,6 +51,7 @@ pub fn save(
             tabs: s.tabs.values().cloned().collect(),
             panes: s.panes.values().cloned().collect(),
             notifications: s.notifications.iter().cloned().collect(),
+            tasks: s.tasks.values().cloned().collect(),
         }
     };
 
@@ -185,6 +188,29 @@ pub fn apply(store: &SharedStore, terms: &Mutex<HeadlessBackend>, mut loaded: Lo
     }
     for n in loaded.snapshot.notifications {
         s.push_notification(n);
+    }
+    // Read cursors are runtime-only: `restore_surface` already reset them
+    // so pre-restart cursors read as dropped (headless `dropped_floor`).
+    for task in loaded.snapshot.tasks {
+        s.tasks.insert(task.id.clone(), task);
+    }
+}
+
+/// Recovery: no process survives a restart (docs/09), so every non-terminal
+/// task's worker is dead. Fail them with evidence via the `task_fail`
+/// transition (pairs mutate + emit per the AGENTS.md rule); completed work,
+/// results, dispositions, and checkouts stay intact. Call after
+/// `Store::configure_events` so the transitions are journaled and broadcast.
+pub fn recover_tasks(store: &SharedStore) {
+    let mut s = store.write().unwrap();
+    let stale: Vec<String> = s
+        .tasks
+        .values()
+        .filter(|t| !t.state.is_terminal())
+        .map(|t| t.id.clone())
+        .collect();
+    for id in stale {
+        s.task_fail(&id, Some(serde_json::json!({"stage": "restart"})));
     }
 }
 

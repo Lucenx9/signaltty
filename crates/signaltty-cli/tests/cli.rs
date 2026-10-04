@@ -14,7 +14,9 @@ fn cli(socket: &std::path::Path, args: &[&str]) -> (bool, String) {
         .output()
         .expect("run signaltty");
     let text = String::from_utf8(out.stdout).unwrap();
-    (out.status.success(), text)
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let full = if text.is_empty() { err } else { text };
+    (out.status.success(), full)
 }
 
 fn cli_json(socket: &std::path::Path, args: &[&str]) -> Value {
@@ -578,5 +580,306 @@ async fn cli_new_preserves_automatic_setup_json_and_human_notice() {
         .unwrap();
     assert!(output.status.success());
     assert!(String::from_utf8(output.stderr).unwrap().contains("/hooks"));
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_pane_submit_and_spawn_lineage() {
+    let srv = TestServer::start().await;
+    let new = cli_json(&srv.socket, &["new", "--cwd", "/tmp", "--", "sleep", "30"]);
+    let ws = new["workspace_id"].as_str().unwrap().to_string();
+    let root_pane = new["pane_id"].as_str().unwrap().to_string();
+
+    // Spawn child with lineage
+    let tab = cli_json(&srv.socket, &["tab", "create", "--workspace", &ws]);
+    let tab_id = tab["tab"]["id"].as_str().unwrap().to_string();
+
+    let child = cli_json(
+        &srv.socket,
+        &[
+            "pane",
+            "spawn",
+            "--workspace",
+            &ws,
+            "--tab",
+            &tab_id,
+            "--parent-pane",
+            &root_pane,
+            "--label",
+            "worker-child",
+            "--relationship",
+            "subagent",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let child_pane = child["pane"]["id"].as_str().unwrap().to_string();
+
+    let get = cli_json(&srv.socket, &["pane", "get", &child_pane]);
+    assert_eq!(get["pane"]["parent_pane_id"], root_pane);
+    assert_eq!(get["pane"]["label"], "worker-child");
+    assert_eq!(get["pane"]["relationship"], "subagent");
+
+    // pane submit without activity gate (pane is idle/done or working -> unknown/working)
+    // Here sleep 30 has no adapter, so lifecycle is unknown -> AGENT_NOT_READY
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args(["pane", "submit", &child_pane, "--text", "echo hi"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.contains("AGENT_NOT_READY") || err.contains("agent is unknown"),
+        "{err}"
+    );
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_task_orchestration() {
+    let repo = signaltty_testkit::TempGitRepo::new();
+    let repo_dir = repo.path().to_path_buf();
+
+    let srv = TestServer::start().await;
+
+    // 1. task start
+    let start = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "start",
+            "--repo",
+            repo_dir.to_str().unwrap(),
+            "--objective",
+            "Implement CLI task feature",
+            "--label",
+            "worker-cli-test",
+            "--context",
+            "ctx_cli_1",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    assert_eq!(start["task"]["state"], "pending");
+    assert_eq!(start["task"]["context_id"], "ctx_cli_1");
+
+    // 2. task get
+    let get = cli_json(&srv.socket, &["task", "get", &task_id]);
+    assert_eq!(get["task"]["id"], task_id);
+
+    // 3. task list
+    let list = cli_json(&srv.socket, &["task", "list", "--context", "ctx_cli_1"]);
+    assert_eq!(list["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(list["tasks"][0]["id"], task_id);
+
+    // 4. task cancel
+    let cancel = cli_json(&srv.socket, &["task", "cancel", &task_id]);
+    assert_eq!(cancel["task"]["state"], "canceled");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_cli_phase5_report_attention_wait() {
+    let repo = signaltty_testkit::TempGitRepo::new();
+    let repo_dir = repo.path().to_path_buf();
+
+    let srv = TestServer::start().await;
+
+    // Start a task
+    let start = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "start",
+            "--repo",
+            repo_dir.to_str().unwrap(),
+            "--objective",
+            "Phase 5 CLI objective",
+            "--context",
+            "ctx_cli_p5",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    let pane_id = start["pane"]["id"].as_str().unwrap().to_string();
+
+    // 1. attention command
+    let att = cli_json(&srv.socket, &["attention"]);
+    assert!(att["panes"].is_array());
+    let (att_ok, _att_text) = cli(&srv.socket, &["attention"]);
+    assert!(att_ok);
+
+    // 2. task wait with positional syntax
+    // Waiting on empty context matches immediately
+    let wait_ctx = cli_json(
+        &srv.socket,
+        &["task", "wait", "--context", "ctx_nonexistent"],
+    );
+    assert_eq!(wait_ctx["tasks"].as_array().unwrap().len(), 0);
+
+    // 3. report command with --task
+    let rep = cli_json(
+        &srv.socket,
+        &[
+            "report",
+            "--task",
+            &task_id,
+            "--status",
+            "completed",
+            "--summary",
+            "Phase 5 task reported via CLI",
+        ],
+    );
+    assert_eq!(rep["task"]["state"], "completed");
+    assert_eq!(
+        rep["task"]["result"]["summary"],
+        "Phase 5 task reported via CLI"
+    );
+
+    // Human output check
+    let (ok, _text) = cli(
+        &srv.socket,
+        &[
+            "report",
+            "--pane",
+            &pane_id,
+            "--status",
+            "completed",
+            "--summary",
+            "Second report",
+        ],
+    );
+    assert!(!ok, "second report should fail");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_task_diff_and_finish() {
+    let repo = signaltty_testkit::TempGitRepo::new();
+    let repo_dir = repo.path().to_path_buf();
+
+    let srv = TestServer::start().await;
+
+    // Start a task
+    let start = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "start",
+            "--repo",
+            repo_dir.to_str().unwrap(),
+            "--objective",
+            "Test diff and finish via CLI",
+            "--branch",
+            "cli-feature",
+            "--json",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    let wt_path = std::path::PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+
+    // Write a file in worktree
+    std::fs::write(wt_path.join("feature.txt"), "hello world\n").unwrap();
+
+    // 1. task diff
+    let diff = cli_json(&srv.socket, &["task", "diff", &task_id]);
+    assert_eq!(diff["task_id"], task_id);
+    let files = diff["files"].as_array().unwrap();
+    assert!(files
+        .iter()
+        .any(|f| f["path"] == "feature.txt" && f["untracked"] == true));
+
+    // 2. task file-diff
+    let file_diff = cli_json(&srv.socket, &["task", "file-diff", &task_id, "feature.txt"]);
+    assert_eq!(file_diff["task_id"], task_id);
+    assert_eq!(file_diff["path"], "feature.txt");
+    assert_eq!(file_diff["untracked"], true);
+
+    // Text output reads the serialized line `kind` and hunk `heading`.
+    std::fs::write(wt_path.join("odd.txt"), "a\nb").unwrap();
+    let (ok, text) = cli(&srv.socket, &["task", "file-diff", &task_id, "odd.txt"]);
+    assert!(ok, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "untracked odd.txt");
+    assert!(lines[1].starts_with("@@ -0,0 +1,2 @@"), "{text}");
+    assert_eq!(&lines[2..], ["+a", "+b", "\\ No newline at end of file"]);
+    std::fs::remove_file(wt_path.join("odd.txt")).unwrap();
+
+    // Commit change so worktree is clean for merge
+    let _ = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&wt_path)
+        .args(["add", "feature.txt"])
+        .output();
+    let _ = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&wt_path)
+        .args(["commit", "-m", "feature added"])
+        .output();
+
+    // Report completed
+    let _ = cli_json(
+        &srv.socket,
+        &[
+            "report",
+            "--task",
+            &task_id,
+            "--status",
+            "completed",
+            "--summary",
+            "Feature complete",
+        ],
+    );
+
+    // 3. task finish --merge
+    let finish = cli_json(
+        &srv.socket,
+        &["task", "finish", &task_id, "--merge", "--delete-branch"],
+    );
+    assert_eq!(finish["task"]["disposition"]["outcome"], "merged");
+    assert!(!wt_path.exists());
+
+    // Start another task to test --discard
+    let start2 = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "start",
+            "--repo",
+            repo_dir.to_str().unwrap(),
+            "--objective",
+            "Test discard via CLI",
+            "--branch",
+            "cli-discard-feature",
+            "--json",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let task_id2 = start2["task"]["id"].as_str().unwrap().to_string();
+    let wt_path2 = std::path::PathBuf::from(start2["task"]["worktree_path"].as_str().unwrap());
+
+    let discard = cli_json(
+        &srv.socket,
+        &["task", "finish", &task_id2, "--discard", "--delete-branch"],
+    );
+    assert_eq!(discard["task"]["disposition"]["outcome"], "discarded");
+    assert_eq!(discard["task"]["state"], "canceled");
+    assert!(!wt_path2.exists());
+
     srv.shutdown().await;
 }

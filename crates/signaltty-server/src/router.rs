@@ -9,11 +9,14 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
+use std::time::Duration;
+
+use crate::submit::SubmitCtx;
 use signaltty_core::model::{
     AgentKind, LiveState, Notification, NotificationSeverity, Pane, PtySize, RestoreState,
     SplitDir, Tab, Workspace,
 };
-use signaltty_core::state::{Attention, Lifecycle};
+use signaltty_core::state::{Attention, Lifecycle, TaskState};
 use signaltty_core::{new_notif_id, new_tab_id, new_ws_id};
 use signaltty_proto::{code, event, method, Request, Response};
 use signaltty_term::TerminalBackend;
@@ -113,6 +116,7 @@ pub struct ConnEffect {
     pub attach: Vec<String>,
     pub detach: Vec<String>,
     pub subscribe: Option<Vec<String>>,
+    pub task_ids: Option<Vec<String>>,
     pub replay: Option<Vec<StoredEvent>>,
     pub fence: Option<u64>,
     pub close: bool,
@@ -190,6 +194,21 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::FOCUS_NEXT_UNREAD => h_next_unread(ctx),
         method::PLUGIN_LIST => h_plugin_list(ctx),
         method::PLUGIN_RELOAD => h_plugin_reload(ctx),
+        method::TASK_START => return crate::tasks::h_task_start(ctx, req, &req.params).await,
+        method::TASK_GET => return crate::tasks::h_task_get(ctx, req, &req.params),
+        method::TASK_LIST => return crate::tasks::h_task_list(ctx, req, &req.params),
+        method::TASK_WAIT => return crate::tasks::h_task_wait(ctx, req, &req.params).await,
+        method::TASK_CANCEL => return crate::tasks::h_task_cancel(ctx, req, &req.params),
+        method::PANE_SUBMIT => return h_pane_submit(ctx, req, &req.params).await,
+        method::TASK_REPORT => return crate::tasks::h_task_report(ctx, req, &req.params),
+        method::ATTENTION_PENDING => {
+            return crate::tasks::h_attention_pending(ctx, req, &req.params)
+        }
+        method::TASK_DIFF => return crate::tasks::h_task_diff(ctx, req, &req.params).await,
+        method::TASK_FILE_DIFF => {
+            return crate::tasks::h_task_file_diff(ctx, req, &req.params).await
+        }
+        method::TASK_FINISH => return crate::tasks::h_task_finish(ctx, req, &req.params).await,
         _ => Err((
             code::UNKNOWN_METHOD.to_string(),
             format!("unknown method '{}'", req.method),
@@ -293,7 +312,7 @@ pub fn resolve_workspace(store: &crate::store::Store, handle_or_id: &str) -> Opt
         .map(|w| w.id.clone())
 }
 
-fn h_workspace_create(ctx: &Ctx, params: &Value) -> Handler {
+pub(crate) fn h_workspace_create(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::WorkspaceCreate = decode(params)?;
     let cwd = p.cwd.unwrap_or_else(default_cwd);
     let _path_reference = ctx.worktrees.references.enter(&cwd)?;
@@ -512,7 +531,7 @@ async fn h_workspace_file_diff(ctx: &Ctx, value: &Value) -> Handler {
 
 // ---- tabs ----
 
-fn h_tab_create(ctx: &Ctx, params: &Value) -> Handler {
+pub(crate) fn h_tab_create(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::TabCreate = decode(params)?;
     let raw = p.workspace_id;
     let ws_id = {
@@ -661,7 +680,7 @@ fn launch_result(pane: &Pane, integration: Value) -> Value {
     result
 }
 
-fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
+pub(crate) fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::PaneSpawn = decode(params)?;
     let raw = p.workspace_id;
     let ws_id = {
@@ -673,13 +692,34 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     if argv.is_empty() {
         return Err(bad_params("'argv' must not be empty"));
     }
-    let env = p.env;
+    let mut env = p.env;
     let size = resolve_size(p.cols, p.rows);
     // Explicit hint wins; otherwise detect from argv (process info layer).
     let kind = match p.agent_hint {
         Some(hint) => AgentKind::parse(&hint).unwrap_or(AgentKind::None),
         None => ctx.detect_kind(&argv),
     };
+
+    let (parent_pane_id, root_pane_id) = {
+        let s = ctx.store.read().unwrap();
+        match &p.parent_pane_id {
+            Some(parent_id) => {
+                let parent = s
+                    .panes
+                    .get(parent_id)
+                    .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), parent_id.clone()))?;
+                let root = parent
+                    .root_pane_id
+                    .clone()
+                    .unwrap_or_else(|| parent.id.clone());
+                (Some(parent_id.clone()), Some(root))
+            }
+            None => (None, None),
+        }
+    };
+    if let Some(parent) = &parent_pane_id {
+        env.insert("SIGNALTTY_PARENT_PANE".to_string(), parent.clone());
+    }
 
     // Hold ownership stable until the process and its pane are published.
     // Pump/reaper threads release their PTY locks before acquiring Store.
@@ -726,6 +766,11 @@ fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
         now,
     );
     pane.agent.kind = kind;
+    pane.parent_pane_id = parent_pane_id;
+    pane.root_pane_id = root_pane_id;
+    pane.label = p.label;
+    pane.relationship = p.relationship;
+    pane.task_id = p.task_id;
     pane.agent.config_env = env
         .iter()
         .filter(|(key, _)| {
@@ -975,11 +1020,28 @@ fn h_pane_read(ctx: &Ctx, params: &Value) -> Handler {
         params::ReadMode::Tail => {
             let n = p.lines.unwrap_or(200).min(5000) as usize;
             let lines = terms.tail(&id, n, strip).unwrap_or_default();
-            let total = terms.scrollback_len(&id);
+            let total = terms.ring_len(&id);
             Ok((
                 json!({"text": lines.join("\n"), "truncated": total > lines.len()}),
                 ConnEffect::default(),
             ))
+        }
+        params::ReadMode::Rendered => {
+            let n = p.lines.unwrap_or(200).min(5000) as usize;
+            let after = p.after_seq.unwrap_or(0);
+            match terms.rendered(&id, after, n) {
+                None => Err((code::NO_SUCH_PANE.to_string(), id)),
+                Some(r) => Ok((
+                    json!({
+                        "text": r.text,
+                        "seq": r.seq,
+                        "next_seq": r.next_seq,
+                        "dropped": r.dropped,
+                        "truncated": r.truncated,
+                    }),
+                    ConnEffect::default(),
+                )),
+            }
         }
     }
 }
@@ -1242,21 +1304,22 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
 
 /// Shared by `notify`, OSC pump, and `hook-event`: sanitize, store,
 /// raise attention, set last_message, emit. Returns the notification.
-pub fn push_notification(
+pub fn push_notification_full(
     store: &SharedStore,
     pane_id: &str,
-    title: Option<&str>,
+    given_title: Option<&str>,
+    fallback_title: &str,
     body: &str,
     severity: NotificationSeverity,
     source: &str,
 ) -> Notification {
-    let given = title
+    let given = given_title
         .map(|t| signaltty_term::sanitize_notification_text(t, 200))
         .filter(|t| !t.is_empty());
     // Notifications always carry a title; the pane's last message only
     // repeats one the caller actually gave.
     let titled = given.is_some();
-    let title = given.unwrap_or_else(|| "signaltty".to_string());
+    let title = given.unwrap_or_else(|| fallback_title.to_string());
     let body = signaltty_term::sanitize_notification_text(body, 2000);
     let workspace_id = store
         .read()
@@ -1284,13 +1347,14 @@ pub fn push_notification(
         let mut s = store.write().unwrap();
         s.push_notification(notif.clone());
         if let Some(p) = s.panes.get_mut(pane_id) {
-            p.last_message = Some(if body.is_empty() {
-                title.clone()
+            let msg = if body.is_empty() {
+                p.last_message.clone().unwrap_or(title.clone())
             } else if titled {
                 format!("{title}: {}", truncate(&body, 300))
             } else {
                 truncate(&body, 300)
-            });
+            };
+            p.last_message = Some(msg);
             p.last_activity_at = now;
         }
         s.emit(event::NOTIFICATION_CREATED, json!({"notification": notif}));
@@ -1300,6 +1364,17 @@ pub fn push_notification(
         .unwrap()
         .raise_attention(pane_id, severity.attention());
     notif
+}
+
+pub fn push_notification(
+    store: &SharedStore,
+    pane_id: &str,
+    title: Option<&str>,
+    body: &str,
+    severity: NotificationSeverity,
+    source: &str,
+) -> Notification {
+    push_notification_full(store, pane_id, title, "signaltty", body, severity, source)
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -1406,8 +1481,43 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
     };
     {
         let s = ctx.store.read().unwrap();
-        if !s.panes.contains_key(&pid) {
+        let Some(_pane) = s.panes.get(&pid) else {
             return Err((code::NO_SUCH_PANE.to_string(), pid.clone()));
+        };
+        // Harness mismatch check:
+        // 1. Agent header vs payload agent mismatch
+        let incoming_kind = adapter.metadata().kind;
+        let payload_agent = event
+            .payload
+            .get("agent")
+            .and_then(|v| v.as_str())
+            .or_else(|| event.payload.get("harness").and_then(|v| v.as_str()));
+        let payload_mismatch = if let Some(pa) = payload_agent {
+            pa != agent && pa != incoming_kind.as_str()
+        } else {
+            false
+        };
+
+        // 2. Task wrapper-identity vs hook-harness mismatch
+        let task_mismatch = s.tasks.values().any(|t| {
+            t.pane_id.as_deref() == Some(&pid)
+                && t.agent
+                    .as_deref()
+                    .is_some_and(|a| a != incoming_kind.as_str())
+        });
+
+        if payload_mismatch || task_mismatch {
+            return Ok((
+                json!({
+                    "accepted": false,
+                    "dropped": true,
+                    "reason": "harness_mismatch",
+                    "agent": agent,
+                    "event": hook,
+                    "pane_id": pid
+                }),
+                ConnEffect::default(),
+            ));
         }
     }
 
@@ -1426,12 +1536,74 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         s.set_agent_session(&pid, sid);
     }
 
-    // 2. Lifecycle + attention from the adapter, under one lock.
-    let decision = adapter.lifecycle_state(&event);
+    let notif_draft = adapter.notification_event(&event);
+    let session_id_opt = adapter.session_identity(&event);
+    let mut decision = adapter.lifecycle_state(&event);
+
+    let is_unrecognized = decision.lifecycle.is_none()
+        && decision.attention.is_none()
+        && session_id_opt.is_none()
+        && notif_draft.is_none()
+        && p.decision.is_none()
+        && p.message.is_none()
+        && p.body.is_none()
+        && !matches!(
+            hook.as_str(),
+            "PreToolUse" | "PostToolUse" | "PreCompact" | "PostCompact" | "SubagentStop"
+        );
+    if is_unrecognized {
+        return Ok((
+            json!({
+                "accepted": false,
+                "dropped": true,
+                "reason": "unrecognized_hook",
+                "agent": agent,
+                "event": hook,
+                "pane_id": pid
+            }),
+            ConnEffect::default(),
+        ));
+    }
     {
         let mut s = ctx.store.write().unwrap();
+        // Tool traffic (e.g. a subagent's tools during a pending permission)
+        // must not clear `blocked`; it still starts work from any other state.
+        if matches!(
+            hook.as_str(),
+            "PreToolUse" | "PostToolUse" | "PreCompact" | "PostCompact"
+        ) && s
+            .panes
+            .get(&pid)
+            .is_some_and(|p| p.lifecycle == Lifecycle::Blocked)
+        {
+            decision.lifecycle = None;
+            decision.attention = None;
+        }
+        if let Some(msg) = &decision.message {
+            if let Some(p) = s.panes.get_mut(&pid) {
+                p.last_message = Some(msg.clone());
+                p.last_activity_at = Utc::now();
+            }
+        }
         if let Some(lifecycle) = decision.lifecycle {
             s.set_lifecycle(&pid, lifecycle);
+            // Only `done` ends a turn. `idle` (e.g. SessionStart after the
+            // task is already working) is not turn end.
+            if lifecycle == Lifecycle::Done {
+                let target_task_id = s
+                    .tasks
+                    .values()
+                    .find(|t| t.pane_id.as_deref() == Some(&pid) && t.state == TaskState::Working)
+                    .map(|t| t.id.clone());
+                if let Some(tid) = target_task_id {
+                    let last_message = s.panes.get(&pid).and_then(|p| p.last_message.clone());
+                    let evidence = json!({
+                        "reason": "turn_ended_without_report",
+                        "last_message": last_message,
+                    });
+                    s.task_input_required_on_turn_end(&tid, Some(evidence));
+                }
+            }
         }
         match decision.attention {
             Some(Attention::None) => {
@@ -1444,6 +1616,7 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             None => {}
         }
     }
+    let decision_prompt = p.decision.as_ref().map(|d| d.prompt.clone());
     // 2b. Structured decision ingest (directive 2): explicit data wins.
     // A decision payload sets/supersedes; without one, leaving `blocked`
     // means the gate is gone and the bar must not stick.
@@ -1481,10 +1654,19 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
                 .is_some_and(|pane| pane.lifecycle != Lifecycle::Blocked)
         };
         if moved_on {
-            ctx.store.write().unwrap().clear_decision(&pid, "moved_on");
+            // A still-unanswered decision at turn end (Stop/SessionEnd) is
+            // kept: dropping it would park the task in working with nobody
+            // left to answer. Only a stale record on a live turn is cleared.
+            let mut s = ctx.store.write().unwrap();
+            let unanswered_at_turn_end = s.panes.get(&pid).is_some_and(|pane| {
+                pane.pending_decision.is_some() && !matches!(pane.lifecycle, Lifecycle::Working)
+            });
+            if !unanswered_at_turn_end {
+                s.clear_decision(&pid, "moved_on");
+            }
         }
     }
-    if let Some(message) = decision.message {
+    if let Some(message) = decision.message.or(decision_prompt) {
         let mut s = ctx.store.write().unwrap();
         if let Some(p) = s.panes.get_mut(&pid) {
             p.last_message = Some(message);
@@ -1507,10 +1689,11 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             );
         }
     } else if let Some(draft) = adapter.notification_event(&event) {
-        push_notification(
+        push_notification_full(
             &ctx.store,
             &pid,
-            Some(&draft.title),
+            p.title.as_deref(),
+            &draft.title,
             draft.body.as_deref().unwrap_or(""),
             draft.severity,
             &format!("hook:{agent}:{hook}"),
@@ -1577,11 +1760,12 @@ fn h_subscribe(ctx: &Ctx, params: &Value) -> Handler {
     let mut reply = json!({"subscribed":true,"seq":s.seq});
     let mut effect = ConnEffect {
         subscribe: Some(events.clone()),
+        task_ids: p.task_ids.clone(),
         fence: Some(s.seq),
         ..ConnEffect::default()
     };
     if let Some(from) = p.from_seq {
-        let (coverage, replay) = s.replay(from, &events);
+        let (coverage, replay) = s.replay(from, &events, p.task_ids.as_deref());
         effect.close = coverage["status"] != "complete";
         reply["subscribed"] = json!(!effect.close);
         reply["replay"] = coverage;
@@ -1716,4 +1900,39 @@ fn h_plugin_list(ctx: &Ctx) -> Handler {
 fn h_plugin_reload(ctx: &Ctx) -> Handler {
     ctx.plugins.reload();
     Ok((ctx.plugins.status(), ConnEffect::default()))
+}
+
+// ---- pane.submit & task orchestration ----
+
+async fn h_pane_submit(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::PaneSubmit = match decode(params) {
+        Ok(p) => p,
+        Err((code, msg)) => return (Response::err(&req.id, &code, msg), ConnEffect::default()),
+    };
+    let submit_delay = Duration::from_millis(p.submit_delay_ms.unwrap_or(300));
+    let stall_timeout = Duration::from_secs(p.stall_timeout_s.unwrap_or(5));
+    match crate::submit::submit_prompt(
+        &SubmitCtx::from(ctx),
+        &p.pane_id,
+        &p.text,
+        submit_delay,
+        stall_timeout,
+        false,
+        true,
+        crate::submit::PANE_SUBMIT_MAX_BYTES,
+    )
+    .await
+    {
+        Ok(outcome) => (
+            Response::ok(&req.id, serde_json::to_value(outcome).unwrap()),
+            ConnEffect::default(),
+        ),
+        Err(e) => {
+            let resp = match e.details {
+                Some(details) => Response::err_with_details(&req.id, &e.code, e.message, details),
+                None => Response::err(&req.id, &e.code, e.message),
+            };
+            (resp, ConnEffect::default())
+        }
+    }
 }

@@ -123,11 +123,93 @@ One terminal/PTY + process. Survives client detach while the server lives.
 `hooks.json`), never from scraping terminal text when a better channel
 exists.
 
+Task lineage fields (all serde-defaulted, set at spawn): `parent_pane_id?`,
+`root_pane_id?` (the parent's root, else the parent, else unset),
+`label?`, `relationship?` (`fork`|`subagent`, default `subagent`),
+`task_id?` (the owning task). At spawn the server injects
+`SIGNALTTY_PARENT_PANE` (when a parent is set) and `SIGNALTTY_TASK`;
+`$SIGNALTTY_PANE` still names the worker pane itself. Note: an unknown
+`parent_pane_id` is stored as-is (no `NO_SUCH_PANE` check); the root is
+left unset.
+
 Native PermissionRequest decisions have a transient server response route to
 their waiting reporter. The public decision is render data; its ID and live
 route jointly identify the request that an answer can resolve. Route loss,
 timeout, supersession, pane exit or session cancellation cannot grant access.
 A saved decision cannot restore the reporter connection or its answerability.
+
+## Task
+
+One orchestrated worker: an agent pane running in its own git worktree cut
+from a recorded base commit. Stored in `Store.tasks`, persisted as a
+serde-defaulted `tasks` list on the snapshot (old snapshots load with no
+tasks). IDs are opaque `task_…` / `tctx_…` strings.
+
+| Field | Meaning |
+|---|---|
+| `id` | opaque, e.g. `task_…` |
+| `context_id` | collaboration id (`tctx_…`); refinements are new tasks, same context |
+| `parent_task_id?` | refinement link (currently always unset — reserved) |
+| `pane_id?` | worker pane; absent before spawn / after pane removal |
+| `parent_pane_id?`, `root_pane_id?` | lineage written at start |
+| `relationship` | `fork`\|`subagent`, default `subagent` |
+| `label` | human label |
+| `contract` | objective (required, 1 byte … 32 KiB) + optional constraints, acceptance criteria list, output format. `task.start` validates this before creating a worktree. The composed worker prompt may be 32 KiB plus that task's fixed preamble; a larger body is refused and creates nothing |
+| `agent?` | requested agent taxonomy kind |
+| `source_repo` | repo the worktree was cut from; the merge target lives here |
+| `target_branch?` | source repo's checked-out branch recorded at start (detached HEAD → unset; then finish needs an explicit `target_ref`) |
+| `worktree_path`, `branch` | task-owned checkout + task branch |
+| `preexisting_branch` | true when the branch already existed (never auto-deleted) |
+| `base_ref`, `base_sha` | requested ref + resolved full SHA at start |
+| `state` | lifecycle below |
+| `result?` | structured handoff, set once by report (`status` completed\|failed\|rejected, `summary` 1 … 8 KiB, `artifacts` ≤ 32 `{name, path, version?}`, `evidence?`, `reported_at`) |
+| `disposition` | `{outcome: none\|merged\|discarded, target_ref?, merged_sha?, branch_deleted?, at?}` — review outcome, not lifecycle |
+| `status_reason?` | A2A-style evidence: `{stage, …}` for background/startup failures, `{reason: turn_ended_without_report, last_message?}`, `{reason: worker_silent, timeout_s}`, `{reason: decision_required, decision_id}` |
+| `finish_error?` | conflict files, or `{cleanup_error}` when removal fails after a disposition is recorded. A later finish retries cleanup while the worktree path remains |
+| `worker_pid?`, `worker_cmd?` | crash-vs-recycle evidence |
+| `client_request_id?` | caller idempotency key from `task.start` (persisted) |
+| `created_at`, `updated_at` | timestamps |
+
+### TaskState
+
+`pending → working ⇄ input_required → completed | failed | canceled | rejected`
+(enforced by `can_transition_to`; terminal states are immutable).
+
+| From | To |
+|---|---|
+| `pending` | `working`, `failed`, `canceled`, `completed`, `rejected` |
+| `working` | `input_required`, `completed`, `failed`, `canceled`, `rejected` |
+| `input_required` | `working`, `completed`, `failed`, `canceled`, `rejected` |
+
+| Transition | Producer |
+|---|---|
+| `pending → working` | server-owned background step: waits for the worker pane to reach `idle`/`done` (default 30 s), writes the composed prompt, moves to `working` on write success |
+| `pending → failed` | background failure with `{stage: ready_timeout\|submit_refused, …}` evidence (pane missing/exited/never idle, or submit write refused) |
+| `* → canceled` (non-terminal) | `task.cancel`, or `finish --discard` from a non-terminal state |
+| `working → input_required` | worker turn ended with no report (`turn_ended_without_report` + `last_message?`); silent-worker watchdog (`worker_silent` + `timeout_s`, default 600 s, `0` disables); pending decision on the worker pane (`decision_required` + `decision_id`) |
+| `input_required → working` | accepted follow-up `pane.submit` on the worker pane (also clears `status_reason`) |
+| `working/input_required/pending → completed/failed/rejected` | `task.report` status (report on a terminal task is refused) |
+| `working/input_required/pending → failed` | worker pane death or restart recovery, with evidence, exactly once |
+
+`task.start` takes an optional `client_request_id`: a retry with the same key
+returns the existing task and pane (the key is persisted, so this also holds
+across a server restart); without a key, or with a new one, every call
+creates a new task.
+`rejected` is worker-side ("finished but does not meet acceptance");
+user-side refusal of finished work is `disposition: discarded` on a
+`completed` task.
+
+The submitted worker prompt is composed as: a preamble naming the task id,
+branch and base SHA ("stay inside this worktree; commit your work; when
+done or blocked run `signaltty report …` — it reads `$SIGNALTTY_TASK`"),
+then `## Objective`, plus `## Constraints` / `## Acceptance Criteria` /
+`## Expected Output Format` when the contract sets them.
+
+### Read cursor (runtime only)
+
+Per-pane monotonic `content_seq` over rendered lines (starts at 1, +1 per
+rendered line). Ring capacity is 5000 rendered lines per pane. Cursors are
+not persisted: after a restart any old cursor reads as dropped.
 
 ## Notification
 

@@ -64,18 +64,19 @@ clients can `subscribe {from_seq}` to replay.
 | `tab.close` | `{tab_id, signal?}` | `{closed}` |
 | `tab.set_layout` | `{tab_id, layout}` | `{tab}` |
 | `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
-| `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?}` | `{pane, integration?}` |
+| `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?, parent_pane_id?, label?, relationship?, task_id?}` | `{pane, integration?}` |
 | `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane, integration?}` (new sibling) |
 | `pane.get` | `{pane_id}` | `{pane, wait_baseline}` |
 | `pane.input` | `{pane_id, data_b64}` | `{written}` |
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
 | `pane.signal` | `{pane_id, signal, group?}` | `{sent}` (`INT TERM KILL HUP QUIT WINCH USR1 USR2`, case-insensitive, optional `SIG`; any other name, here or in a `*.close` `signal`, → `BAD_PARAMS`) |
-| `pane.read` | `{pane_id, mode: "screen"\|"tail", lines?, strip_ansi?}` | `{text, truncated}` |
+| `pane.read` | `{pane_id, mode: "screen"\|"tail"\|"rendered", lines?, strip_ansi?, after_seq?}` | `screen`/`tail` → `{text, truncated}`; `rendered` → `{text, seq, next_seq, dropped, truncated}` |
 | `pane.attach` | `{pane_id, cols?, rows?, mark_seen?}` | `{snapshot_b64, output_offset, size, live, ...}` then `pty.data` stream; the snapshot is replayable VT state (contents, colours, cursor, modes) (`mark_seen` default true; GUIs pass false and acknowledge on focus) |
 | `pane.detach` | `{pane_id}` | `{detached}` (also implicit on disconnect) |
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
 | `pane.resume` | `{pane_id}` | `{pane, integration?}` (spawns adapter resume argv; errors unless restored+resumable) |
 | `pane.mark_seen` | `{pane_id}` | `{pane}` (records reading; clears ordinary attention while preserving unanswered decisions and their required attention) |
+| `pane.submit` | `{pane_id, text, submit_delay_ms?, stall_timeout_s?}` | `{submitted, outcome, transition_seq, lifecycle, attention}` (bracketed paste + delayed Enter; embedded `ESC[200~` / `ESC[201~` is `BAD_PARAMS` before any write, not stripped; gate checks lifecycle, resumes `input_required` to `working`) |
 | `decision.answer` | `{pane_id, decision_id, option_id}` | `{answered, lifecycle?, attention?}` (delivers through a live native permission waiter or the pane adapter's channel and consumes the id; stale/consumed ids → `NO_SUCH_DECISION`, unknown option or channelless adapter → `BAD_PARAMS`) |
 | `notify` | `{pane_id?, title, body?, severity?}` | `{notification}` |
 | `hook-event` | `{agent, event, pane_id?, client_pid?, payload?, message?, title?, severity?, decision?}` | `{accepted, agent, event, pane_id, lifecycle?, attention?}` (adapter classification; pane by explicit id or `client_pid` ancestry; `decision: {id, prompt, options[{id, label}]}` sets/supersedes the pane's pending decision, captured `answerable` iff the adapter has a channel) |
@@ -83,12 +84,82 @@ clients can `subscribe {from_seq}` to replay.
 | `subscribe` | `{events?: ["agent.*","attention.*",…], from_seq?}` | `{subscribed, seq, replay?}` then complete replay/live stream |
 | `wait` | `{pane_id, until: string\|string[], after?: wait_baseline, timeout_s?}` | `{satisfied, outcome, transition_seq, lifecycle, attention}` or `TIMEOUT` / `IDENTITY_CHANGED` |
 | `focus.next_unread` | — | `{pane_id?}` (severity→recency order) |
+| `task.start` | `{repo, contract: {objective, constraints?, output_format?, acceptance_criteria?}, agent?, label?, parent_pane_id?, context_id?, client_request_id?, base_ref?, fetch_first?, branch?, path?, ready_timeout_s?, stall_timeout_s?, submit_delay_ms?, argv?}` | `{task, pane}` (starts worker at `pending`; background ready-wait and prompt submit transitions to `working`; objective over 32 KiB, or a composed prompt over 32 KiB plus the fixed preamble, is `BAD_PARAMS` and creates no worktree; the same `client_request_id` returns the existing task and pane instead of creating another) |
+| `task.get` | `{task_id}` | `{task}` |
+| `task.list` | `{context_id?, state?, limit?}` | `{tasks: [...]}` |
+| `task.wait` | `{task_id?, context_id?, until?: string\|string[], timeout_s?}` | `{satisfied, tasks: [...]}` (default `until: settled`) |
+| `task.cancel` | `{task_id}` | `{task}` |
+| `task.report` | `{task_id?, pane_id?, status: completed\|failed\|rejected, summary, artifacts?, evidence?}` (task resolved via explicit `task_id`, else the task owning `pane_id`; one of the two is required) | `{task}` (stores the result, emits `task.result` + `task.updated`; report on a terminal task → `BAD_PARAMS`) |
+| `task.diff` | `{task_id}` | `{task_id, base_sha, branch, files[...], dirs[...], added, removed}` (worktree-vs-recorded-base, tracked + untracked; no index mutation; untracked reads are capped, `O_NOFOLLOW`, and off the runtime thread — symlinks, fifos, and files over 512 KiB are binary with zero counts) |
+| `task.file_diff` | `{task_id, path}` | `{task_id, path, untracked, content}` (same `content` shapes as `workspace.file_diff`) |
+| `task.finish` | `{task_id, mode: merge\|discard, target_ref?, delete_branch?, ignore_dirty?}` | `{task, merge?: {target, sha}, cleanup_error?}` (merge needs a `completed` task and a clean target; a failed `git status` is `IO_ERROR`, never "clean"; conflicts abort leaving the target clean → `MERGE_CONFLICT`, or `IO_ERROR` with `details.target_dirty` when abort fails; the merge runs in its own process group under a deadline (default 120 s, `SIGNALTTY_MERGE_TIMEOUT_MS`) and expiry kills it, restores the target and returns `TIMEOUT`) |
+| `attention.pending` | `{limit?}` (default 50, max 500) | `{panes: [{pane_id, workspace_id, tab_id, label?, task_id?, lifecycle, attention, last_message?, attention_since?}]}` ranked by severity then recency; panes with `attention: none` excluded |
 | `plugin.list` | — | `{dir, plugins[], failures[]}` (hooks with runs/errors/last_error; see 13) |
 | `plugin.reload` | — | same as `plugin.list` after re-scan (stats reset) |
 
 `until` accepts any lifecycle or attention state, plus `seen` and
 `attention_cleared`; a nonempty array matches any alternative in caller order.
 Without `after`, an already matching current state succeeds immediately.
+
+`task.start` requires `agent` or `argv` (else `BAD_PARAMS`) and runs cap →
+base → worktree → spawn synchronously: over-cap starts are refused with
+`RATE_LIMITED` before creating anything, and base/worktree/spawn failures
+are synchronous errors (`BAD_PARAMS` / `IO_ERROR`) that create no task.
+Only the background ready-wait + prompt write produces `failed` tasks with
+`{stage: ready_timeout|submit_refused|activity_gate, …}` evidence. The background step
+waits for the worker pane to reach `idle`/`done` (default
+`ready_timeout_s: 30`), writes the composed prompt with `submit_delay_ms`
+(default 300, the same paste/Enter delay as `pane.submit`), and runs the
+same activity gate: a newer `working` or `blocked` transition within
+`stall_timeout_s` (default 5) moves the task to `working`; a stall fails it
+with `{stage: activity_gate}`. A repeated `client_request_id` returns the
+existing task and pane instead of creating another; without it retries
+create new tasks. The merge target defaults to the recorded
+`target_branch`; when the start ran on a detached HEAD an explicit
+`target_ref` is required at finish, and the resolved target must be the
+branch currently checked out in the source repo (`BAD_PARAMS` with
+`details: {expected, actual}` otherwise).
+
+`task.wait` takes exactly one of `task_id` / `context_id` (both or neither
+→ `BAD_PARAMS`); `until` accepts task states plus the pseudo-states
+`terminal` (any of completed/failed/canceled/rejected) and `settled`
+(terminal OR `input_required`, the default). A context wait ends when every
+task in it matches (an empty context matches immediately); unknown tasks →
+`NO_SUCH_TASK`, expiry → `TIMEOUT` (default timeout 3600 s). Unknown `until`
+strings never match (the wait runs to timeout). Unlike pane `wait`, the
+task waiter is a polling loop, not a single-flight connection: it does not
+cancel on client disconnect.
+
+`task.finish` records disposition through a store transition that emits
+`task.updated` with a top-level `task_id`. Conflict file names and a cleanup
+failure are stored on `task.finish_error`. A second finish is `BAD_PARAMS`
+once the recorded worktree is gone; while that path still exists the second
+finish retries removal and does not merge again. A foreign live pane blocks
+finish only when its canonical cwd is the worktree or a directory inside it
+(`PANES_ALIVE`); comparison is on whole path components, so a sibling such as
+`…/proj-other` does not match and a symlink to the worktree does.
+
+`subscribe` accepts an optional `task_ids[]` server-side filter alongside
+`events`/`from_seq`: only events whose payload carries a matching `task_id`
+are delivered (other events still pass the glob match).
+
+`pane.read` modes: `screen` returns the current grid as plain text (no
+scrollback). `tail` (default, `lines` default 200, max 5000) returns the
+last content lines from the rendered ring — cursor-correct (CR overwrites,
+repaints and alternate-screen grids resolved), same `{text, truncated}`
+shape as before. `rendered` adds the incremental cursor: pass `after_seq`
+(default 0 = oldest retained) and `lines` (default 200, max 5000); the
+reply's `seq` is the oldest retained line in the reply (or the head when
+empty), `next_seq` is the current head (pass back as the next `after_seq`),
+`dropped` means `after_seq` is older than retained scrollback, ahead of the
+head, or from before a restart (cursors are runtime-only, like
+`output_offset` — re-read from scratch), and `truncated` means the new
+range exceeded `lines` (the newest `lines` are returned, still
+cursor-continuous). Unknown pane → `NO_SUCH_PANE`. Reads are passive:
+never refused on agent state, never move the viewport. While a full-screen
+TUI owns the alternate grid, reads return the current alt grid; repaints
+bump the touched rows' sequences (poll again with `next_seq` for deltas)
+and nothing is appended to history. See docs/05 (rendered ring).
 
 `pane.get` adds `wait_baseline {pane_id, process_instance, agent_session_id,
 session_generation, lifecycle_seq, attention_seq}`. Capture it **before** submitting
@@ -109,7 +180,8 @@ Wait uses a dedicated single-flight connection: EOF, another request on that con
 or shutdown cancels it immediately. Runtime schema advertises these capabilities.
 See [ADR-0018](adr/0018-event-recovery-and-work-baselines.md).
 Glob subscriptions: `*`, `agent.*`, `pane.*`, `workspace.*`, `tab.*`,
-`attention.*`, `notification.*`, `decision.*`, `worktree.*`, `git.*`, `pty.*`.
+`attention.*`, `notification.*`, `decision.*`, `worktree.*`, `git.*`, `pty.*`,
+`task.*`.
 
 Worktree methods accept a source workspace ID or handle. Git owns registrations;
 these methods do not fetch a remote or delete a branch. Close the worktree
@@ -233,6 +305,7 @@ agent.idle         agent.unknown      agent.exited
 attention.created  attention.updated  attention.cleared
 decision.created   decision.answered  decision.cleared
 notification.created
+task.created       task.updated       task.result
 git.branch_changed
 server.will_shutdown
 ```
@@ -259,15 +332,16 @@ All other events go to `subscribe`rs by glob match.
 ## Error codes
 
 `BAD_PROTOCOL, UNKNOWN_METHOD, BAD_PARAMS, NO_SUCH_{SERVER,WORKSPACE,TAB,PANE},
-NO_SUCH_DECISION, PANE_EXITED, PANES_ALIVE, SPAWN_FAILED, IO_ERROR, TIMEOUT, IDENTITY_CHANGED,
+NO_SUCH_TASK, NO_SUCH_DECISION, AGENT_BUSY, AGENT_NOT_READY, MERGE_CONFLICT,
+PANE_EXITED, PANES_ALIVE, SPAWN_FAILED, IO_ERROR, TIMEOUT, IDENTITY_CHANGED,
 RATE_LIMITED, FORBIDDEN, INTERNAL`.
 
 `decision.created {pane_id, decision, prev?}` fires on set (a supersede folds
 into one emit carrying the previous id). `decision.answered
 {pane_id, decision_id, option_id}` fires on delivery. `decision.cleared
 {pane_id, decision_id, reason}` fires when the bar drops unanswered
-(`reason`: `attention_cleared | moved_on | pane_exited`). A pending decision
-clears on answer, when an agent transition clears its required attention or leaves `blocked`, or when the child exits. Reading,
+(`reason`: `attention_cleared | moved_on | pane_exited | native_cancelled`). A pending decision
+clears on answer, when an agent transition clears its required attention or leaves `blocked`, or when the child exits. A still-unanswered decision at turn end (`Stop`/`SessionEnd`) is kept, never dropped. Clearing a decision never resumes a worker task: only an explicit answer or an accepted follow-up submit moves an `input_required` task back to `working`; timeout, disconnect, and turn-end drops park it in `input_required`. Reading,
 focusing, `pane.mark_seen`, and default attach preserve the decision and gate.
 
 ## CLI mapping
@@ -278,3 +352,17 @@ passthrough of `result`. Examples: `signaltty new` → `workspace.create`
 → `wait`; `signaltty notify` → `notify`. The CLI injects
 `$SIGNALTTY_PANE` context for `notify`/`hook-event` when run inside a
 pane (env set by the server at spawn).
+
+Task orchestration CLI: `signaltty task start --repo … --objective …
+… -- <argv…>` → `task.start` (the worker command is trailing args, not a
+flag; returns `{task, pane}` at `pending`); `signaltty task get/list/wait
+diff/file-diff/finish/cancel` → the matching `task.*` method (`wait`
+defaults to `--until settled`; `finish` needs `--merge` or `--discard`);
+`signaltty report --status … --summary … [--task …] [--pane …]` →
+`task.report` (falls back to `$SIGNALTTY_TASK` / `$SIGNALTTY_PANE`);
+`signaltty pane submit … --text …` → `pane.submit`;
+`signaltty pane read … --mode rendered [--after-seq N]` → `pane.read`;
+`signaltty pane spawn … [--parent-pane …] [--label …] [--relationship …]` →
+`pane.spawn`; `signaltty attention [--limit N]` → `attention.pending`.
+`signaltty schema` prints the live contract (same constants the router
+dispatches on); a sync test proves every listed method dispatches.

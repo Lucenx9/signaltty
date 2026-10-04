@@ -38,6 +38,8 @@ pub struct TestServer {
     pub socket: PathBuf,
     pub state_dir: PathBuf,
     pub integration_home: PathBuf,
+    /// Re-applied by `restart()` so overrides such as PATH survive it.
+    extra_envs: Vec<(String, String)>,
     child: std::process::Child,
 }
 
@@ -51,17 +53,37 @@ impl TestServer {
         Self::start_with_dirs(plugin_dir, None).await
     }
 
+    pub async fn start_with_env(envs: &[(&str, &str)]) -> TestServer {
+        Self::start_internal(None, None, envs).await
+    }
+
     /// Start with explicit plugin + agents dirs (None = server default).
     pub async fn start_with_dirs(
         plugin_dir: Option<&Path>,
         agents_dir: Option<&Path>,
     ) -> TestServer {
-        let ns = format!("signaltty-test-{}-{}", std::process::id(), unique());
-        let base = std::env::temp_dir().join(ns);
-        let socket = base.join("signaltty.sock");
+        Self::start_internal(plugin_dir, agents_dir, &[]).await
+    }
+
+    async fn start_internal(
+        plugin_dir: Option<&Path>,
+        agents_dir: Option<&Path>,
+        extra_envs: &[(&str, &str)],
+    ) -> TestServer {
+        let ns = format!("st-{}", unique());
+        let temp_dir = std::env::temp_dir();
+        // Keep unix domain socket path under SUN_LEN (108 bytes).
+        let parent = if temp_dir.as_os_str().len() > 35 {
+            PathBuf::from("/tmp")
+        } else {
+            temp_dir
+        };
+        let base = parent.join(ns);
+        let socket = base.join("s.sock");
         let state_dir = base.join("state");
         let integration_home = base.join("home");
         std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&integration_home).unwrap();
         let bin = bin_path("signaltty-server");
         let mut cmd = std::process::Command::new(bin);
         cmd.arg("--socket")
@@ -75,7 +97,12 @@ impl TestServer {
             cmd.arg("--agents-dir").arg(dir);
         }
         cmd.env("SIGNALTTY_INTEGRATION_HOME", &integration_home)
-            .env("XDG_CONFIG_HOME", integration_home.join(".config"));
+            .env("XDG_CONFIG_HOME", integration_home.join(".config"))
+            .env("XDG_DATA_HOME", integration_home.join(".local/share"))
+            .env("HOME", &integration_home);
+        for (k, v) in extra_envs {
+            cmd.env(k, v);
+        }
         let mut child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -101,6 +128,10 @@ impl TestServer {
             socket,
             state_dir,
             integration_home,
+            extra_envs: extra_envs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             child,
         }
     }
@@ -148,6 +179,9 @@ impl TestServer {
         self.child = std::process::Command::new(bin)
             .env("SIGNALTTY_INTEGRATION_HOME", &self.integration_home)
             .env("XDG_CONFIG_HOME", self.integration_home.join(".config"))
+            .env("XDG_DATA_HOME", self.integration_home.join(".local/share"))
+            .env("HOME", &self.integration_home)
+            .envs(self.extra_envs.iter().map(|(k, v)| (k, v)))
             .arg("--socket")
             .arg(&self.socket)
             .arg("--state-dir")
@@ -168,6 +202,181 @@ impl TestServer {
             }
         }
         assert!(ready, "respawned server did not become ready");
+    }
+}
+
+/// Hermetic temporary git repository for tests.
+pub struct TempGitRepo {
+    path: PathBuf,
+}
+
+impl TempGitRepo {
+    pub fn new() -> Self {
+        Self::with_branch(None)
+    }
+
+    pub fn with_branch(branch: Option<&str>) -> Self {
+        let ns = format!("st-repo-{}", unique());
+        let temp_dir = std::env::temp_dir();
+        let parent = if temp_dir.as_os_str().len() > 35 {
+            PathBuf::from("/tmp")
+        } else {
+            temp_dir
+        };
+        let path = parent.join(ns);
+        std::fs::create_dir_all(&path).unwrap();
+        let repo = Self { path };
+        repo.git(&["init", "-q"]);
+        repo.git(&["config", "user.name", "test"]);
+        repo.git(&["config", "user.email", "test@example.invalid"]);
+        repo.git(&["config", "commit.gpgsign", "false"]);
+        let _ = repo.git(&["checkout", "-B", "main"]);
+        std::fs::write(repo.path().join("README.md"), "initial\n").unwrap();
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-qm", "initial commit"]);
+        if let Some(b) = branch {
+            repo.create_branch(b);
+        }
+        repo
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn head_sha(&self) -> String {
+        let out = self.git(&["rev-parse", "HEAD"]);
+        assert!(
+            out.status.success(),
+            "rev-parse HEAD failed: {:?}",
+            out.stderr
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    pub fn create_branch(&self, branch_name: &str) {
+        let out = self.git(&["branch", branch_name]);
+        assert!(
+            out.status.success(),
+            "create branch {branch_name} failed: {:?}",
+            out.stderr
+        );
+    }
+
+    pub fn git(&self, args: &[&str]) -> std::process::Output {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.path)
+            .args(args)
+            .output()
+            .expect("execute git")
+    }
+}
+
+impl Default for TempGitRepo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for TempGitRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Synthetic hook-event driver for a fake agent pane.
+pub struct FakeAgentPane {
+    pub pane_id: String,
+    pub agent: String,
+    pub session_id: String,
+}
+
+impl FakeAgentPane {
+    pub fn new(pane_id: impl Into<String>, agent: impl Into<String>) -> Self {
+        let agent = agent.into();
+        let session_id = format!("{}-sess-{}", agent, unique());
+        Self {
+            pane_id: pane_id.into(),
+            agent,
+            session_id,
+        }
+    }
+
+    pub async fn session_start(
+        &self,
+        client: &mut TestClient,
+        cwd: &Path,
+    ) -> Result<Value, String> {
+        client
+            .call(
+                "hook-event",
+                json!({
+                    "agent": self.agent,
+                    "event": "SessionStart",
+                    "pane_id": self.pane_id,
+                    "payload": {
+                        "session_id": self.session_id,
+                        "cwd": cwd.to_string_lossy(),
+                    }
+                }),
+            )
+            .await
+    }
+
+    pub async fn prompt_submit(&self, client: &mut TestClient) -> Result<Value, String> {
+        client
+            .call(
+                "hook-event",
+                json!({
+                    "agent": self.agent,
+                    "event": "UserPromptSubmit",
+                    "pane_id": self.pane_id,
+                    "payload": {
+                        "session_id": self.session_id,
+                    }
+                }),
+            )
+            .await
+    }
+
+    pub async fn permission_request(
+        &self,
+        client: &mut TestClient,
+        tool_name: &str,
+        tool_input: Value,
+    ) -> Result<Value, String> {
+        client
+            .call(
+                "hook-event",
+                json!({
+                    "agent": self.agent,
+                    "event": "PermissionRequest",
+                    "pane_id": self.pane_id,
+                    "payload": {
+                        "session_id": self.session_id,
+                        "tool_name": tool_name,
+                        "tool_input": tool_input,
+                    }
+                }),
+            )
+            .await
+    }
+
+    pub async fn stop(&self, client: &mut TestClient) -> Result<Value, String> {
+        client
+            .call(
+                "hook-event",
+                json!({
+                    "agent": self.agent,
+                    "event": "Stop",
+                    "pane_id": self.pane_id,
+                    "payload": {
+                        "session_id": self.session_id,
+                    }
+                }),
+            )
+            .await
     }
 }
 
@@ -201,6 +410,16 @@ impl TestClient {
 
     /// Single call; skips interleaved events.
     pub async fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let resp = self.call_raw_resp(method, params).await?;
+        if resp.ok {
+            return Ok(resp.result);
+        }
+        let e = resp.error.unwrap();
+        Err(format!("{}: {}", e.code, e.message))
+    }
+
+    /// Single call returning the raw `Response` envelope (to inspect error details).
+    pub async fn call_raw_resp(&mut self, method: &str, params: Value) -> Result<Response, String> {
         let id = self.next_id.to_string();
         self.next_id += 1;
         let line = serde_json::json!({
@@ -230,11 +449,7 @@ impl TestClient {
                 continue;
             }
             let resp: Response = serde_json::from_value(v).map_err(|e| e.to_string())?;
-            if resp.ok {
-                return Ok(resp.result);
-            }
-            let e = resp.error.unwrap();
-            return Err(format!("{}: {}", e.code, e.message));
+            return Ok(resp);
         }
     }
 

@@ -232,7 +232,11 @@ async fn run_session(
     let handshake = async {
         let control = Conn::connect(socket).await?;
         let mut sub = Conn::connect(socket).await?;
-        let id = sub.send("subscribe", json!({"events":["*"]})).await?;
+        // `*` already covers task events. `task.*` is named so a
+        // narrower subscribe still delivers the worker chip.
+        let id = sub
+            .send("subscribe", json!({"events":["*", "task.*"]}))
+            .await?;
         let response = read_response(&mut sub, &id).await?;
         response_result(response)?;
         Ok::<_, String>((control, sub))
@@ -548,6 +552,14 @@ mod tests {
         let mut sub = server_conn(listener).await;
         let subscribe = request(&mut sub).await;
         assert_eq!(subscribe.method, "subscribe");
+        let events = subscribe.params["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            events.iter().any(|v| v.as_str() == Some("task.*")),
+            "subscribe must include task.* so worker chips update"
+        );
         respond(&mut sub, &subscribe, json!({"subscribed": true})).await;
         (control, sub)
     }

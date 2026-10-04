@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::CoreError;
+
 /// What the agent is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,8 +86,9 @@ impl Lifecycle {
     }
 }
 
-/// Whether the human needs to look. Severity order:
-/// error > permission_required > input_required > warning > unread > none.
+/// Why the human must look. Independent of [`Lifecycle`]: an agent
+/// can be working with an unread badge, or blocked with no attention
+/// once acknowledged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Attention {
@@ -146,6 +149,108 @@ impl Attention {
     }
 }
 
+/// A2A-aligned task lifecycle state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskState {
+    Pending,
+    Working,
+    InputRequired,
+    Completed,
+    Failed,
+    Canceled,
+    Rejected,
+}
+
+impl TaskState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TaskState::Pending => "pending",
+            TaskState::Working => "working",
+            TaskState::InputRequired => "input_required",
+            TaskState::Completed => "completed",
+            TaskState::Failed => "failed",
+            TaskState::Canceled => "canceled",
+            TaskState::Rejected => "rejected",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<TaskState> {
+        Some(match s {
+            "pending" => TaskState::Pending,
+            "working" => TaskState::Working,
+            "input_required" => TaskState::InputRequired,
+            "completed" => TaskState::Completed,
+            "failed" => TaskState::Failed,
+            "canceled" => TaskState::Canceled,
+            "rejected" => TaskState::Rejected,
+            _ => return None,
+        })
+    }
+
+    /// Terminal states cannot transition to any other state.
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::Rejected
+        )
+    }
+
+    /// Settled means completed, failed, canceled, rejected, or input_required.
+    pub fn is_settled(self) -> bool {
+        self.is_terminal() || self == TaskState::InputRequired
+    }
+
+    /// Validate whether a transition from `self` to `target` is valid under A2A lifecycle rules.
+    pub fn can_transition_to(self, target: TaskState) -> bool {
+        if self.is_terminal() {
+            return false;
+        }
+        if self == target {
+            return true;
+        }
+        match self {
+            TaskState::Pending => matches!(
+                target,
+                TaskState::Working
+                    | TaskState::Failed
+                    | TaskState::Canceled
+                    | TaskState::Completed
+                    | TaskState::Rejected
+            ),
+            TaskState::Working => matches!(
+                target,
+                TaskState::InputRequired
+                    | TaskState::Completed
+                    | TaskState::Failed
+                    | TaskState::Canceled
+                    | TaskState::Rejected
+            ),
+            TaskState::InputRequired => matches!(
+                target,
+                TaskState::Working
+                    | TaskState::Completed
+                    | TaskState::Failed
+                    | TaskState::Canceled
+                    | TaskState::Rejected
+            ),
+            _ => false,
+        }
+    }
+
+    /// Turn ended without a report: transitions Working -> InputRequired.
+    /// If the task is already terminal (e.g. report arrived first), report wins and state is untouched.
+    pub fn on_turn_ended_without_report(self) -> Result<TaskState, CoreError> {
+        if self.is_terminal() {
+            return Ok(self);
+        }
+        if self == TaskState::Working {
+            return Ok(TaskState::InputRequired);
+        }
+        Ok(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +299,50 @@ mod tests {
         ] {
             assert_eq!(Attention::parse(s).unwrap().as_str(), s);
         }
+    }
+
+    #[test]
+    fn task_state_lifecycle_transitions() {
+        assert_eq!(TaskState::Pending.as_str(), "pending");
+        assert_eq!(
+            TaskState::parse("input_required"),
+            Some(TaskState::InputRequired)
+        );
+        assert!(TaskState::Completed.is_terminal());
+        assert!(TaskState::Failed.is_terminal());
+        assert!(TaskState::Canceled.is_terminal());
+        assert!(TaskState::Rejected.is_terminal());
+        assert!(!TaskState::Working.is_terminal());
+        assert!(!TaskState::InputRequired.is_terminal());
+
+        // Settled
+        assert!(TaskState::Completed.is_settled());
+        assert!(TaskState::InputRequired.is_settled());
+        assert!(!TaskState::Working.is_settled());
+
+        // Valid transitions
+        assert!(TaskState::Pending.can_transition_to(TaskState::Working));
+        assert!(TaskState::Pending.can_transition_to(TaskState::Completed));
+        assert!(TaskState::Working.can_transition_to(TaskState::InputRequired));
+        assert!(TaskState::InputRequired.can_transition_to(TaskState::Working));
+        assert!(TaskState::Working.can_transition_to(TaskState::Completed));
+        assert!(TaskState::Working.can_transition_to(TaskState::Failed));
+
+        // Terminal is immutable
+        assert!(!TaskState::Completed.can_transition_to(TaskState::Working));
+        assert!(!TaskState::Failed.can_transition_to(TaskState::InputRequired));
+        assert!(!TaskState::Canceled.can_transition_to(TaskState::Working));
+        assert!(!TaskState::Rejected.can_transition_to(TaskState::Pending));
+
+        // Turn ended without report
+        assert_eq!(
+            TaskState::Working.on_turn_ended_without_report().unwrap(),
+            TaskState::InputRequired
+        );
+        // Report wins over turn ended
+        assert_eq!(
+            TaskState::Completed.on_turn_ended_without_report().unwrap(),
+            TaskState::Completed
+        );
     }
 }
