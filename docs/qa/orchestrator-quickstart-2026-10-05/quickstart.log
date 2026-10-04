@@ -1,0 +1,170 @@
++ export PATH=/tmp/qs:/home/simone/.local/bin:/home/simone/.linuxbrew/bin:/home/simone/.linuxbrew/sbin:/home/simone/bin:/home/simone/.grok/bin:/home/simone/.bun/bin:/home/simone/.cargo/bin:/home/simone/.opencode/bin:/home/simone/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games:/usr/local/sbin:/usr/sbin
++ PATH=/tmp/qs:/home/simone/.local/bin:/home/simone/.linuxbrew/bin:/home/simone/.linuxbrew/sbin:/home/simone/bin:/home/simone/.grok/bin:/home/simone/.bun/bin:/home/simone/.cargo/bin:/home/simone/.opencode/bin:/home/simone/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games:/usr/local/sbin:/usr/sbin
++ rm -rf /tmp/orch-e2e
++ mkdir -p /tmp/orch-e2e/home
++ cd /tmp/orch-e2e
++ export XDG_DATA_HOME=/tmp/orch-e2e/data HOME=/tmp/orch-e2e/home
++ XDG_DATA_HOME=/tmp/orch-e2e/data
++ HOME=/tmp/orch-e2e/home
++ git init -q -b main .
++ git config user.name e2e
++ git config user.email e2e@example.invalid
++ echo base
++ git add .
++ git commit -qm base
++ export SOCK=/tmp/orch-e2e/sock STATE=/tmp/orch-e2e/state
++ SOCK=/tmp/orch-e2e/sock
++ STATE=/tmp/orch-e2e/state
++ SERVER=4031855
++ trap 'kill $SERVER 2>/dev/null' EXIT
++ export SIGNALTTY_SOCKET=/tmp/orch-e2e/sock CTX=tctx_e2e
++ signaltty-server --socket /tmp/orch-e2e/sock --state-dir /tmp/orch-e2e/state
++ SIGNALTTY_SOCKET=/tmp/orch-e2e/sock
++ CTX=tctx_e2e
++ signaltty status
++ sleep 0.2
++ signaltty status
++ for i in 1 2 3
++ signaltty --json task start --repo /tmp/orch-e2e --context tctx_e2e --label worker-1 --agent codex --objective 'task 1: add file 1' -- sh
++ for i in 1 2 3
++ signaltty --json task start --repo /tmp/orch-e2e --context tctx_e2e --label worker-2 --agent codex --objective 'task 2: add file 2' -- sh
++ for i in 1 2 3
++ signaltty --json task start --repo /tmp/orch-e2e --context tctx_e2e --label worker-3 --agent codex --objective 'task 3: add file 3' -- sh
++ jq -c '{state:.task.state,base:.task.base_sha,target:.task.target_branch}' task1.json
+{"state":"pending","base":"892dcf63dacd95e0c9b4950ad21d08464ccd66de","target":"main"}
++ for i in 1 2 3
+++ jq -r .pane.id task1.json
++ signaltty hook-event --agent codex --event SessionStart --pane pane_b5a9843b6c9c4b239186d9ee61c54b41
+accepted codex:SessionStart lifecycle=idle attention=none
++ for i in 1 2 3
+++ jq -r .pane.id task2.json
++ signaltty hook-event --agent codex --event SessionStart --pane pane_dcf9d802286048e6988b4b96b8b9e629
+accepted codex:SessionStart lifecycle=idle attention=none
++ for i in 1 2 3
+++ jq -r .pane.id task3.json
++ signaltty hook-event --agent codex --event SessionStart --pane pane_79c7a262453d499b91dfe0ad1134d2a0
+accepted codex:SessionStart lifecycle=idle attention=none
++ sleep 1
++ for i in 1 2 3
+++ jq -r .pane.id task1.json
++ signaltty hook-event --agent codex --event UserPromptSubmit --pane pane_b5a9843b6c9c4b239186d9ee61c54b41
+accepted codex:UserPromptSubmit lifecycle=working attention=none
++ for i in 1 2 3
+++ jq -r .pane.id task2.json
++ signaltty hook-event --agent codex --event UserPromptSubmit --pane pane_dcf9d802286048e6988b4b96b8b9e629
+accepted codex:UserPromptSubmit lifecycle=working attention=none
++ for i in 1 2 3
+++ jq -r .pane.id task3.json
++ signaltty hook-event --agent codex --event UserPromptSubmit --pane pane_79c7a262453d499b91dfe0ad1134d2a0
+accepted codex:UserPromptSubmit lifecycle=working attention=none
++ signaltty --json task wait --context tctx_e2e --until working --timeout 60
++ jq -c '[.tasks[].state]'
+["working","working","working"]
++ git -C /tmp/orch-e2e worktree list
+/tmp/orch-e2e                                                                         892dcf6 [main]
+/tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-1-fff0aecc  892dcf6 [signaltty/worker-1-fff0aecc] locked
+/tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-2-1ca02580  892dcf6 [signaltty/worker-2-1ca02580] locked
+/tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-3-2cda7ace  892dcf6 [signaltty/worker-3-2cda7ace] locked
+++ jq -r .task.id task1.json
++ T1=task_6d897725569442faac26f80cfff0aecc
+++ jq -r .task.id task2.json
++ T2=task_b700ca9096384505962b4d6e1ca02580
+++ jq -r .task.id task3.json
++ T3=task_ed80a7e82e28480286007fe72cda7ace
+++ jq -r .pane.id task1.json
++ PANE1=pane_b5a9843b6c9c4b239186d9ee61c54b41
+++ jq -r .pane.id task2.json
++ PANE2=pane_dcf9d802286048e6988b4b96b8b9e629
+++ jq -r .pane.id task3.json
++ PANE3=pane_79c7a262453d499b91dfe0ad1134d2a0
++ finish_work 1
+++ jq -r .task.worktree_path task1.json
++ W=/tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-1-fff0aecc
++ echo 'line 1'
++ git -C /tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-1-fff0aecc add file1.txt
++ git -C /tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-1-fff0aecc commit -qm 'task 1'
+++ jq -r .task.id task1.json
++ signaltty --json report --status completed --summary 'did task 1' --task task_6d897725569442faac26f80cfff0aecc
++ signaltty hook-event --agent codex --event PermissionRequest --pane pane_dcf9d802286048e6988b4b96b8b9e629 --decision '{"id":"d_e2e","prompt":"Allow edit?","options":[{"id":"yes","label":"Yes"},{"id":"no","label":"No"}]}'
+accepted codex:PermissionRequest lifecycle=blocked attention=permission_required
++ jq -c .
++ signaltty --json attention
+{"panes":[{"attention":"permission_required","attention_since":"2026-10-04T23:27:53.129442448Z","label":"worker-2","last_message":"approval requested","lifecycle":"blocked","pane_id":"pane_dcf9d802286048e6988b4b96b8b9e629","tab_id":"tab_01ec80dcd34d4c8d9a26aeb914e757e8","task_id":"task_b700ca9096384505962b4d6e1ca02580","workspace_id":"ws_6423ee3e3580474eaaebaa2506c45a76"}]}
++ signaltty decision answer --pane pane_dcf9d802286048e6988b4b96b8b9e629 --decision d_e2e --option yes
+answered d_e2e with yes
++ finish_work 2
+++ jq -r .task.worktree_path task2.json
++ W=/tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-2-1ca02580
++ echo 'line 2'
++ git -C /tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-2-1ca02580 add file2.txt
++ git -C /tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-2-1ca02580 commit -qm 'task 2'
+++ jq -r .task.id task2.json
++ signaltty --json report --status completed --summary 'did task 2' --task task_b700ca9096384505962b4d6e1ca02580
++ signaltty hook-event --agent codex --event Stop --pane pane_79c7a262453d499b91dfe0ad1134d2a0
+accepted codex:Stop lifecycle=done attention=unread
++ signaltty --json task wait task_ed80a7e82e28480286007fe72cda7ace --timeout 60
++ jq -c '.tasks[0].state'
+"input_required"
++ SUBMIT=4032674
++ sleep 1
++ signaltty --json pane submit pane_79c7a262453d499b91dfe0ad1134d2a0 --text 'please report your result now'
++ signaltty hook-event --agent codex --event UserPromptSubmit --pane pane_79c7a262453d499b91dfe0ad1134d2a0
+accepted codex:UserPromptSubmit lifecycle=working attention=none
++ wait 4032674
++ echo 'submit exit 0'
+submit exit 0
++ jq -c .
++ cat submit.json
+{"attention":"none","lifecycle":"working","outcome":"working","submitted":true,"transition_seq":38}
++ finish_work 3
+++ jq -r .task.worktree_path task3.json
++ W=/tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-3-2cda7ace
++ echo 'line 3'
++ git -C /tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-3-2cda7ace add file3.txt
++ git -C /tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-3-2cda7ace commit -qm 'task 3'
+++ jq -r .task.id task3.json
++ signaltty --json report --status completed --summary 'did task 3' --task task_ed80a7e82e28480286007fe72cda7ace
++ signaltty --json task wait --context tctx_e2e --timeout 60
++ jq -c '[.tasks[].state]'
+["completed","completed","completed"]
++ signaltty --json pane read pane_b5a9843b6c9c4b239186d9ee61c54b41 --mode rendered --after-seq 0
++ jq .next_seq
+20
++ signaltty --json attention
++ jq -c .
+{"panes":[]}
++ signaltty --json task diff task_6d897725569442faac26f80cfff0aecc
++ jq -c '[.files[].path]'
+["file1.txt"]
++ kill 4031855
++ wait 4031855
++ SERVER=4033236
++ signaltty status
++ signaltty-server --socket /tmp/orch-e2e/sock --state-dir /tmp/orch-e2e/state
++ sleep 0.2
++ signaltty status
++ signaltty --json task get task_6d897725569442faac26f80cfff0aecc
++ jq -c '{state:.task.state,result:.task.result}'
+{"state":"completed","result":{"artifacts":[],"reported_at":"2026-10-04T23:27:53.115264190Z","status":"completed","summary":"did task 1"}}
++ signaltty --json task finish task_6d897725569442faac26f80cfff0aecc --merge --keep-branch
++ jq -c .
+{"merge":{"sha":"6bc25e3dde48613e73f90bf8649564ec0d414fc6","target":"main"},"task":{"agent":"codex","base_ref":"HEAD","base_sha":"892dcf63dacd95e0c9b4950ad21d08464ccd66de","branch":"signaltty/worker-1-fff0aecc","context_id":"tctx_e2e","contract":{"objective":"task 1: add file 1"},"created_at":"2026-10-04T23:27:51.698693084Z","disposition":{"at":"2026-10-04T23:27:54.883896710Z","branch_deleted":false,"merged_sha":"6bc25e3dde48613e73f90bf8649564ec0d414fc6","outcome":"merged","target_ref":"main"},"id":"task_6d897725569442faac26f80cfff0aecc","label":"worker-1","pane_id":"pane_b5a9843b6c9c4b239186d9ee61c54b41","preexisting_branch":false,"relationship":"subagent","result":{"artifacts":[],"reported_at":"2026-10-04T23:27:53.115264190Z","status":"completed","summary":"did task 1"},"source_repo":"/tmp/orch-e2e","state":"completed","target_branch":"main","updated_at":"2026-10-04T23:27:54.883910290Z","worker_cmd":["sh"],"worktree_path":"/tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-1-fff0aecc"}}
++ signaltty --json task finish task_b700ca9096384505962b4d6e1ca02580 --merge
++ jq -c .
+{"merge":{"sha":"06ac5705382fdb3ee204410816320314c5f341b5","target":"main"},"task":{"agent":"codex","base_ref":"HEAD","base_sha":"892dcf63dacd95e0c9b4950ad21d08464ccd66de","branch":"signaltty/worker-2-1ca02580","context_id":"tctx_e2e","contract":{"objective":"task 2: add file 2"},"created_at":"2026-10-04T23:27:51.774528863Z","disposition":{"at":"2026-10-04T23:27:54.939037859Z","branch_deleted":true,"merged_sha":"06ac5705382fdb3ee204410816320314c5f341b5","outcome":"merged","target_ref":"main"},"id":"task_b700ca9096384505962b4d6e1ca02580","label":"worker-2","pane_id":"pane_dcf9d802286048e6988b4b96b8b9e629","preexisting_branch":false,"relationship":"subagent","result":{"artifacts":[],"reported_at":"2026-10-04T23:27:53.210934944Z","status":"completed","summary":"did task 2"},"source_repo":"/tmp/orch-e2e","state":"completed","target_branch":"main","updated_at":"2026-10-04T23:27:54.939049838Z","worker_cmd":["sh"],"worktree_path":"/tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-2-1ca02580"}}
++ signaltty --json task finish task_ed80a7e82e28480286007fe72cda7ace --discard
++ jq -c .
+{"task":{"agent":"codex","base_ref":"HEAD","base_sha":"892dcf63dacd95e0c9b4950ad21d08464ccd66de","branch":"signaltty/worker-3-2cda7ace","context_id":"tctx_e2e","contract":{"objective":"task 3: add file 3"},"created_at":"2026-10-04T23:27:51.864968483Z","disposition":{"at":"2026-10-04T23:27:54.954244519Z","branch_deleted":false,"outcome":"discarded"},"id":"task_ed80a7e82e28480286007fe72cda7ace","label":"worker-3","pane_id":"pane_79c7a262453d499b91dfe0ad1134d2a0","preexisting_branch":false,"relationship":"subagent","result":{"artifacts":[],"reported_at":"2026-10-04T23:27:54.340190215Z","status":"completed","summary":"did task 3"},"source_repo":"/tmp/orch-e2e","state":"completed","target_branch":"main","updated_at":"2026-10-04T23:27:54.954257421Z","worker_cmd":["sh"],"worktree_path":"/tmp/orch-e2e/data/signaltty/worktrees/orch-e2e-e68c82a0/signaltty-worker-3-2cda7ace"}}
++ git -C /tmp/orch-e2e log --oneline
+06ac570 Merge branch 'signaltty/worker-2-1ca02580'
+6bc25e3 Merge branch 'signaltty/worker-1-fff0aecc'
+887d39c task 2
+9f75d83 task 1
+892dcf6 base
++ git -C /tmp/orch-e2e worktree list
+/tmp/orch-e2e  06ac570 [main]
++ git -C /tmp/orch-e2e branch
+* main
+  signaltty/worker-1-fff0aecc
+  signaltty/worker-3-2cda7ace
++ kill 4033236

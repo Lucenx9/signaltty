@@ -229,7 +229,7 @@ failed with evidence, checkouts preserved; pane exit fails task exactly once.
   wait` to `settled`, incremental `pane read --mode rendered`, handling
   `input_required` (follow-up submit), `task diff`, `task finish --merge` /
   `--discard` — with the `signaltty schema` pointer for the exact contract.
-- [ ] T031 Run `quickstart.md` end-to-end manually, then `scripts/verify.sh
+- [x] T031 Run `quickstart.md` end-to-end manually, then `scripts/verify.sh
   full`; attach evidence; independent diff review; un-ignore the E2E test.
 
 ## Dependencies & execution order
