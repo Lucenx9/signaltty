@@ -511,6 +511,13 @@ impl Store {
     }
 
     /// Drop the pending decision without answering. `None` when absent.
+    ///
+    /// Never resumes a worker task: only an explicit answer (via
+    /// `answer_decision`) or an accepted follow-up submit moves an
+    /// `input_required` task back to `working`. Timeout, disconnect
+    /// (`native_cancelled`) and turn-end (`moved_on`) drops park the task
+    /// in `input_required` so the stall is visible instead of silently
+    /// resuming unanswered work.
     pub fn clear_decision(&mut self, pane_id: &str, reason: &str) -> Option<StoredEvent> {
         let pane = self.panes.get_mut(pane_id)?;
         let dropped = pane.pending_decision.take()?;
@@ -523,22 +530,6 @@ impl Store {
                 "reason": reason,
             }),
         );
-
-        // Pane death fails the task via the `task_fail` tail of `set_exited` /
-        // `remove_pane`; resuming here would emit a spurious working blip first.
-        if reason != "pane_exited" {
-            let task_id = self
-                .tasks
-                .values()
-                .find(|t| {
-                    t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::InputRequired
-                })
-                .map(|t| t.id.clone());
-            if let Some(tid) = task_id {
-                self.task_resume_working(&tid);
-            }
-        }
-
         Some(ev)
     }
 
@@ -1070,6 +1061,81 @@ mod tests {
 
         // Second finish record refused
         assert!(store.task_finish_record(&task_id, disp).is_err());
+    }
+
+    #[test]
+    fn clear_decision_never_resumes_task_for_non_answer_reasons() {
+        use signaltty_core::model::{Contract, Decision, DecisionOption, Relationship};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let pane = pane_with(Attention::None, 0);
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+        let decision = || Decision {
+            id: "d1".to_string(),
+            prompt: "Allow?".to_string(),
+            options: vec![DecisionOption {
+                id: "once".into(),
+                label: "Once".into(),
+            }],
+            answerable: true,
+            received_at: Utc::now(),
+        };
+        let task_id = signaltty_core::ids::new_task_id();
+        let task = Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id.clone()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "decision-test".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-d".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state: TaskState::InputRequired,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: Some(serde_json::json!({"reason": "decision_required"})),
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.task_create(task);
+
+        // Non-answer drops (timeout, disconnect, turn end) must park the
+        // task in input_required, never resume it to working unanswered.
+        for reason in [
+            "native_cancelled",
+            "timeout",
+            "moved_on",
+            "attention_cleared",
+        ] {
+            store.set_decision(&pane_id, decision());
+            // set_decision only moves working -> input_required; force it here.
+            store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
+            store.clear_decision(&pane_id, reason);
+            assert_eq!(
+                store.tasks[&task_id].state,
+                TaskState::InputRequired,
+                "clear_decision({reason}) must not resume the task"
+            );
+        }
+        // The answer path still resumes.
+        store.set_decision(&pane_id, decision());
+        store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
+        store.answer_decision(&pane_id, "d1", "once");
+        assert_eq!(store.tasks[&task_id].state, TaskState::Working);
     }
 
     #[test]

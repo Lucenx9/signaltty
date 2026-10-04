@@ -1637,7 +1637,16 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
                 .is_some_and(|pane| pane.lifecycle != Lifecycle::Blocked)
         };
         if moved_on {
-            ctx.store.write().unwrap().clear_decision(&pid, "moved_on");
+            // A still-unanswered decision at turn end (Stop/SessionEnd) is
+            // kept: dropping it would park the task in working with nobody
+            // left to answer. Only a stale record on a live turn is cleared.
+            let mut s = ctx.store.write().unwrap();
+            let unanswered_at_turn_end = s.panes.get(&pid).is_some_and(|pane| {
+                pane.pending_decision.is_some() && !matches!(pane.lifecycle, Lifecycle::Working)
+            });
+            if !unanswered_at_turn_end {
+                s.clear_decision(&pid, "moved_on");
+            }
         }
     }
     if let Some(message) = decision.message.or(decision_prompt) {

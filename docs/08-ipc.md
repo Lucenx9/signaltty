@@ -328,8 +328,8 @@ RATE_LIMITED, FORBIDDEN, INTERNAL`.
 into one emit carrying the previous id). `decision.answered
 {pane_id, decision_id, option_id}` fires on delivery. `decision.cleared
 {pane_id, decision_id, reason}` fires when the bar drops unanswered
-(`reason`: `attention_cleared | moved_on | pane_exited`). A pending decision
-clears on answer, when an agent transition clears its required attention or leaves `blocked`, or when the child exits. Reading,
+(`reason`: `attention_cleared | moved_on | pane_exited | native_cancelled`). A pending decision
+clears on answer, when an agent transition clears its required attention or leaves `blocked`, or when the child exits. A still-unanswered decision at turn end (`Stop`/`SessionEnd`) is kept, never dropped. Clearing a decision never resumes a worker task: only an explicit answer or an accepted follow-up submit moves an `input_required` task back to `working`; timeout, disconnect, and turn-end drops park it in `input_required`. Reading,
 focusing, `pane.mark_seen`, and default attach preserve the decision and gate.
 
 ## CLI mapping
