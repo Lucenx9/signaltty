@@ -67,7 +67,11 @@ New `mode: "rendered"`: `{pane_id, mode: "rendered", after_seq?, lines?}` →
   `decision.answer` / `pane.input`, never submit.
 - Write: `ESC[200~ text ESC[201~`, wait the delay, then `\r` (research-codebase
   §2: `\n` does not submit in raw-mode TUIs; bracketed paste keeps multiline
-  text out of premature execution).
+  text out of premature execution). Text that already contains `ESC[200~` or
+  `ESC[201~` is `BAD_PARAMS` and is not written. The markers are not stripped:
+  dropping them would change the prompt the worker sees, and a split tail
+  would still leave paste mode and run as keystrokes. The same check applies
+  to the background first submit (`submit_refused` when that step hits it).
 - Activity gate: a `working` or `blocked` transition newer than the pre-submit
   baseline within the stall budget (existing `WaitBaseline` machinery,
   research-codebase §3; fast completions before gate attach still match).

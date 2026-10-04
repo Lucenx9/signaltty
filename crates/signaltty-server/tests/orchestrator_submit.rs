@@ -724,3 +724,76 @@ async fn submit_accepts_blocked_input_required_without_decision_and_refuses_perm
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn submit_rejects_embedded_bracketed_paste_markers_before_any_write() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let ws = c
+        .call(
+            "workspace.create",
+            json!({"cwd": repo.path().to_string_lossy(), "name": "ws"}),
+        )
+        .await
+        .unwrap();
+    let ws_id = ws["workspace"]["id"].as_str().unwrap();
+
+    let p = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws_id, "argv": ["cat"]}),
+        )
+        .await
+        .unwrap();
+    let pane_id = p["pane"]["id"].as_str().unwrap().to_string();
+
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, repo.path()).await.unwrap();
+
+    let read_before = c
+        .call("pane.read", json!({"pane_id": pane_id}))
+        .await
+        .unwrap();
+    let text_before = read_before["text"].as_str().unwrap_or_default().to_string();
+
+    // Reject, do not strip. Either marker ends or opens paste mode early.
+    for (label, text) in [
+        ("end", "hello\u{1b}[201~LEAKED_END\r"),
+        ("start", "hello\u{1b}[200~LEAKED_START"),
+    ] {
+        let err = c
+            .call(
+                "pane.submit",
+                json!({
+                    "pane_id": pane_id,
+                    "text": text,
+                    "submit_delay_ms": 10,
+                    "stall_timeout_s": 1,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.starts_with(code::BAD_PARAMS),
+            "{label} marker must be BAD_PARAMS, got {err}"
+        );
+    }
+
+    let read_after = c
+        .call("pane.read", json!({"pane_id": pane_id}))
+        .await
+        .unwrap();
+    let text_after = read_after["text"].as_str().unwrap_or_default();
+    assert_eq!(
+        text_before, text_after,
+        "paste markers must be refused before any PTY write"
+    );
+    assert!(
+        !text_after.contains("LEAKED_END") && !text_after.contains("LEAKED_START"),
+        "refused paste leaked into the pane: {text_after:?}"
+    );
+
+    srv.shutdown().await;
+}

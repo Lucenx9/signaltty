@@ -85,17 +85,20 @@ impl From<SubmitError> for (String, String) {
 
 /// Gated prompt submission:
 /// 1. Validate text length (1 byte .. 32 KiB).
-/// 2. Gate on pane lifecycle (`idle` or `done`) and live state.
+/// 2. Reject text that already contains `ESC[200~` or `ESC[201~` (`BAD_PARAMS`).
+///    Stripping would change the prompt the worker sees, so the text is refused
+///    whole, before the readiness gate and before any PTY write.
+/// 3. Gate on pane lifecycle (`idle` or `done`) and live state.
 ///    - If `!allow_pending_task` and worker pane is still `pending`, refuse `AGENT_NOT_READY`.
 ///    - If working/blocked, refuse `AGENT_BUSY`.
 ///    - If unknown/failed, refuse `AGENT_NOT_READY`.
 ///    - If exited, refuse `PANE_EXITED`.
-/// 3. Record pre-submit `WaitBaseline`.
-/// 4. Write bracketed paste (`\x1b[200~text\x1b[201~`).
-/// 5. Sleep `submit_delay`.
-/// 6. Write `\r`.
-/// 7. Activity gate (if `check_activity`): wait up to `stall_timeout` for a newer `working` or `blocked` transition.
-/// 8. If worker pane belongs to an `input_required` task, resume it to `working`.
+/// 4. Record pre-submit `WaitBaseline`.
+/// 5. Write bracketed paste (`\x1b[200~text\x1b[201~`).
+/// 6. Sleep `submit_delay`.
+/// 7. Write `\r`.
+/// 8. Activity gate (if `check_activity`): wait up to `stall_timeout` for a newer `working` or `blocked` transition.
+/// 9. If worker pane belongs to an `input_required` task, resume it to `working`.
 pub async fn submit_prompt(
     ctx: &SubmitCtx,
     pane_id: &str,
@@ -109,6 +112,16 @@ pub async fn submit_prompt(
         return Err(SubmitError::new(
             code::BAD_PARAMS,
             "text must be 1 .. 32768 bytes",
+        ));
+    }
+    // Reject, do not strip. A marker inside the text ends or opens paste mode
+    // early, and the tail is delivered as immediate keystrokes. Removing the
+    // bytes would silently change the prompt, so the whole text is refused
+    // before the readiness gate and before any `ptys.input`.
+    if text.contains("\u{1b}[200~") || text.contains("\u{1b}[201~") {
+        return Err(SubmitError::new(
+            code::BAD_PARAMS,
+            "text must not contain bracketed-paste markers ESC[200~ or ESC[201~",
         ));
     }
 
