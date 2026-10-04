@@ -20,6 +20,18 @@ use crate::router::{ConnEffect, Ctx};
 use crate::store::Store;
 use crate::submit::SubmitCtx;
 
+/// `None` when the workspace is gone, else its active tab if that tab is empty
+/// (no layout) and can host the worker pane.
+fn empty_active_tab(s: &Store, ws_id: &str) -> Option<Option<String>> {
+    let ws = s.workspaces.get(ws_id)?;
+    Some(ws.active_tab_id.as_ref().and_then(|tid| {
+        s.tabs
+            .get(tid)
+            .filter(|t| t.layout.is_none())
+            .map(|t| t.id.clone())
+    }))
+}
+
 /// Persist a `failed` task for a `task.start` failure after the worktree was
 /// created, unlock the checkout so it stays removable, and return the error
 /// with `details: {task_id, stage}`. Pre-worktree validation never reaches here.
@@ -357,29 +369,25 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         }
     };
 
-    // Tab lookup / create: if active tab is empty (no layout), reuse it; otherwise create a tab
-    let tab_id = {
+    // Tab lookup / create: if active tab is empty (no layout), reuse it; otherwise create a tab.
+    // The read guard is gone before `fail_task_start`, which takes the write lock.
+    let tab_lookup = {
         let s = ctx.store.read().unwrap();
-        let ws = match s.workspaces.get(&ws_id) {
-            Some(w) => w,
-            None => {
-                return fail_task_start(
-                    ctx,
-                    reservation,
-                    task,
-                    "workspace",
-                    code::NO_SUCH_WORKSPACE,
-                    ws_id.clone(),
-                    &req.id,
-                );
-            }
-        };
-        ws.active_tab_id.as_ref().and_then(|tid| {
-            s.tabs
-                .get(tid)
-                .filter(|t| t.layout.is_none())
-                .map(|t| t.id.clone())
-        })
+        empty_active_tab(&s, &ws_id)
+    };
+    let tab_id = match tab_lookup {
+        Some(tab) => tab,
+        None => {
+            return fail_task_start(
+                ctx,
+                reservation,
+                task,
+                "workspace",
+                code::NO_SUCH_WORKSPACE,
+                ws_id.clone(),
+                &req.id,
+            );
+        }
     };
     let tab_id = match tab_id {
         Some(id) => id,
@@ -1744,4 +1752,25 @@ fn retry_recorded_cleanup(
         res["cleanup_error"] = json!(err);
     }
     (Response::ok(req_id, res), ConnEffect::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_workspace_is_reported_without_a_guard_in_the_lookup() {
+        let store = std::sync::Arc::new(std::sync::RwLock::new(Store::new()));
+        // The caller must be able to take the write lock (as `fail_task_start`
+        // does) as soon as the lookup returns `None`.
+        let lookup = {
+            let s = store.read().unwrap();
+            empty_active_tab(&s, "ws_gone")
+        };
+        assert!(lookup.is_none());
+        assert!(
+            store.try_write().is_ok(),
+            "no read guard may outlive the lookup"
+        );
+    }
 }
