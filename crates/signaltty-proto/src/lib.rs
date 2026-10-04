@@ -369,6 +369,83 @@ pub fn check_protocol(req: &Request) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    /// `pub const NAME: &str` declarations inside `pub mod <module>`, read
+    /// from this file so a constant missing from `ALL` fails the test.
+    fn declared(module: &str) -> Vec<&'static str> {
+        let source = include_str!("lib.rs");
+        let start = source.find(&format!("pub mod {module} {{")).unwrap();
+        let body = &source[start..start + source[start..].find("\n}\n").unwrap()];
+        body.lines()
+            .filter_map(|l| l.trim().strip_prefix("pub const "))
+            .filter(|l| l.contains(": &str") && !l.starts_with("ALL"))
+            .map(|l| l.split(':').next().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn all_lists_cover_every_constant_without_duplicates() {
+        for name in method::ALL {
+            assert!(!name.is_empty());
+        }
+        for (module, list) in [
+            ("method", method::ALL),
+            ("event", event::ALL),
+            ("code", code::ALL),
+        ] {
+            let set: HashSet<&&str> = list.iter().collect();
+            assert_eq!(set.len(), list.len(), "{module}: no duplicates");
+            assert_eq!(
+                declared(module).len(),
+                list.len(),
+                "{module}: every constant listed"
+            );
+        }
+        for must in [
+            method::SERVER_STATUS,
+            method::SERVER_SCHEMA,
+            method::PANE_SPAWN,
+            method::HOOK_EVENT,
+            method::WAIT,
+            method::FOCUS_NEXT_UNREAD,
+            method::WORKSPACE_FILE_DIFF,
+            method::TASK_START,
+            method::TASK_GET,
+            method::TASK_LIST,
+            method::TASK_WAIT,
+            method::TASK_REPORT,
+            method::TASK_DIFF,
+            method::TASK_FILE_DIFF,
+            method::TASK_FINISH,
+            method::TASK_CANCEL,
+            method::PANE_SUBMIT,
+            method::ATTENTION_PENDING,
+        ] {
+            assert!(method::ALL.contains(&must), "{must} listed");
+        }
+        for must in [
+            event::PTY_DATA,
+            event::AGENT_DONE,
+            event::SERVER_WILL_SHUTDOWN,
+            event::TASK_CREATED,
+            event::TASK_UPDATED,
+            event::TASK_RESULT,
+        ] {
+            assert!(event::ALL.contains(&must), "{must} listed");
+        }
+        for must in [
+            code::BAD_PARAMS,
+            code::UNKNOWN_METHOD,
+            code::TIMEOUT,
+            code::NO_SUCH_TASK,
+            code::AGENT_BUSY,
+            code::AGENT_NOT_READY,
+            code::MERGE_CONFLICT,
+        ] {
+            assert!(code::ALL.contains(&must), "{must} listed");
+        }
+    }
 
     #[test]
     fn schema_roundtrip() {
@@ -389,7 +466,60 @@ mod tests {
         assert!(glob_matches("pane.*", "pane.created"));
         assert!(glob_matches("pane.*", "pane.exited"));
         assert!(!glob_matches("pane.*", "workspace.created"));
+        assert!(glob_matches("agent.*", "agent.done"));
+        assert!(!glob_matches("agent.*", "pane.created"));
         assert!(glob_matches("agent.working", "agent.working"));
         assert!(!glob_matches("agent.working", "agent.idle"));
+        assert!(glob_matches("pane.created", "pane.created"));
+        assert!(!glob_matches("pane.created", "pane.exited"));
+        assert!(glob_matches("task.*", "task.created"));
+        assert!(glob_matches("task.*", "task.result"));
+        assert!(!glob_matches("task.*", "pane.created"));
+    }
+
+    #[test]
+    fn response_roundtrip() {
+        let r = Response::ok("1", serde_json::json!({"a": 1}));
+        let line = r.to_line();
+        assert!(line.ends_with('\n'));
+        let back: Response = serde_json::from_str(line.trim()).unwrap();
+        assert!(back.ok);
+        let e = Response::err("2", code::BAD_PARAMS, "nope");
+        assert!(!e.ok);
+        assert_eq!(e.error.unwrap().code, "BAD_PARAMS");
+    }
+
+    #[test]
+    fn err_with_details_keeps_details_and_plain_errors_omit_them() {
+        let e = Response::err_with_details(
+            "3",
+            code::MERGE_CONFLICT,
+            "conflict",
+            serde_json::json!({"conflicted": ["a.txt"]}),
+        );
+        assert!(!e.ok);
+        let back: Response = serde_json::from_str(e.to_line().trim()).unwrap();
+        let body = back.error.unwrap();
+        assert_eq!(body.code, "MERGE_CONFLICT");
+        assert_eq!(body.message, "conflict");
+        assert_eq!(body.details["conflicted"][0], "a.txt");
+        let plain = Response::err("4", code::BAD_PARAMS, "nope").to_line();
+        assert!(!plain.contains("details"), "{plain}");
+    }
+
+    #[test]
+    fn protocol_check() {
+        let r = Request {
+            protocol: "signaltty/1".into(),
+            id: "1".into(),
+            method: "server.status".into(),
+            params: Value::Null,
+        };
+        assert!(check_protocol(&r));
+        let old = Request {
+            protocol: "signaltty/0".into(),
+            ..r
+        };
+        assert!(!check_protocol(&old));
     }
 }
