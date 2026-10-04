@@ -15,7 +15,7 @@ Run the test suite across core logic, headless GUI operations, and formatting/li
 cargo test -p signaltty-core theme
 
 # Terminal styling and CSS token consistency
-cargo test -p signaltty-gui terminal
+cargo test -p signaltty-gui pane_bg_table_matches_the_stylesheet
 
 # Complete workspace test suite
 cargo test --workspace
@@ -30,7 +30,7 @@ cargo fmt --check
 To run the ignored GTK display tests verifying live preference switching on the window:
 
 ```sh
-xvfb-run -a dbus-run-session -- cargo test -p signaltty-gui preference -- --ignored --test-threads=1
+xvfb-run -a dbus-run-session -- cargo test -p signaltty-gui theme_and_appearance_swapping -- --ignored --test-threads=1
 ```
 
 ---
@@ -112,7 +112,9 @@ mkdir -p artifacts/screenshots
 # Start isolated Xvfb server
 Xvfb :77 -screen 0 1280x800x24 &
 XVFB_PID=$!
-trap "kill $XVFB_PID || true" EXIT
+# Scratch config dir so captures never touch the real gui.json
+export XDG_CONFIG_HOME="$(mktemp -d)"
+trap 'kill $XVFB_PID || true; rm -rf "$XDG_CONFIG_HOME"' EXIT
 
 export DISPLAY=:77
 
@@ -125,8 +127,8 @@ for theme in "${THEMES[@]}"; do
     echo "Capturing ${theme} (${scheme_suffix})..."
 
     # Configure target preference
-    mkdir -p ~/.config/signaltty
-    cat <<EOF > ~/.config/signaltty/gui.json
+    mkdir -p "$XDG_CONFIG_HOME/signaltty"
+    cat <<EOF > "$XDG_CONFIG_HOME/signaltty/gui.json"
 {"appearance":"${scheme_suffix}","theme":"${theme}"}
 EOF
 

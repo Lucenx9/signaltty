@@ -857,6 +857,9 @@ fn pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios() {
 #[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
 fn theme_and_appearance_swapping_updates_window_classes() {
+    // The setters persist gui.json; keep the user's own file out of it.
+    let config = std::env::temp_dir().join(format!("signaltty-theme-test-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
     adw::init().unwrap();
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
     let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
@@ -887,9 +890,9 @@ fn theme_and_appearance_swapping_updates_window_classes() {
     assert!(!app.window.has_css_class("theme-ocean"));
     assert!(!app.window.has_css_class("dark"));
 
-    // Restore to default and clean up
-    app.set_appearance(signaltty_core::theme::Appearance::System);
     app.window.destroy();
+    std::env::remove_var("XDG_CONFIG_HOME");
+    let _ = std::fs::remove_dir_all(&config);
 }
 
 fn find_widget<T: glib::object::IsA<gtk4::Widget> + glib::types::StaticType>(
