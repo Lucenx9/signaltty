@@ -1465,8 +1465,38 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
     };
     {
         let s = ctx.store.read().unwrap();
-        if !s.panes.contains_key(&pid) {
+        let Some(pane) = s.panes.get(&pid) else {
             return Err((code::NO_SUCH_PANE.to_string(), pid.clone()));
+        };
+        // Harness mismatch check:
+        // If the pane already has an established non-unknown agent kind,
+        // and the incoming event's agent adapter kind does not match it:
+        // drop the event, never relabel or mutate the pane.
+        let incoming_kind = adapter.metadata().kind;
+        let is_specific = |k: signaltty_core::model::AgentKind| {
+            matches!(
+                k,
+                signaltty_core::model::AgentKind::Codex
+                    | signaltty_core::model::AgentKind::Claude
+                    | signaltty_core::model::AgentKind::Opencode
+                    | signaltty_core::model::AgentKind::Cursor
+            )
+        };
+        if is_specific(pane.agent.kind)
+            && is_specific(incoming_kind)
+            && pane.agent.kind != incoming_kind
+        {
+            return Ok((
+                json!({
+                    "accepted": false,
+                    "dropped": true,
+                    "reason": "harness_mismatch",
+                    "agent": agent,
+                    "event": hook,
+                    "pane_id": pid
+                }),
+                ConnEffect::default(),
+            ));
         }
     }
 
@@ -1485,8 +1515,34 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         s.set_agent_session(&pid, sid);
     }
 
-    // 2. Lifecycle + attention from the adapter, under one lock.
+    let notif_draft = adapter.notification_event(&event);
+    let session_id_opt = adapter.session_identity(&event);
     let decision = adapter.lifecycle_state(&event);
+
+    let is_unrecognized = decision.lifecycle.is_none()
+        && decision.attention.is_none()
+        && session_id_opt.is_none()
+        && notif_draft.is_none()
+        && p.decision.is_none()
+        && p.message.is_none()
+        && p.body.is_none()
+        && !matches!(
+            hook.as_str(),
+            "PreToolUse" | "PostToolUse" | "PreCompact" | "PostCompact" | "SubagentStop"
+        );
+    if is_unrecognized {
+        return Ok((
+            json!({
+                "accepted": false,
+                "dropped": true,
+                "reason": "unrecognized_hook",
+                "agent": agent,
+                "event": hook,
+                "pane_id": pid
+            }),
+            ConnEffect::default(),
+        ));
+    }
     {
         let mut s = ctx.store.write().unwrap();
         if let Some(lifecycle) = decision.lifecycle {

@@ -1193,17 +1193,18 @@ async fn test_turn_ended_without_report_and_follow_up_submit_and_report() {
     assert_eq!(wait["satisfied"], true);
 
     // Simulate agent ending turn (Stop) without reporting
-    c.call(
-        "hook-event",
-        json!({
-            "agent": "claude",
-            "event": "Stop",
-            "pane_id": pane_id,
-            "message": "I finished the turn without report",
-        }),
-    )
-    .await
-    .unwrap();
+    let _hres = c
+        .call(
+            "hook-event",
+            json!({
+                "agent": "codex",
+                "event": "Stop",
+                "pane_id": pane_id,
+                "message": "I finished the turn without report",
+            }),
+        )
+        .await
+        .unwrap();
 
     // Task moves to input_required with reason turn_ended_without_report
     let task_get = c
