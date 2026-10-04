@@ -2069,3 +2069,67 @@ async fn restart_recovery_transition_is_journaled_and_replayable() {
     );
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn oversized_client_timeouts_are_bad_params_not_panics() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "timeouts"},
+                "argv": ["sleep", "30"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap();
+
+    let err = c
+        .call(
+            "task.wait",
+            json!({"task_id": task_id, "timeout_s": u64::MAX}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.starts_with(signaltty_proto::code::BAD_PARAMS), "{err}");
+
+    let err = c
+        .call(
+            "pane.submit",
+            json!({"pane_id": pane_id, "text": "hi", "stall_timeout_s": u64::MAX}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.starts_with(signaltty_proto::code::BAD_PARAMS), "{err}");
+
+    for key in ["ready_timeout_s", "stall_timeout_s"] {
+        let err = c
+            .call(
+                "task.start",
+                json!({
+                    "repo": repo.path().to_string_lossy(),
+                    "contract": {"objective": "too long"},
+                    "argv": ["sleep", "30"],
+                    key: u64::MAX,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.starts_with(signaltty_proto::code::BAD_PARAMS),
+            "{key}: {err}"
+        );
+    }
+    let list = c.call("task.list", json!({})).await.unwrap();
+    assert_eq!(
+        list["tasks"].as_array().unwrap().len(),
+        1,
+        "no task created"
+    );
+    srv.shutdown().await;
+}

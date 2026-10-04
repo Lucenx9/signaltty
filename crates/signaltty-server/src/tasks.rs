@@ -154,6 +154,23 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         }
     }
 
+    // Deadlines are built from these later, in the background; an overflow
+    // there would panic after the worktree and pane exist.
+    for (name, secs) in [
+        ("ready_timeout_s", p.ready_timeout_s),
+        ("stall_timeout_s", p.stall_timeout_s),
+    ] {
+        if tokio::time::Instant::now()
+            .checked_add(Duration::from_secs(secs.unwrap_or(0)))
+            .is_none()
+        {
+            return (
+                Response::err(&req.id, code::BAD_PARAMS, format!("{name} is too large")),
+                ConnEffect::default(),
+            );
+        }
+    }
+
     // Resolve agent and argv
     let (argv, _kind, agent_name) = match resolve_agent_and_argv(ctx, &p) {
         Ok(res) => res,
@@ -827,7 +844,14 @@ pub async fn h_task_wait(ctx: &Ctx, req: &Request, params: &Value) -> (Response,
         }
     }
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(p.timeout_s.unwrap_or(3600));
+    let Some(deadline) =
+        tokio::time::Instant::now().checked_add(Duration::from_secs(p.timeout_s.unwrap_or(3600)))
+    else {
+        return (
+            Response::err(&req.id, code::BAD_PARAMS, "wait timeout is too large"),
+            ConnEffect::default(),
+        );
+    };
     let mut rx = ctx.bcast.subscribe();
     let mut tick = tokio::time::interval(Duration::from_millis(50));
 

@@ -135,6 +135,18 @@ pub async fn submit_prompt(
             format!("text must be 1 .. {max_bytes} bytes"),
         ));
     }
+    // Checked before any PTY write so an overflow cannot panic after the
+    // prompt was already delivered.
+    if check_activity
+        && tokio::time::Instant::now()
+            .checked_add(stall_timeout)
+            .is_none()
+    {
+        return Err(SubmitError::new(
+            code::BAD_PARAMS,
+            "stall timeout is too large",
+        ));
+    }
     // Reject, do not strip. A marker inside the text ends or opens paste mode
     // early, and the tail is delivered as immediate keystrokes. Removing the
     // bytes would silently change the prompt, so the whole text is refused
@@ -242,7 +254,7 @@ pub async fn submit_prompt(
 
     // Activity gate
     let outcomes = ["working", "blocked"];
-    let deadline = tokio::time::Instant::now() + stall_timeout;
+    let deadline = tokio::time::Instant::now() + stall_timeout; // checked above
     let mut rx = ctx.bcast.subscribe();
     let mut tick = tokio::time::interval(Duration::from_millis(50));
 
