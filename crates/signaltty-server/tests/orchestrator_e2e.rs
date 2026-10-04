@@ -24,6 +24,10 @@ async fn orchestrator_deterministic_acceptance_scenario() {
     //    start server and an orchestrator pane.
     let repo = TempGitRepo::new();
     repo.create_branch("pre-existing-feature");
+    let pre_existing_sha_before =
+        String::from_utf8_lossy(&repo.git(&["rev-parse", "pre-existing-feature"]).stdout)
+            .trim()
+            .to_string();
 
     let mut srv = TestServer::start().await;
     let mut c = srv.client().await;
@@ -41,7 +45,7 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         .call("pane.spawn", json!({"workspace_id": ws_id, "argv": ["sh"]}))
         .await
         .unwrap();
-    let _orch_pane_id = orch_p["pane"]["id"].as_str().unwrap();
+    let orch_pane_id = orch_p["pane"]["id"].as_str().unwrap().to_string();
 
     // 2. Orchestrator starts 3 tasks sharing one context, each with a contract,
     //    back-to-back (async: each returns at pending).
@@ -51,8 +55,10 @@ async fn orchestrator_deterministic_acceptance_scenario() {
             "task.start",
             json!({
                 "context_id": ctx_id,
-                "source_repo": repo.path().to_string_lossy(),
+                "repo": repo.path().to_string_lossy(),
                 "branch": "task-a-branch",
+                "parent_pane_id": orch_pane_id,
+                "label": "worker-a",
                 "contract": {
                     "objective": "Worker A objective: create file_a.txt",
                     "acceptance_criteria": ["file_a.txt exists"]
@@ -69,8 +75,10 @@ async fn orchestrator_deterministic_acceptance_scenario() {
             "task.start",
             json!({
                 "context_id": ctx_id,
-                "source_repo": repo.path().to_string_lossy(),
+                "repo": repo.path().to_string_lossy(),
                 "branch": "task-b-branch",
+                "parent_pane_id": orch_pane_id,
+                "label": "worker-b",
                 "contract": {
                     "objective": "Worker B objective: create file_b.txt with permission",
                     "acceptance_criteria": ["file_b.txt exists"]
@@ -87,8 +95,10 @@ async fn orchestrator_deterministic_acceptance_scenario() {
             "task.start",
             json!({
                 "context_id": ctx_id,
-                "source_repo": repo.path().to_string_lossy(),
+                "repo": repo.path().to_string_lossy(),
                 "branch": "task-c-branch",
+                "parent_pane_id": orch_pane_id,
+                "label": "worker-c",
                 "contract": {
                     "objective": "Worker C objective: finish after follow-up",
                     "acceptance_criteria": ["file_c.txt exists"]
@@ -100,10 +110,31 @@ async fn orchestrator_deterministic_acceptance_scenario() {
     let task_c_id = start_c["task"]["id"].as_str().unwrap().to_string();
     assert_eq!(start_c["task"]["state"], "pending");
 
-    // 3. Each worker pane becomes ready (SessionStart hook -> idle).
+    // 3. Worker panes have lineage (parent_pane_id, label) set.
     let pane_a_id = start_a["task"]["pane_id"].as_str().unwrap().to_string();
     let pane_b_id = start_b["task"]["pane_id"].as_str().unwrap().to_string();
     let pane_c_id = start_c["task"]["pane_id"].as_str().unwrap().to_string();
+
+    let pane_a_info = c
+        .call("pane.get", json!({"pane_id": pane_a_id}))
+        .await
+        .unwrap();
+    assert_eq!(pane_a_info["pane"]["parent_pane_id"], orch_pane_id);
+    assert_eq!(pane_a_info["pane"]["label"], "worker-a");
+
+    let pane_b_info = c
+        .call("pane.get", json!({"pane_id": pane_b_id}))
+        .await
+        .unwrap();
+    assert_eq!(pane_b_info["pane"]["parent_pane_id"], orch_pane_id);
+    assert_eq!(pane_b_info["pane"]["label"], "worker-b");
+
+    let pane_c_info = c
+        .call("pane.get", json!({"pane_id": pane_c_id}))
+        .await
+        .unwrap();
+    assert_eq!(pane_c_info["pane"]["parent_pane_id"], orch_pane_id);
+    assert_eq!(pane_c_info["pane"]["label"], "worker-c");
 
     let worktree_a = Path::new(start_a["task"]["worktree_path"].as_str().unwrap());
     let worktree_b = Path::new(start_b["task"]["worktree_path"].as_str().unwrap());
@@ -169,7 +200,7 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         .unwrap();
     assert_eq!(rep_a["task"]["state"], "completed");
 
-    // Worker B raises PermissionRequest -> attention/needs-user -> answered -> report completed.
+    // Worker B raises PermissionRequest -> attention/needs-user -> blocked -> input_required
     std::fs::write(worktree_b.join("file_b.txt"), "hello from B\n").unwrap();
     git(worktree_b, &["add", "file_b.txt"]);
     git(worktree_b, &["commit", "-qm", "feat: file_b"]);
@@ -183,21 +214,33 @@ async fn orchestrator_deterministic_acceptance_scenario() {
 
     let pending_att = c.call("attention.pending", json!({})).await.unwrap();
     let items = pending_att["panes"].as_array().unwrap();
-    assert!(items.iter().any(|item| item["id"] == pane_b_id));
+    assert!(items.iter().any(|item| item["pane_id"] == pane_b_id));
 
-    let pane_b_info = c
+    let task_b_blocked = c
+        .call("task.get", json!({"task_id": task_b_id}))
+        .await
+        .unwrap();
+    assert_eq!(task_b_blocked["task"]["state"], "input_required");
+
+    let pane_b_latest = c
         .call("pane.get", json!({"pane_id": pane_b_id}))
         .await
         .unwrap();
-    let dec_id = pane_b_info["pane"]["pending_decision"]["id"]
-        .as_str()
-        .unwrap();
+    let dec = &pane_b_latest["pane"]["pending_decision"];
+    let dec_id = dec["id"].as_str().unwrap();
+    let opt_id = dec["options"][0]["id"].as_str().unwrap();
     c.call(
         "decision.answer",
-        json!({"decision_id": dec_id, "verdict": "allow"}),
+        json!({"pane_id": pane_b_id, "decision_id": dec_id, "option_id": opt_id}),
     )
     .await
     .unwrap();
+
+    let task_b_working = c
+        .call("task.get", json!({"task_id": task_b_id}))
+        .await
+        .unwrap();
+    assert_eq!(task_b_working["task"]["state"], "working");
 
     let rep_b = c
         .call(
@@ -227,10 +270,11 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         .await
         .unwrap();
     assert_eq!(wait_ctx_1["satisfied"], true);
-    assert_eq!(wait_ctx_1["settled_task"]["id"], task_c_id);
-    assert_eq!(wait_ctx_1["settled_task"]["state"], "input_required");
+    let tasks_1 = wait_ctx_1["tasks"].as_array().unwrap();
+    let task_c = tasks_1.iter().find(|t| t["id"] == task_c_id).unwrap();
+    assert_eq!(task_c["state"], "input_required");
     assert_eq!(
-        wait_ctx_1["settled_task"]["finish_error"]["reason"],
+        task_c["status_reason"]["reason"],
         "turn_ended_without_report"
     );
 
@@ -242,7 +286,13 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         )
         .await
         .unwrap();
-    assert_eq!(submit_c["task"]["state"], "working");
+    assert_eq!(submit_c["submitted"], true);
+
+    let get_c = c
+        .call("task.get", json!({"task_id": task_c_id}))
+        .await
+        .unwrap();
+    assert_eq!(get_c["task"]["state"], "working");
 
     // Worker C reports completed.
     let rep_c = c
@@ -265,25 +315,45 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         .await
         .unwrap();
     assert_eq!(wait_ctx_2["satisfied"], true);
-    assert_eq!(wait_ctx_2["all_terminal"], true);
+    let tasks_2 = wait_ctx_2["tasks"].as_array().unwrap();
+    assert!(tasks_2.iter().all(|t| {
+        let st = t["state"].as_str().unwrap_or("");
+        ["completed", "failed", "canceled", "rejected"].contains(&st)
+    }));
 
     // Incremental output reads on worker A.
     let read_1 = c
         .call(
             "pane.read",
-            json!({"pane_id": pane_a_id, "mode": "rendered", "after_offset": 0}),
+            json!({"pane_id": pane_a_id, "mode": "rendered", "after_seq": 0}),
         )
         .await
         .unwrap();
-    let offset_1 = read_1["next_offset"].as_u64().unwrap_or(0);
+    let seq_1 = read_1["next_seq"].as_u64().unwrap_or(0);
+
+    // Cause output in pane A between two reads
+    c.call(
+        "pane.input",
+        json!({
+            "pane_id": pane_a_id,
+            "bytes": b"echo incremental_output_a\n".to_vec()
+        }),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
     let read_2 = c
         .call(
             "pane.read",
-            json!({"pane_id": pane_a_id, "mode": "rendered", "after_offset": offset_1}),
+            json!({"pane_id": pane_a_id, "mode": "rendered", "after_seq": seq_1}),
         )
         .await
         .unwrap();
-    assert!(read_2["text"].as_str().unwrap_or("").is_empty());
+    assert_eq!(read_2["dropped"], false);
+    let text_2 = read_2["text"].as_str().unwrap_or("");
+    assert!(text_2.contains("incremental_output_a"));
+    assert!(!text_2.contains("Worker A done"));
 
     // Needs-user attention listing is now empty.
     let att_final = c.call("attention.pending", json!({})).await.unwrap();
@@ -294,20 +364,23 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         .call("task.diff", json!({"task_id": task_a_id}))
         .await
         .unwrap();
-    assert!(diff_a["diff"].as_str().unwrap().contains("file_a.txt"));
+    let files_a = diff_a["files"].as_array().unwrap();
+    assert!(files_a.iter().any(|f| f["path"] == "file_a.txt"));
 
     let diff_b = c
         .call("task.diff", json!({"task_id": task_b_id}))
         .await
         .unwrap();
-    assert!(diff_b["diff"].as_str().unwrap().contains("file_b.txt"));
-    assert!(diff_b["diff"].as_str().unwrap().contains("untracked_b.txt"));
+    let files_b = diff_b["files"].as_array().unwrap();
+    assert!(files_b.iter().any(|f| f["path"] == "file_b.txt"));
+    assert!(files_b.iter().any(|f| f["path"] == "untracked_b.txt"));
 
     let diff_c = c
         .call("task.diff", json!({"task_id": task_c_id}))
         .await
         .unwrap();
-    assert!(diff_c["diff"].as_str().unwrap().contains("file_c.txt"));
+    let files_c = diff_c["files"].as_array().unwrap();
+    assert!(files_c.iter().any(|f| f["path"] == "file_c.txt"));
 
     // 7. Server restarts mid-run (here after all reports).
     srv.restart().await;
@@ -340,38 +413,36 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         .call("task.diff", json!({"task_id": task_a_id}))
         .await
         .unwrap();
-    assert!(diff_a_restart["diff"]
-        .as_str()
-        .unwrap()
-        .contains("file_a.txt"));
+    let files_a_restart = diff_a_restart["files"].as_array().unwrap();
+    assert!(files_a_restart.iter().any(|f| f["path"] == "file_a.txt"));
 
     // 8. Orchestrator finishes: merge 2 (A and B), discard 1 (C).
     let fin_a = c_after
         .call(
             "task.finish",
-            json!({"task_id": task_a_id, "action": "merge", "delete_branch": true}),
+            json!({"task_id": task_a_id, "mode": "merge", "delete_branch": true}),
         )
         .await
         .unwrap();
-    assert_eq!(fin_a["disposition"]["outcome"], "merged");
+    assert_eq!(fin_a["task"]["disposition"]["outcome"], "merged");
 
     let fin_b = c_after
         .call(
             "task.finish",
-            json!({"task_id": task_b_id, "action": "merge", "delete_branch": true}),
+            json!({"task_id": task_b_id, "mode": "merge", "delete_branch": true}),
         )
         .await
         .unwrap();
-    assert_eq!(fin_b["disposition"]["outcome"], "merged");
+    assert_eq!(fin_b["task"]["disposition"]["outcome"], "merged");
 
     let fin_c = c_after
         .call(
             "task.finish",
-            json!({"task_id": task_c_id, "action": "discard", "delete_branch": true}),
+            json!({"task_id": task_c_id, "mode": "discard", "delete_branch": true}),
         )
         .await
         .unwrap();
-    assert_eq!(fin_c["disposition"]["outcome"], "discarded");
+    assert_eq!(fin_c["task"]["disposition"]["outcome"], "discarded");
 
     // Merged files land in the source repo.
     let main_a = repo.path().join("file_a.txt");
@@ -379,14 +450,49 @@ async fn orchestrator_deterministic_acceptance_scenario() {
     assert!(main_a.exists(), "file_a.txt merged into source repo");
     assert!(main_b.exists(), "file_b.txt merged into source repo");
 
-    // Discarded worktree is gone.
+    // All worktrees are removed.
+    assert!(!worktree_a.exists(), "worktree A removed");
+    assert!(!worktree_b.exists(), "worktree B removed");
     assert!(!worktree_c.exists(), "discarded worktree C is deleted");
 
-    // Pre-existing branch is untouched.
-    let branches = repo.git(&["branch", "--list", "pre-existing-feature"]);
+    // Task branches deleted only where allowed.
+    let br_a = repo.git(&["branch", "--list", "task-a-branch"]);
     assert!(
-        String::from_utf8_lossy(&branches.stdout).contains("pre-existing-feature"),
-        "pre-existing branch was not touched"
+        String::from_utf8_lossy(&br_a.stdout).trim().is_empty(),
+        "task-a-branch was deleted"
+    );
+    let br_b = repo.git(&["branch", "--list", "task-b-branch"]);
+    assert!(
+        String::from_utf8_lossy(&br_b.stdout).trim().is_empty(),
+        "task-b-branch was deleted"
+    );
+    let br_c = repo.git(&["branch", "--list", "task-c-branch"]);
+    assert!(
+        String::from_utf8_lossy(&br_c.stdout).trim().is_empty(),
+        "task-c-branch was deleted"
+    );
+
+    // Source repo is on its target branch and clean.
+    let current_branch = repo.git(&["branch", "--show-current"]);
+    assert_eq!(
+        String::from_utf8_lossy(&current_branch.stdout).trim(),
+        "main",
+        "source repo is on its target branch"
+    );
+    let status = repo.git(&["status", "--porcelain"]);
+    assert!(
+        String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+        "source repo is clean after finish"
+    );
+
+    // Pre-existing branch still points at its original SHA.
+    let pre_existing_sha_after =
+        String::from_utf8_lossy(&repo.git(&["rev-parse", "pre-existing-feature"]).stdout)
+            .trim()
+            .to_string();
+    assert_eq!(
+        pre_existing_sha_before, pre_existing_sha_after,
+        "pre-existing branch still points at original SHA"
     );
 
     srv.shutdown().await;
