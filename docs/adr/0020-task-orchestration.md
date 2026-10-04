@@ -96,6 +96,36 @@ VERIFIED https://www.anthropic.com/engineering/multi-agent-research-system/).
   agent-agnostic multiplexer; the orchestrator agent evaluates against contract
   acceptance criteria.
 
+## Implementation amendments (lane C record, 2026-10-04)
+
+What the code does where it diverges from the proposal above — docs
+(`docs/02`, `docs/08`, skill, quickstart) describe this behavior:
+
+- No `client_request_id`: neither the spec contracts nor the code define an
+  idempotency key for `task.start`. Retries create new tasks; callers
+  de-duplicate via `task.list --context`.
+- Sync-error semantics: base-ref/empty-repo/worktree/spawn failures return
+  synchronous errors (`BAD_PARAMS`/`IO_ERROR`) and create no task. Only the
+  background ready-wait + prompt write produces `failed` tasks with `{stage:
+  ready_timeout|submit_refused, …}`. The accepted-research deltas all
+  landed: hook-receiver drops (`harness_mismatch`, `unrecognized_hook`),
+  the silent-worker watchdog (`worker_silent_timeout_s`, default 600 s, `0`
+  disables), `last_assistant_message` flowing into pane `last_message` and
+  turn-end evidence, ref-safety checks, and the composed worker preamble.
+- Background submit writes the prompt (fixed 100 ms paste/Enter delay) and
+  moves the task to `working` on a successful write; it does not run the
+  `pane.submit` activity gate.
+- `pane.spawn` stores an unknown `parent_pane_id` as-is (root unset) rather
+  than refusing `NO_SUCH_PANE`.
+- `Task.finish_error` is a reserved field, never set: conflicts return
+  `MERGE_CONFLICT` without mutating the task, and cleanup problems come back
+  inline as `cleanup_error`.
+- Board / PR-CI cycle (Agent Orchestrator's Kanban of derived PR states,
+  CI/review auto-paste, GitHub squash finish) is explicitly deferred to a
+  follow-up feature (019): this PR merges locally into the recorded target
+  branch with a human review gate, and surfaces label + state on existing GUI
+  rows only.
+
 ## Consequences
 
 New `Task` in core + `Snapshot.tasks` (serde-defaulted, old snapshots load);
