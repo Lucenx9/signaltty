@@ -2009,3 +2009,63 @@ async fn task_start_client_request_id_is_idempotent_across_restart() {
     assert_eq!(list["tasks"].as_array().unwrap().len(), 3);
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn restart_recovery_transition_is_journaled_and_replayable() {
+    let repo = TempGitRepo::new();
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "recover"},
+                "argv": ["sleep", "30"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    c.call("server.shutdown", json!({"force": true}))
+        .await
+        .unwrap();
+    drop(c);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    // Simulate a crash mid-task: the snapshot still says `working`.
+    let snap_path = srv.state_dir.join("snapshot.json");
+    let mut snap: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&snap_path).unwrap()).unwrap();
+    snap["tasks"][0]["state"] = json!("working");
+    snap["tasks"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("status_reason");
+    std::fs::write(&snap_path, serde_json::to_vec(&snap).unwrap()).unwrap();
+    srv.restart().await;
+    // Only the on-disk journal survives a second restart; the in-memory
+    // ring does not.
+    srv.restart().await;
+
+    let mut c = srv.client().await;
+    let sub = c
+        .call("subscribe", json!({"events": ["task.*"], "from_seq": 0}))
+        .await
+        .unwrap();
+    assert_eq!(sub["replay"]["status"], "complete", "{sub}");
+    let returned = sub["replay"]["returned"].as_u64().unwrap() as usize;
+    let events = c.read_events(returned, Duration::from_secs(5)).await;
+    let recovery = events
+        .iter()
+        .find(|e| {
+            e["event"] == "task.updated"
+                && e["payload"]["task_id"] == task_id.as_str()
+                && e["payload"]["task"]["state"] == "failed"
+        })
+        .unwrap_or_else(|| panic!("recovery event not replayed: {events:?}"));
+    assert_eq!(
+        recovery["payload"]["task"]["status_reason"]["stage"],
+        "restart"
+    );
+    srv.shutdown().await;
+}

@@ -66,6 +66,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         .write()
         .unwrap()
         .configure_events(audit, sequence, bcast.clone());
+    crate::persist::recover_tasks(&store);
     let ctx = Arc::new(Ctx {
         store: store.clone(),
         approvals: crate::approvals::Approvals::default(),
