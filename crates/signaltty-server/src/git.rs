@@ -539,13 +539,11 @@ pub fn validate_branch_name(branch: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// True when `HEAD` of `repo` descends from `tip` (a full commit SHA).
-/// Used after `task.finish --merge` to prove the task commits landed
-/// before recording `merged`.
-/// Files that would conflict if `branch` merged into `target` now, from
-/// `git merge-tree --write-tree` (git >= 2.38; touches no index or
-/// checkout). Empty means a clean merge; `None` when git cannot tell.
-pub fn merge_preview(repo: &str, target: &str, branch: &str) -> Option<Vec<String>> {
+/// Would merging `branch` into `target` now conflict? From `git merge-tree
+/// --write-tree` (git >= 2.38; touches no index or checkout): `(clean,
+/// conflicted paths)`. Clean comes from the exit code, since some conflicts
+/// (directory renames) name no file. `None` when git cannot tell.
+pub fn merge_preview(repo: &str, target: &str, branch: &str) -> Option<(bool, Vec<String>)> {
     let target = format!("refs/heads/{target}");
     let branch = format!("refs/heads/{branch}");
     let out = git_output(
@@ -555,25 +553,36 @@ pub fn merge_preview(repo: &str, target: &str, branch: &str) -> Option<Vec<Strin
             "--write-tree",
             "--name-only",
             "--no-messages",
+            "-z",
             &target,
             &branch,
         ],
     )
     .ok()?;
-    match out.status.code() {
-        // First line is the result tree; conflicted paths follow.
-        Some(0) | Some(1) => Some(
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .skip(1)
-                .filter(|l| !l.is_empty())
-                .map(str::to_string)
-                .collect(),
-        ),
-        _ => None,
+    let clean = match out.status.code() {
+        Some(0) => true,
+        Some(1) => false,
+        _ => return None,
+    };
+    // NUL-separated: the result tree, then conflicted paths (unquoted).
+    let mut conflicted: Vec<String> = Vec::new();
+    for path in out
+        .stdout
+        .split(|b| *b == 0)
+        .skip(1)
+        .filter(|p| !p.is_empty())
+    {
+        let path = String::from_utf8_lossy(path).into_owned();
+        if !conflicted.contains(&path) {
+            conflicted.push(path);
+        }
     }
+    Some((clean, conflicted))
 }
 
+/// True when `HEAD` of `repo` descends from `tip` (a full commit SHA).
+/// Used after `task.finish --merge` to prove the task commits landed
+/// before recording `merged`.
 pub fn head_contains_branch_tip(repo: &str, tip: &str) -> bool {
     Command::new("git")
         .arg("-C")

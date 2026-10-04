@@ -1100,8 +1100,8 @@ pub async fn h_task_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response,
         // Committed branch tip vs the recorded target, so an orchestrator can
         // order merges or re-run a worker before `task.finish` conflicts.
         let preview = preview_args.and_then(|(repo, target, branch)| {
-            crate::git::merge_preview(&repo, &target, &branch).map(|conflicted| {
-                json!({"target": target, "clean": conflicted.is_empty(), "conflicted": conflicted})
+            crate::git::merge_preview(&repo, &target, &branch).map(|(clean, conflicted)| {
+                json!({"target": target, "clean": clean, "conflicted": conflicted})
             })
         });
         diff.map(|d| (d, preview))

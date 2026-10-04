@@ -260,11 +260,11 @@ enum TaskOp {
         discard: bool,
         #[arg(long)]
         target: Option<String>,
-        /// Delete the task branch (default after --merge).
+        /// Delete the task branch (already the default for --merge; opt-in for --discard).
         #[arg(long)]
         delete_branch: bool,
-        /// Keep the task branch after --merge.
-        #[arg(long, conflicts_with = "delete_branch")]
+        /// Keep the task branch after --merge (--discard always keeps it unless --delete-branch).
+        #[arg(long, conflicts_with_all = ["delete_branch", "discard"])]
         keep_branch: bool,
         #[arg(long)]
         ignore_dirty: bool,

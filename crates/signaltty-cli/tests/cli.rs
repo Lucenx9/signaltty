@@ -897,8 +897,9 @@ stty raw -echo
 hook SessionStart
 n=0
 while :; do
-  c=$(dd bs=4096 count=1 2>/dev/null | od -An -tx1 -v | tr ' ' '\n' | grep -c '^0d$')
-  n=$((n + c))
+  bytes=$(dd bs=4096 count=1 2>/dev/null | od -An -tx1 -v)
+  [ -n "$bytes" ] || exit 0
+  n=$((n + $(echo "$bytes" | tr ' ' '\n' | grep -c '^0d$')))
   if [ "$n" -ge 2 ]; then hook UserPromptSubmit; exec sleep 300; fi
 done"#,
         cli = cli_bin.display()
