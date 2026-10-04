@@ -892,6 +892,28 @@ fn theme_and_appearance_swapping_updates_window_classes() {
     assert!(!app.window.has_css_class("theme-ocean"));
     assert!(!app.window.has_css_class("dark"));
 
+    // Sidebar width preference applies, clamps, and persists
+    app.set_sidebar_width(380);
+    assert_eq!(app.preference().sidebar_width, Some(380));
+    assert_eq!(app.split_view.min_sidebar_width(), 380.0);
+    assert_eq!(app.split_view.max_sidebar_width(), 380.0);
+
+    // Sidebar width clamp below min
+    app.set_sidebar_width(100);
+    assert_eq!(app.preference().sidebar_width, Some(200));
+    assert_eq!(app.split_view.min_sidebar_width(), 200.0);
+    assert_eq!(app.split_view.max_sidebar_width(), 200.0);
+
+    // Sidebar width clamp above max
+    app.set_sidebar_width(900);
+    assert_eq!(app.preference().sidebar_width, Some(560));
+    assert_eq!(app.split_view.min_sidebar_width(), 560.0);
+    assert_eq!(app.split_view.max_sidebar_width(), 560.0);
+
+    // Persisted file has the updated width
+    let loaded = crate::preferences::load_preference();
+    assert_eq!(loaded.sidebar_width, Some(560));
+
     app.window.destroy();
     std::env::remove_var("XDG_CONFIG_HOME");
     let _ = std::fs::remove_dir_all(&config);

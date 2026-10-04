@@ -48,7 +48,8 @@ headers. Phases 1–2 are toolkit-free by design.
 
 Layout follows libadwaita idiom so the app behaves like its neighbours
 on GNOME and Plasma: `AdwOverlaySplitView` (sidebar collapses to an
-overlay below 760sp), `AdwTabView`/`AdwTabBar` (autohides with one
+overlay below 760sp, resizable via a drag handle on its edge clamped to
+200–560px and persisted across restarts), `AdwTabView`/`AdwTabBar` (autohides with one
 tab), one primary menu, every command a `win.*` action with an
 accelerator. Colour comes only from libadwaita variables, so light,
 dark, the system accent and high contrast follow the desktop;

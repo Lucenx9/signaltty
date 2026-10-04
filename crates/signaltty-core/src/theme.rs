@@ -4,6 +4,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Bounds for the user-dragged sidebar width, in px.
+pub const SIDEBAR_MIN_WIDTH: u32 = 200;
+pub const SIDEBAR_MAX_WIDTH: u32 = 560;
+
+pub fn clamp_sidebar_width(w: f64) -> u32 {
+    if w.is_nan() || w < SIDEBAR_MIN_WIDTH as f64 {
+        SIDEBAR_MIN_WIDTH
+    } else if w > SIDEBAR_MAX_WIDTH as f64 {
+        SIDEBAR_MAX_WIDTH
+    } else {
+        w.round() as u32
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Appearance {
@@ -121,6 +135,8 @@ impl Theme {
 pub struct GuiPreference {
     pub appearance: Appearance,
     pub theme: Theme,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_width: Option<u32>,
 }
 
 impl GuiPreference {
@@ -141,7 +157,15 @@ impl GuiPreference {
             .and_then(|v| v.as_str())
             .and_then(Theme::from_id)
             .unwrap_or_default();
-        Self { appearance, theme }
+        let sidebar_width = obj
+            .get("sidebar_width")
+            .and_then(|v| v.as_f64())
+            .map(clamp_sidebar_width);
+        Self {
+            appearance,
+            theme,
+            sidebar_width,
+        }
     }
 
     pub fn to_json(&self) -> String {
@@ -239,17 +263,93 @@ mod tests {
         let def = GuiPreference::default();
         assert_eq!(def.appearance, Appearance::System);
         assert_eq!(def.theme, Theme::Signal);
+        assert_eq!(def.sidebar_width, None);
+    }
+
+    #[test]
+    fn clamp_sidebar_width_bounds() {
+        // Below range
+        assert_eq!(clamp_sidebar_width(100.0), 200);
+        assert_eq!(clamp_sidebar_width(0.0), 200);
+        assert_eq!(clamp_sidebar_width(-50.0), 200);
+        assert_eq!(clamp_sidebar_width(199.4), 200);
+        assert_eq!(clamp_sidebar_width(f64::NAN), 200);
+
+        // Above range
+        assert_eq!(clamp_sidebar_width(560.6), 560);
+        assert_eq!(clamp_sidebar_width(700.0), 560);
+        assert_eq!(clamp_sidebar_width(10000.0), 560);
+
+        // Inside range
+        assert_eq!(clamp_sidebar_width(200.0), 200);
+        assert_eq!(clamp_sidebar_width(320.0), 320);
+        assert_eq!(clamp_sidebar_width(320.4), 320);
+        assert_eq!(clamp_sidebar_width(320.6), 321);
+        assert_eq!(clamp_sidebar_width(560.0), 560);
     }
 
     #[test]
     fn gui_preference_roundtrip() {
-        let pref = GuiPreference {
+        let pref_without_width = GuiPreference {
             appearance: Appearance::Dark,
             theme: Theme::Ocean,
+            ..Default::default()
         };
-        let json = pref.to_json();
+        let json = pref_without_width.to_json();
         let parsed = GuiPreference::parse(&json);
-        assert_eq!(parsed, pref);
+        assert_eq!(parsed, pref_without_width);
+        assert_eq!(parsed.sidebar_width, None);
+
+        let pref_with_width = GuiPreference {
+            appearance: Appearance::Light,
+            theme: Theme::Iris,
+            sidebar_width: Some(340),
+        };
+        let json = pref_with_width.to_json();
+        let parsed = GuiPreference::parse(&json);
+        assert_eq!(parsed, pref_with_width);
+        assert_eq!(parsed.sidebar_width, Some(340));
+    }
+
+    #[test]
+    fn gui_preference_parse_sidebar_width() {
+        // Valid within range
+        let p1 = GuiPreference::parse(r#"{"sidebar_width": 320}"#);
+        assert_eq!(p1.sidebar_width, Some(320));
+
+        // Clamped below min
+        let p2 = GuiPreference::parse(r#"{"sidebar_width": 100}"#);
+        assert_eq!(p2.sidebar_width, Some(200));
+
+        // Clamped above max
+        let p3 = GuiPreference::parse(r#"{"sidebar_width": 1000}"#);
+        assert_eq!(p3.sidebar_width, Some(560));
+
+        // Missing field
+        let p4 = GuiPreference::parse(r#"{"appearance": "dark"}"#);
+        assert_eq!(p4.sidebar_width, None);
+
+        // Non-number / garbage fields fall back to None
+        assert_eq!(
+            GuiPreference::parse(r#"{"sidebar_width": "garbage"}"#).sidebar_width,
+            None
+        );
+        assert_eq!(
+            GuiPreference::parse(r#"{"sidebar_width": true}"#).sidebar_width,
+            None
+        );
+        assert_eq!(
+            GuiPreference::parse(r#"{"sidebar_width": [300]}"#).sidebar_width,
+            None
+        );
+        assert_eq!(
+            GuiPreference::parse(r#"{"sidebar_width": {"width": 300}}"#).sidebar_width,
+            None
+        );
+        assert_eq!(
+            GuiPreference::parse(r#"{"sidebar_width": null}"#).sidebar_width,
+            None
+        );
     }
 
     #[test]
@@ -272,6 +372,7 @@ mod tests {
             GuiPreference {
                 appearance: Appearance::System,
                 theme: Theme::Grove,
+                ..Default::default()
             }
         );
 
@@ -282,6 +383,7 @@ mod tests {
             GuiPreference {
                 appearance: Appearance::System,
                 theme: Theme::Ember,
+                ..Default::default()
             }
         );
 
@@ -292,6 +394,7 @@ mod tests {
             GuiPreference {
                 appearance: Appearance::Light,
                 theme: Theme::Signal,
+                ..Default::default()
             }
         );
 
@@ -302,6 +405,7 @@ mod tests {
             GuiPreference {
                 appearance: Appearance::Dark,
                 theme: Theme::Signal,
+                ..Default::default()
             }
         );
 
@@ -314,6 +418,7 @@ mod tests {
             GuiPreference {
                 appearance: Appearance::Dark,
                 theme: Theme::Iris,
+                ..Default::default()
             }
         );
     }
