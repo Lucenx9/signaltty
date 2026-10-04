@@ -1108,3 +1108,61 @@ async fn test_task_finish_merge_reaps_the_worker_process_group_first() {
     );
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_task_finish_non_conflict_merge_failure_reports_git_error() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let repo = TempGitRepo::new();
+
+    let start_res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Hook refuses the merge"},
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start_res["task"]["id"].as_str().unwrap().to_string();
+    let wt_path = PathBuf::from(start_res["task"]["worktree_path"].as_str().unwrap());
+    std::fs::write(wt_path.join("feature.txt"), "feature\n").unwrap();
+    for args in [
+        &["add", "feature.txt"][..],
+        &["commit", "-m", "feature"][..],
+    ] {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&wt_path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+    c.call(
+        "task.report",
+        json!({"task_id": &task_id, "status": "completed", "summary": "done"}),
+    )
+    .await
+    .unwrap();
+
+    // The merge itself is clean; a pre-merge-commit hook refuses it.
+    let hook = repo.path().join(".git/hooks/pre-merge-commit");
+    std::fs::write(&hook, "#!/bin/sh\necho refused-by-hook >&2\nexit 1\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let resp = c
+        .call_raw_resp("task.finish", json!({"task_id": &task_id, "mode": "merge"}))
+        .await
+        .unwrap();
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, code::IO_ERROR, "{}", err.message);
+    assert!(err.message.contains("refused-by-hook"), "{}", err.message);
+    assert_eq!(err.details["abort_ok"], true);
+
+    srv.shutdown().await;
+}

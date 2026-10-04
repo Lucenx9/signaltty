@@ -1622,9 +1622,16 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         // Abort merge. A failed abort (or a target that is still dirty
         // afterwards) must not be reported as a clean conflict: the target
         // may be mid-merge, so this is IO_ERROR with the dirt flagged.
-        let abort_ok = crate::git::git_output(&src_str, &["merge", "--abort"])
-            .map(|out| out.status.success())
-            .unwrap_or(false);
+        // A merge refused before it started (unrelated histories, a lock)
+        // has nothing to abort; that is not a failed abort.
+        let merging =
+            crate::git::git_output(&src_str, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+                .map(|out| out.status.success())
+                .unwrap_or(true);
+        let abort_ok = !merging
+            || crate::git::git_output(&src_str, &["merge", "--abort"])
+                .map(|out| out.status.success())
+                .unwrap_or(false);
         let target_clean = crate::git::porcelain_clean(
             &src_str,
             &["status", "--porcelain=v1", "--untracked-files=no"],
@@ -1647,6 +1654,23 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
                     code::IO_ERROR,
                     "merge conflict abort failed or left the target dirty; target may be mid-merge",
                     details,
+                ),
+                ConnEffect::default(),
+            );
+        }
+
+        // No conflicted paths: git refused for another reason (a hook,
+        // unrelated histories). Say why instead of claiming a conflict.
+        if conflicted_files.is_empty() {
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::IO_ERROR,
+                    format!(
+                        "git merge failed: {}",
+                        String::from_utf8_lossy(&merge_out.stderr).trim()
+                    ),
+                    json!({ "abort_ok": abort_ok, "target_dirty": false }),
                 ),
                 ConnEffect::default(),
             );
