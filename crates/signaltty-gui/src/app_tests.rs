@@ -6,6 +6,22 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[test]
+fn sidebar_pointer_tracks_the_trailing_edge_in_both_directions() {
+    use gtk4::TextDirection::{Ltr, Rtl};
+    // The six-pixel handle occupies opposite edges of the same allocation.
+    assert_eq!(sidebar_pointer_width(380, Ltr, 377.0), 377.0);
+    assert_eq!(sidebar_pointer_width(380, Rtl, 3.0), 377.0);
+    assert_eq!(sidebar_pointer_width(380, Ltr, 3.0), 3.0);
+    assert_eq!(sidebar_pointer_width(380, Rtl, 377.0), 3.0);
+    // Drag past either edge; keep measuring from the fixed leading edge
+    // even after allocation catches up and changes RTL local coordinates.
+    assert_eq!(sidebar_pointer_width(380, Ltr, 417.0), 417.0);
+    assert_eq!(sidebar_pointer_width(380, Rtl, -37.0), 417.0);
+    assert_eq!(sidebar_pointer_width(417, Rtl, 0.0), 417.0);
+    assert_eq!(sidebar_pointer_width(417, Rtl, 20.0), 397.0);
+}
+
+#[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
 fn desktop_motion_preference_applies_at_startup_and_changes_live() {
     adw::init().unwrap();
@@ -913,6 +929,54 @@ fn theme_and_appearance_swapping_updates_window_classes() {
     // Persisted file has the updated width
     let loaded = crate::preferences::load_preference();
     assert_eq!(loaded.sidebar_width, Some(560));
+
+    assert_eq!(app.split_view.sidebar_width_unit(), adw::LengthUnit::Px);
+    let handle = try_descendant(app.sidebar_overlay.upcast_ref(), "sidebar-handle").unwrap();
+    assert!(handle.is_focusable());
+    assert!(handle.grab_focus());
+    let keys = handle
+        .observe_controllers()
+        .iter::<glib::Object>()
+        .filter_map(Result::ok)
+        .find_map(|controller| controller.downcast::<gtk4::EventControllerKey>().ok())
+        .expect("sidebar handle has keyboard controls");
+    let press = |key: gtk4::gdk::Key| {
+        keys.emit_by_name::<bool>(
+            "key-pressed",
+            &[&key, &0u32, &gtk4::gdk::ModifierType::empty()],
+        )
+    };
+    for (direction, grow, shrink) in [
+        (
+            gtk4::TextDirection::Ltr,
+            gtk4::gdk::Key::Right,
+            gtk4::gdk::Key::Left,
+        ),
+        (
+            gtk4::TextDirection::Rtl,
+            gtk4::gdk::Key::Left,
+            gtk4::gdk::Key::Right,
+        ),
+    ] {
+        app.sidebar_overlay.set_direction(direction);
+        app.set_sidebar_width(380);
+        assert!(press(grow));
+        assert!(press(grow)); // Repeats before the next layout must accumulate.
+        assert_eq!(app.split_view.min_sidebar_width(), 400.0);
+        assert!(press(shrink));
+        assert_eq!(app.split_view.max_sidebar_width(), 390.0);
+        assert_eq!(
+            crate::preferences::load_preference().sidebar_width,
+            Some(390)
+        );
+        app.set_sidebar_width(560);
+        assert!(press(grow));
+        assert_eq!(app.preference().sidebar_width, Some(560));
+        app.set_sidebar_width(200);
+        assert!(press(shrink));
+        assert_eq!(app.preference().sidebar_width, Some(200));
+        assert!(!press(gtk4::gdk::Key::Tab));
+    }
 
     app.window.destroy();
     std::env::remove_var("XDG_CONFIG_HOME");

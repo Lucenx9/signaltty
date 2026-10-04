@@ -309,6 +309,7 @@ toolbarview > .top-bar headerbar button.image-button:checked {
 }
 
 .sidebar-handle:hover,
+.sidebar-handle:focus-visible,
 .sidebar-handle:active {
   background-color: alpha(var(--accent-bg-color), 0.25);
 }

@@ -60,6 +60,14 @@ struct TabEntry {
 /// Width of the drag strip on the sidebar's trailing edge.
 const SIDEBAR_HANDLE_PX: i32 = 6;
 
+fn sidebar_pointer_width(width: i32, direction: gtk4::TextDirection, x: f64) -> f64 {
+    if direction == gtk4::TextDirection::Rtl {
+        f64::from(width) - x
+    } else {
+        x
+    }
+}
+
 type PanedWidgets = HashMap<(String, Vec<bool>), glib::WeakRef<gtk4::Paned>>;
 
 /// Header button: how many panes need you; click jumps to the next.
@@ -151,6 +159,7 @@ impl App {
         sidebar_handle.set_vexpand(true);
         sidebar_handle.set_width_request(SIDEBAR_HANDLE_PX);
         sidebar_handle.set_cursor_from_name(Some("col-resize"));
+        sidebar_handle.set_focusable(true);
         sidebar_handle.update_property(&[gtk4::accessible::Property::Label("Resize Sidebar")]);
         sidebar_overlay.add_overlay(&sidebar_handle);
 
@@ -246,6 +255,7 @@ impl App {
         content_page.set_content(Some(&content));
 
         let split_view = adw::OverlaySplitView::new();
+        split_view.set_sidebar_width_unit(adw::LengthUnit::Px);
         split_view.set_sidebar(Some(&sidebar_overlay));
         split_view.set_content(Some(&content_page));
         split_view.set_min_sidebar_width(260.0);
@@ -306,6 +316,31 @@ impl App {
             me: RefCell::new(Weak::new()),
         });
         app.me.replace(Rc::downgrade(&app));
+        let keys = gtk4::EventControllerKey::new();
+        let w = app.weak();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            let delta = match key {
+                gtk4::gdk::Key::Left => -10.0,
+                gtk4::gdk::Key::Right => 10.0,
+                _ => return glib::Propagation::Proceed,
+            };
+            let Some(a) = w.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            let delta = if a.sidebar_overlay.direction() == gtk4::TextDirection::Rtl {
+                -delta
+            } else {
+                delta
+            };
+            let width = a
+                .preference()
+                .sidebar_width
+                .map(f64::from)
+                .unwrap_or_else(|| f64::from(a.sidebar_overlay.width()));
+            a.set_sidebar_width(signaltty_core::clamp_sidebar_width(width + delta));
+            glib::Propagation::Stop
+        });
+        sidebar_handle.add_controller(keys);
         app.install_actions(application);
         app.connect_signals();
         app.apply_preference(app.preference());
@@ -497,22 +532,25 @@ impl App {
             None => glib::ControlFlow::Break,
         });
 
-        // Sidebar resize: the gesture lives on the overlay, whose leading edge
-        // stays put while the sidebar grows, so pointer x is the width. On the
-        // moving handle itself GTK's offsets would drift with the widget.
+        // Measure the pointer from the sidebar's fixed leading edge. In RTL,
+        // GTK's local coordinates follow the moving left edge, so subtract
+        // from the current overlay width to measure from the right edge.
         let drag = gtk4::GestureDrag::new();
         let overlay = self.sidebar_overlay.clone();
         drag.connect_drag_begin(move |g, x, _| {
-            if x < f64::from(overlay.width() - SIDEBAR_HANDLE_PX) {
+            let width = sidebar_pointer_width(overlay.width(), overlay.direction(), x);
+            if width < f64::from(overlay.width() - SIDEBAR_HANDLE_PX) {
                 g.set_state(gtk4::EventSequenceState::Denied);
             }
         });
         let split = self.split_view.clone();
+        let overlay = self.sidebar_overlay.clone();
         drag.connect_drag_update(move |g, dx, _| {
             let Some((x, _)) = g.start_point() else {
                 return;
             };
-            let w = f64::from(signaltty_core::clamp_sidebar_width(x + dx));
+            let width = sidebar_pointer_width(overlay.width(), overlay.direction(), x + dx);
+            let w = f64::from(signaltty_core::clamp_sidebar_width(width));
             split.set_min_sidebar_width(w);
             split.set_max_sidebar_width(w);
         });
@@ -521,7 +559,12 @@ impl App {
             let (Some((x, _)), Some(a)) = (g.start_point(), w.upgrade()) else {
                 return;
             };
-            a.set_sidebar_width(signaltty_core::clamp_sidebar_width(x + dx));
+            let width = sidebar_pointer_width(
+                a.sidebar_overlay.width(),
+                a.sidebar_overlay.direction(),
+                x + dx,
+            );
+            a.set_sidebar_width(signaltty_core::clamp_sidebar_width(width));
         });
         self.sidebar_overlay.add_controller(drag);
     }
