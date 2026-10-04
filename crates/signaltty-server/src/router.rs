@@ -1765,20 +1765,7 @@ fn h_subscribe(ctx: &Ctx, params: &Value) -> Handler {
         ..ConnEffect::default()
     };
     if let Some(from) = p.from_seq {
-        let (coverage, mut replay) = s.replay(from, &events);
-        if let Some(ref tids) = p.task_ids {
-            replay.retain(|e| {
-                if e.name.starts_with("task.") {
-                    e.payload
-                        .get("task_id")
-                        .and_then(|v| v.as_str())
-                        .map(|tid| tids.iter().any(|t| t == tid))
-                        .unwrap_or(false)
-                } else {
-                    true
-                }
-            });
-        }
+        let (coverage, replay) = s.replay(from, &events, p.task_ids.as_deref());
         effect.close = coverage["status"] != "complete";
         reply["subscribed"] = json!(!effect.close);
         reply["replay"] = coverage;

@@ -225,7 +225,14 @@ impl Store {
         Some(self.emit(signaltty_proto::event::PANE_UPDATED, json!({"pane":pane})))
     }
 
-    pub fn replay(&self, after: u64, patterns: &[String]) -> (Value, Vec<StoredEvent>) {
+    /// `task_ids` scopes `task.*` events to those tasks; the filter runs before
+    /// the cap and the `returned` count so unrelated traffic cannot truncate.
+    pub fn replay(
+        &self,
+        after: u64,
+        patterns: &[String],
+        task_ids: Option<&[String]>,
+    ) -> (Value, Vec<StoredEvent>) {
         let history = self.audit.as_ref().map(AuditLog::history);
         let retained_after = history
             .as_ref()
@@ -261,6 +268,13 @@ impl Store {
                         && patterns
                             .iter()
                             .any(|g| signaltty_proto::glob_matches(g, &e.name))
+                        && task_ids.is_none_or(|tids| {
+                            !e.name.starts_with("task.")
+                                || e.payload
+                                    .get("task_id")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|tid| tids.iter().any(|t| t == tid))
+                        })
                 })
                 .collect();
             if events.len() > crate::audit::REPLAY_CAP {
@@ -888,18 +902,42 @@ mod tests {
         }
         store.next_seq(); // PTY numbers are legitimate holes.
         store.emit("included", Value::Null);
-        let (coverage, events) = store.replay(0, &["included".into()]);
+        let (coverage, events) = store.replay(0, &["included".into()], None);
         assert_eq!(coverage["status"], "complete");
         assert_eq!(events.len(), 1);
-        let (coverage, events) = store.replay(0, &["*".into()]);
+        let (coverage, events) = store.replay(0, &["*".into()], None);
         assert_eq!(coverage["status"], "truncated");
         assert!(events.is_empty());
         assert_eq!(
-            store.replay(store.seq + 1, &["*".into()]).0["status"],
+            store.replay(store.seq + 1, &["*".into()], None).0["status"],
             "cursor_ahead"
         );
         store.audit = None;
-        assert_eq!(store.replay(0, &["*".into()]).0["status"], "unavailable");
+        assert_eq!(
+            store.replay(0, &["*".into()], None).0["status"],
+            "unavailable"
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn replay_applies_task_filter_before_cap_and_count() {
+        let d = std::env::temp_dir().join(signaltty_core::ids::new_pane_id());
+        let log = AuditLog::open(&d).unwrap();
+        let sequence = EventSequence::open(&d, 0).unwrap();
+        let (publisher, _) = tokio::sync::broadcast::channel(8);
+        let mut store = Store::new();
+        store.configure_events(log, sequence, publisher);
+        for _ in 0..=crate::audit::REPLAY_CAP {
+            store.emit("task.updated", json!({"task_id": "other"}));
+        }
+        store.emit("task.updated", json!({"task_id": "mine"}));
+        store.emit("pane.updated", Value::Null);
+        let mine = vec!["mine".to_string()];
+        let (coverage, events) = store.replay(0, &["*".into()], Some(&mine));
+        assert_eq!(coverage["status"], "complete");
+        assert_eq!(coverage["returned"], 2);
+        assert_eq!(events.len(), 2);
         std::fs::remove_dir_all(d).unwrap();
     }
 
