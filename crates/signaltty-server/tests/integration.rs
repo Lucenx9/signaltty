@@ -2716,3 +2716,29 @@ async fn concurrent_workspace_creates_get_distinct_handles() {
     assert_eq!(handles.len(), 8, "{handles:?}");
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn tool_hooks_start_work_but_never_clear_blocked() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let hook = |event: &str| json!({"agent": "claude", "event": event, "pane_id": pane});
+
+    c.call("hook-event", hook("SessionStart")).await.unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_ne!(p["pane"]["lifecycle"], "working");
+    c.call("hook-event", hook("PreToolUse")).await.unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["lifecycle"], "working", "idle pane starts work");
+
+    c.call("hook-event", hook("PermissionRequest"))
+        .await
+        .unwrap();
+    for event in ["PreToolUse", "PostToolUse", "PreCompact", "PostCompact"] {
+        c.call("hook-event", hook(event)).await.unwrap();
+        let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+        assert_eq!(p["pane"]["lifecycle"], "blocked", "{event} kept blocked");
+        assert_eq!(p["pane"]["attention"], "permission_required");
+    }
+    srv.shutdown().await;
+}

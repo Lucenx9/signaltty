@@ -35,9 +35,12 @@ impl AgentAdapter for CodexAdapter {
                 attention: Some(Attention::None),
                 message: None,
             },
-            "PreToolUse" | "PostToolUse" | "PreCompact" | "PostCompact" | "SubagentStop" => {
-                LifecycleDecision::default()
-            }
+            "PreToolUse" | "PostToolUse" | "PreCompact" | "PostCompact" => LifecycleDecision {
+                lifecycle: Some(Lifecycle::Working),
+                attention: None,
+                message: None,
+            },
+            "SubagentStop" => LifecycleDecision::default(),
             "PermissionRequest" => {
                 let msg = ev
                     .payload_str("prompt")
@@ -202,17 +205,13 @@ mod tests {
         }));
     }
     #[test]
-    fn tool_use_and_subagent_hooks_do_not_clear_blocked_or_mutate_lifecycle() {
+    fn tool_hooks_map_to_working_and_subagent_stop_changes_nothing() {
         let a = CodexAdapter;
-        for hook in [
-            "PreToolUse",
-            "PostToolUse",
-            "PreCompact",
-            "PostCompact",
-            "SubagentStop",
-        ] {
+        for hook in ["PreToolUse", "PostToolUse", "PreCompact", "PostCompact"] {
             let d = a.lifecycle_state(&ev(hook, json!({})));
-            assert_eq!(d.lifecycle, None, "{hook} must not change lifecycle");
+            assert_eq!(d.lifecycle, Some(Lifecycle::Working), "{hook}");
         }
+        let d = a.lifecycle_state(&ev("SubagentStop", json!({})));
+        assert_eq!(d.lifecycle, None);
     }
 }

@@ -1538,7 +1538,7 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
 
     let notif_draft = adapter.notification_event(&event);
     let session_id_opt = adapter.session_identity(&event);
-    let decision = adapter.lifecycle_state(&event);
+    let mut decision = adapter.lifecycle_state(&event);
 
     let is_unrecognized = decision.lifecycle.is_none()
         && decision.attention.is_none()
@@ -1566,6 +1566,19 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
     }
     {
         let mut s = ctx.store.write().unwrap();
+        // Tool traffic (e.g. a subagent's tools during a pending permission)
+        // must not clear `blocked`; it still starts work from any other state.
+        if matches!(
+            hook.as_str(),
+            "PreToolUse" | "PostToolUse" | "PreCompact" | "PostCompact"
+        ) && s
+            .panes
+            .get(&pid)
+            .is_some_and(|p| p.lifecycle == Lifecycle::Blocked)
+        {
+            decision.lifecycle = None;
+            decision.attention = None;
+        }
         if let Some(msg) = &decision.message {
             if let Some(p) = s.panes.get_mut(&pid) {
                 p.last_message = Some(msg.clone());
