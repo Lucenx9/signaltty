@@ -198,7 +198,6 @@ async fn test_task_finish_merge_happy_path_and_disposition() {
             json!({
                 "task_id": &task_id,
                 "mode": "merge",
-                "delete_branch": true,
             }),
         )
         .await
@@ -218,6 +217,21 @@ async fn test_task_finish_merge_happy_path_and_disposition() {
         !wt_path.exists(),
         "worktree must be removed after successful finish merge"
     );
+
+    // A merged task branch is deleted by default.
+    assert_eq!(finish_res["task"]["disposition"]["branch_deleted"], true);
+    let branch = finish_res["task"]["branch"].as_str().unwrap();
+    let out = std::process::Command::new("git")
+        .args([
+            "-C",
+            &repo.path().to_string_lossy(),
+            "branch",
+            "--list",
+            branch,
+        ])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).trim().is_empty());
 
     // Second finish must be refused
     let second_finish = c

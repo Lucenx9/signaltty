@@ -1746,7 +1746,8 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
     };
 
     // Delete branch if requested and not pre-existing
-    let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch && unchanged;
+    // A merged task branch is spent: delete it unless the caller keeps it.
+    let should_delete_branch = p.delete_branch.unwrap_or(true) && !preexisting_branch && unchanged;
     let branch_deleted =
         should_delete_branch && delete_task_branch(&src_str, &branch, &mut cleanup_error);
 

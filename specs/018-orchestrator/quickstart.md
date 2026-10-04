@@ -111,8 +111,8 @@ signaltty-server --socket "$SOCK" --state-dir "$STATE" >> server.log 2>&1 &
 SERVER=$!
 until signaltty status >/dev/null 2>&1; do sleep 0.2; done
 signaltty --json task get "$T1" | jq .task.state          # still completed, result intact
-signaltty --json task finish "$T1" --merge                # target defaults to the recorded target_branch
-signaltty --json task finish "$T2" --merge --delete-branch
+signaltty --json task finish "$T1" --merge --keep-branch  # target defaults to the recorded target_branch
+signaltty --json task finish "$T2" --merge                # deletes the task branch by default
 signaltty --json task finish "$T3" --discard
 # Merge refuses if the source repo no longer has the recorded target checked out:
 #   BAD_PARAMS {expected: "main", actual: "other"} — switch back first.
