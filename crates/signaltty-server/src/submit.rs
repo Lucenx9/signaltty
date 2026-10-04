@@ -242,7 +242,10 @@ pub async fn submit_prompt(
 
     if !check_activity {
         let s = ctx.store.read().unwrap();
-        let pane = s.panes.get(pane_id).unwrap();
+        let pane = s
+            .panes
+            .get(pane_id)
+            .ok_or_else(|| SubmitError::new(code::NO_SUCH_PANE, pane_id.to_string()))?;
         return Ok(SubmitOutcome {
             submitted: true,
             outcome: "submitted".to_string(),
@@ -298,7 +301,10 @@ pub async fn submit_prompt(
                         }
                     }
                     let s = ctx.store.read().unwrap();
-                    let pane = s.panes.get(pane_id).unwrap();
+                    let pane = s
+                        .panes
+                        .get(pane_id)
+                        .ok_or_else(|| SubmitError::new(code::NO_SUCH_PANE, pane_id.to_string()))?;
                     return Ok(SubmitOutcome {
                         submitted: true,
                         outcome: (*outcome).to_string(),
