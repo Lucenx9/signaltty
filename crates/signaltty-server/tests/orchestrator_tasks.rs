@@ -2009,6 +2009,32 @@ async fn ready_timeout_evidence_shows_the_blocking_screen() {
 }
 
 #[tokio::test]
+async fn task_start_relative_path_is_bad_params() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let err = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "relative path"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "path": "relative/worktree",
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("BAD_PARAMS"), "{err}");
+    let list = c.call("task.list", json!({})).await.unwrap();
+    assert_eq!(list["tasks"].as_array().unwrap().len(), 0);
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn task_wait_unknown_until_is_bad_params() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;

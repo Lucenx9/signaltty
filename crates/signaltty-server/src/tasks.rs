@@ -265,6 +265,14 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         );
     }
     let worktree_path = match p.path {
+        // Relative paths would resolve against the server's cwd for locks,
+        // pane-cwd guards and cleanup, but against the repo for git.
+        Some(path) if !std::path::Path::new(&path).is_absolute() => {
+            return (
+                Response::err(&req.id, code::BAD_PARAMS, "worktree path must be absolute"),
+                ConnEffect::default(),
+            );
+        }
         Some(path) => PathBuf::from(path),
         None => crate::git::default_worktree_path(&p.repo, &branch),
     };
