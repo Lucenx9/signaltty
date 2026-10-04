@@ -41,6 +41,8 @@ pub struct WsSummary {
     /// Timing of the pane that sets `lifecycle` (see `headline`).
     pub lifecycle_since: Option<DateTime<Utc>>,
     pub last_run_secs: Option<i64>,
+    /// When the oldest pane at `attention` was raised to it.
+    pub attention_since: Option<DateTime<Utc>>,
     /// Branch, or the directory when not a git repo.
     pub place: String,
     /// Agent display names, comma-joined; empty for plain shells.
@@ -80,6 +82,11 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
         attention,
         message,
         lifecycle_since: lead.and_then(|p| p.lifecycle_since),
+        attention_since: panes
+            .iter()
+            .filter(|p| p.attention == attention)
+            .filter_map(|p| p.attention_since)
+            .min(),
         last_run_secs: lead.and_then(|p| p.last_run_secs),
         place: ws.git.branch.clone().unwrap_or_else(|| tilde(&ws.cwd)),
         agents: agents.join(", "),
@@ -333,11 +340,11 @@ impl Row {
             self.message.set_tooltip_text(Some(&headline));
         }
         let time = s.last_activity.map(time_ago).unwrap_or_default();
-        // Attention dates from the last event; lifecycle from its change.
+        // Attention dates from when it was raised; lifecycle from its change.
         let began = if s.attention == Attention::None {
             s.lifecycle_since
         } else {
-            s.last_activity
+            s.attention_since
         };
         let age = began.map(time_ago).unwrap_or_default();
         self.status.set(s.lifecycle, s.attention, &time, &age);
@@ -508,6 +515,7 @@ mod tests {
             attention,
             message: None,
             lifecycle_since: None,
+            attention_since: None,
             last_run_secs: None,
             place: String::new(),
             agents: String::new(),
@@ -691,6 +699,19 @@ mod tests {
         assert_eq!(s.lifecycle, Lifecycle::Working);
         assert_eq!(s.lifecycle_since, ago(12));
         assert_eq!(s.headline(t0), "Working for 12m…");
+    }
+
+    #[test]
+    fn attention_age_comes_from_the_gate_not_later_activity() {
+        let t0 = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let mut gate = pane(Lifecycle::Blocked, None);
+        gate.attention = Attention::PermissionRequired;
+        gate.attention_since = Some(t0 - chrono::Duration::minutes(10));
+        let mut chatty = pane(Lifecycle::Working, None);
+        chatty.last_activity_at = t0;
+        let s = summarize(&workspace(), &[gate, chatty]);
+        assert_eq!(s.attention, Attention::PermissionRequired);
+        assert_eq!(s.attention_since, Some(t0 - chrono::Duration::minutes(10)));
     }
 
     #[test]
