@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use signaltty_core::model::{
-    Disposition, DispositionOutcome, Notification, Pane, Tab, Task, TaskResult, Workspace,
+    AgentKind, Disposition, DispositionOutcome, Notification, Pane, Tab, Task, TaskResult,
+    Workspace,
 };
 use signaltty_core::state::{Attention, Lifecycle, TaskState};
 use signaltty_proto::{code, event};
@@ -171,6 +172,20 @@ impl Store {
         pane.live = signaltty_core::model::LiveState::Exited { code };
         pane.restore_state = signaltty_core::model::RestoreState::Exited;
         pane.last_activity_at = Utc::now();
+        // Capture before emit: done/failed must persist after PTY exit
+        // (product + docs/03,/07). Generic/None one-shots map exit code →
+        // done/failed so `wait --until done` does not hang when the child
+        // finishes before the waiter arms. Known agents keep Exited unless
+        // hooks already recorded a terminal outcome.
+        let next_lifecycle = match pane.lifecycle {
+            Lifecycle::Done | Lifecycle::Failed => pane.lifecycle,
+            _ if matches!(pane.agent.kind, AgentKind::Generic | AgentKind::None) => match code {
+                Some(0) => Lifecycle::Done,
+                Some(_) => Lifecycle::Failed,
+                None => Lifecycle::Exited,
+            },
+            _ => Lifecycle::Exited,
+        };
         let event = self.emit(
             signaltty_proto::event::PANE_EXITED,
             json!({"pane_id":pane_id,"code":code}),
@@ -179,7 +194,7 @@ impl Store {
             progress.lifecycle_seq = event.seq;
             progress.transitions.insert("exited", event.seq);
         }
-        self.set_lifecycle(pane_id, Lifecycle::Exited);
+        self.set_lifecycle(pane_id, next_lifecycle);
         // An exited pane can no longer take input or grant permission.
         if matches!(
             self.panes.get(pane_id).map(|p| p.attention),
@@ -1135,6 +1150,50 @@ mod tests {
         store.clear_attention(&id, "task_closed");
         store.set_exited(&id, Some(0));
         assert_eq!(store.panes[&id].attention, Attention::None);
+    }
+
+    #[test]
+    fn generic_exit_maps_code_to_done_or_failed() {
+        let mut store = Store::new();
+        let mut ok = pane_with(Attention::None, 0);
+        ok.agent.kind = AgentKind::Generic;
+        ok.lifecycle = Lifecycle::Unknown;
+        let ok_id = ok.id.clone();
+        store.panes.insert(ok_id.clone(), ok);
+        store.set_exited(&ok_id, Some(0));
+        assert_eq!(store.panes[&ok_id].lifecycle, Lifecycle::Done);
+        assert!(matches!(
+            store.panes[&ok_id].live,
+            signaltty_core::model::LiveState::Exited { code: Some(0) }
+        ));
+
+        let mut bad = pane_with(Attention::None, 0);
+        bad.agent.kind = AgentKind::None;
+        bad.lifecycle = Lifecycle::Unknown;
+        let bad_id = bad.id.clone();
+        store.panes.insert(bad_id.clone(), bad);
+        store.set_exited(&bad_id, Some(7));
+        assert_eq!(store.panes[&bad_id].lifecycle, Lifecycle::Failed);
+    }
+
+    #[test]
+    fn known_agent_exit_keeps_exited_unless_already_terminal() {
+        let mut store = Store::new();
+        let mut working = pane_with(Attention::None, 0);
+        working.agent.kind = AgentKind::Claude;
+        working.lifecycle = Lifecycle::Working;
+        let working_id = working.id.clone();
+        store.panes.insert(working_id.clone(), working);
+        store.set_exited(&working_id, Some(0));
+        assert_eq!(store.panes[&working_id].lifecycle, Lifecycle::Exited);
+
+        let mut done = pane_with(Attention::None, 0);
+        done.agent.kind = AgentKind::Codex;
+        done.lifecycle = Lifecycle::Done;
+        let done_id = done.id.clone();
+        store.panes.insert(done_id.clone(), done);
+        store.set_exited(&done_id, Some(0));
+        assert_eq!(store.panes[&done_id].lifecycle, Lifecycle::Done);
     }
 
     #[test]
