@@ -214,7 +214,7 @@ failed with evidence, checkouts preserved; pane exit fails task exactly once.
 
 ## Phase 9: Polish & cross-cutting (lane D)
 
-- [ ] T029 [P] Docs rows: Task in `docs/02-data-model.md`, one row per new/
+- [x] T029 [P] Docs rows: Task in `docs/02-data-model.md`, one row per new/
   changed method and event in `docs/08-ipc.md` (`task.start/get/list/wait/
   report/diff/file_diff/finish/cancel`, `pane.submit`, `pane.spawn` lineage
   params, `pane.read` rendered mode, `attention.pending`, `task.*` events —
@@ -223,7 +223,7 @@ failed with evidence, checkouts preserved; pane exit fails task exactly once.
   method must dispatch; extend the drift test). Implementers update;
   ADR-0020 already written by the spec author — amend only if implementation
   diverged, with reasons.
-- [ ] T030 [P] Agent-facing orchestrator loop doc IN the shipped skill
+- [x] T030 [P] Agent-facing orchestrator loop doc IN the shipped skill
   (`crates/signaltty-cli/assets/SKILL.md`, served by `signaltty skill` — check
   `skill.rs` embedding): worked example — start 3 tasks back-to-back, `task
   wait` to `settled`, incremental `pane read --mode rendered`, handling

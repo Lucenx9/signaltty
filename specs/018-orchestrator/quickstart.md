@@ -14,7 +14,7 @@ signaltty-server --socket "$SOCK" --state-dir "$STATE" &
 export SIGNALTTY_SOCKET="$SOCK" CTX="tctx_e2e"
 for i in 1 2 3; do
   signaltty --json task start --repo /tmp/orch-e2e --context "$CTX" \
-    --label "worker-$i" --argv sh --objective "task $i: append line $i" > "task$i.json"
+    --label "worker-$i" --objective "task $i: append line $i" -- sh > "task$i.json"
 done
 # Starts are async: each returns at `pending`. Issue all three back-to-back,
 # then wait for the background ready + submit on each:
@@ -38,7 +38,8 @@ signaltty --json report --status completed --summary "did task 1" --task "$(jq -
 Worker 2 blocks instead: send a `PermissionRequest` with the native waiting
 fixture (see `crates/signaltty-server/tests/native_permissions.rs`
 `provider_fixture`), confirm it appears in `signaltty --json attention`, answer
-via `signaltty decision answer`, then report. Worker 3 ends its turn WITHOUT
+via `signaltty decision answer --pane "$PANE2" --decision "$DID" --option "$OID"`
+(ids from `attention` / the decision payload), then report. Worker 3 ends its turn WITHOUT
 reporting (synthetic `Stop` hook, no `report` call): its task moves to
 `input_required` (`turn_ended_without_report`). Send a follow-up and let it
 report afterwards:
@@ -84,7 +85,7 @@ git -C /tmp/orch-e2e worktree list       # no task worktrees left
 - Conflict: two workers edit the same line → second merge → `MERGE_CONFLICT`,
   target `git status --porcelain` clean, conflicted files named.
 - Crash: `kill` a worker pane's child → task `failed` with evidence.
-- Cap: set `--max-tasks 1`, start two → second is `RATE_LIMITED`, creates nothing.
+- Cap: start the server with `signaltty-server --max-tasks 1`, start two → second is `RATE_LIMITED`, creates nothing.
 - Stall: submit to an idle shell that never emits hooks → `TIMEOUT`
   (`details.stage: "activity_gate"`) after ~5 s.
 
@@ -92,3 +93,10 @@ git -C /tmp/orch-e2e worktree list       # no task worktrees left
 
 `scripts/verify.sh full`; inspect `target/verification/` evidence. GUI row
 surfacing: light + dark screenshots per the constitution gate.
+
+## Pointers
+
+- Live contract: `signaltty schema` (same constants the router dispatches
+  on); IPC tables in `docs/08-ipc.md`, Task entity in `docs/02-data-model.md`.
+- Agent loop: "Orchestrating other agents" in
+  `crates/signaltty-cli/assets/SKILL.md` (served by `signaltty skill`).
