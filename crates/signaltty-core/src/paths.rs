@@ -28,9 +28,13 @@ fn current_uid() -> u32 {
 }
 
 pub fn socket_path() -> PathBuf {
-    std::env::var("SIGNALTTY_SOCKET")
+    socket_path_from(std::env::var("SIGNALTTY_SOCKET").ok(), runtime_dir())
+}
+
+fn socket_path_from(socket: Option<String>, runtime: PathBuf) -> PathBuf {
+    socket
         .map(PathBuf::from)
-        .unwrap_or_else(|_| runtime_dir().join("signaltty.sock"))
+        .unwrap_or_else(|| runtime.join("signaltty.sock"))
 }
 
 pub fn state_dir() -> PathBuf {
@@ -62,9 +66,16 @@ pub fn config_dir() -> PathBuf {
 }
 
 pub fn data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
+    data_dir_from(
+        std::env::var("XDG_DATA_HOME").ok(),
+        std::env::var("HOME").ok(),
+    )
+}
+
+fn data_dir_from(xdg: Option<String>, home: Option<String>) -> PathBuf {
+    if let Some(dir) = xdg {
         PathBuf::from(dir).join("signaltty")
-    } else if let Ok(home) = std::env::var("HOME") {
+    } else if let Some(home) = home {
         PathBuf::from(home).join(".local/share/signaltty")
     } else {
         PathBuf::from("/tmp/signaltty-data")
@@ -90,17 +101,33 @@ pub fn agents_dir() -> PathBuf {
 mod tests {
     use super::*;
 
+    // Resolvers take the values as parameters: tests never touch the shared
+    // process environment (set_var races other threads' getenv).
     #[test]
     fn data_dir_xdg_env_override_wins() {
-        std::env::set_var("XDG_DATA_HOME", "/tmp/custom-xdg-data");
-        assert_eq!(data_dir(), PathBuf::from("/tmp/custom-xdg-data/signaltty"));
-        std::env::remove_var("XDG_DATA_HOME");
+        assert_eq!(
+            data_dir_from(Some("/tmp/custom-xdg-data".into()), Some("/home/u".into())),
+            PathBuf::from("/tmp/custom-xdg-data/signaltty")
+        );
+        assert_eq!(
+            data_dir_from(None, Some("/home/u".into())),
+            PathBuf::from("/home/u/.local/share/signaltty")
+        );
+        assert_eq!(
+            data_dir_from(None, None),
+            PathBuf::from("/tmp/signaltty-data")
+        );
     }
 
     #[test]
     fn socket_env_override_wins() {
-        std::env::set_var("SIGNALTTY_SOCKET", "/tmp/test-signaltty.sock");
-        assert_eq!(socket_path(), PathBuf::from("/tmp/test-signaltty.sock"));
-        std::env::remove_var("SIGNALTTY_SOCKET");
+        assert_eq!(
+            socket_path_from(Some("/tmp/test-signaltty.sock".into()), "/run/x".into()),
+            PathBuf::from("/tmp/test-signaltty.sock")
+        );
+        assert_eq!(
+            socket_path_from(None, "/run/x".into()),
+            PathBuf::from("/run/x/signaltty.sock")
+        );
     }
 }

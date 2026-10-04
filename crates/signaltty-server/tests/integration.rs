@@ -894,11 +894,14 @@ async fn workspace_diff_reports_numstat_and_rejects_non_repo() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
+    // The temp root is the git ceiling so a TMPDIR inside a checkout is never
+    // discovered as a parent repo; passed explicitly, never via set_var.
+    let ceiling = std::env::temp_dir();
     let run = |args: &[&str]| {
         let out = std::process::Command::new("git")
             .arg("-C")
             .arg(&dir)
+            .env("GIT_CEILING_DIRECTORIES", &ceiling)
             .args(args)
             .output()
             .unwrap();
@@ -914,7 +917,8 @@ async fn workspace_diff_reports_numstat_and_rejects_non_repo() {
     std::fs::write(dir.join("a.txt"), "1\n2\n").unwrap();
     std::fs::write(dir.join("new.txt"), "u\n").unwrap();
 
-    let srv = TestServer::start().await;
+    let srv =
+        TestServer::start_with_env(&[("GIT_CEILING_DIRECTORIES", ceiling.to_str().unwrap())]).await;
     let mut c = srv.client().await;
     let w = c
         .call(
