@@ -131,7 +131,7 @@ lineage/env; over-cap refused with nothing created.
 **Independent Test**: reports store + emit + transition; context wait ends on
 all-terminal; permission block → ranked listing → native answer → resume.
 
-- [ ] T018 [US4] Failing tests: report stores + emits `task.result` and moves
+- [x] T018 [US4] Failing tests: report stores + emits `task.result` and moves
   state per status; second report refused; unknown task refused; `task.wait`
   single + context + empty-context-immediate + timeout + default-`settled`
   ending at `input_required`; turn-ended-without-report → `input_required`
@@ -142,11 +142,11 @@ all-terminal; permission block → ranked listing → native answer → resume.
   `provider_fixture` pattern from
   `crates/signaltty-server/tests/native_permissions.rs`) in
   `crates/signaltty-server/tests/orchestrator_tasks.rs`.
-- [ ] T019 [US4] `task.report` + `task.wait` (default `until: settled`; single-flight,
+- [x] T019 [US4] `task.report` + `task.wait` (default `until: settled`; single-flight,
   EOF/shutdown cancel) + `attention.pending` handlers + typed params +
   `task_ids[]` subscribe filter in `crates/signaltty-server/src/router.rs` /
   `crates/signaltty-server/src/params.rs`.
-- [ ] T020 [P] [US4] `signaltty report`, `task wait`, `attention` CLI in
+- [x] T020 [P] [US4] `signaltty report`, `task wait`, `attention` CLI in
   `crates/signaltty-cli/src/main.rs`.
 
 **Checkpoint**: US4 green; E2E legs 4–5 pass.

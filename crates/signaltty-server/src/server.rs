@@ -428,6 +428,7 @@ mod tests {
             agents_dir: base.join("agents"),
             integration_home: Some(base.join("home")),
             max_parallel_tasks: crate::config::DEFAULT_MAX_PARALLEL_TASKS,
+            worker_silent_timeout_s: crate::config::DEFAULT_WORKER_SILENT_TIMEOUT_S,
         };
         let mut store = Store::new();
         let pane = signaltty_core::model::Pane::new(
