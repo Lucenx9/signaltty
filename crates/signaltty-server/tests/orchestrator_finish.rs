@@ -218,6 +218,20 @@ async fn test_task_finish_merge_happy_path_and_disposition() {
         "worktree must be removed after successful finish merge"
     );
 
+    // The closed worker leaves nothing in the attention list, even after
+    // the PTY's late exit lands.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let pane_id = start_res["pane"]["id"].as_str().unwrap();
+    let pending = c.call("attention.pending", json!({})).await.unwrap();
+    assert!(
+        !pending["panes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["pane_id"] == pane_id),
+        "finished worker still listed: {pending}"
+    );
+
     // A merged task branch is deleted by default.
     assert_eq!(finish_res["task"]["disposition"]["branch_deleted"], true);
     let branch = finish_res["task"]["branch"].as_str().unwrap();

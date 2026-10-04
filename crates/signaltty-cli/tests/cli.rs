@@ -883,3 +883,58 @@ async fn cli_task_diff_and_finish() {
 
     srv.shutdown().await;
 }
+
+/// A TUI that drops the first Enter (its input box was still settling)
+/// starts its turn only on the second: the task must still reach working.
+#[tokio::test]
+async fn task_start_survives_a_tui_that_drops_the_first_enter() {
+    let srv = TestServer::start().await;
+    let repo = signaltty_testkit::TempGitRepo::new();
+    let cli_bin = bin_path("signaltty");
+    let script = format!(
+        r#"hook() {{ '{cli}' --socket "$SIGNALTTY_SOCKET" hook-event --agent codex --event "$1" --pane "$SIGNALTTY_PANE" >/dev/null; }}
+stty raw -echo
+hook SessionStart
+n=0
+while :; do
+  c=$(dd bs=4096 count=1 2>/dev/null | od -An -tx1 -v | tr ' ' '\n' | grep -c '^0d$')
+  n=$((n + c))
+  if [ "$n" -ge 2 ]; then hook UserPromptSubmit; exec sleep 300; fi
+done"#,
+        cli = cli_bin.display()
+    );
+    let start = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "start",
+            "--repo",
+            &repo.path().to_string_lossy(),
+            "--agent",
+            "codex",
+            "--objective",
+            "drop the first enter",
+            "--",
+            "sh",
+            "-c",
+            &script,
+        ],
+    );
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+
+    let waited = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "wait",
+            &task_id,
+            "--until",
+            "working",
+            "--timeout",
+            "15",
+        ],
+    );
+    let task = cli_json(&srv.socket, &["task", "get", &task_id]);
+    assert_eq!(task["task"]["state"], "working", "{waited} {task}");
+    assert!(task["task"]["status_reason"].is_null(), "{task}");
+}
