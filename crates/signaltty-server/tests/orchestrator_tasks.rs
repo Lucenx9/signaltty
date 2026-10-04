@@ -238,7 +238,9 @@ async fn task_start_async_happy_path() {
                 },
                 "label": "worker-happy",
                 "parent_pane_id": orch_pane_id,
-                "context_id": "ctx_happy"
+                "context_id": "ctx_happy",
+                "agent": "codex",
+                "argv": ["sh"]
             }),
         )
         .await
@@ -297,6 +299,7 @@ async fn task_start_pane_closed_before_ready_fails_task_and_server_remains_respo
                     "objective": "Task to exit early",
                 },
                 "label": "worker-exit",
+                "argv": ["sh"],
             }),
         )
         .await
@@ -340,6 +343,7 @@ async fn task_start_rate_limited_over_cap() {
                     "repo": repo.path().to_string_lossy(),
                     "contract": {"objective": format!("Objective {i}")},
                     "label": format!("worker-{i}"),
+                    "argv": ["sh"],
                 }),
             )
             .await;
@@ -354,6 +358,7 @@ async fn task_start_rate_limited_over_cap() {
                 "repo": repo.path().to_string_lossy(),
                 "contract": {"objective": "Fifth objective"},
                 "label": "worker-5",
+                "argv": ["sh"],
             }),
         )
         .await;
@@ -406,6 +411,7 @@ async fn task_start_bad_base_ref_refused() {
                 "repo": repo.path().to_string_lossy(),
                 "contract": {"objective": "Valid objective"},
                 "base_ref": "nonexistent-branch-or-tag-12345",
+                "argv": ["sh"],
             }),
         )
         .await;
@@ -433,6 +439,7 @@ async fn task_start_existing_branch_adopted() {
                 "repo": repo.path().to_string_lossy(),
                 "contract": {"objective": "Valid objective"},
                 "branch": "pre-existing-feature",
+                "argv": ["sh"],
             }),
         )
         .await
@@ -464,6 +471,7 @@ async fn task_start_concurrent_same_path_serialized() {
                 "contract": {"objective": "First"},
                 "branch": "branch-1",
                 "path": wt_target.to_string_lossy(),
+                "argv": ["sh"],
             }),
         )
         .await
@@ -478,6 +486,7 @@ async fn task_start_concurrent_same_path_serialized() {
                 "contract": {"objective": "Second"},
                 "branch": "branch-2",
                 "path": wt_target.to_string_lossy(),
+                "argv": ["sh"],
             }),
         )
         .await;
@@ -508,6 +517,7 @@ async fn task_start_default_worktree_path_vs_explicit() {
                 "contract": {"objective": "Explicit path"},
                 "branch": "branch-explicit",
                 "path": explicit_path.to_string_lossy(),
+                "argv": ["sh"],
             }),
         )
         .await
@@ -525,6 +535,7 @@ async fn task_start_default_worktree_path_vs_explicit() {
                 "repo": repo.path().to_string_lossy(),
                 "contract": {"objective": "Default path"},
                 "branch": "branch-default",
+                "argv": ["sh"],
             }),
         )
         .await
@@ -551,6 +562,7 @@ async fn task_start_detached_head_target_branch_unset() {
                 "repo": repo.path().to_string_lossy(),
                 "contract": {"objective": "Detached head test"},
                 "branch": "branch-detached",
+                "argv": ["sh"],
             }),
         )
         .await
@@ -575,6 +587,7 @@ async fn task_get_and_list_roundtrip() {
                 "contract": {"objective": "Task 1"},
                 "context_id": "ctx_A",
                 "branch": "b1",
+                "argv": ["sh"],
             }),
         )
         .await
@@ -589,6 +602,7 @@ async fn task_get_and_list_roundtrip() {
                 "contract": {"objective": "Task 2"},
                 "context_id": "ctx_B",
                 "branch": "b2",
+                "argv": ["sh"],
             }),
         )
         .await
@@ -615,6 +629,63 @@ async fn task_get_and_list_roundtrip() {
         .unwrap();
     assert_eq!(list_ctx_a["tasks"].as_array().unwrap().len(), 1);
     assert_eq!(list_ctx_a["tasks"][0]["id"], t1_id);
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn task_start_agent_and_argv_resolution() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    // 1. Neither agent nor argv -> BAD_PARAMS
+    let res_neither = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "No agent or argv"},
+            }),
+        )
+        .await;
+    let err = res_neither.unwrap_err();
+    assert!(err.starts_with(signaltty_proto::code::BAD_PARAMS));
+
+    // 2. Agent given without argv -> spawns agent interactive default binary
+    let res_agent = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Agent default"},
+                "agent": "claude",
+            }),
+        )
+        .await
+        .unwrap();
+    let pane = &res_agent["pane"];
+    let task = &res_agent["task"];
+    assert_eq!(task["worker_cmd"], json!(["claude"]));
+    assert_eq!(pane["agent"]["kind"], "claude");
+
+    // 3. Explicit argv wins when given alongside agent
+    let res_argv = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Argv wins"},
+                "agent": "claude",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let pane_override = &res_argv["pane"];
+    let task_override = &res_argv["task"];
+    assert_eq!(task_override["worker_cmd"], json!(["sh"]));
+    assert_eq!(pane_override["agent"]["kind"], "claude");
 
     srv.shutdown().await;
 }

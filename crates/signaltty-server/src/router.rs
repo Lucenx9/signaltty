@@ -1827,6 +1827,72 @@ async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Co
         );
     }
 
+    // Resolve agent and argv
+    let (argv, kind, agent_name) = match (p.agent.as_deref(), p.argv) {
+        (None, None) => {
+            return (
+                Response::err(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    "task.start requires either 'agent' or 'argv'",
+                ),
+                ConnEffect::default(),
+            );
+        }
+        (Some(agent_name), None) => {
+            let Some(adapter) = signaltty_agent::adapter_for_name(agent_name) else {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::BAD_PARAMS,
+                        format!("unknown agent '{agent_name}'"),
+                    ),
+                    ConnEffect::default(),
+                );
+            };
+            let kind = adapter.metadata().kind;
+            if matches!(kind, AgentKind::Generic | AgentKind::None)
+                || adapter.metadata().binaries.is_empty()
+            {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::BAD_PARAMS,
+                        format!("agent '{agent_name}' has no interactive default binary; specify 'argv'"),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+            let argv = vec![adapter.metadata().binaries[0].to_string()];
+            (argv, kind, Some(agent_name.to_string()))
+        }
+        (Some(agent_name), Some(argv)) => {
+            if argv.is_empty() {
+                return (
+                    Response::err(&req.id, code::BAD_PARAMS, "'argv' must not be empty"),
+                    ConnEffect::default(),
+                );
+            }
+            let kind = AgentKind::parse(agent_name).unwrap_or_else(|| ctx.detect_kind(&argv));
+            (argv, kind, Some(agent_name.to_string()))
+        }
+        (None, Some(argv)) => {
+            if argv.is_empty() {
+                return (
+                    Response::err(&req.id, code::BAD_PARAMS, "'argv' must not be empty"),
+                    ConnEffect::default(),
+                );
+            }
+            let kind = ctx.detect_kind(&argv);
+            let agent_name = if matches!(kind, AgentKind::Generic | AgentKind::None) {
+                None
+            } else {
+                Some(kind.as_str().to_string())
+            };
+            (argv, kind, agent_name)
+        }
+    };
+
     // 1. Cap check
     let active_tasks = {
         let s = ctx.store.read().unwrap();
@@ -1973,12 +2039,7 @@ async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Co
         (ws_id, tab_id)
     };
 
-    let argv = p.argv.unwrap_or_else(|| vec!["sh".to_string()]);
     let size = resolve_size(None, None);
-    let kind = match &p.agent {
-        Some(hint) => AgentKind::parse(hint).unwrap_or(AgentKind::None),
-        None => ctx.detect_kind(&argv),
-    };
 
     let (parent_pane_id, root_pane_id) = {
         let s = ctx.store.read().unwrap();
@@ -2064,7 +2125,7 @@ async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Co
         relationship,
         label: p.label.unwrap_or_else(|| format!("worker-{}", short_id)),
         contract: p.contract,
-        agent: p.agent,
+        agent: agent_name,
         source_repo: PathBuf::from(p.repo),
         target_branch,
         worktree_path,
