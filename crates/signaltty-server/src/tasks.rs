@@ -581,120 +581,130 @@ pub(crate) fn spawn_background_submit(
     let ready_timeout = Duration::from_secs(ready_timeout_s);
     let stall_timeout = Duration::from_secs(stall_timeout_s);
     let mut rx = ctx.bcast.subscribe();
+    let persist = ctx.ptys.clone();
 
+    // Every exit below moves the task (working, input_required or failed)
+    // with no request handler around to persist it: flag the save after it,
+    // or a restart recovers the task as still pending and fails it.
     tokio::spawn(async move {
-        let ready_deadline = tokio::time::Instant::now() + ready_timeout;
-        let mut tick = tokio::time::interval(Duration::from_millis(50));
+        async move {
+            let ready_deadline = tokio::time::Instant::now() + ready_timeout;
+            let mut tick = tokio::time::interval(Duration::from_millis(50));
 
-        loop {
-            enum Check {
-                Done,
-                PaneMissing,
-                PaneExited,
-                Ready,
-                Wait,
-            }
-            let check = {
-                let s = bg_submit_ctx.store.read().unwrap();
-                let Some(task) = s.tasks.get(&bg_task_id) else {
-                    return;
-                };
-                if task.state != TaskState::Pending {
-                    Check::Done
-                } else {
-                    match s.panes.get(&bg_pane_id) {
-                        None => Check::PaneMissing,
-                        Some(pane) if !matches!(pane.live, LiveState::Live) => Check::PaneExited,
-                        Some(pane)
-                            if matches!(pane.lifecycle, Lifecycle::Idle | Lifecycle::Done) =>
-                        {
-                            Check::Ready
+            loop {
+                enum Check {
+                    Done,
+                    PaneMissing,
+                    PaneExited,
+                    Ready,
+                    Wait,
+                }
+                let check = {
+                    let s = bg_submit_ctx.store.read().unwrap();
+                    let Some(task) = s.tasks.get(&bg_task_id) else {
+                        return;
+                    };
+                    if task.state != TaskState::Pending {
+                        Check::Done
+                    } else {
+                        match s.panes.get(&bg_pane_id) {
+                            None => Check::PaneMissing,
+                            Some(pane) if !matches!(pane.live, LiveState::Live) => {
+                                Check::PaneExited
+                            }
+                            Some(pane)
+                                if matches!(pane.lifecycle, Lifecycle::Idle | Lifecycle::Done) =>
+                            {
+                                Check::Ready
+                            }
+                            Some(_) => Check::Wait,
                         }
-                        Some(_) => Check::Wait,
                     }
-                }
-            };
+                };
 
-            match check {
-                Check::Done => return,
-                Check::PaneMissing => {
-                    let mut s = bg_submit_ctx.store.write().unwrap();
-                    s.task_fail(
-                        &bg_task_id,
-                        Some(json!({"stage": "ready_timeout", "error": "pane missing"})),
-                    );
-                    return;
-                }
-                Check::PaneExited => {
-                    let mut s = bg_submit_ctx.store.write().unwrap();
-                    s.task_fail(
-                        &bg_task_id,
-                        Some(json!({"stage": "ready_timeout", "error": "pane exited"})),
-                    );
-                    return;
-                }
-                Check::Ready => break,
-                Check::Wait => {}
-            }
-
-            tokio::select! {
-                biased;
-                _ = tokio::time::sleep_until(ready_deadline) => {
-                    // The screen says why the worker never got ready (e.g. a
-                    // folder-trust or login prompt the hooks cannot report).
-                    let screen_tail = bg_submit_ctx
-                        .ptys
-                        .terms()
-                        .lock()
-                        .unwrap()
-                        .tail(&bg_pane_id, 12, true)
-                        .unwrap_or_default()
-                        .join("\n");
-                    let mut s = bg_submit_ctx.store.write().unwrap();
-                    s.task_fail(
-                        &bg_task_id,
-                        Some(json!({"stage": "ready_timeout", "screen_tail": screen_tail})),
-                    );
-                    return;
-                }
-                _ = tick.tick() => {}
-                event = rx.recv() => {
-                    if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                match check {
+                    Check::Done => return,
+                    Check::PaneMissing => {
+                        let mut s = bg_submit_ctx.store.write().unwrap();
+                        s.task_fail(
+                            &bg_task_id,
+                            Some(json!({"stage": "ready_timeout", "error": "pane missing"})),
+                        );
                         return;
                     }
+                    Check::PaneExited => {
+                        let mut s = bg_submit_ctx.store.write().unwrap();
+                        s.task_fail(
+                            &bg_task_id,
+                            Some(json!({"stage": "ready_timeout", "error": "pane exited"})),
+                        );
+                        return;
+                    }
+                    Check::Ready => break,
+                    Check::Wait => {}
+                }
+
+                tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(ready_deadline) => {
+                        // The screen says why the worker never got ready (e.g. a
+                        // folder-trust or login prompt the hooks cannot report).
+                        let screen_tail = bg_submit_ctx
+                            .ptys
+                            .terms()
+                            .lock()
+                            .unwrap()
+                            .tail(&bg_pane_id, 12, true)
+                            .unwrap_or_default()
+                            .join("\n");
+                        let mut s = bg_submit_ctx.store.write().unwrap();
+                        s.task_fail(
+                            &bg_task_id,
+                            Some(json!({"stage": "ready_timeout", "screen_tail": screen_tail})),
+                        );
+                        return;
+                    }
+                    _ = tick.tick() => {}
+                    event = rx.recv() => {
+                        if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                            return;
+                        }
+                    }
+                }
+            }
+
+            let submit_res = crate::submit::submit_prompt(
+                &bg_submit_ctx,
+                &bg_pane_id,
+                &prompt,
+                submit_delay,
+                stall_timeout,
+                true,
+                true,
+                submit_max_bytes,
+            )
+            .await;
+
+            match submit_res {
+                Ok(_) => {
+                    let mut s = bg_submit_ctx.store.write().unwrap();
+                    s.task_background_ready(&bg_task_id);
+                }
+                Err(e) => {
+                    let mut s = bg_submit_ctx.store.write().unwrap();
+                    if e.code == code::TIMEOUT {
+                        s.task_submit_unconfirmed(&bg_task_id, &e.message);
+                    } else {
+                        s.task_fail(
+                            &bg_task_id,
+                            Some(json!({"stage": "submit_refused", "error": e.message})),
+                        );
+                    }
                 }
             }
         }
-
-        let submit_res = crate::submit::submit_prompt(
-            &bg_submit_ctx,
-            &bg_pane_id,
-            &prompt,
-            submit_delay,
-            stall_timeout,
-            true,
-            true,
-            submit_max_bytes,
-        )
         .await;
-
-        match submit_res {
-            Ok(_) => {
-                let mut s = bg_submit_ctx.store.write().unwrap();
-                s.task_background_ready(&bg_task_id);
-            }
-            Err(e) => {
-                let mut s = bg_submit_ctx.store.write().unwrap();
-                if e.code == code::TIMEOUT {
-                    s.task_submit_unconfirmed(&bg_task_id, &e.message);
-                } else {
-                    s.task_fail(
-                        &bg_task_id,
-                        Some(json!({"stage": "submit_refused", "error": e.message})),
-                    );
-                }
-            }
-        }
+        persist.mark_persist();
     });
 }
 

@@ -2035,6 +2035,59 @@ async fn task_start_relative_path_is_bad_params() {
 }
 
 #[tokio::test]
+async fn background_submit_outcome_reaches_the_snapshot() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "never gets ready"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                // Past the 2 s flush tick, so the save of `pending` lands first.
+                "ready_timeout_s": 3,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    c.call(
+        "task.wait",
+        json!({"task_id": task_id, "until": "failed", "timeout_s": 8}),
+    )
+    .await
+    .unwrap();
+
+    // No request follows: only the background step can flag the save. A
+    // crash now must not recover the task as pending.
+    let snap_path = srv.state_dir.join("snapshot.json");
+    let mut state = String::new();
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let Ok(bytes) = std::fs::read(&snap_path) else {
+            continue;
+        };
+        let snap: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let tasks = &snap["tasks"];
+        let task = tasks
+            .as_array()
+            .and_then(|a| a.iter().find(|t| t["id"] == task_id.as_str()))
+            .or_else(|| tasks.get(&task_id));
+        state = task.map(|t| t["state"].to_string()).unwrap_or_default();
+        if state == "\"failed\"" {
+            break;
+        }
+    }
+    assert_eq!(state, "\"failed\"");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn task_wait_unknown_until_is_bad_params() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;
