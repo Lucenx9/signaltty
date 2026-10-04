@@ -22,18 +22,24 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Config {
+        Config::try_from_env().expect("invalid server configuration")
+    }
+
+    /// Like `from_env`, but an invalid value (`SIGNALTTY_MAX_PARALLEL_TASKS=0`)
+    /// is an error the caller can report instead of a silently useless server.
+    pub fn try_from_env() -> Result<Config, String> {
         let max_parallel_tasks = parse_max_tasks(
             std::env::var("SIGNALTTY_MAX_PARALLEL_TASKS")
                 .ok()
                 .as_deref(),
-        );
+        )?;
         let worker_silent_timeout_s = parse_worker_silent_timeout(
             std::env::var("SIGNALTTY_WORKER_SILENT_TIMEOUT_S")
                 .ok()
                 .as_deref(),
         );
 
-        Config {
+        Ok(Config {
             socket_path: paths::socket_path(),
             state_dir: paths::state_dir(),
             history_tail_bytes: 64 * 1024,
@@ -46,13 +52,29 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(DEFAULT_MERGE_TIMEOUT_MS),
-        }
+        })
     }
 }
 
-pub fn parse_max_tasks(val: Option<&str>) -> usize {
-    val.and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_MAX_PARALLEL_TASKS)
+/// `0` would make every `task.start` fail with `RATE_LIMITED`; it is a
+/// configuration error. Unparsable values keep falling back to the default.
+pub fn parse_max_tasks(val: Option<&str>) -> Result<usize, String> {
+    match val.and_then(|v| v.parse::<usize>().ok()) {
+        Some(0) => {
+            Err("max parallel tasks must be at least 1 (0 would reject every task.start)".into())
+        }
+        Some(n) => Ok(n),
+        None => Ok(DEFAULT_MAX_PARALLEL_TASKS),
+    }
+}
+
+/// clap value parser for `--max-tasks`: a positive integer, strictly.
+pub fn parse_positive_tasks(val: &str) -> Result<usize, String> {
+    match val.parse::<usize>() {
+        Ok(0) => Err("must be at least 1 (0 would reject every task.start)".into()),
+        Ok(n) => Ok(n),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 pub fn parse_worker_silent_timeout(val: Option<&str>) -> u64 {
@@ -69,15 +91,20 @@ mod tests {
 
     #[test]
     fn parse_max_tasks_logic() {
-        assert_eq!(parse_max_tasks(None), DEFAULT_MAX_PARALLEL_TASKS);
-        assert_eq!(parse_max_tasks(None), 4);
-        assert_eq!(parse_max_tasks(Some("12")), 12);
-        assert_eq!(parse_max_tasks(Some("0")), 0);
+        assert_eq!(parse_max_tasks(None), Ok(DEFAULT_MAX_PARALLEL_TASKS));
+        assert_eq!(parse_max_tasks(None), Ok(4));
+        assert_eq!(parse_max_tasks(Some("12")), Ok(12));
+        assert!(parse_max_tasks(Some("0"))
+            .unwrap_err()
+            .contains("at least 1"));
         assert_eq!(
             parse_max_tasks(Some("not-a-number")),
-            DEFAULT_MAX_PARALLEL_TASKS
+            Ok(DEFAULT_MAX_PARALLEL_TASKS)
         );
-        assert_eq!(parse_max_tasks(Some("-1")), DEFAULT_MAX_PARALLEL_TASKS);
+        assert_eq!(parse_max_tasks(Some("-1")), Ok(DEFAULT_MAX_PARALLEL_TASKS));
+        assert!(parse_positive_tasks("0").is_err());
+        assert!(parse_positive_tasks("x").is_err());
+        assert_eq!(parse_positive_tasks("3"), Ok(3));
     }
 
     #[test]
@@ -95,6 +122,9 @@ mod tests {
         std::env::set_var("SIGNALTTY_MAX_PARALLEL_TASKS", "invalid");
         let cfg3 = Config::from_env();
         assert_eq!(cfg3.max_parallel_tasks, DEFAULT_MAX_PARALLEL_TASKS);
+
+        std::env::set_var("SIGNALTTY_MAX_PARALLEL_TASKS", "0");
+        assert!(Config::try_from_env().unwrap_err().contains("at least 1"));
 
         std::env::remove_var("SIGNALTTY_MAX_PARALLEL_TASKS");
     }
