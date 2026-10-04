@@ -8,7 +8,8 @@ use std::time::Duration;
 use chrono::Utc;
 use serde_json::{json, Value};
 use signaltty_core::model::{
-    AgentKind, Disposition, DispositionOutcome, LiveState, Relationship, Task, TaskResult,
+    parse_review_decision, rollup_status_checks, AgentKind, Disposition, DispositionOutcome,
+    LiveState, PrChecks, PrReview, PrState, Relationship, Task, TaskPr, TaskResult,
 };
 use signaltty_core::state::{Attention, Lifecycle, TaskState};
 use signaltty_core::{new_context_id, new_task_id};
@@ -1346,6 +1347,24 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
             );
         }
 
+        if mode == "merge" {
+            if let Some(ref pr) = task.pr {
+                if pr.state == PrState::Open {
+                    return (
+                        Response::err(
+                            &req.id,
+                            code::BAD_PARAMS,
+                            format!(
+                                "cannot merge task '{}' with an open pull request ({})",
+                                p.task_id, pr.url
+                            ),
+                        ),
+                        ConnEffect::default(),
+                    );
+                }
+            }
+        }
+
         if mode == "merge" && task.state != TaskState::Completed {
             return (
                 Response::err_with_details(
@@ -1814,6 +1833,482 @@ fn cwd_inside_worktree(cwd: &str, worktree: &std::path::Path) -> bool {
 /// Second finish when a disposition is already stored but the recorded
 /// checkout is still on disk: retry removal only, do not merge again.
 #[allow(clippy::too_many_arguments)]
+
+pub async fn h_task_pr_open(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::TaskPrOpen = match decode(params) {
+        Ok(p) => p,
+        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+    };
+
+    let worktree_for_lock = {
+        let s = ctx.store.read().unwrap();
+        match s.tasks.get(&p.task_id) {
+            Some(t) => t.worktree_path.clone(),
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        }
+    };
+    let path_lock = ctx.worktrees.path_lock(&worktree_for_lock);
+    let _lock = path_lock.lock().await;
+
+    let (task_id, wt, branch, target_branch, title, body, draft) = {
+        let s = ctx.store.read().unwrap();
+        let task = match s.tasks.get(&p.task_id) {
+            Some(t) => t,
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        };
+
+        if task.state != TaskState::Completed {
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    format!(
+                        "task must be completed to open a pr, currently {}",
+                        task.state.as_str()
+                    ),
+                    json!({ "state": task.state.as_str() }),
+                ),
+                ConnEffect::default(),
+            );
+        }
+
+        if task.disposition.outcome != DispositionOutcome::None {
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    format!(
+                        "task '{}' already has a disposition ({:?})",
+                        p.task_id, task.disposition.outcome
+                    ),
+                    json!({ "state": task.state.as_str() }),
+                ),
+                ConnEffect::default(),
+            );
+        }
+
+        if task.pr.is_some() {
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    format!("task '{}' already has a pull request", p.task_id),
+                    json!({ "state": task.state.as_str() }),
+                ),
+                ConnEffect::default(),
+            );
+        }
+
+        let target_branch = match task.target_branch {
+            Some(ref tb) => tb.clone(),
+            None => {
+                return (
+                    Response::err_with_details(
+                        &req.id,
+                        code::BAD_PARAMS,
+                        "task has no recorded target_branch",
+                        json!({ "state": task.state.as_str() }),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        };
+
+        let title = p.title.clone().unwrap_or_else(|| {
+            if !task.label.trim().is_empty() {
+                task.label.clone()
+            } else {
+                task.contract.objective.clone()
+            }
+        });
+
+        let body = p.body.clone().unwrap_or_else(|| {
+            if let Some(ref res) = task.result {
+                format!(
+                    "{}\n\n{}",
+                    res.summary.trim(),
+                    task.contract.objective.trim()
+                )
+            } else {
+                task.contract.objective.clone()
+            }
+        });
+
+        (
+            task.id.clone(),
+            task.worktree_path.to_string_lossy().to_string(),
+            task.branch.clone(),
+            target_branch,
+            title,
+            body,
+            p.draft.unwrap_or(false),
+        )
+    };
+
+    let push_and_create =
+        tokio::task::spawn_blocking(move || -> Result<TaskPr, (String, String, Value)> {
+            // 1. git push -u origin <branch>
+            let push_res = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&wt)
+                .args(["push", "-u", "origin", &branch])
+                .output();
+            let push_out = match push_res {
+                Ok(o) => o,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err((
+                        code::SPAWN_FAILED.to_string(),
+                        "git binary not found".to_string(),
+                        Value::Null,
+                    ));
+                }
+                Err(e) => {
+                    return Err((
+                        code::IO_ERROR.to_string(),
+                        format!("git push failed: {e}"),
+                        Value::Null,
+                    ));
+                }
+            };
+            if !push_out.status.success() {
+                let stderr = String::from_utf8_lossy(&push_out.stderr).trim().to_string();
+                return Err((
+                    code::IO_ERROR.to_string(),
+                    format!("git push failed: {stderr}"),
+                    json!({ "stderr": stderr }),
+                ));
+            }
+
+            // 2. gh pr create --head <branch> --base <target_branch> --title <title> --body <body> (+ --draft)
+            let mut gh_cmd = std::process::Command::new("gh");
+            gh_cmd.current_dir(&wt);
+            gh_cmd.args([
+                "pr",
+                "create",
+                "--head",
+                &branch,
+                "--base",
+                &target_branch,
+                "--title",
+                &title,
+                "--body",
+                &body,
+            ]);
+            if draft {
+                gh_cmd.arg("--draft");
+            }
+            let gh_res = gh_cmd.output();
+            let gh_out = match gh_res {
+                Ok(o) => o,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err((
+                        code::SPAWN_FAILED.to_string(),
+                        "gh binary not found".to_string(),
+                        Value::Null,
+                    ));
+                }
+                Err(e) => {
+                    return Err((
+                        code::IO_ERROR.to_string(),
+                        format!("gh pr create failed: {e}"),
+                        Value::Null,
+                    ));
+                }
+            };
+            if !gh_out.status.success() {
+                let stderr = String::from_utf8_lossy(&gh_out.stderr).trim().to_string();
+                return Err((
+                    code::IO_ERROR.to_string(),
+                    format!("gh pr create failed: {stderr}"),
+                    json!({ "stderr": stderr }),
+                ));
+            }
+
+            let stdout = String::from_utf8_lossy(&gh_out.stdout);
+            let url = stdout
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .last()
+                .ok_or_else(|| {
+                    (
+                        code::IO_ERROR.to_string(),
+                        "gh pr create produced no output".to_string(),
+                        Value::Null,
+                    )
+                })?
+                .to_string();
+
+            let number: u64 = url
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| {
+                    (
+                        code::IO_ERROR.to_string(),
+                        format!("could not parse pull request number from '{url}'"),
+                        Value::Null,
+                    )
+                })?;
+
+            Ok(TaskPr {
+                number,
+                url,
+                state: PrState::Open,
+                checks: PrChecks::None,
+                review: PrReview::None,
+                checked_at: None,
+            })
+        });
+
+    let res = match tokio::time::timeout(Duration::from_secs(60), push_and_create).await {
+        Ok(Ok(inner)) => inner,
+        Ok(Err(join_err)) => {
+            return (
+                Response::err(&req.id, code::INTERNAL, format!("join error: {join_err}")),
+                ConnEffect::default(),
+            );
+        }
+        Err(_) => {
+            return (
+                Response::err(&req.id, code::TIMEOUT, "pr open timed out after 60s"),
+                ConnEffect::default(),
+            );
+        }
+    };
+
+    let pr = match res {
+        Ok(pr) => pr,
+        Err((c, m, details)) => {
+            return if details.is_null() {
+                (Response::err(&req.id, &c, m), ConnEffect::default())
+            } else {
+                (
+                    Response::err_with_details(&req.id, &c, m, details),
+                    ConnEffect::default(),
+                )
+            };
+        }
+    };
+
+    let task = {
+        let mut s = ctx.store.write().unwrap();
+        match s.task_set_pr(&task_id, pr) {
+            Ok(_) => s.tasks.get(&task_id).cloned().unwrap(),
+            Err((c, m)) => return (Response::err(&req.id, &c, m), ConnEffect::default()),
+        }
+    };
+    ctx.mark_persist();
+    (
+        Response::ok(&req.id, json!({ "task": task })),
+        ConnEffect::default(),
+    )
+}
+
+pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::TaskPrRefresh = match decode(params) {
+        Ok(p) => p,
+        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+    };
+
+    // 1. Gather target tasks: (task_id, source_repo, existing_pr)
+    let targets = {
+        let s = ctx.store.read().unwrap();
+        if let Some(ref tid) = p.task_id {
+            let task = match s.tasks.get(tid) {
+                Some(t) => t,
+                None => {
+                    return (
+                        Response::err(&req.id, code::NO_SUCH_TASK, format!("no such task '{tid}'")),
+                        ConnEffect::default(),
+                    );
+                }
+            };
+            let pr = match task.pr {
+                Some(ref pr) => pr.clone(),
+                None => {
+                    return (
+                        Response::err(
+                            &req.id,
+                            code::BAD_PARAMS,
+                            format!("task '{tid}' has no pull request"),
+                        ),
+                        ConnEffect::default(),
+                    );
+                }
+            };
+            vec![(
+                task.id.clone(),
+                task.source_repo.to_string_lossy().to_string(),
+                pr,
+            )]
+        } else {
+            s.tasks
+                .values()
+                .filter(|t| t.pr.as_ref().map_or(false, |pr| pr.state == PrState::Open))
+                .map(|t| {
+                    (
+                        t.id.clone(),
+                        t.source_repo.to_string_lossy().to_string(),
+                        t.pr.clone().unwrap(),
+                    )
+                })
+                .collect()
+        }
+    };
+
+    if targets.is_empty() {
+        return (
+            Response::ok(&req.id, json!({ "tasks": [] })),
+            ConnEffect::default(),
+        );
+    }
+
+    let refresh_job = tokio::task::spawn_blocking(
+        move || -> Result<Vec<(String, TaskPr)>, (String, String, Value)> {
+            let mut results = Vec::new();
+            for (tid, src_repo, mut pr) in targets {
+                let mut gh_cmd = std::process::Command::new("gh");
+                gh_cmd.current_dir(&src_repo);
+                gh_cmd.args([
+                    "pr",
+                    "view",
+                    &pr.url,
+                    "--json",
+                    "state,reviewDecision,statusCheckRollup",
+                ]);
+                let gh_res = gh_cmd.output();
+                let gh_out = match gh_res {
+                    Ok(o) => o,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        return Err((
+                            code::SPAWN_FAILED.to_string(),
+                            "gh binary not found".to_string(),
+                            Value::Null,
+                        ));
+                    }
+                    Err(e) => {
+                        return Err((
+                            code::IO_ERROR.to_string(),
+                            format!("gh pr view failed: {e}"),
+                            Value::Null,
+                        ));
+                    }
+                };
+                if !gh_out.status.success() {
+                    let stderr = String::from_utf8_lossy(&gh_out.stderr).trim().to_string();
+                    return Err((
+                        code::IO_ERROR.to_string(),
+                        format!("gh pr view failed: {stderr}"),
+                        json!({ "stderr": stderr }),
+                    ));
+                }
+
+                let view_json: Value = serde_json::from_slice(&gh_out.stdout).map_err(|e| {
+                    (
+                        code::IO_ERROR.to_string(),
+                        format!("failed to parse gh pr view JSON output: {e}"),
+                        Value::Null,
+                    )
+                })?;
+
+                if let Some(state_str) = view_json.get("state").and_then(|v| v.as_str()) {
+                    if let Some(st) = PrState::parse_gh(state_str) {
+                        pr.state = st;
+                    }
+                }
+
+                if let Some(rd_str) = view_json.get("reviewDecision").and_then(|v| v.as_str()) {
+                    pr.review = parse_review_decision(rd_str);
+                } else {
+                    pr.review = PrReview::None;
+                }
+
+                if let Some(checks_arr) = view_json
+                    .get("statusCheckRollup")
+                    .and_then(|v| v.as_array())
+                {
+                    pr.checks = rollup_status_checks(checks_arr);
+                } else {
+                    pr.checks = PrChecks::None;
+                }
+
+                pr.checked_at = Some(Utc::now());
+                results.push((tid, pr));
+            }
+            Ok(results)
+        },
+    );
+
+    let res = match tokio::time::timeout(Duration::from_secs(60), refresh_job).await {
+        Ok(Ok(inner)) => inner,
+        Ok(Err(join_err)) => {
+            return (
+                Response::err(&req.id, code::INTERNAL, format!("join error: {join_err}")),
+                ConnEffect::default(),
+            );
+        }
+        Err(_) => {
+            return (
+                Response::err(&req.id, code::TIMEOUT, "pr refresh timed out after 60s"),
+                ConnEffect::default(),
+            );
+        }
+    };
+
+    let refreshed_pairs = match res {
+        Ok(pairs) => pairs,
+        Err((c, m, details)) => {
+            return if details.is_null() {
+                (Response::err(&req.id, &c, m), ConnEffect::default())
+            } else {
+                (
+                    Response::err_with_details(&req.id, &c, m, details),
+                    ConnEffect::default(),
+                )
+            };
+        }
+    };
+
+    let refreshed_tasks = {
+        let mut s = ctx.store.write().unwrap();
+        let mut tasks = Vec::new();
+        for (tid, pr) in refreshed_pairs {
+            if s.task_set_pr(&tid, pr).is_ok() {
+                if let Some(t) = s.tasks.get(&tid) {
+                    tasks.push(t.clone());
+                }
+            }
+        }
+        tasks
+    };
+    ctx.mark_persist();
+
+    (
+        Response::ok(&req.id, json!({ "tasks": refreshed_tasks })),
+        ConnEffect::default(),
+    )
+}
+
 fn retry_recorded_cleanup(
     ctx: &Ctx,
     req_id: &str,
