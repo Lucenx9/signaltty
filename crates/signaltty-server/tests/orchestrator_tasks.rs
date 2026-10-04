@@ -653,8 +653,22 @@ async fn task_get_and_list_roundtrip() {
 
 #[tokio::test]
 async fn task_start_agent_and_argv_resolution() {
+    use std::os::unix::fs::PermissionsExt;
+
     let repo = TempGitRepo::new();
-    let srv = TestServer::start().await;
+    // A stand-in `claude` on PATH so the agent default spawns on machines
+    // (like CI) that don't have the real CLI installed.
+    let bin = repo.path().with_extension("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let fake = bin.join("claude");
+    std::fs::write(&fake, "#!/bin/sh\nexec sleep 600\n").unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let srv = TestServer::start_with_env(&[("PATH", &path)]).await;
     let mut c = srv.client().await;
 
     // 1. Neither agent nor argv -> BAD_PARAMS
@@ -706,6 +720,7 @@ async fn task_start_agent_and_argv_resolution() {
     assert_eq!(pane_override["agent"]["kind"], "claude");
 
     srv.shutdown().await;
+    let _ = std::fs::remove_dir_all(&bin);
 }
 
 #[tokio::test]
