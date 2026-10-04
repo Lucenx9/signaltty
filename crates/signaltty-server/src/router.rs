@@ -1301,21 +1301,22 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
 
 /// Shared by `notify`, OSC pump, and `hook-event`: sanitize, store,
 /// raise attention, set last_message, emit. Returns the notification.
-pub fn push_notification(
+pub fn push_notification_full(
     store: &SharedStore,
     pane_id: &str,
-    title: Option<&str>,
+    given_title: Option<&str>,
+    fallback_title: &str,
     body: &str,
     severity: NotificationSeverity,
     source: &str,
 ) -> Notification {
-    let given = title
+    let given = given_title
         .map(|t| signaltty_term::sanitize_notification_text(t, 200))
         .filter(|t| !t.is_empty());
     // Notifications always carry a title; the pane's last message only
     // repeats one the caller actually gave.
     let titled = given.is_some();
-    let title = given.unwrap_or_else(|| "signaltty".to_string());
+    let title = given.unwrap_or_else(|| fallback_title.to_string());
     let body = signaltty_term::sanitize_notification_text(body, 2000);
     let workspace_id = store
         .read()
@@ -1343,13 +1344,14 @@ pub fn push_notification(
         let mut s = store.write().unwrap();
         s.push_notification(notif.clone());
         if let Some(p) = s.panes.get_mut(pane_id) {
-            p.last_message = Some(if body.is_empty() {
-                title.clone()
+            let msg = if body.is_empty() {
+                p.last_message.clone().unwrap_or(title.clone())
             } else if titled {
                 format!("{title}: {}", truncate(&body, 300))
             } else {
                 truncate(&body, 300)
-            });
+            };
+            p.last_message = Some(msg);
             p.last_activity_at = now;
         }
         s.emit(event::NOTIFICATION_CREATED, json!({"notification": notif}));
@@ -1359,6 +1361,17 @@ pub fn push_notification(
         .unwrap()
         .raise_attention(pane_id, severity.attention());
     notif
+}
+
+pub fn push_notification(
+    store: &SharedStore,
+    pane_id: &str,
+    title: Option<&str>,
+    body: &str,
+    severity: NotificationSeverity,
+    source: &str,
+) -> Notification {
+    push_notification_full(store, pane_id, title, "signaltty", body, severity, source)
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -1545,6 +1558,12 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
     }
     {
         let mut s = ctx.store.write().unwrap();
+        if let Some(msg) = &decision.message {
+            if let Some(p) = s.panes.get_mut(&pid) {
+                p.last_message = Some(msg.clone());
+                p.last_activity_at = Utc::now();
+            }
+        }
         if let Some(lifecycle) = decision.lifecycle {
             s.set_lifecycle(&pid, lifecycle);
             if matches!(lifecycle, Lifecycle::Idle | Lifecycle::Done) {
@@ -1574,6 +1593,7 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             None => {}
         }
     }
+    let decision_prompt = p.decision.as_ref().map(|d| d.prompt.clone());
     // 2b. Structured decision ingest (directive 2): explicit data wins.
     // A decision payload sets/supersedes; without one, leaving `blocked`
     // means the gate is gone and the bar must not stick.
@@ -1614,7 +1634,7 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             ctx.store.write().unwrap().clear_decision(&pid, "moved_on");
         }
     }
-    if let Some(message) = decision.message {
+    if let Some(message) = decision.message.or(decision_prompt) {
         let mut s = ctx.store.write().unwrap();
         if let Some(p) = s.panes.get_mut(&pid) {
             p.last_message = Some(message);
@@ -1637,10 +1657,11 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             );
         }
     } else if let Some(draft) = adapter.notification_event(&event) {
-        push_notification(
+        push_notification_full(
             &ctx.store,
             &pid,
-            Some(&draft.title),
+            p.title.as_deref(),
+            &draft.title,
             draft.body.as_deref().unwrap_or(""),
             draft.severity,
             &format!("hook:{agent}:{hook}"),

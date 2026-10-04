@@ -1502,6 +1502,19 @@ async fn test_last_message_capture_from_stop_and_permission_hooks() {
     let driver = FakeAgentPane::new(&pane_id, "codex");
     driver.session_start(&mut c, &wt_path).await.unwrap();
 
+    let wait = c
+        .call(
+            "task.wait",
+            json!({
+                "task_id": &task_id,
+                "until": "working",
+                "timeout_s": 5,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+
     // 1. PermissionRequest hook carries explicit prompt
     c.call(
         "hook-event",

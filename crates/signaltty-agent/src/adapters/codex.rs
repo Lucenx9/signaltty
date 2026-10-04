@@ -38,16 +38,28 @@ impl AgentAdapter for CodexAdapter {
             "PreToolUse" | "PostToolUse" | "PreCompact" | "PostCompact" | "SubagentStop" => {
                 LifecycleDecision::default()
             }
-            "PermissionRequest" => LifecycleDecision {
-                lifecycle: Some(Lifecycle::Blocked),
-                attention: Some(Attention::PermissionRequired),
-                message: Some("approval requested".to_string()),
-            },
-            "Stop" | "agent-turn-complete" => LifecycleDecision {
-                lifecycle: Some(Lifecycle::Done),
-                attention: Some(Attention::Unread),
-                message: Some("turn complete".to_string()),
-            },
+            "PermissionRequest" => {
+                let msg = ev
+                    .payload_str("prompt")
+                    .or_else(|| ev.payload_str("tool_name"))
+                    .or_else(|| ev.payload_str("description"))
+                    .unwrap_or_else(|| "approval requested".to_string());
+                LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Blocked),
+                    attention: Some(Attention::PermissionRequired),
+                    message: Some(msg),
+                }
+            }
+            "Stop" | "agent-turn-complete" => {
+                let msg = ev
+                    .payload_str("last_assistant_message")
+                    .unwrap_or_else(|| "turn complete".to_string());
+                LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Done),
+                    attention: Some(Attention::Unread),
+                    message: Some(msg),
+                }
+            }
             "SessionEnd" => LifecycleDecision {
                 lifecycle: Some(Lifecycle::Done),
                 attention: Some(Attention::Unread),
@@ -67,7 +79,8 @@ impl AgentAdapter for CodexAdapter {
             "PermissionRequest" => Some(NotificationDraft {
                 title: "Codex needs approval".to_string(),
                 body: ev
-                    .payload_str("tool_name")
+                    .payload_str("prompt")
+                    .or_else(|| ev.payload_str("tool_name"))
                     .or_else(|| ev.payload_str("description")),
                 severity: NotificationSeverity::Warning,
             }),
