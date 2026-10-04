@@ -157,7 +157,7 @@ all-terminal; permission block → ranked listing → native answer → resume.
 happy/conflict/dirty paths; discard scoping; branch rules; cleanup-error
 separation.
 
-- [ ] T021 [US5] Failing tests: `task.diff` shows only own change vs base
+- [x] T021 [US5] Failing tests: `task.diff` shows only own change vs base
   (tracked + untracked), index untouched (porcelain clean apart from test
   edits); merge lands + disposition; conflict → `MERGE_CONFLICT`, target
   clean, files named; dirty source/target refusals; staged-work refusal;
@@ -166,17 +166,17 @@ separation.
   `target_ref` at finish; cleanup-error separation; discard removes
   only the task path; second finish refused; `task.cancel` keeps checkout in
   `crates/signaltty-server/tests/orchestrator_finish.rs`.
-- [ ] T022 [US5] `task.diff` / `task.file_diff` (base-SHA baseline, direct
+- [x] T022 [US5] `task.diff` / `task.file_diff` (base-SHA baseline, direct
   untracked reads, no `add -N`) in `crates/signaltty-server/src/git.rs` and
   `crates/signaltty-server/src/file_diff.rs` + handlers in
   `crates/signaltty-server/src/router.rs`.
-- [ ] T023 [US5] `task.finish` (merge/discard rules incl. recorded-target
+- [x] T023 [US5] `task.finish` (merge/discard rules incl. recorded-target
   checkout check, abort-on-conflict,
   guarded cleanup, disposition recording) + `task.cancel` in
   `crates/signaltty-server/src/router.rs` (+ git helpers in
   `crates/signaltty-server/src/git.rs` /
   `crates/signaltty-server/src/worktrees.rs`).
-- [ ] T024 [P] [US5] `task diff/file-diff/finish/cancel` CLI in
+- [x] T024 [P] [US5] `task diff/file-diff/finish/cancel` CLI in
   `crates/signaltty-cli/src/main.rs`.
 
 **Checkpoint**: US5 green; E2E legs 6 + 8 pass (restart leg still red).
