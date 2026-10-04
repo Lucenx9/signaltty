@@ -1397,3 +1397,80 @@ async fn test_task_start_ref_safety_rejects_flag_injection_and_invalid_branches(
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_hook_receiver_drops_harness_mismatch_and_unparseable_event() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    // Start task with agent codex
+    let res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Harness mismatch test"},
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+
+    let pane_id = res["pane"]["id"].as_str().unwrap().to_string();
+    let wt_path = std::path::PathBuf::from(res["task"]["worktree_path"].as_str().unwrap());
+
+    // Fake agent drives worker to session_start as codex
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt_path).await.unwrap();
+
+    // Verify pane is codex
+    let pane_get = c
+        .call("pane.get", json!({"pane_id": &pane_id}))
+        .await
+        .unwrap();
+    assert_eq!(pane_get["pane"]["agent"]["kind"], "codex");
+
+    // 1. Cross-harness replay: Claude hook event sent to Codex pane
+    let drop_mismatch = c
+        .call(
+            "hook-event",
+            json!({
+                "agent": "claude",
+                "event": "Stop",
+                "pane_id": &pane_id,
+                "payload": {"session_id": "claude-sess-xyz"}
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(drop_mismatch["dropped"], true);
+    assert_eq!(drop_mismatch["reason"], "harness_mismatch");
+
+    // Verify pane was NOT relabeled to claude and did not move to Done
+    let pane_after = c
+        .call("pane.get", json!({"pane_id": &pane_id}))
+        .await
+        .unwrap();
+    assert_eq!(pane_after["pane"]["agent"]["kind"], "codex");
+
+    // 2. Unparseable/unknown hook event: should be dropped, never default to Stop/Done
+    let drop_unknown = c
+        .call(
+            "hook-event",
+            json!({
+                "agent": "codex",
+                "event": "UnparseableGarbageHookXYZ",
+                "pane_id": &pane_id,
+                "payload": {}
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(drop_unknown["dropped"], true);
+
+    srv.shutdown().await;
+}
