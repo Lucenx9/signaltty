@@ -66,7 +66,7 @@ rendered/incremental reads on TUI fixtures.
   `pending` (background first-submit in flight), `PANE_EXITED` on exited,
   activity-gate `TIMEOUT`, fast-completion
   match in `crates/signaltty-server/tests/orchestrator_submit.rs`.
-- [ ] T008 [P] [US3] Failing tests: tail-vs-rendered equality on TUI repaint
+- [x] T008 [P] [US3] Failing tests: tail-vs-rendered equality on TUI repaint
   fixtures, incremental delta-only second read, dropped-range signal after
   eviction/restart in `crates/signaltty-term/tests/` (new) +
   `crates/signaltty-server/tests/orchestrator_read.rs`.
@@ -77,13 +77,13 @@ rendered/incremental reads on TUI fixtures.
   an `input_required` task's worker pane moves the task to `working` via the
   Store transition method; submit to a `pending` task's worker pane refused
   `AGENT_NOT_READY`).
-- [ ] T010 [US3] Rendered ring: vt100 scrollback 5000 + `content_seq` + grid
+- [x] T010 [US3] Rendered ring: vt100 scrollback 5000 + `content_seq` + grid
   extraction in `crates/signaltty-term/src/headless.rs`; rebase `tail` on it;
   add `mode: "rendered"` (`after_seq`/`lines` → `text`/`seq`/`next_seq`/
   `dropped`/`truncated`) in `crates/signaltty-server/src/router.rs` +
   `crates/signaltty-server/src/params.rs`.
 - [ ] T011 [P] [US2] `signaltty pane submit` CLI in `crates/signaltty-cli/src/main.rs`.
-- [ ] T012 [P] [US3] `pane read --mode rendered --after-seq` CLI in
+- [x] T012 [P] [US3] `pane read --mode rendered --after-seq` CLI in
   `crates/signaltty-cli/src/main.rs`.
 
 **Checkpoint**: US2 + US3 green on panes without any task involved.

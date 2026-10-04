@@ -39,6 +39,51 @@ pub struct RenderedRead {
     pub truncated: bool,
 }
 
+/// Upper bound on how many rows one feed batch could have scrolled:
+/// newlines + explicit scroll controls (VT/FF/NEL/RI, CSI `S`/`T` with
+/// counts) + printable-cell rows + one slack. Deliberately generous — it
+/// only excludes shifts the batch could not have produced, so repetitive
+/// content cannot match a wild `k`.
+fn scroll_bound(batch: &[u8], cols: u16) -> usize {
+    let mut bound = 1; // slack for control-edge cases
+    let mut printable = 0usize;
+    let mut i = 0;
+    while i < batch.len() {
+        let b = batch[i];
+        match b {
+            b'\n' | b'\x0b' | b'\x0c' | b'\x84' => bound += 1,
+            b'\x1b' => {
+                let mut j = i + 1;
+                if j < batch.len() && batch[j] == b'E' {
+                    bound += 1; // NEL
+                    i = j;
+                } else {
+                    if j < batch.len() && batch[j] == b'[' {
+                        j += 1;
+                        let mut val = 0usize;
+                        let mut digits = false;
+                        while j < batch.len() && batch[j].is_ascii_digit() {
+                            val = val
+                                .saturating_mul(10)
+                                .saturating_add((batch[j] - b'0') as usize);
+                            digits = true;
+                            j += 1;
+                        }
+                        if j < batch.len() && (batch[j] == b'S' || batch[j] == b'T') {
+                            bound += if digits { val.max(1) } else { 1 };
+                            i = j;
+                        }
+                    }
+                }
+            }
+            0x20..=0x7e | 0x80..=0xff => printable += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    bound + printable / (cols.max(1) as usize)
+}
+
 struct Surface {
     parser: vt100::Parser,
     cols: u16,
@@ -87,15 +132,20 @@ impl Surface {
         // Splitting on CR/LF is UTF-8 safe (neither byte appears inside a
         // multibyte sequence) and harmless to the parser, which is a byte
         // state machine that resumes across `process` calls — even mid-OSC.
-        let max_bytes = ((self.cols as usize) * (self.rows as usize) / 4).max(256);
+        // The byte budget (~one visual row) bounds how much new content a
+        // single reconcile can carry, so wrap-driven scrolls stay inside
+        // the matcher's tail allowance.
+        let max_bytes = (self.cols as usize).max(64);
         let mut start = 0usize;
         for (i, &b) in data.iter().enumerate() {
             let cut = b == b'\n' || b == b'\r';
             let bytes = i + 1 - start;
             if cut || bytes >= max_bytes || i + 1 == data.len() {
-                self.parser.process(&data[start..i + 1]);
+                let batch = &data[start..i + 1];
+                let bound = scroll_bound(batch, self.cols);
+                self.parser.process(batch);
                 start = i + 1;
-                self.reconcile();
+                self.reconcile(bound);
             }
         }
     }
@@ -110,7 +160,7 @@ impl Surface {
             .collect()
     }
 
-    fn reconcile(&mut self) {
+    fn reconcile(&mut self, bound: usize) {
         let alt = self.parser.screen().alternate_screen();
         let grid = self.grid_text();
         let transitioned = alt != self.in_alt;
@@ -125,7 +175,7 @@ impl Surface {
         // On alt enter/exit the grids are unrelated buffers: refresh in
         // place so alt rows never leak into main-screen history.
         if !transitioned && !alt {
-            if let Some(k) = self.scroll_by(&grid) {
+            if let Some(k) = self.scroll_by(&grid, bound) {
                 self.apply_scroll(k, &grid);
                 return;
             }
@@ -133,30 +183,72 @@ impl Surface {
         self.refresh_in_place(&grid);
     }
 
-    /// Smallest scroll-up `k` (1..=n) consistent with the new grid, or
-    /// None. Batches cut after every CR/LF, so a genuine scroll advances one
-    /// line per step and the smallest match is the exact one; a partial
-    /// scroll needs a non-blank line on either side of the fold so an idle
-    /// so an idle blank screen never churns history; a fully blanked grid
-    /// over non-blank rows counts as a full scroll-off (this also preserves
-    /// cleared content in history instead of dropping it).
-    fn scroll_by(&self, grid: &[String]) -> Option<usize> {
+    /// Scroll-up `k` (1..=n) consistent with the new grid and the batch's
+    /// scroll bound, or None. Batches cut after every CR/LF, so a genuine
+    /// scroll advances one line per step.
+    ///
+    /// Only the leading `n-2k` rows must match: a print that scrolls in the
+    /// same step (long wrapped line at the bottom) lands its new rows at the
+    /// tail of the overlap, so the tail `k` overlap rows are excused. This
+    /// biases toward preservation — a coincidental match archives lines to
+    /// history rather than dropping them. Candidates beyond the batch's
+    /// scroll bound are ignored: repetitive content can match any shift,
+    /// but the batch itself caps how far the grid could have moved. A
+    /// partial scroll still needs a
+    /// non-blank line on either side of the fold so an idle blank screen
+    /// never churns history; a fully blanked grid over non-blank rows
+    /// counts as a full scroll-off (this preserves cleared content in
+    /// history instead of dropping it). An identical grid never scrolls
+    /// (covers no-op feeds on uniform screens, which would otherwise flood
+    /// history).
+    fn scroll_by(&self, grid: &[String], bound: usize) -> Option<usize> {
         let n = grid.len();
         if n == 0 || self.screen.len() != n {
             return None;
         }
+        if self
+            .screen
+            .iter()
+            .map(|l| l.text.as_str())
+            .eq(grid.iter().map(String::as_str))
+        {
+            return None;
+        }
+        let mut smallest: Option<usize> = None;
+        let mut evidenced: Option<usize> = None;
         for k in 1..n {
+            // Leading rows must match exactly; trailing `k` overlap rows
+            // may hold freshly printed content. Needs at least one
+            // verified row, and the batch must be able to explain the
+            // shift (bounds repetitive-content matches).
+            if n < 2 * k + 1 || k > bound {
+                continue;
+            }
             let moved = &self.screen[..k];
-            let kept = &self.screen[k..];
-            if kept
+            if !(moved.iter().any(|l| !l.text.is_empty())
+                || grid[n - k..].iter().any(|l| !l.is_empty()))
+            {
+                continue;
+            }
+            let kept = &self.screen[k..n - k];
+            if !kept
                 .iter()
                 .map(|l| l.text.as_str())
-                .eq(grid[..n - k].iter().map(String::as_str))
-                && (moved.iter().any(|l| !l.text.is_empty())
-                    || grid[n - k..].iter().any(|l| !l.is_empty()))
+                .eq(grid[..n - 2 * k].iter().map(String::as_str))
             {
-                return Some(k);
+                continue;
             }
+            if smallest.is_none() {
+                smallest = Some(k);
+            }
+            // Non-blank evidence proves the shift: blanks align with
+            // anything, so the largest evidenced `k` is the exact scroll.
+            if grid[..n - 2 * k].iter().any(|l| !l.is_empty()) {
+                evidenced = Some(k);
+            }
+        }
+        if let Some(k) = evidenced.or(smallest) {
+            return Some(k);
         }
         if grid.iter().all(|l| l.is_empty()) && self.screen.iter().any(|l| !l.text.is_empty()) {
             return Some(n);
@@ -246,7 +338,7 @@ impl Surface {
 
     /// Content lines (history + live screen rows) as (seq, text) in
     /// positional order.
-    fn content<'a>(&'a self) -> impl Iterator<Item = &'a RingLine> {
+    fn content(&self) -> impl Iterator<Item = &RingLine> {
         let n = self.screen_content_len();
         self.history.iter().chain(self.screen.iter().take(n))
     }
