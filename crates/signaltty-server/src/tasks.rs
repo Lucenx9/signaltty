@@ -56,6 +56,38 @@ fn fail_task_start(
     )
 }
 
+/// Remove a task worktree with the herdr leftover guard: unlock, then
+/// `git worktree remove`. A leftover directory is force-deleted only after
+/// git says it is not a registered worktree of this repo *and* it is the
+/// recorded task path — never while git still claims it (a live checkout
+/// or a failed remove must not be `remove_dir_all`'d). Returns a cleanup
+/// error string when the checkout survives.
+fn remove_task_worktree(src_repo: &str, worktree_path: &std::path::Path) -> Option<String> {
+    let wt_str = worktree_path.to_string_lossy().to_string();
+    let _ = crate::git::git_output(src_repo, &["worktree", "unlock", &wt_str]);
+    let rm_err = match crate::git::git_output(
+        src_repo,
+        &["worktree", "remove", "--force", "--force", &wt_str],
+    ) {
+        Ok(out) if out.status.success() => None,
+        Ok(out) => Some(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        Err(e) => Some(format!("git worktree remove failed: {e}")),
+    };
+    let _ = crate::git::git_output(src_repo, &["worktree", "prune"]);
+    if !worktree_path.exists() {
+        return None;
+    }
+    if crate::git::is_worktree_registered(src_repo, &wt_str) {
+        return Some(format!(
+            "worktree checkout left in place (still registered): {}",
+            rm_err.unwrap_or_else(|| "remove reported success but the directory remains".into())
+        ));
+    }
+    std::fs::remove_dir_all(worktree_path)
+        .err()
+        .map(|e| format!("failed to remove worktree directory: {e}"))
+}
+
 pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
     let p: params::TaskStart = match decode(params) {
         Ok(p) => p,
@@ -1089,16 +1121,8 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
             s.set_exited(pid, Some(0));
         }
 
-        // Remove worktree
-        let _ = crate::git::git_output(&src_str, &["worktree", "unlock", &wt_str]);
-        let _ = crate::git::git_output(
-            &src_str,
-            &["worktree", "remove", "--force", "--force", &wt_str],
-        );
-        if worktree_path.exists() {
-            let _ = std::fs::remove_dir_all(&worktree_path);
-        }
-        let _ = crate::git::git_output(&src_str, &["worktree", "prune"]);
+        // Remove worktree (herdr-guarded: see remove_task_worktree).
+        let _cleanup_error = remove_task_worktree(&src_str, &worktree_path);
 
         // Delete branch if requested and not pre-existing
         if should_delete_branch {
@@ -1157,11 +1181,13 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         );
     }
 
-    // Check source worktree dirt
+    // Check source worktree dirt. A failed check is IO_ERROR, never
+    // "clean": merging or deleting on an unverified tree could destroy
+    // uncommitted work.
     if !p.ignore_dirty.unwrap_or(false) {
-        if let Ok(out) = crate::git::git_output(&wt_str, &["status", "--porcelain"]) {
-            let status = String::from_utf8_lossy(&out.stdout);
-            if !status.trim().is_empty() {
+        match crate::git::porcelain_clean(&wt_str, &["status", "--porcelain"]) {
+            Ok(true) => {}
+            Ok(false) => {
                 return (
                     Response::err(
                         &req.id,
@@ -1171,21 +1197,41 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
                     ConnEffect::default(),
                 );
             }
+            Err(e) => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::IO_ERROR,
+                        format!("source dirt check failed: {e}"),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
         }
     }
 
     // Check target checkout dirt (tracked modifications)
-    if let Ok(out) = crate::git::git_output(
+    match crate::git::porcelain_clean(
         &src_str,
         &["status", "--porcelain=v1", "--untracked-files=no"],
     ) {
-        let status = String::from_utf8_lossy(&out.stdout);
-        if !status.trim().is_empty() {
+        Ok(true) => {}
+        Ok(false) => {
             return (
                 Response::err(
                     &req.id,
                     code::BAD_PARAMS,
                     "target checkout is dirty (tracked modifications present)",
+                ),
+                ConnEffect::default(),
+            );
+        }
+        Err(e) => {
+            return (
+                Response::err(
+                    &req.id,
+                    code::IO_ERROR,
+                    format!("target dirt check failed: {e}"),
                 ),
                 ConnEffect::default(),
             );
@@ -1238,18 +1284,31 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
             Vec::new()
         };
 
-        // Abort merge
-        let _ = crate::git::git_output(&src_str, &["merge", "--abort"]);
-
-        // Verify target clean
-        let target_clean = crate::git::git_output(
+        // Abort merge. A failed abort (or a target that is still dirty
+        // afterwards) must not be reported as a clean conflict: the target
+        // may be mid-merge, so this is IO_ERROR with the dirt flagged.
+        let abort_ok = crate::git::git_output(&src_str, &["merge", "--abort"])
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+        let target_clean = crate::git::porcelain_clean(
             &src_str,
             &["status", "--porcelain=v1", "--untracked-files=no"],
-        )
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().is_empty())
-        .unwrap_or(true);
-        if !target_clean {
-            tracing::warn!("target repo remained dirty after merge --abort");
+        );
+        if !abort_ok || !matches!(target_clean, Ok(true)) {
+            let target_dirty = !matches!(target_clean, Ok(true));
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::IO_ERROR,
+                    "merge conflict abort failed or left the target dirty; target may be mid-merge",
+                    json!({
+                        "conflicted": conflicted_files,
+                        "target_dirty": target_dirty,
+                        "abort_ok": abort_ok,
+                    }),
+                ),
+                ConnEffect::default(),
+            );
         }
 
         return (
@@ -1293,35 +1352,8 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         s.set_exited(pid, Some(0));
     }
 
-    // Clean up worktree
-    let mut cleanup_error = None;
-    let _ = crate::git::git_output(&src_str, &["worktree", "unlock", &wt_str]);
-    let rm_out = crate::git::git_output(
-        &src_str,
-        &["worktree", "remove", "--force", "--force", &wt_str],
-    );
-    if let Ok(ref out) = rm_out {
-        if !out.status.success() {
-            cleanup_error = Some(format!(
-                "worktree remove failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
-        }
-    }
-    let fs_rm = if worktree_path.exists() {
-        std::fs::remove_dir_all(&worktree_path)
-    } else {
-        Ok(())
-    };
-    let _ = crate::git::git_output(&src_str, &["worktree", "prune"]);
-
-    if let Err(e) = fs_rm {
-        cleanup_error = Some(format!("failed to remove worktree directory: {e}"));
-    } else if let Ok(ref out) = rm_out {
-        if !out.status.success() && worktree_path.exists() {
-            cleanup_error = Some(String::from_utf8_lossy(&out.stderr).trim().to_string());
-        }
-    }
+    // Clean up worktree (herdr-guarded: see remove_task_worktree).
+    let mut cleanup_error = remove_task_worktree(&src_str, &worktree_path);
 
     // Delete branch if requested and not pre-existing
     let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch;

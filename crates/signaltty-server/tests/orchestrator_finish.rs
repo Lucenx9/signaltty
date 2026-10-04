@@ -620,3 +620,89 @@ async fn test_task_cancel_preserves_worktree_and_closes_worker_pane() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_task_finish_failed_dirt_check_is_io_error_and_merges_nothing() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let repo = TempGitRepo::new();
+
+    let start_res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Dirt check failure test"},
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+
+    let task_id = start_res["task"]["id"].as_str().unwrap().to_string();
+    let branch = start_res["task"]["branch"].as_str().unwrap().to_string();
+    let wt_path = PathBuf::from(start_res["task"]["worktree_path"].as_str().unwrap());
+
+    // Commit one change on the task branch, then break `git status` in the
+    // worktree by removing its .git pointer file (worktrees keep .git as a
+    // file). Uncommitted content stays behind to prove the point.
+    std::fs::write(wt_path.join("file1.txt"), "committed\n").unwrap();
+    let _ = std::process::Command::new("git")
+        .args(["-C", &wt_path.to_string_lossy(), "add", "file1.txt"])
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["-C", &wt_path.to_string_lossy(), "commit", "-m", "commit 1"])
+        .output();
+    std::fs::write(wt_path.join("uncommitted.txt"), "dirt\n").unwrap();
+
+    c.call(
+        "task.report",
+        json!({ "task_id": &task_id, "status": "completed", "summary": "Done" }),
+    )
+    .await
+    .unwrap();
+
+    std::fs::remove_file(wt_path.join(".git")).unwrap();
+    assert!(
+        !std::process::Command::new("git")
+            .args(["-C", &wt_path.to_string_lossy(), "status", "--porcelain"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        "precondition: git status in the worktree fails"
+    );
+
+    // A failed dirt check is IO_ERROR, never a clean-tree merge or delete.
+    let err = c
+        .call(
+            "task.finish",
+            json!({ "task_id": &task_id, "mode": "merge" }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with(code::IO_ERROR),
+        "failed dirt check must be IO_ERROR, got: {err}"
+    );
+
+    // Nothing merged, nothing recorded, worktree (with its dirt) intact.
+    let get = c
+        .call("task.get", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(get["task"]["disposition"]["outcome"], "none");
+    assert!(wt_path.join("uncommitted.txt").exists());
+    let log = repo.git(&["log", "--oneline", "main"]);
+    assert!(
+        !String::from_utf8_lossy(&log.stdout).contains("commit 1"),
+        "task branch must not have merged"
+    );
+    assert!(
+        !repo.git(&["branch", "--list", &branch]).stdout.is_empty(),
+        "task branch must survive the refused finish"
+    );
+
+    srv.shutdown().await;
+}

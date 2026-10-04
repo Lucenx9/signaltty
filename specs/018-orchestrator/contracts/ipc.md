@@ -207,9 +207,12 @@ Merge (`src/workflow/merge.rs` rules, VERIFIED workmux):
   `details: {expected, actual}` — never merge into whatever branch the user
   switched to since start.
 - Source checks: any porcelain output (staged/unstaged/untracked) → refuse
-  unless `ignore_dirty: true` ("those changes would be lost"). Staged work is
-  never auto-committed (decision vs workmux's editor commit: non-interactive
-  server, no invented authorship — commit explicitly first).
+  unless `ignore_dirty: true` ("those changes would be lost"). A `git status`
+  that itself fails (non-zero exit, including dubious ownership or a missing
+  `.git` pointer) is `IO_ERROR`, never "clean": finish merges or deletes
+  nothing on an unverified tree. Staged work is never auto-committed
+  (decision vs workmux's editor commit: non-interactive server, no invented
+  authorship — commit explicitly first).
 - Target checks (on the resolved target above): tracked dirt → refuse. Untracked on target allowed (git fails later
   on collision, as workmux).
 - `git merge --no-ff --no-edit -- <branch>` in the target checkout (`--`
@@ -218,7 +221,10 @@ Merge (`src/workflow/merge.rs` rules, VERIFIED workmux):
   `git merge --abort`, verify target clean via porcelain, return
   `MERGE_CONFLICT` with `details.conflicted[]` (`git diff --diff-filter=U`,
   vibe-kanban `crates/git`) — target stays clean, resolution stays in the
-  source worktree.
+  source worktree. If `merge --abort` fails, or the post-abort porcelain
+  check errors or still shows tracked dirt, return `IO_ERROR` with
+  `details.target_dirty` and `details.abort_ok` and do not claim the target
+  is clean.
 - After a successful merge, the new `HEAD` must descend from the task branch
   tip (`merge-base --is-ancestor`), else finish returns `IO_ERROR` and records
   no disposition — a merge that resolves to the already-checked-out target

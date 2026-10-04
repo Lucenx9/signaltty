@@ -92,7 +92,7 @@ clients can `subscribe {from_seq}` to replay.
 | `task.report` | `{task_id?, pane_id?, status: completed\|failed\|rejected, summary, artifacts?, evidence?}` (task resolved via explicit `task_id`, else the task owning `pane_id`; one of the two is required) | `{task}` (stores the result, emits `task.result` + `task.updated`; report on a terminal task → `BAD_PARAMS`) |
 | `task.diff` | `{task_id}` | `{task_id, base_sha, branch, files[...], dirs[...], added, removed}` (worktree-vs-recorded-base, tracked + untracked; no index mutation) |
 | `task.file_diff` | `{task_id, path}` | `{task_id, path, untracked, content}` (same `content` shapes as `workspace.file_diff`) |
-| `task.finish` | `{task_id, mode: merge\|discard, target_ref?, delete_branch?, ignore_dirty?}` | `{task, merge?: {target, sha}, cleanup_error?}` (merge needs a `completed` task and a clean target; conflicts abort leaving the target clean → `MERGE_CONFLICT`) |
+| `task.finish` | `{task_id, mode: merge\|discard, target_ref?, delete_branch?, ignore_dirty?}` | `{task, merge?: {target, sha}, cleanup_error?}` (merge needs a `completed` task and a clean target; a failed `git status` is `IO_ERROR`, never "clean"; conflicts abort leaving the target clean → `MERGE_CONFLICT`, or `IO_ERROR` with `details.target_dirty` when abort fails) |
 | `attention.pending` | `{limit?}` (default 50, max 500) | `{panes: [{pane_id, workspace_id, tab_id, label?, task_id?, lifecycle, attention, last_message?, attention_since?}]}` ranked by severity then recency; panes with `attention: none` excluded |
 | `plugin.list` | — | `{dir, plugins[], failures[]}` (hooks with runs/errors/last_error; see 13) |
 | `plugin.reload` | — | same as `plugin.list` after re-scan (stats reset) |

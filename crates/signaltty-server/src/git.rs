@@ -329,6 +329,48 @@ pub fn git_info(cwd: &str) -> GitInfo {
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+/// Strict porcelain cleanliness check: `Ok(true)` = clean tree,
+/// `Ok(false)` = dirty tree. A git failure (spawn error or non-zero exit,
+/// e.g. dubious ownership or a missing `.git` pointer) is `Err` — an empty
+/// or missing stdout is never treated as clean.
+pub fn porcelain_clean(cwd: &str, args: &[&str]) -> Result<bool, String> {
+    let out = git_output(cwd, args).map_err(|e| format!("git failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            String::new()
+        } else {
+            format!(": {stderr}")
+        };
+        return Err(format!(
+            "git {} exited {}{detail}",
+            args.join(" "),
+            out.status
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().is_empty())
+}
+
+/// True when `path` is a registered worktree of `repo` (herdr leftover
+/// guard: a leftover directory may be force-deleted only after git says it
+/// is not a registered worktree). Fail-closed: when git itself fails, the
+/// path counts as registered so callers never `remove_dir_all` blind.
+pub fn is_worktree_registered(repo: &str, path: &str) -> bool {
+    let out = match git_output(repo, &["worktree", "list", "--porcelain"]) {
+        Ok(out) if out.status.success() => out,
+        _ => return true,
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let canon = std::path::Path::new(path)
+        .canonicalize()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok();
+    stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .any(|w| w == path || canon.as_deref().is_some_and(|c| w == c))
+}
+
 /// Resolve base_ref into a 40-character commit SHA.
 /// If fetch_first is true, runs `git fetch origin` first (best effort).
 pub fn resolve_base_ref(repo: &str, base_ref: &str, fetch_first: bool) -> Result<String, String> {
@@ -707,6 +749,65 @@ mod tests {
         assert!(!head_contains_branch_tip(dir_str, &tip));
         run(&["merge", "--no-ff", "--no-edit", "--", "task-x"]);
         assert!(head_contains_branch_tip(dir_str, &tip));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn porcelain_failure_is_error_never_clean() {
+        // A failed `git status` (missing .git, dubious ownership, corrupt
+        // index) must surface as Err: empty stdout is not a clean tree.
+        let outside = std::env::temp_dir().join(format!(
+            "signaltty-norepo-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&outside).unwrap();
+        // A `.git` pointer to nowhere fails status even when this directory
+        // sits inside another repo (test TMPDIR often does). Empty stdout
+        // from that failure must not look clean.
+        std::fs::write(outside.join(".git"), "gitdir: /no/such/gitdir\n").unwrap();
+        let outside_str = outside.to_str().unwrap();
+        assert!(
+            porcelain_clean(outside_str, &["status", "--porcelain"]).is_err(),
+            "broken gitdir must not count as a clean tree"
+        );
+        let dir = fixture_repo("porcelain");
+        let dir_str = dir.to_str().unwrap();
+        // Fixture has modifications -> dirty.
+        assert_eq!(
+            porcelain_clean(dir_str, &["status", "--porcelain"]),
+            Ok(false)
+        );
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn worktree_registration_guard() {
+        let dir = fixture_repo("registered");
+        let dir_str = dir.to_str().unwrap();
+        let wt = dir.join("wt-guard");
+        let wt_str = wt.to_str().unwrap().to_string();
+        assert!(!is_worktree_registered(dir_str, &wt_str));
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["worktree", "add", &wt_str])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert!(is_worktree_registered(dir_str, &wt_str));
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["worktree", "remove", "--force", &wt_str])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert!(!is_worktree_registered(dir_str, &wt_str));
         std::fs::remove_dir_all(&dir).ok();
     }
 
