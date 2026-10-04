@@ -1475,3 +1475,79 @@ async fn test_hook_receiver_drops_harness_mismatch_and_unparseable_event() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_last_message_capture_from_stop_and_permission_hooks() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Message capture test"},
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+
+    let task_id = res["task"]["id"].as_str().unwrap().to_string();
+    let pane_id = res["pane"]["id"].as_str().unwrap().to_string();
+    let wt_path = std::path::PathBuf::from(res["task"]["worktree_path"].as_str().unwrap());
+
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt_path).await.unwrap();
+
+    // 1. PermissionRequest hook carries explicit prompt
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "codex",
+            "event": "PermissionRequest",
+            "pane_id": &pane_id,
+            "payload": {
+                "session_id": driver.session_id,
+                "prompt": "Allow reading /etc/passwd?",
+            }
+        }),
+    )
+    .await
+    .unwrap();
+
+    let att = c.call("attention.pending", json!({})).await.unwrap();
+    let panes = att["panes"].as_array().unwrap();
+    let pane_att = panes.iter().find(|p| p["pane_id"] == pane_id).unwrap();
+    assert_eq!(pane_att["last_message"], "Allow reading /etc/passwd?");
+
+    // 2. Stop hook carries last_assistant_message
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "codex",
+            "event": "Stop",
+            "pane_id": &pane_id,
+            "payload": {
+                "session_id": driver.session_id,
+                "last_assistant_message": "All unit tests pass and code is formatted.",
+            }
+        }),
+    )
+    .await
+    .unwrap();
+
+    let task_get = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(task_get["task"]["state"], "input_required");
+    assert_eq!(
+        task_get["task"]["status_reason"]["last_message"],
+        "All unit tests pass and code is formatted."
+    );
+
+    srv.shutdown().await;
+}
