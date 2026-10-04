@@ -185,6 +185,11 @@ async fn test_task_finish_merge_happy_path_and_disposition() {
     )
     .await
     .unwrap();
+    let diff = c
+        .call("task.diff", json!({ "task_id": &task_id }))
+        .await
+        .unwrap();
+    assert_eq!(diff["merge_preview"]["clean"], true, "{diff}");
 
     // Call task.finish with merge
     let finish_res = c
@@ -286,6 +291,14 @@ async fn test_task_finish_merge_conflict_aborts_target_clean_and_names_files() {
     )
     .await
     .unwrap();
+
+    // The conflict is visible before finishing.
+    let diff = c
+        .call("task.diff", json!({ "task_id": &task_id }))
+        .await
+        .unwrap();
+    assert_eq!(diff["merge_preview"]["clean"], false, "{diff}");
+    assert_eq!(diff["merge_preview"]["conflicted"], json!(["conflict.txt"]));
 
     // Call task.finish with merge
     let finish_err = c

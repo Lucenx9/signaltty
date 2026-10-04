@@ -542,6 +542,38 @@ pub fn validate_branch_name(branch: &str) -> Result<(), String> {
 /// True when `HEAD` of `repo` descends from `tip` (a full commit SHA).
 /// Used after `task.finish --merge` to prove the task commits landed
 /// before recording `merged`.
+/// Files that would conflict if `branch` merged into `target` now, from
+/// `git merge-tree --write-tree` (git >= 2.38; touches no index or
+/// checkout). Empty means a clean merge; `None` when git cannot tell.
+pub fn merge_preview(repo: &str, target: &str, branch: &str) -> Option<Vec<String>> {
+    let target = format!("refs/heads/{target}");
+    let branch = format!("refs/heads/{branch}");
+    let out = git_output(
+        repo,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            &target,
+            &branch,
+        ],
+    )
+    .ok()?;
+    match out.status.code() {
+        // First line is the result tree; conflicted paths follow.
+        Some(0) | Some(1) => Some(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .skip(1)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
 pub fn head_contains_branch_tip(repo: &str, tip: &str) -> bool {
     Command::new("git")
         .arg("-C")

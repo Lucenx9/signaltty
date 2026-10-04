@@ -1069,7 +1069,7 @@ pub async fn h_task_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response,
         Ok(p) => p,
         Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
     };
-    let (worktree_path, base_sha) = {
+    let (worktree_path, base_sha, preview_args) = {
         let s = ctx.store.read().unwrap();
         let task = match s.tasks.get(&p.task_id) {
             Some(t) => t,
@@ -1085,11 +1085,26 @@ pub async fn h_task_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response,
             }
         };
         let wt = task.worktree_path.to_string_lossy().to_string();
-        (wt, task.base_sha.clone())
+        let preview_args = task.target_branch.clone().map(|target| {
+            (
+                task.source_repo.to_string_lossy().to_string(),
+                target,
+                task.branch.clone(),
+            )
+        });
+        (wt, task.base_sha.clone(), preview_args)
     };
     let base_for_diff = base_sha.clone();
     let diff_result = tokio::task::spawn_blocking(move || {
-        crate::git::task_git_diff(&worktree_path, &base_for_diff)
+        let diff = crate::git::task_git_diff(&worktree_path, &base_for_diff);
+        // Committed branch tip vs the recorded target, so an orchestrator can
+        // order merges or re-run a worker before `task.finish` conflicts.
+        let preview = preview_args.and_then(|(repo, target, branch)| {
+            crate::git::merge_preview(&repo, &target, &branch).map(|conflicted| {
+                json!({"target": target, "clean": conflicted.is_empty(), "conflicted": conflicted})
+            })
+        });
+        diff.map(|d| (d, preview))
     })
     .await;
     let diff_result = match diff_result {
@@ -1106,7 +1121,7 @@ pub async fn h_task_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response,
         }
     };
     match diff_result {
-        Ok(diff) => (
+        Ok((diff, merge_preview)) => (
             Response::ok(
                 &req.id,
                 json!({
@@ -1117,6 +1132,7 @@ pub async fn h_task_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response,
                     "dirs": diff.dirs,
                     "added": diff.added,
                     "removed": diff.removed,
+                    "merge_preview": merge_preview,
                 }),
             ),
             ConnEffect::default(),
