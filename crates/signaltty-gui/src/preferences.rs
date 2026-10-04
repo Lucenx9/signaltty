@@ -43,6 +43,23 @@ pub fn save_preference(pref: &GuiPreference) {
     save_preference_to(&config_path(), pref);
 }
 
+/// Mark `chosen` selected and its siblings not. Walking the parent
+/// instead of capturing the button list keeps callbacks free of cycles.
+fn select_only(chosen: &impl IsA<gtk4::Widget>) {
+    let Some(parent) = chosen.parent() else {
+        return;
+    };
+    let mut child = parent.first_child();
+    while let Some(w) = child {
+        if w == *chosen.upcast_ref() {
+            w.add_css_class("selected");
+        } else {
+            w.remove_css_class("selected");
+        }
+        child = w.next_sibling();
+    }
+}
+
 /// Build the Preferences dialog with Appearance and Theme controls.
 pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
     let dialog = adw::PreferencesDialog::new();
@@ -105,17 +122,10 @@ pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
         .enumerate()
     {
         let btn = &appearance_buttons[i];
-        let buttons = appearance_buttons.clone();
         let weak = weak_app.clone();
         btn.connect_toggled(move |b| {
             if b.is_active() {
-                for other in &buttons {
-                    if other == b {
-                        other.add_css_class("selected");
-                    } else {
-                        other.remove_css_class("selected");
-                    }
-                }
+                select_only(b);
                 if let Some(a) = weak.upgrade() {
                     a.set_appearance(app_variant);
                 }
@@ -180,16 +190,9 @@ pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
     let weak_app = app.weak();
     for (i, theme) in Theme::ALL.into_iter().enumerate() {
         let btn = &theme_buttons[i];
-        let buttons = theme_buttons.clone();
         let weak = weak_app.clone();
         btn.connect_clicked(move |b| {
-            for other in &buttons {
-                if other == b {
-                    other.add_css_class("selected");
-                } else {
-                    other.remove_css_class("selected");
-                }
-            }
+            select_only(b);
             if let Some(a) = weak.upgrade() {
                 a.set_theme(theme);
             }
