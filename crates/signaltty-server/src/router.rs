@@ -116,6 +116,7 @@ pub struct ConnEffect {
     pub attach: Vec<String>,
     pub detach: Vec<String>,
     pub subscribe: Option<Vec<String>>,
+    pub task_ids: Option<Vec<String>>,
     pub replay: Option<Vec<StoredEvent>>,
     pub fence: Option<u64>,
     pub close: bool,
@@ -199,11 +200,11 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::TASK_WAIT => return crate::tasks::h_task_wait(ctx, req, &req.params).await,
         method::TASK_CANCEL => return crate::tasks::h_task_cancel(ctx, req, &req.params),
         method::PANE_SUBMIT => return h_pane_submit(ctx, req, &req.params).await,
-        method::TASK_REPORT
-        | method::TASK_DIFF
-        | method::TASK_FILE_DIFF
-        | method::TASK_FINISH
-        | method::ATTENTION_PENDING => Err((
+        method::TASK_REPORT => return crate::tasks::h_task_report(ctx, req, &req.params),
+        method::ATTENTION_PENDING => {
+            return crate::tasks::h_attention_pending(ctx, req, &req.params)
+        }
+        method::TASK_DIFF | method::TASK_FILE_DIFF | method::TASK_FINISH => Err((
             code::BAD_PARAMS.to_string(),
             format!("method '{}' not implemented in this phase", req.method),
         )),
@@ -1650,11 +1651,25 @@ fn h_subscribe(ctx: &Ctx, params: &Value) -> Handler {
     let mut reply = json!({"subscribed":true,"seq":s.seq});
     let mut effect = ConnEffect {
         subscribe: Some(events.clone()),
+        task_ids: p.task_ids.clone(),
         fence: Some(s.seq),
         ..ConnEffect::default()
     };
     if let Some(from) = p.from_seq {
-        let (coverage, replay) = s.replay(from, &events);
+        let (coverage, mut replay) = s.replay(from, &events);
+        if let Some(ref tids) = p.task_ids {
+            replay.retain(|e| {
+                if e.name.starts_with("task.") {
+                    e.payload
+                        .get("task_id")
+                        .and_then(|v| v.as_str())
+                        .map(|tid| tids.iter().any(|t| t == tid))
+                        .unwrap_or(false)
+                } else {
+                    true
+                }
+            });
+        }
         effect.close = coverage["status"] != "complete";
         reply["subscribed"] = json!(!effect.close);
         reply["replay"] = coverage;

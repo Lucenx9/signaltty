@@ -208,6 +208,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 struct ConnState {
     ptys: PtyManager,
     subs: Vec<String>,
+    task_ids: Option<Vec<String>>,
     attached: HashSet<String>,
     fence: u64,
     last_received: u64,
@@ -231,6 +232,7 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
     let mut state = ConnState {
         ptys: ctx.ptys.clone(),
         subs: Vec::new(),
+        task_ids: None,
         attached: HashSet::new(),
         fence: 0,
         last_received: 0,
@@ -268,7 +270,10 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                 }
                 let native_wait = req.method == signaltty_proto::method::HOOK_EVENT
                     && req.params.get("wait_for_answer").and_then(serde_json::Value::as_bool) == Some(true);
-                let (mut resp, effect) = if native_wait || req.method == signaltty_proto::method::WAIT {
+                let is_wait_call = native_wait
+                    || req.method == signaltty_proto::method::WAIT
+                    || req.method == signaltty_proto::method::TASK_WAIT;
+                let (mut resp, effect) = if is_wait_call {
                     tokio::select! {
                         result = dispatch(&ctx, &req) => result,
                         _ = lines.next_line() => break,
@@ -295,6 +300,9 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                 }
                 if let Some(subs) = effect.subscribe {
                     state.subs = subs;
+                }
+                if let Some(task_ids) = effect.task_ids {
+                    state.task_ids = Some(task_ids);
                 }
                 if let Some(fence) = effect.fence { state.fence = fence; }
                 if effect.close { break; }
@@ -327,7 +335,20 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                 let for_attached = ev.name == signaltty_proto::event::PTY_DATA
                     && pane_id.map(|p| state.attached.contains(p)).unwrap_or(false);
                 let for_sub = state.subs.iter().any(|g| signaltty_proto::glob_matches(g, &ev.name));
-                if for_attached || (for_sub && ev.name != signaltty_proto::event::PTY_DATA) {
+                let for_task = if let Some(ref tids) = state.task_ids {
+                    if ev.name.starts_with("task.") {
+                        ev.payload
+                            .get("task_id")
+                            .and_then(|v| v.as_str())
+                            .map(|tid| tids.iter().any(|t| t == tid))
+                            .unwrap_or(false)
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                };
+                if for_attached || (for_sub && for_task && ev.name != signaltty_proto::event::PTY_DATA) {
                     let msg = EventMsg::new(&ev.name, ev.seq, ev.payload);
                     if send_line(writer.clone(), msg.to_line()).await.is_err() {
                         break;
@@ -566,6 +587,7 @@ mod tests {
             let _connection = ConnState {
                 ptys: ptys.clone(),
                 subs: Vec::new(),
+                task_ids: None,
                 attached: HashSet::from(["pane".to_string()]),
                 fence: 0,
                 last_received: 0,

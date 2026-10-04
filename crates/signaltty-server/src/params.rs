@@ -317,6 +317,7 @@ pub struct ReportSession {
 pub struct Subscribe {
     pub events: Option<Vec<String>>,
     pub from_seq: Option<u64>,
+    pub task_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -415,6 +416,21 @@ pub struct TaskWait {
     pub context_id: Option<String>,
     pub until: Option<Value>,
     pub timeout_s: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskReport {
+    pub task_id: Option<String>,
+    pub pane_id: Option<String>,
+    pub status: signaltty_core::model::TaskResultStatus,
+    pub summary: String,
+    pub artifacts: Option<Vec<signaltty_core::model::Artifact>>,
+    pub evidence: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttentionPending {
+    pub limit: Option<usize>,
 }
 
 #[cfg(test)]

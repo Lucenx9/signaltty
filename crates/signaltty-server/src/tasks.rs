@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use chrono::Utc;
 use serde_json::{json, Value};
-use signaltty_core::model::{AgentKind, Disposition, LiveState, Relationship, Task};
-use signaltty_core::state::{Lifecycle, TaskState};
+use signaltty_core::model::{AgentKind, Disposition, LiveState, Relationship, Task, TaskResult};
+use signaltty_core::state::{Attention, Lifecycle, TaskState};
 use signaltty_core::{new_context_id, new_task_id};
 use signaltty_proto::{code, Request, Response};
 use tokio::sync::broadcast;
@@ -669,4 +669,110 @@ pub async fn h_task_wait(ctx: &Ctx, req: &Request, params: &Value) -> (Response,
             }
         }
     }
+}
+
+pub fn h_task_report(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::TaskReport = match decode(params) {
+        Ok(p) => p,
+        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+    };
+
+    let target_task_id = if let Some(ref tid) = p.task_id {
+        tid.clone()
+    } else if let Some(ref pid) = p.pane_id {
+        let s = ctx.store.read().unwrap();
+        match s.task_for_pane(pid) {
+            Some(t) => t.id.clone(),
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task for pane '{pid}'"),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        }
+    } else {
+        return (
+            Response::err(&req.id, code::BAD_PARAMS, "must provide task_id or pane_id"),
+            ConnEffect::default(),
+        );
+    };
+
+    let result = TaskResult {
+        status: p.status,
+        summary: p.summary,
+        artifacts: p.artifacts.unwrap_or_default(),
+        evidence: p.evidence,
+        reported_at: Utc::now(),
+    };
+
+    let mut s = ctx.store.write().unwrap();
+    match s.task_report(&target_task_id, result) {
+        Ok(_) => {
+            ctx.mark_persist();
+            let task = s.tasks.get(&target_task_id).unwrap();
+            (
+                Response::ok(&req.id, json!({ "task": task })),
+                ConnEffect::default(),
+            )
+        }
+        Err((c, m)) => (Response::err(&req.id, &c, m), ConnEffect::default()),
+    }
+}
+
+pub fn h_attention_pending(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::AttentionPending = match decode(params) {
+        Ok(p) => p,
+        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+    };
+
+    let limit = p.limit.unwrap_or(50).clamp(1, 500);
+    let s = ctx.store.read().unwrap();
+    let mut panes: Vec<&signaltty_core::model::Pane> = s
+        .panes
+        .values()
+        .filter(|pane| pane.attention != Attention::None)
+        .collect();
+
+    panes.sort_by(|a, b| {
+        b.attention
+            .severity()
+            .cmp(&a.attention.severity())
+            .then(b.last_activity_at.cmp(&a.last_activity_at))
+    });
+
+    let items: Vec<Value> = panes
+        .into_iter()
+        .take(limit)
+        .map(|p| {
+            let mut obj = json!({
+                "pane_id": p.id,
+                "workspace_id": p.workspace_id,
+                "tab_id": p.tab_id,
+                "lifecycle": p.lifecycle,
+                "attention": p.attention,
+            });
+            if let Some(ref l) = p.label {
+                obj["label"] = json!(l);
+            }
+            if let Some(ref tid) = p.task_id {
+                obj["task_id"] = json!(tid);
+            }
+            if let Some(ref msg) = p.last_message {
+                obj["last_message"] = json!(msg);
+            }
+            if let Some(since) = p.attention_since {
+                obj["attention_since"] = json!(since);
+            }
+            obj
+        })
+        .collect();
+
+    (
+        Response::ok(&req.id, json!({ "panes": items })),
+        ConnEffect::default(),
+    )
 }

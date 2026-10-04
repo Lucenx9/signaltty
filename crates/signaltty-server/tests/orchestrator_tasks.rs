@@ -1170,11 +1170,16 @@ async fn test_turn_ended_without_report_and_follow_up_submit_and_report() {
         .await
         .unwrap();
 
-    let task_id = res["task"]["id"].as_str().unwrap();
-    let pane_id = res["pane"]["id"].as_str().unwrap();
+    let task_id = res["task"]["id"].as_str().unwrap().to_string();
+    let pane_id = res["pane"]["id"].as_str().unwrap().to_string();
+    let wt_path = std::path::PathBuf::from(res["task"]["worktree_path"].as_str().unwrap());
+
+    // Fake agent drives worker to idle, then background submit moves task to working
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt_path).await.unwrap();
 
     // Wait until working
-    let _ = c
+    let wait = c
         .call(
             "task.wait",
             json!({
@@ -1183,7 +1188,9 @@ async fn test_turn_ended_without_report_and_follow_up_submit_and_report() {
                 "timeout_s": 5,
             }),
         )
-        .await;
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
 
     // Simulate agent ending turn (Stop) without reporting
     c.call(
@@ -1210,17 +1217,37 @@ async fn test_turn_ended_without_report_and_follow_up_submit_and_report() {
     );
 
     // Follow-up submit resumes working
+    let sock = srv.socket.clone();
+    let pid_cl = pane_id.clone();
+    let sess_cl = driver.session_id.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if let Ok(mut c2) = signaltty_testkit::TestClient::connect(&sock).await {
+            let _ = c2
+                .call(
+                    "hook-event",
+                    json!({
+                        "agent": "codex",
+                        "event": "UserPromptSubmit",
+                        "pane_id": pid_cl,
+                        "payload": {"session_id": sess_cl}
+                    }),
+                )
+                .await;
+        }
+    });
+
     let sub = c
         .call(
             "pane.submit",
             json!({
-                "pane_id": pane_id,
+                "pane_id": &pane_id,
                 "text": "echo continuing",
             }),
         )
         .await
         .unwrap();
-    assert_eq!(sub["accepted"], true);
+    assert_eq!(sub["submitted"], true);
 
     let task_get2 = c
         .call("task.get", json!({"task_id": task_id}))
@@ -1233,7 +1260,7 @@ async fn test_turn_ended_without_report_and_follow_up_submit_and_report() {
         .call(
             "task.report",
             json!({
-                "pane_id": pane_id,
+                "pane_id": &pane_id,
                 "status": "completed",
                 "summary": "Completed after follow up",
             }),
@@ -1257,14 +1284,15 @@ async fn test_task_native_permission_block_and_answer() {
             json!({
                 "repo": repo.path().to_string_lossy(),
                 "contract": {"objective": "Permission test"},
+                "agent": "codex",
                 "argv": ["sh"],
             }),
         )
         .await
         .unwrap();
 
-    let task_id = res["task"]["id"].as_str().unwrap();
-    let pane_id = res["pane"]["id"].as_str().unwrap();
+    let task_id = res["task"]["id"].as_str().unwrap().to_string();
+    let pane_id = res["pane"]["id"].as_str().unwrap().to_string();
 
     // Raise permission request hook
     c.call(
@@ -1277,8 +1305,8 @@ async fn test_task_native_permission_block_and_answer() {
                 "id": "appr-perm-test",
                 "prompt": "Allow tool execution?",
                 "options": [
-                    {"label": "Allow", "verdict": "allow"},
-                    {"label": "Deny", "verdict": "deny"}
+                    {"id": "opt_allow", "label": "Allow", "verdict": "allow"},
+                    {"id": "opt_deny", "label": "Deny", "verdict": "deny"}
                 ]
             }
         }),
@@ -1303,7 +1331,7 @@ async fn test_task_native_permission_block_and_answer() {
             json!({
                 "pane_id": pane_id,
                 "decision_id": "appr-perm-test",
-                "choice": 0,
+                "option_id": "opt_allow",
             }),
         )
         .await
