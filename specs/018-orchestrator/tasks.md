@@ -17,14 +17,14 @@ task handlers, or vice versa — agree at phase start).
 
 ## Phase 1: Setup (shared fixtures + E2E skeleton)
 
-- [ ] T001 [US6] Write the deterministic E2E skeleton in
+- [x] T001 [US6] Write the deterministic E2E skeleton in
   `crates/signaltty-server/tests/orchestrator_e2e.rs` (temp repo → 3 async
   starts back-to-back → wait `working` → fake hooks → reports (worker C via
   the input_required leg: turn ends without reporting → settled wait ends →
   follow-up submit → report) → context wait → reads → restart →
   merge/discard asserts); MUST fail (no `task.*` methods yet). Disabled
   (`#[ignore]`) until Phase 8 greens it.
-- [ ] T002 [P] [US6] Add testkit fixtures in
+- [x] T002 [P] [US6] Add testkit fixtures in
   `crates/signaltty-testkit/src/lib.rs`: temp git repo helper, synthetic
   hook-event driver, server restart-on-same-socket/state helper.
 
@@ -32,15 +32,15 @@ task handlers, or vice versa — agree at phase start).
 
 ## Phase 2: Foundational (entity + protocol — blocks all stories)
 
-- [ ] T003 [P] Core `Task`/`TaskState`/transitions + contract/result validation
+- [x] T003 [P] Core `Task`/`TaskState`/transitions + contract/result validation
   (objective 1…32 KiB, summary …8 KiB, artifacts ≤ 32) with in-module unit
   tests in `crates/signaltty-core/src/model.rs` and
   `crates/signaltty-core/src/state.rs`.
-- [ ] T004 [P] Protocol constants in `crates/signaltty-proto/src/lib.rs`:
+- [x] T004 [P] Protocol constants in `crates/signaltty-proto/src/lib.rs`:
   `task.*` methods, `pane.submit`, `attention.pending`, `task.*` events +
   `task.*` glob, codes `NO_SUCH_TASK`, `AGENT_BUSY`, `AGENT_NOT_READY`,
   `MERGE_CONFLICT`; extend `ALL` lists + schema output.
-- [ ] T005 `Store.tasks` + transition methods (create/report/cancel/fail/
+- [x] T005 `Store.tasks` + transition methods (create/report/cancel/fail/
   finish-record/input_required-on-turn-end/background-ready, each pairing
   mutate + emit per the AGENTS.md rule — NO direct task-state writes from hook
   handlers, the background step, or recovery) in
@@ -50,7 +50,7 @@ task handlers, or vice versa — agree at phase start).
   serde-defaulted in `crates/signaltty-core/src/model.rs`; `target_branch`
   recorded at start; legacy-snapshot
   load test in `crates/signaltty-server/tests/orchestrator_tasks.rs`.
-- [ ] T006 [P] `max_parallel_tasks` (default 4) server flag + config in
+- [x] T006 [P] `max_parallel_tasks` (default 4) server flag + config in
   `crates/signaltty-server/src/config.rs` and `crates/signaltty-server/src/main.rs`.
 
 **Checkpoint**: Entity + protocol exist; legacy snapshots load; nothing callable yet.
