@@ -580,3 +580,140 @@ async fn cli_new_preserves_automatic_setup_json_and_human_notice() {
     assert!(String::from_utf8(output.stderr).unwrap().contains("/hooks"));
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn cli_pane_submit_and_spawn_lineage() {
+    let srv = TestServer::start().await;
+    let new = cli_json(&srv.socket, &["new", "--cwd", "/tmp", "--", "sleep", "30"]);
+    let ws = new["workspace_id"].as_str().unwrap().to_string();
+    let root_pane = new["pane_id"].as_str().unwrap().to_string();
+
+    // Spawn child with lineage
+    let tab = cli_json(&srv.socket, &["tab", "create", "--workspace", &ws]);
+    let tab_id = tab["tab"]["id"].as_str().unwrap().to_string();
+
+    let child = cli_json(
+        &srv.socket,
+        &[
+            "pane",
+            "spawn",
+            "--workspace",
+            &ws,
+            "--tab",
+            &tab_id,
+            "--parent-pane",
+            &root_pane,
+            "--label",
+            "worker-child",
+            "--relationship",
+            "subagent",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let child_pane = child["pane"]["id"].as_str().unwrap().to_string();
+
+    let get = cli_json(&srv.socket, &["pane", "get", &child_pane]);
+    assert_eq!(get["pane"]["parent_pane_id"], root_pane);
+    assert_eq!(get["pane"]["label"], "worker-child");
+    assert_eq!(get["pane"]["relationship"], "subagent");
+
+    // pane submit without activity gate (pane is idle/done or working -> unknown/working)
+    // Here sleep 30 has no adapter, so lifecycle is unknown -> AGENT_NOT_READY
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args(["pane", "submit", &child_pane, "--text", "echo hi"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.contains("AGENT_NOT_READY") || err.contains("agent is unknown"),
+        "{err}"
+    );
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_task_orchestration() {
+    let repo_dir = std::env::temp_dir().join(format!(
+        "signaltty-clitest-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos()
+    ));
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    let r = std::process::Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+    assert!(r.status.success());
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.name", "Orchestrator Test"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.email", "orch@test.local"])
+        .current_dir(&repo_dir)
+        .output();
+    std::fs::write(
+        &repo_dir.join("README.md"),
+        "# Test Repo
+",
+    )
+    .unwrap();
+    let _ = std::process::Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(&repo_dir)
+        .output();
+
+    let srv = TestServer::start().await;
+
+    // 1. task start
+    let start = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "start",
+            "--repo",
+            &repo_dir.to_str().unwrap(),
+            "--objective",
+            "Implement CLI task feature",
+            "--label",
+            "worker-cli-test",
+            "--context",
+            "ctx_cli_1",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    assert_eq!(start["task"]["state"], "pending");
+    assert_eq!(start["task"]["context_id"], "ctx_cli_1");
+
+    // 2. task get
+    let get = cli_json(&srv.socket, &["task", "get", &task_id]);
+    assert_eq!(get["task"]["id"], task_id);
+
+    // 3. task list
+    let list = cli_json(&srv.socket, &["task", "list", "--context", "ctx_cli_1"]);
+    assert_eq!(list["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(list["tasks"][0]["id"], task_id);
+
+    // 4. task cancel
+    let cancel = cli_json(&srv.socket, &["task", "cancel", &task_id]);
+    assert_eq!(cancel["task"]["state"], "canceled");
+
+    srv.shutdown().await;
+}

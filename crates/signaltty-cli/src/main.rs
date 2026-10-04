@@ -152,6 +152,76 @@ enum Command {
         #[command(subcommand)]
         op: PluginOp,
     },
+    /// Orchestrated background tasks.
+    Task {
+        #[command(subcommand)]
+        op: TaskOp,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum TaskOp {
+    /// Start a new orchestrated background task.
+    Start {
+        #[arg(long)]
+        repo: String,
+        #[arg(long, conflicts_with = "objective_file")]
+        objective: Option<String>,
+        #[arg(long)]
+        objective_file: Option<PathBuf>,
+        #[arg(long)]
+        constraints: Option<String>,
+        #[arg(long)]
+        output_format: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        acceptance_criteria: Option<Vec<String>>,
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        parent_pane: Option<String>,
+        #[arg(long)]
+        context: Option<String>,
+        #[arg(long)]
+        base_ref: Option<String>,
+        #[arg(long)]
+        fetch_first: bool,
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        ready_timeout_s: Option<u64>,
+        #[arg(long)]
+        stall_timeout_s: Option<u64>,
+        #[arg(last = true)]
+        cmd: Vec<String>,
+    },
+    /// Get details of an orchestrated task.
+    Get { id: String },
+    /// List orchestrated tasks.
+    List {
+        #[arg(long)]
+        context: Option<String>,
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Wait for a task or context to settle.
+    Wait {
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        context: Option<String>,
+        #[arg(long, default_value = "settled", value_delimiter = ',')]
+        until: Vec<String>,
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Cancel an orchestrated task.
+    Cancel { id: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -200,8 +270,27 @@ enum PaneOp {
         cwd: Option<String>,
         #[arg(long)]
         agent: Option<String>,
+        #[arg(long)]
+        parent_pane: Option<String>,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long, value_parser = ["fork", "subagent"])]
+        relationship: Option<String>,
         #[arg(last = true)]
         cmd: Vec<String>,
+    },
+    /// Submit prompt to an agent pane with bracketed paste and delayed Enter.
+    Submit {
+        id: String,
+        /// Literal text to send (use --stdin for piped input).
+        #[arg(long, conflicts_with = "stdin")]
+        text: Option<String>,
+        #[arg(long)]
+        stdin: bool,
+        #[arg(long)]
+        submit_delay_ms: Option<u64>,
+        #[arg(long, alias = "stall-timeout")]
+        stall_timeout_s: Option<u64>,
     },
     Split {
         id: String,
@@ -826,6 +915,7 @@ async fn run(args: Args) -> Result<(), CliError> {
             }
         }
         Command::Plugin { op } => plugin_cmd(socket, json, op).await,
+        Command::Task { op } => task_cmd(socket, json, op).await,
     }
 }
 
@@ -924,6 +1014,9 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                     tab,
                     cwd,
                     agent,
+                    parent_pane,
+                    label,
+                    relationship,
                     cmd,
                 } => {
                     let argv = if cmd.is_empty() { shell_cmd() } else { cmd };
@@ -937,10 +1030,60 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                     if let Some(a) = agent {
                         p["agent_hint"] = json!(a);
                     }
+                    if let Some(pp) = parent_pane {
+                        p["parent_pane_id"] = json!(pp);
+                    }
+                    if let Some(l) = label {
+                        p["label"] = json!(l);
+                    }
+                    if let Some(rel) = relationship {
+                        p["relationship"] = json!(rel);
+                    }
                     let r = c.call("pane.spawn", p).await?;
                     integration_notice(&r, json);
                     let id = r["pane"]["id"].as_str().unwrap_or("?").to_string();
                     emit(json, &r, format!("pane {id}"));
+                    Ok(())
+                }
+                PaneOp::Submit {
+                    id,
+                    text,
+                    stdin,
+                    submit_delay_ms,
+                    stall_timeout_s,
+                } => {
+                    let text = if stdin {
+                        use tokio::io::AsyncReadExt;
+                        let mut buf = String::new();
+                        tokio::io::stdin()
+                            .read_to_string(&mut buf)
+                            .await
+                            .map_err(|e| CliError::Io(e.to_string()))?;
+                        buf
+                    } else {
+                        text.ok_or_else(|| {
+                            CliError::Usage("--text or --stdin required".to_string())
+                        })?
+                    };
+                    let mut p = json!({
+                        "pane_id": id,
+                        "text": text,
+                    });
+                    if let Some(d) = submit_delay_ms {
+                        p["submit_delay_ms"] = json!(d);
+                    }
+                    if let Some(t) = stall_timeout_s {
+                        p["stall_timeout_s"] = json!(t);
+                    }
+                    let r = c.call("pane.submit", p).await?;
+                    let outcome = r["outcome"].as_str().unwrap_or("?");
+                    let seq = r["transition_seq"].as_u64().unwrap_or(0);
+                    let lc = r["lifecycle"].as_str().unwrap_or("?");
+                    emit(
+                        json,
+                        &r,
+                        format!("submitted: outcome={outcome} seq={seq} lifecycle={lc}"),
+                    );
                     Ok(())
                 }
                 PaneOp::Split {
@@ -1106,5 +1249,178 @@ mod tests {
     fn object_baseline_passes_through() {
         let baseline = parse_wait_baseline("{\"pane_id\":\"p\"}").unwrap();
         assert_eq!(baseline["pane_id"], "p");
+    }
+}
+
+async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliError> {
+    let mut c = Client::connect(&socket).await?;
+    match op {
+        TaskOp::Start {
+            repo,
+            objective,
+            objective_file,
+            constraints,
+            output_format,
+            acceptance_criteria,
+            agent,
+            label,
+            parent_pane,
+            context,
+            base_ref,
+            fetch_first,
+            branch,
+            path,
+            ready_timeout_s,
+            stall_timeout_s,
+            cmd,
+        } => {
+            let obj_text = if let Some(path) = objective_file {
+                std::fs::read_to_string(&path)
+                    .map_err(|e| CliError::Io(format!("failed to read objective file: {e}")))?
+            } else if let Some(text) = objective {
+                text
+            } else {
+                return Err(CliError::Usage(
+                    "--objective or --objective-file required".to_string(),
+                ));
+            };
+
+            let mut contract = json!({
+                "objective": obj_text,
+            });
+            if let Some(con) = constraints {
+                contract["constraints"] = json!(con);
+            }
+            if let Some(fmt) = output_format {
+                contract["output_format"] = json!(fmt);
+            }
+            if let Some(crit) = acceptance_criteria {
+                contract["acceptance_criteria"] = json!(crit);
+            }
+
+            let mut p = json!({
+                "repo": repo,
+                "contract": contract,
+            });
+            if let Some(a) = agent {
+                p["agent"] = json!(a);
+            }
+            if let Some(l) = label {
+                p["label"] = json!(l);
+            }
+            if let Some(pp) = parent_pane {
+                p["parent_pane_id"] = json!(pp);
+            }
+            if let Some(ctx) = context {
+                p["context_id"] = json!(ctx);
+            }
+            if let Some(br) = base_ref {
+                p["base_ref"] = json!(br);
+            }
+            if fetch_first {
+                p["fetch_first"] = json!(true);
+            }
+            if let Some(b) = branch {
+                p["branch"] = json!(b);
+            }
+            if let Some(pa) = path {
+                p["path"] = json!(pa);
+            }
+            if let Some(rt) = ready_timeout_s {
+                p["ready_timeout_s"] = json!(rt);
+            }
+            if let Some(st) = stall_timeout_s {
+                p["stall_timeout_s"] = json!(st);
+            }
+            if !cmd.is_empty() {
+                p["argv"] = json!(cmd);
+            }
+
+            let r = c.call("task.start", p).await?;
+            let task_id = r["task"]["id"].as_str().unwrap_or("?").to_string();
+            let pane_id = r["pane"]["id"].as_str().unwrap_or("?").to_string();
+            let state = r["task"]["state"].as_str().unwrap_or("?").to_string();
+            emit(
+                json,
+                &r,
+                format!("task {task_id} pane {pane_id} (state={state})"),
+            );
+            Ok(())
+        }
+        TaskOp::Get { id } => {
+            let r = c.call("task.get", json!({"task_id": id})).await?;
+            let t = &r["task"];
+            let human = format!(
+                "{} state={} repo={} branch={}",
+                t["id"].as_str().unwrap_or("?"),
+                t["state"].as_str().unwrap_or("?"),
+                t["source_repo"].as_str().unwrap_or("?"),
+                t["branch"].as_str().unwrap_or("?"),
+            );
+            emit(json, &r, human);
+            Ok(())
+        }
+        TaskOp::List {
+            context,
+            state,
+            limit,
+        } => {
+            let mut p = json!({});
+            if let Some(ctx) = context {
+                p["context_id"] = json!(ctx);
+            }
+            if let Some(st) = state {
+                p["state"] = json!(st);
+            }
+            if let Some(l) = limit {
+                p["limit"] = json!(l);
+            }
+            let r = c.call("task.list", p).await?;
+            let mut human = String::new();
+            let tasks = r["tasks"].as_array().cloned().unwrap_or_default();
+            if tasks.is_empty() {
+                human.push_str("(no tasks)\n");
+            }
+            for t in &tasks {
+                human.push_str(&format!(
+                    "{} state={} label={} context={}\n",
+                    t["id"].as_str().unwrap_or("?"),
+                    t["state"].as_str().unwrap_or("?"),
+                    t["label"].as_str().unwrap_or("?"),
+                    t["context_id"].as_str().unwrap_or("?"),
+                ));
+            }
+            emit(json, &r, human.trim_end().to_string());
+            Ok(())
+        }
+        TaskOp::Wait {
+            id,
+            context,
+            until,
+            timeout,
+        } => {
+            let mut p = json!({
+                "until": until,
+            });
+            if let Some(tid) = id {
+                p["task_id"] = json!(tid);
+            }
+            if let Some(ctx) = context {
+                p["context_id"] = json!(ctx);
+            }
+            if let Some(to) = timeout {
+                p["timeout_s"] = json!(to);
+            }
+            let r = c.call("task.wait", p).await?;
+            let count = r["tasks"].as_array().map(|a| a.len()).unwrap_or(0);
+            emit(json, &r, format!("satisfied: {count} tasks"));
+            Ok(())
+        }
+        TaskOp::Cancel { id } => {
+            let r = c.call("task.cancel", json!({"task_id": id})).await?;
+            let tid = r["task"]["id"].as_str().unwrap_or("?").to_string();
+            emit(json, &r, format!("canceled task {tid}"));
+            Ok(())
+        }
     }
 }
