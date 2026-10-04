@@ -429,11 +429,20 @@ pub fn default_worktree_path(repo: &str, branch: &str) -> PathBuf {
 }
 
 /// Validate a branch name per `git check-ref-format --branch`.
-/// Rejects empty string, leading '-', or names invalid per git rules.
+/// Rejects empty string, leading '-', any name containing `refs/` or `@{`,
+/// and any name whose `--branch` expansion differs from the input (e.g.
+/// `@{-1}` expands to the previous branch; `refs/heads/<current>` would
+/// otherwise create a nested ref whose commits a later merge silently drops).
+/// Callers must still pass `--` before the branch in git invocations.
 pub fn validate_branch_name(branch: &str) -> Result<(), String> {
     if branch.is_empty() || branch.starts_with('-') {
         return Err(format!(
             "invalid branch name '{branch}': cannot start with '-' or be empty"
+        ));
+    }
+    if branch.contains("refs/") || branch.contains("@{") {
+        return Err(format!(
+            "invalid branch name '{branch}': must not contain 'refs/' or '@{{'"
         ));
     }
     let out = Command::new("git")
@@ -445,7 +454,26 @@ pub fn validate_branch_name(branch: &str) -> Result<(), String> {
             "invalid branch name '{branch}' per git check-ref-format"
         ));
     }
+    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if printed != branch {
+        return Err(format!(
+            "invalid branch name '{branch}': git expands it to '{printed}'"
+        ));
+    }
     Ok(())
+}
+
+/// True when `HEAD` of `repo` descends from `tip` (a full commit SHA).
+/// Used after `task.finish --merge` to prove the task commits landed
+/// before recording `merged`.
+pub fn head_contains_branch_tip(repo: &str, tip: &str) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["merge-base", "--is-ancestor", tip, "HEAD"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
 }
 
 /// Validate a base ref format.
@@ -624,6 +652,62 @@ mod tests {
             .iter()
             .any(|f| f.path == "new.txt" && f.untracked));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn branch_validation_rejects_expanding_and_ref_paths() {
+        let dir = fixture_repo("branch-names");
+        let dir_str = dir.to_str().unwrap();
+        let current = detect_target_branch(dir_str).unwrap();
+        // Plain names pass.
+        assert!(validate_branch_name("feature/work").is_ok());
+        assert!(validate_branch_name(&current).is_ok());
+        // `git check-ref-format --branch` exits 0 for these but must not
+        // be stored: refs/heads/<current> would create a nested ref whose
+        // commits a later merge (resolving to the checked-out branch)
+        // silently drops.
+        assert!(validate_branch_name(&format!("refs/heads/{current}")).is_err());
+        assert!(validate_branch_name("refs/heads/other").is_err());
+        assert!(validate_branch_name("task/refs/x").is_err());
+        // `@{-1}` expands via stdout; stdout must equal the input.
+        assert!(validate_branch_name("@{-1}").is_err());
+        assert!(validate_branch_name("foo@{").is_err());
+        assert!(validate_branch_name("foo@{u}").is_err());
+        assert!(validate_branch_name("").is_err());
+        assert!(validate_branch_name("-leading-dash").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn head_descends_from_branch_tip_after_merge() {
+        let dir = fixture_repo("descendant");
+        let dir_str = dir.to_str().unwrap();
+        let run = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}");
+            out
+        };
+        let base = detect_target_branch(dir_str).unwrap();
+        run(&["checkout", "-qb", "task-x"]);
+        std::fs::write(dir.join("t.txt"), "work\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "work"]);
+        let tip_out = run(&["rev-parse", "task-x"]);
+        let tip = String::from_utf8(tip_out.stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+        run(&["checkout", "-q", &base]);
+        // Before merge the base HEAD does not contain the tip.
+        assert!(!head_contains_branch_tip(dir_str, &tip));
+        run(&["merge", "--no-ff", "--no-edit", "--", "task-x"]);
+        assert!(head_contains_branch_tip(dir_str, &tip));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

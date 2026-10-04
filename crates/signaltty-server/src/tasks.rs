@@ -1031,7 +1031,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
 
         // Delete branch if requested and not pre-existing
         if should_delete_branch {
-            let _ = crate::git::git_output(&src_str, &["branch", "-D", &branch]);
+            let _ = crate::git::git_output(&src_str, &["branch", "-D", "--", &branch]);
         }
 
         ctx.mark_persist();
@@ -1121,9 +1121,29 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         }
     }
 
+    // Resolve the task branch tip before merging so we can prove the
+    // new HEAD descends from it afterwards (a merge that resolves to the
+    // checked-out branch reports success without landing task commits).
+    let branch_tip = match crate::git::git_output(
+        &src_str,
+        &["rev-parse", "--verify", &format!("refs/heads/{branch}")],
+    ) {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        _ => {
+            return (
+                Response::err(
+                    &req.id,
+                    code::IO_ERROR,
+                    format!("task branch '{branch}' is missing in the source repo"),
+                ),
+                ConnEffect::default(),
+            );
+        }
+    };
+
     // Execute merge
     let merge_out =
-        match crate::git::git_output(&src_str, &["merge", "--no-ff", "--no-edit", &branch]) {
+        match crate::git::git_output(&src_str, &["merge", "--no-ff", "--no-edit", "--", &branch]) {
             Ok(out) => out,
             Err(e) => {
                 return (
@@ -1178,6 +1198,23 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         Err(_) => String::new(),
     };
 
+    // The merge must have landed the task commits: the new HEAD has to
+    // descend from the task branch tip. Otherwise (e.g. the branch resolved
+    // to the already-checked-out target) report failure and record nothing.
+    if !crate::git::head_contains_branch_tip(&src_str, &branch_tip) {
+        return (
+            Response::err_with_details(
+                &req.id,
+                code::IO_ERROR,
+                format!(
+                    "merge of '{branch}' did not advance '{target}' to include the task commits"
+                ),
+                json!({ "branch": branch, "tip": branch_tip, "head": head_sha }),
+            ),
+            ConnEffect::default(),
+        );
+    }
+
     // Close worker pane
     if let Some(ref pid) = pane_id {
         ctx.ptys.destroy(pid, Some("TERM"));
@@ -1218,7 +1255,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
     // Delete branch if requested and not pre-existing
     let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch;
     if should_delete_branch {
-        let b_out = crate::git::git_output(&src_str, &["branch", "-D", &branch]);
+        let b_out = crate::git::git_output(&src_str, &["branch", "-D", "--", &branch]);
         if let Ok(ref out) = b_out {
             if !out.status.success() {
                 cleanup_error = Some(format!(

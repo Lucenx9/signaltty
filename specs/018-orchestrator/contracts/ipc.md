@@ -113,7 +113,9 @@ research-external §workmux). Steps, in order:
    creating anything (backpressure stays synchronous even though start is async).
 2. Ref & branch validation: `base_ref` and `branch` (if provided) are validated
    against git reference rules via `git check-ref-format` (rejecting leading `-`,
-   `--`, and illegal ref control characters; returns synchronous `BAD_PARAMS` before
+   `--`, and illegal ref control characters; branch names containing `refs/` or
+   `@{` are rejected, and a name whose `--branch` expansion differs from the
+   input (e.g. `@{-1}`) is rejected; returns synchronous `BAD_PARAMS` before
    any git or disk operations).
    Resolve `base_ref` (default `HEAD`; `fetch_first` runs `git fetch origin`
    first, Conductor-style) → record `base_sha` AND `target_branch` = the source
@@ -208,11 +210,17 @@ Merge (`src/workflow/merge.rs` rules, VERIFIED workmux):
   server, no invented authorship — commit explicitly first).
 - Target checks (on the resolved target above): tracked dirt → refuse. Untracked on target allowed (git fails later
   on collision, as workmux).
-- `git merge --no-ff --no-edit <branch>` in the target checkout. Conflict →
+- `git merge --no-ff --no-edit -- <branch>` in the target checkout (`--`
+  guards branch names that parse as revisions; `branch -D` takes the same
+  guard). Conflict →
   `git merge --abort`, verify target clean via porcelain, return
   `MERGE_CONFLICT` with `details.conflicted[]` (`git diff --diff-filter=U`,
   vibe-kanban `crates/git`) — target stays clean, resolution stays in the
   source worktree.
+- After a successful merge, the new `HEAD` must descend from the task branch
+  tip (`merge-base --is-ancestor`), else finish returns `IO_ERROR` and records
+  no disposition — a merge that resolves to the already-checked-out target
+  reports success without landing task commits.
 - Success: `merge: {target, sha}`; cleanup removes the task worktree
   (guarded to the recorded path + herdr leftover guard: delete a leftover dir
   only after git says not-a-worktree and the checkout still matches,
