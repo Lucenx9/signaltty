@@ -178,6 +178,23 @@ async fn git_with_timeout(
     args: &[&str],
     deadline: Duration,
 ) -> Result<Vec<u8>, ParamError> {
+    let out = git_status_with_timeout(cwd, args, deadline).await?;
+    if !out.status.success() {
+        return Err(bad_params(
+            String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(out.stdout)
+}
+
+/// Run git in its own process group under a deadline and return the output
+/// for any exit status. On expiry or cancellation the whole group (hooks and
+/// signing helpers included) is killed and reaped; expiry is `TIMEOUT`.
+pub(crate) async fn git_status_with_timeout(
+    cwd: &str,
+    args: &[&str],
+    deadline: Duration,
+) -> Result<std::process::Output, ParamError> {
     let mut command = tokio::process::Command::new("git");
     command
         .arg("-C")
@@ -210,24 +227,18 @@ async fn git_with_timeout(
         })
     })
     .await;
-    let out = match output {
-        Ok(Ok(out)) => out,
+    match output {
+        Ok(Ok(out)) => Ok(out),
         failure => {
             group.kill();
             let _ = child.wait().await;
-            return Err(match failure {
+            Err(match failure {
                 Err(_) => (code::TIMEOUT.into(), "Git operation timed out".into()),
                 Ok(Err(error)) => (code::IO_ERROR.into(), error.to_string()),
                 Ok(Ok(_)) => unreachable!(),
-            });
+            })
         }
-    };
-    if !out.status.success() {
-        return Err(bad_params(
-            String::from_utf8_lossy(&out.stderr).trim().to_owned(),
-        ));
     }
-    Ok(out.stdout)
 }
 
 fn utf8(bytes: &[u8]) -> Result<String, ParamError> {

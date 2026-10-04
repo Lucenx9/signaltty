@@ -4,6 +4,7 @@ use signaltty_core::paths;
 
 pub const DEFAULT_MAX_PARALLEL_TASKS: usize = 4;
 pub const DEFAULT_WORKER_SILENT_TIMEOUT_S: u64 = 600;
+pub const DEFAULT_MERGE_TIMEOUT_MS: u64 = 120_000;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -15,6 +16,8 @@ pub struct Config {
     pub integration_home: Option<PathBuf>,
     pub max_parallel_tasks: usize,
     pub worker_silent_timeout_s: u64,
+    /// Deadline for the `task.finish` merge (hooks and signing included).
+    pub merge_timeout_ms: u64,
 }
 
 impl Config {
@@ -39,6 +42,10 @@ impl Config {
             integration_home: std::env::var_os("SIGNALTTY_INTEGRATION_HOME").map(PathBuf::from),
             max_parallel_tasks,
             worker_silent_timeout_s,
+            merge_timeout_ms: std::env::var("SIGNALTTY_MERGE_TIMEOUT_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_MERGE_TIMEOUT_MS),
         }
     }
 }

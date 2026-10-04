@@ -1414,17 +1414,54 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         }
     };
 
-    // Execute merge
-    let merge_out =
-        match crate::git::git_output(&src_str, &["merge", "--no-ff", "--no-edit", "--", &branch]) {
-            Ok(out) => out,
-            Err(e) => {
-                return (
-                    Response::err(&req.id, code::IO_ERROR, format!("git merge failed: {e}")),
-                    ConnEffect::default(),
-                );
-            }
-        };
+    // Execute merge under a deadline in its own process group: a stalled
+    // hook or signing helper must not hold this handler (and its path lock)
+    // forever. On expiry the group is killed, then the merge is aborted.
+    let merge_out = match crate::worktrees::git_status_with_timeout(
+        &src_str,
+        &["merge", "--no-ff", "--no-edit", "--", &branch],
+        Duration::from_millis(ctx.config.merge_timeout_ms),
+    )
+    .await
+    {
+        Ok(out) => out,
+        Err((c, _)) if c == code::TIMEOUT => {
+            // Killed before MERGE_HEAD existed, `merge --abort` has nothing to
+            // abort but the index may already hold the merge; the target was
+            // verified clean above, so `reset --merge` restores it exactly.
+            let ok = |args: &[&str]| {
+                crate::git::git_output(&src_str, args)
+                    .map(|out| out.status.success())
+                    .unwrap_or(false)
+            };
+            let abort_ok = ok(&["merge", "--abort"]) || ok(&["reset", "--merge"]);
+            let target_clean = crate::git::porcelain_clean(
+                &src_str,
+                &["status", "--porcelain=v1", "--untracked-files=no"],
+            );
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::TIMEOUT,
+                    format!(
+                        "git merge timed out after {} ms",
+                        ctx.config.merge_timeout_ms
+                    ),
+                    json!({
+                        "abort_ok": abort_ok,
+                        "target_dirty": !matches!(target_clean, Ok(true)),
+                    }),
+                ),
+                ConnEffect::default(),
+            );
+        }
+        Err((c, m)) => {
+            return (
+                Response::err(&req.id, &c, format!("git merge failed: {m}")),
+                ConnEffect::default(),
+            );
+        }
+    };
 
     if !merge_out.status.success() {
         // Collect conflicted files

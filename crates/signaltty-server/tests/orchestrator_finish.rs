@@ -962,3 +962,78 @@ async fn test_finish_uses_canonical_worktree_boundary() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_task_finish_merge_is_bounded_and_leaves_target_clean() {
+    let srv = TestServer::start_with_env(&[("SIGNALTTY_MERGE_TIMEOUT_MS", "500")]).await;
+    let mut c = srv.client().await;
+    let repo = TempGitRepo::new();
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Stalled merge"},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    let wt_path = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+    std::fs::write(wt_path.join("feature.txt"), "feature\n").unwrap();
+    for args in [
+        &["add", "feature.txt"][..],
+        &["commit", "-m", "feature"][..],
+    ] {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&wt_path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+    c.call(
+        "task.report",
+        json!({"task_id": &task_id, "status": "completed", "summary": "done"}),
+    )
+    .await
+    .unwrap();
+
+    // A stalled merge hook in the target repo.
+    let hook = repo.path().join(".git/hooks/pre-merge-commit");
+    let marker = repo.path().join(".git/hook-started");
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\ntouch '{}'\nsleep 30\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    let started = std::time::Instant::now();
+    let err = c
+        .call("task.finish", json!({"task_id": &task_id, "mode": "merge"}))
+        .await
+        .unwrap_err();
+    assert!(err.starts_with(code::TIMEOUT), "{err}");
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert!(marker.exists(), "the merge hook must have started");
+    assert!(
+        !repo.path().join(".git/MERGE_HEAD").exists(),
+        "merge aborted"
+    );
+    assert!(
+        !repo.path().join("feature.txt").exists(),
+        "merge left its files behind"
+    );
+    let status = repo.git(&["status", "--porcelain", "--untracked-files=no"]);
+    assert!(status.stdout.is_empty(), "target must stay clean");
+    assert!(wt_path.exists(), "no cleanup after a timed-out merge");
+    let task = c
+        .call("task.get", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(task["task"]["disposition"]["outcome"], "none");
+    srv.shutdown().await;
+}
