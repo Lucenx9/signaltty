@@ -62,7 +62,7 @@ impl TestServer {
         let base = if temp_dir.as_os_str().len() > 35 {
             PathBuf::from("/tmp").join(ns)
         } else {
-            temp_dir.join(ns)
+            temp_dir
         };
         let socket = base.join("s.sock");
         let state_dir = base.join("state");
@@ -382,6 +382,16 @@ impl TestClient {
 
     /// Single call; skips interleaved events.
     pub async fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let resp = self.call_raw_resp(method, params).await?;
+        if resp.ok {
+            return Ok(resp.result);
+        }
+        let e = resp.error.unwrap();
+        Err(format!("{}: {}", e.code, e.message))
+    }
+
+    /// Single call returning the raw `Response` envelope (to inspect error details).
+    pub async fn call_raw_resp(&mut self, method: &str, params: Value) -> Result<Response, String> {
         let id = self.next_id.to_string();
         self.next_id += 1;
         let line = serde_json::json!({
@@ -411,11 +421,7 @@ impl TestClient {
                 continue;
             }
             let resp: Response = serde_json::from_value(v).map_err(|e| e.to_string())?;
-            if resp.ok {
-                return Ok(resp.result);
-            }
-            let e = resp.error.unwrap();
-            return Err(format!("{}: {}", e.code, e.message));
+            return Ok(resp);
         }
     }
 
