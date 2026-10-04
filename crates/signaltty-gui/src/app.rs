@@ -1913,6 +1913,12 @@ impl App {
             }
         });
         *self.board_dialog.borrow_mut() = Some(dialog);
+        self.run(move |app| async move {
+            let _ = app
+                .actor
+                .call("task.pr_refresh", serde_json::json!({}))
+                .await;
+        });
     }
 
     /// Open the New Workspace dialog (Ctrl+Shift+N, the sidebar "+"
