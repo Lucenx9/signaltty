@@ -641,43 +641,8 @@ async fn cli_pane_submit_and_spawn_lineage() {
 
 #[tokio::test]
 async fn cli_task_orchestration() {
-    let repo_dir = std::env::temp_dir().join(format!(
-        "signaltty-clitest-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
-    ));
-    std::fs::create_dir_all(&repo_dir).unwrap();
-    let r = std::process::Command::new("git")
-        .args(["init", "-b", "main"])
-        .current_dir(&repo_dir)
-        .output()
-        .unwrap();
-    assert!(r.status.success());
-    let _ = std::process::Command::new("git")
-        .args(["config", "user.name", "Orchestrator Test"])
-        .current_dir(&repo_dir)
-        .output();
-    let _ = std::process::Command::new("git")
-        .args(["config", "user.email", "orch@test.local"])
-        .current_dir(&repo_dir)
-        .output();
-    std::fs::write(
-        repo_dir.join("README.md"),
-        "# Test Repo
-",
-    )
-    .unwrap();
-    let _ = std::process::Command::new("git")
-        .args(["add", "README.md"])
-        .current_dir(&repo_dir)
-        .output();
-    let _ = std::process::Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(&repo_dir)
-        .output();
+    let repo = signaltty_testkit::TempGitRepo::new();
+    let repo_dir = repo.path().to_path_buf();
 
     let srv = TestServer::start().await;
 
@@ -722,36 +687,8 @@ async fn cli_task_orchestration() {
 
 #[tokio::test]
 async fn test_cli_phase5_report_attention_wait() {
-    let repo_dir = std::env::temp_dir().join(format!(
-        "signaltty-clitest-phase5-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
-    ));
-    std::fs::create_dir_all(&repo_dir).unwrap();
-    let _ = std::process::Command::new("git")
-        .args(["init", "-b", "main"])
-        .current_dir(&repo_dir)
-        .output();
-    let _ = std::process::Command::new("git")
-        .args(["config", "user.name", "Orchestrator Test"])
-        .current_dir(&repo_dir)
-        .output();
-    let _ = std::process::Command::new("git")
-        .args(["config", "user.email", "orch@test.local"])
-        .current_dir(&repo_dir)
-        .output();
-    std::fs::write(repo_dir.join("README.md"), "# Test\n").unwrap();
-    let _ = std::process::Command::new("git")
-        .args(["add", "README.md"])
-        .current_dir(&repo_dir)
-        .output();
-    let _ = std::process::Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(&repo_dir)
-        .output();
+    let repo = signaltty_testkit::TempGitRepo::new();
+    let repo_dir = repo.path().to_path_buf();
 
     let srv = TestServer::start().await;
 
@@ -828,36 +765,8 @@ async fn test_cli_phase5_report_attention_wait() {
 
 #[tokio::test]
 async fn cli_task_diff_and_finish() {
-    let repo_dir = std::env::temp_dir().join(format!(
-        "signaltty-clifin-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
-    ));
-    std::fs::create_dir_all(&repo_dir).unwrap();
-    let _ = std::process::Command::new("git")
-        .args(["init", "-b", "main"])
-        .current_dir(&repo_dir)
-        .output();
-    let _ = std::process::Command::new("git")
-        .args(["config", "user.name", "Orchestrator Test"])
-        .current_dir(&repo_dir)
-        .output();
-    let _ = std::process::Command::new("git")
-        .args(["config", "user.email", "orch@test.local"])
-        .current_dir(&repo_dir)
-        .output();
-    std::fs::write(repo_dir.join("README.md"), "# Test Repo\n").unwrap();
-    let _ = std::process::Command::new("git")
-        .args(["add", "README.md"])
-        .current_dir(&repo_dir)
-        .output();
-    let _ = std::process::Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(&repo_dir)
-        .output();
+    let repo = signaltty_testkit::TempGitRepo::new();
+    let repo_dir = repo.path().to_path_buf();
 
     let srv = TestServer::start().await;
 
