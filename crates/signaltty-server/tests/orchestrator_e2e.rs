@@ -18,7 +18,6 @@ fn git(cwd: &Path, args: &[&str]) {
 }
 
 #[tokio::test]
-#[ignore = "018: greens in Phase 7"]
 async fn orchestrator_deterministic_acceptance_scenario() {
     // 1. Create a temp git repo with one commit and an untouched pre-existing branch;
     //    start server and an orchestrator pane.
@@ -59,6 +58,8 @@ async fn orchestrator_deterministic_acceptance_scenario() {
                 "branch": "task-a-branch",
                 "parent_pane_id": orch_pane_id,
                 "label": "worker-a",
+                "agent": "codex",
+                "argv": ["sleep", "60"],
                 "contract": {
                     "objective": "Worker A objective: create file_a.txt",
                     "acceptance_criteria": ["file_a.txt exists"]
@@ -79,6 +80,8 @@ async fn orchestrator_deterministic_acceptance_scenario() {
                 "branch": "task-b-branch",
                 "parent_pane_id": orch_pane_id,
                 "label": "worker-b",
+                "agent": "codex",
+                "argv": ["sleep", "60"],
                 "contract": {
                     "objective": "Worker B objective: create file_b.txt with permission",
                     "acceptance_criteria": ["file_b.txt exists"]
@@ -99,6 +102,8 @@ async fn orchestrator_deterministic_acceptance_scenario() {
                 "branch": "task-c-branch",
                 "parent_pane_id": orch_pane_id,
                 "label": "worker-c",
+                "agent": "codex",
+                "argv": ["sleep", "60"],
                 "contract": {
                     "objective": "Worker C objective: finish after follow-up",
                     "acceptance_criteria": ["file_c.txt exists"]
@@ -207,10 +212,29 @@ async fn orchestrator_deterministic_acceptance_scenario() {
     // Also add an untracked file to prove untracked diff detection
     std::fs::write(worktree_b.join("untracked_b.txt"), "untracked\n").unwrap();
 
-    driver_b
-        .permission_request(&mut c, "Bash", json!({"command": "touch file_b.txt"}))
-        .await
-        .unwrap();
+    let mut hook_b = srv.client().await;
+    let b_pid = pane_b_id.clone();
+    let b_sid = driver_b.session_id.clone();
+    let _perm_task = tokio::spawn(async move {
+        hook_b
+            .call(
+                "hook-event",
+                json!({
+                    "agent": "codex",
+                    "event": "PermissionRequest",
+                    "pane_id": b_pid,
+                    "wait_for_answer": true,
+                    "wait_timeout_s": 10,
+                    "payload": {
+                        "session_id": b_sid,
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "touch file_b.txt"},
+                    }
+                }),
+            )
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
 
     let pending_att = c.call("attention.pending", json!({})).await.unwrap();
     let items = pending_att["panes"].as_array().unwrap();
@@ -278,6 +302,27 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         "turn_ended_without_report"
     );
 
+    // Fake agent C responds to the submit with UserPromptSubmit
+    let sock_c = srv.socket.clone();
+    let pid_c_cl = pane_c_id.clone();
+    let sess_c_cl = driver_c.session_id.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if let Ok(mut c2) = signaltty_testkit::TestClient::connect(&sock_c).await {
+            let _ = c2
+                .call(
+                    "hook-event",
+                    json!({
+                        "agent": "codex",
+                        "event": "UserPromptSubmit",
+                        "pane_id": pid_c_cl,
+                        "payload": {"session_id": sess_c_cl}
+                    }),
+                )
+                .await;
+        }
+    });
+
     // Orchestrator sends follow-up submit to worker C -> task back to working.
     let submit_c = c
         .call(
@@ -336,7 +381,7 @@ async fn orchestrator_deterministic_acceptance_scenario() {
         "pane.input",
         json!({
             "pane_id": pane_a_id,
-            "bytes": b"echo incremental_output_a\n".to_vec()
+            "data_b64": "ZWNobyBpbmNyZW1lbnRhbF9vdXRwdXRfYQo="
         }),
     )
     .await
@@ -429,7 +474,7 @@ async fn orchestrator_deterministic_acceptance_scenario() {
     let fin_b = c_after
         .call(
             "task.finish",
-            json!({"task_id": task_b_id, "mode": "merge", "delete_branch": true}),
+            json!({"task_id": task_b_id, "mode": "merge", "delete_branch": true, "ignore_dirty": true}),
         )
         .await
         .unwrap();
@@ -493,6 +538,265 @@ async fn orchestrator_deterministic_acceptance_scenario() {
     assert_eq!(
         pre_existing_sha_before, pre_existing_sha_after,
         "pre-existing branch still points at original SHA"
+    );
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_restart_with_mixed_task_states_and_pane_kill_idempotent() {
+    let repo = TempGitRepo::new();
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    // 1. Task Completed: starts, drives to working, writes file, reports completed
+    let start_done = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "contract": {"objective": "Done task"}
+            }),
+        )
+        .await
+        .unwrap();
+    let task_done_id = start_done["task"]["id"].as_str().unwrap().to_string();
+    let pane_done_id = start_done["pane"]["id"].as_str().unwrap().to_string();
+    let wt_done = std::path::PathBuf::from(start_done["task"]["worktree_path"].as_str().unwrap());
+
+    let driver_done = FakeAgentPane::new(&pane_done_id, "codex");
+    driver_done.session_start(&mut c, &wt_done).await.unwrap();
+
+    let _ = c
+        .call(
+            "task.wait",
+            json!({"task_id": task_done_id, "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+
+    std::fs::write(
+        wt_done.join("done.txt"),
+        "done
+",
+    )
+    .unwrap();
+    let rep = c
+        .call(
+            "task.report",
+            json!({
+                "task_id": task_done_id,
+                "status": "completed",
+                "summary": "Finished nicely",
+                "artifacts": [{"name": "done.txt", "path": "done.txt"}]
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rep["task"]["state"], "completed");
+
+    // 2. Task Working: starts, drives to working, writes file
+    let start_working = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "contract": {"objective": "Working task"}
+            }),
+        )
+        .await
+        .unwrap();
+    let task_working_id = start_working["task"]["id"].as_str().unwrap().to_string();
+    let pane_working_id = start_working["pane"]["id"].as_str().unwrap().to_string();
+    let wt_working =
+        std::path::PathBuf::from(start_working["task"]["worktree_path"].as_str().unwrap());
+
+    let driver_working = FakeAgentPane::new(&pane_working_id, "codex");
+    driver_working
+        .session_start(&mut c, &wt_working)
+        .await
+        .unwrap();
+    let _ = c
+        .call(
+            "task.wait",
+            json!({"task_id": task_working_id, "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+
+    std::fs::write(
+        wt_working.join("wip.txt"),
+        "in progress
+",
+    )
+    .unwrap();
+
+    // 3. Task InputRequired: starts, drives to working, Stop hook moves to input_required
+    let start_ir = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "contract": {"objective": "Input required task"}
+            }),
+        )
+        .await
+        .unwrap();
+    let task_ir_id = start_ir["task"]["id"].as_str().unwrap().to_string();
+    let pane_ir_id = start_ir["pane"]["id"].as_str().unwrap().to_string();
+    let wt_ir = std::path::PathBuf::from(start_ir["task"]["worktree_path"].as_str().unwrap());
+
+    let driver_ir = FakeAgentPane::new(&pane_ir_id, "codex");
+    driver_ir.session_start(&mut c, &wt_ir).await.unwrap();
+    let _ = c
+        .call(
+            "task.wait",
+            json!({"task_id": task_ir_id, "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "codex",
+            "event": "Stop",
+            "pane_id": pane_ir_id,
+            "message": "Turn finished without reporting"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let get_ir = c
+        .call("task.get", json!({"task_id": task_ir_id}))
+        .await
+        .unwrap();
+    assert_eq!(get_ir["task"]["state"], "input_required");
+
+    // 4. Task Pending: starts, we do NOT drive it (remains pending until restart)
+    let start_pending = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "contract": {"objective": "Pending task"}
+            }),
+        )
+        .await
+        .unwrap();
+    let task_pending_id = start_pending["task"]["id"].as_str().unwrap().to_string();
+    let wt_pending =
+        std::path::PathBuf::from(start_pending["task"]["worktree_path"].as_str().unwrap());
+    assert_eq!(start_pending["task"]["state"], "pending");
+
+    // 5. Pane kill idempotency: start a task, kill its pane, verify fail exactly once
+    let start_kill = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "contract": {"objective": "Kill task"}
+            }),
+        )
+        .await
+        .unwrap();
+    let task_kill_id = start_kill["task"]["id"].as_str().unwrap().to_string();
+    let pane_kill_id = start_kill["pane"]["id"].as_str().unwrap().to_string();
+
+    // Close pane (killing it)
+    c.call("pane.close", json!({"pane_id": pane_kill_id}))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    let kill_get_1 = c
+        .call("task.get", json!({"task_id": task_kill_id}))
+        .await
+        .unwrap();
+    assert_eq!(kill_get_1["task"]["state"], "failed");
+    let reason_1 = kill_get_1["task"]["status_reason"].clone();
+    assert!(!reason_1.is_null());
+
+    // Calling pane.close again or redundant exit does not error or change task state
+    let close_again = c.call("pane.close", json!({"pane_id": pane_kill_id})).await;
+    // pane is already closed so NO_SUCH_PANE is returned
+    assert!(close_again.is_err());
+    let kill_get_2 = c
+        .call("task.get", json!({"task_id": task_kill_id}))
+        .await
+        .unwrap();
+    assert_eq!(kill_get_2["task"]["state"], "failed");
+    assert_eq!(kill_get_2["task"]["status_reason"], reason_1);
+
+    // 6. RESTART SERVER
+    srv.restart().await;
+    let mut c2 = srv.client().await;
+
+    // 7. Verify all tasks after restart:
+    // 7a. Task Completed: intact, results preserved, diffs work!
+    let post_done = c2
+        .call("task.get", json!({"task_id": task_done_id}))
+        .await
+        .unwrap();
+    assert_eq!(post_done["task"]["state"], "completed");
+    assert_eq!(post_done["task"]["result"]["summary"], "Finished nicely");
+
+    let diff_done = c2
+        .call("task.diff", json!({"task_id": task_done_id}))
+        .await
+        .unwrap();
+    let files_done = diff_done["diff"]["files"].as_array().unwrap();
+    assert!(files_done.iter().any(|f| f["path"] == "done.txt"));
+
+    // 7b. Task Working: failed with restart stage/evidence, checkout preserved
+    let post_working = c2
+        .call("task.get", json!({"task_id": task_working_id}))
+        .await
+        .unwrap();
+    assert_eq!(post_working["task"]["state"], "failed");
+    assert_eq!(post_working["task"]["status_reason"]["stage"], "restart");
+    assert!(
+        wt_working.exists(),
+        "working task checkout must be preserved for post-mortem"
+    );
+    assert!(
+        wt_working.join("wip.txt").exists(),
+        "working files must remain intact"
+    );
+
+    // 7c. Task InputRequired: failed with restart stage/evidence, checkout preserved
+    let post_ir = c2
+        .call("task.get", json!({"task_id": task_ir_id}))
+        .await
+        .unwrap();
+    assert_eq!(post_ir["task"]["state"], "failed");
+    assert_eq!(post_ir["task"]["status_reason"]["stage"], "restart");
+    assert!(
+        wt_ir.exists(),
+        "input_required task checkout must be preserved"
+    );
+
+    // 7d. Task Pending: failed with restart stage/evidence, checkout preserved
+    let post_pending = c2
+        .call("task.get", json!({"task_id": task_pending_id}))
+        .await
+        .unwrap();
+    assert_eq!(post_pending["task"]["state"], "failed");
+    assert_eq!(post_pending["task"]["status_reason"]["stage"], "restart");
+    assert!(
+        wt_pending.exists(),
+        "pending task checkout must be preserved"
     );
 
     srv.shutdown().await;
