@@ -20,7 +20,7 @@ fn cli(socket: &std::path::Path, args: &[&str]) -> (bool, String) {
 fn cli_json(socket: &std::path::Path, args: &[&str]) -> Value {
     let mut full = vec!["--json"];
     full.extend(args.iter());
-    let (ok, _text) = cli(socket, &full);
+    let (ok, text) = cli(socket, &full);
     assert!(ok, "cli failed: {text}");
     serde_json::from_str(text.trim()).expect("valid JSON")
 }
@@ -146,7 +146,7 @@ async fn cli_decision_answer_flow() {
     // `new` spawns a plain shell pane; re-hinting is not supported, so drive
     // the flow through hook-event + decision.answer against the recorded kind:
     // plain panes are read-only, which the CLI must surface, not fake.
-    let (ok, _text) = cli(
+    let (ok, text) = cli(
         &srv.socket,
         &[
             "hook-event",
@@ -164,7 +164,7 @@ async fn cli_decision_answer_flow() {
     let g = cli_json(&srv.socket, &["pane", "get", &pane]);
     assert_eq!(g["pane"]["pending_decision"]["id"], "d1");
     // Human `pane get` prints the prompt plus one line per option.
-    let (ok, _text) = cli(&srv.socket, &["pane", "get", &pane]);
+    let (ok, text) = cli(&srv.socket, &["pane", "get", &pane]);
     assert!(ok, "{text}");
     assert!(text.contains("Allow?"), "{text}");
     assert!(text.contains("once — Once"), "{text}");
@@ -322,7 +322,7 @@ async fn cli_workspace_diff_reports_counts() {
     let ws = new["workspace_id"].as_str().unwrap().to_string();
     let d = cli_json(&srv.socket, &["workspace", "diff", &ws]);
     assert_eq!(d["added"], 1);
-    let (ok, _text) = cli(&srv.socket, &["workspace", "diff", &ws]);
+    let (ok, text) = cli(&srv.socket, &["workspace", "diff", &ws]);
     assert!(ok, "{text}");
     assert!(text.contains("+1 -0 a.txt"), "{text}");
     assert!(text.contains("total +1 -0"), "{text}");
@@ -359,7 +359,7 @@ async fn cli_integration_status_lists_manifests() {
     assert_eq!(wrap["manifest"]["ok"], true);
     let broken = manifests.iter().find(|m| m["name"] == "broken").unwrap();
     assert_eq!(broken["manifest"]["ok"], false);
-    let (ok, _text) = cli(&srv.socket, &["integration", "status"]);
+    let (ok, text) = cli(&srv.socket, &["integration", "status"]);
     assert!(ok, "{text}");
     assert!(text.contains("manifest wrap: kind=codex"), "{text}");
     assert!(text.contains("BROKEN"), "{text}");
@@ -456,7 +456,7 @@ async fn cli_integration_install_uninstall() {
 #[tokio::test]
 async fn cli_human_output_and_errors() {
     let srv = TestServer::start().await;
-    let (ok, _text) = cli(&srv.socket, &["status"]);
+    let (ok, text) = cli(&srv.socket, &["status"]);
     assert!(ok);
     assert!(text.contains("workspaces"), "{text}");
     // Unknown pane → nonzero exit + message on stderr.

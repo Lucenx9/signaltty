@@ -157,6 +157,26 @@ enum Command {
         #[command(subcommand)]
         op: TaskOp,
     },
+    /// Report a task outcome with structured result.
+    Report {
+        #[arg(long, value_parser = ["completed", "failed", "rejected"])]
+        status: String,
+        #[arg(long)]
+        summary: String,
+        #[arg(long)]
+        task: Option<String>,
+        #[arg(long)]
+        pane: Option<String>,
+        #[arg(long)]
+        artifacts: Option<String>,
+        #[arg(long)]
+        evidence: Option<String>,
+    },
+    /// List panes requiring user attention, ranked by severity then recency.
+    Attention {
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -212,8 +232,10 @@ enum TaskOp {
     },
     /// Wait for a task or context to settle.
     Wait {
-        #[arg(long)]
+        #[arg(value_name = "TASK_ID")]
         id: Option<String>,
+        #[arg(long = "id", hide = true)]
+        id_flag: Option<String>,
         #[arg(long)]
         context: Option<String>,
         #[arg(long, default_value = "settled", value_delimiter = ',')]
@@ -919,6 +941,117 @@ async fn run(args: Args) -> Result<(), CliError> {
         }
         Command::Plugin { op } => plugin_cmd(socket, json, op).await,
         Command::Task { op } => task_cmd(socket, json, op).await,
+        Command::Report {
+            status,
+            summary,
+            task,
+            pane,
+            artifacts,
+            evidence,
+        } => {
+            let task_id = task.or_else(|| {
+                std::env::var("SIGNALTTY_TASK")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            });
+            let pane_id = pane.or_else(|| {
+                std::env::var("SIGNALTTY_PANE")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            });
+            if task_id.is_none() && pane_id.is_none() {
+                return Err(CliError::Usage(
+                    "must provide --task, --pane, or set $SIGNALTTY_TASK or $SIGNALTTY_PANE"
+                        .to_string(),
+                ));
+            }
+            let parsed_artifacts: Option<Vec<Value>> = if let Some(ref a) = artifacts {
+                if let Ok(v) = serde_json::from_str::<Vec<Value>>(a) {
+                    Some(v)
+                } else if let Ok(content) = std::fs::read_to_string(a) {
+                    Some(serde_json::from_str::<Vec<Value>>(&content).map_err(|e| {
+                        CliError::Usage(format!("failed to parse artifacts JSON file: {e}"))
+                    })?)
+                } else {
+                    return Err(CliError::Usage(format!(
+                        "artifacts must be a valid JSON array or path to a JSON file: {a}"
+                    )));
+                }
+            } else {
+                None
+            };
+            let parsed_evidence: Option<Value> = if let Some(ref ev) = evidence {
+                if let Ok(v) = serde_json::from_str::<Value>(ev) {
+                    Some(v)
+                } else if let Ok(content) = std::fs::read_to_string(ev) {
+                    Some(serde_json::from_str::<Value>(&content).map_err(|e| {
+                        CliError::Usage(format!("failed to parse evidence JSON file: {e}"))
+                    })?)
+                } else {
+                    return Err(CliError::Usage(format!(
+                        "evidence must be valid JSON or path to a JSON file: {ev}"
+                    )));
+                }
+            } else {
+                None
+            };
+            let mut payload = json!({
+                "status": status,
+                "summary": summary,
+            });
+            if let Some(tid) = task_id {
+                payload["task_id"] = json!(tid);
+            }
+            if let Some(pid) = pane_id {
+                payload["pane_id"] = json!(pid);
+            }
+            if let Some(art) = parsed_artifacts {
+                payload["artifacts"] = json!(art);
+            }
+            if let Some(ev) = parsed_evidence {
+                payload["evidence"] = ev;
+            }
+            let mut c = Client::connect(&socket).await?;
+            let r = c.call("task.report", payload).await?;
+            let task = &r["task"];
+            emit(
+                json,
+                &r,
+                format!(
+                    "reported {}: task {} is {}",
+                    status,
+                    task["id"].as_str().unwrap_or("?"),
+                    task["state"].as_str().unwrap_or("?")
+                ),
+            );
+            Ok(())
+        }
+        Command::Attention { limit } => {
+            let mut p = json!({});
+            if let Some(lim) = limit {
+                p["limit"] = json!(lim);
+            }
+            let mut c = Client::connect(&socket).await?;
+            let r = c.call("attention.pending", p).await?;
+            let mut human = String::new();
+            if let Some(panes) = r["panes"].as_array() {
+                if panes.is_empty() {
+                    human.push_str("no panes require attention\n");
+                } else {
+                    for p in panes {
+                        human.push_str(&format!(
+                            "{:<8} {:<20} {:<12} {}\n",
+                            p["pane_id"].as_str().unwrap_or("?"),
+                            p["attention"].as_str().unwrap_or("?"),
+                            p["task_id"].as_str().unwrap_or("-"),
+                            p["last_message"].as_str().unwrap_or("")
+                        ));
+                    }
+                }
+            }
+            emit(json, &r, human.trim_end().to_string());
+            Ok(())
+        }
     }
 }
 
@@ -1376,14 +1509,16 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
         }
         TaskOp::Wait {
             id,
+            id_flag,
             context,
             until,
             timeout,
         } => {
+            let target_id = id.or(id_flag);
             let mut p = json!({
                 "until": until,
             });
-            if let Some(tid) = id {
+            if let Some(tid) = target_id {
                 p["task_id"] = json!(tid);
             }
             if let Some(ctx) = context {
