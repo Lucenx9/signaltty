@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use signaltty_core::model::LiveState;
-use signaltty_core::state::{Lifecycle, TaskState};
+use signaltty_core::state::{Attention, Lifecycle, TaskState};
 use signaltty_proto::code;
 use tokio::sync::broadcast;
 
@@ -138,11 +138,21 @@ pub async fn submit_prompt(
         }
 
         match pane.lifecycle {
-            Lifecycle::Working | Lifecycle::Blocked => {
+            Lifecycle::Working => {
                 return Err(SubmitError::new(
                     code::AGENT_BUSY,
                     format!("agent is {}", pane.lifecycle.as_str()),
                 ));
+            }
+            Lifecycle::Blocked => {
+                let can_submit =
+                    pane.attention == Attention::InputRequired && pane.pending_decision.is_none();
+                if !can_submit {
+                    return Err(SubmitError::new(
+                        code::AGENT_BUSY,
+                        format!("agent is {}", pane.lifecycle.as_str()),
+                    ));
+                }
             }
             Lifecycle::Unknown | Lifecycle::Failed => {
                 return Err(SubmitError::new(
@@ -156,7 +166,16 @@ pub async fn submit_prompt(
                     format!("pane '{pane_id}' has exited"),
                 ));
             }
-            Lifecycle::Idle | Lifecycle::Done => {}
+            Lifecycle::Idle | Lifecycle::Done => {
+                if pane.pending_decision.is_some()
+                    || pane.attention == Attention::PermissionRequired
+                {
+                    return Err(SubmitError::new(
+                        code::AGENT_BUSY,
+                        "agent has pending decision or permission required",
+                    ));
+                }
+            }
         }
 
         s.wait_baseline(pane_id)

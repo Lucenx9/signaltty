@@ -57,8 +57,10 @@ New `mode: "rendered"`: `{pane_id, mode: "rendered", after_seq?, lines?}` →
 - `text`: 1 byte … 32 KiB, else `BAD_PARAMS`. `submit_delay_ms` default 300
   (herdr `AGENT_PROMPT_SUBMIT_DELAY`, `src/app/api/agents.rs`); `stall_timeout_s`
   default 5 (herdr `AGENT_PROMPT_EFFECT_TIMEOUT_MS`, same file).
-- Gate (before any write): pane must be live and lifecycle `idle`|`done`.
-  `working`|`blocked` → `AGENT_BUSY`; `unknown`|`failed` → `AGENT_NOT_READY`;
+- Gate (before any write): pane must be live and lifecycle `idle`|`done`
+  (or `blocked` with attention `input_required` and no `pending_decision`).
+  `working` → `AGENT_BUSY`; `blocked` with `permission_required` or a pending
+  decision → `AGENT_BUSY`; `unknown`|`failed` → `AGENT_NOT_READY`;
   exited → `PANE_EXITED`. A worker pane whose task is still `pending`
   (background first-submit in flight) → `AGENT_NOT_READY` before any write.
   Answering a question/permission uses
