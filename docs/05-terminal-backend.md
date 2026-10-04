@@ -74,3 +74,55 @@ trait TerminalBackend {
 
 Implementations: `HeadlessBackend` (Phase 1, `vt100`, in server),
 `VteBackend` (Phase 3, GUI), `GhosttyVtBackend` (future, feature-gated).
+
+## Rendered ring (US3 reads, 018)
+
+`HeadlessBackend` keeps one rendered line ring per pane
+(`crates/signaltty-term/src/headless.rs`), built from the RENDERED grid —
+never from raw `\n` splitting, which garbles full-screen TUIs (cursor
+moves, CR overwrites and repaints concatenate instead of resolving).
+Capacity is 5000 content lines per pane; every line carries a monotonic
+`content_seq` (runtime-only, reset on restart, so pre-restart cursors read
+as dropped). `tail` is rebased on the ring (same `{text, truncated}`
+shape); `pane.read` `mode: "rendered"` adds the cursor
+(`after_seq`/`lines` → `text`/`seq`/`next_seq`/`dropped`/`truncated`, see
+docs/08). Reads are passive and never refused on agent state.
+
+How it works: `feed()` splits PTY bytes into small batches (cut after
+every CR/LF, plus a ~one-visual-row byte budget; splitting is UTF-8 safe
+and harmless to the `vt100` state machine) and reconciles the ring after
+each batch. Scroll detection matches the surviving grid prefix against the
+ring with the tail overlap excused (a print that scrolls in the same step
+lands new rows there), bounded by the batch's own scroll potential
+(newlines + scroll controls + printable rows + slack) so repetitive
+content cannot match a wild shift; among matches the largest shift with
+non-blank evidence wins, else the smallest. Changed rows keep their
+position but take a fresh sequence, so a repaint never grows the ring and
+a polling cursor observes each repaint exactly once. Trailing blank grid
+rows are padding, not content (matches `contents()` trimming).
+
+Alt-screen decision: while a TUI owns the alternate grid there is no
+scrollback (engine limit — `vt100` keeps a separate zero-scrollback grid,
+and the ring stores one screen only). Reads return the current alt grid;
+repaints bump touched rows' sequences, so an orchestrator polling with
+`next_seq` gets deltas without duplicates; nothing is appended to history
+on repaint or on alt enter/exit, and exiting restores the main grid
+verbatim. Deliberately no herdr-style `agent_not_idle` refusal: our reads
+are passive and side-effect-free, so refusal would buy nothing.
+
+Known limits (documented, not silent): explicit clears (`ESC[2J`)
+preserve the cleared lines into history rather than dropping them; wrapped
+continuation rows read as separate lines (no wrap-joining); a bare `\n`
+without `\r` staircases exactly like a real terminal (PTYs in cooked mode
+deliver `\r\n` via ONLCR, so shell output is unaffected); restores
+re-sequence from 1 with a dropped-floor, so every pre-restart cursor
+reads as dropped (Phase 7's cursor-reset line must keep this: see
+`dropped_floor`).
+
+Performance: reconciling costs grid extraction per batch. Measured
+`feed()` throughput (release, 80×24): shell-like 3k lines ≈ 125 ms (was
+≈ 2 ms raw-splitting), TUI repaint 3k ≈ 49 ms (was ≈ 1 ms), bulk 1 MiB
+≈ 0.56 s (was ≈ 9 ms). ~30–60× relative, but absolute cost stays
+sub-millisecond per PTY read and microseconds per line — invisible next
+to PTY delivery itself, and it buys exact reads (50×-rewritten spinner =
+1 line; 500-char wrapped lines survive bit-for-bit).

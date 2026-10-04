@@ -70,7 +70,7 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.input` | `{pane_id, data_b64}` | `{written}` |
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
 | `pane.signal` | `{pane_id, signal, group?}` | `{sent}` (`INT TERM KILL HUP QUIT WINCH USR1 USR2`, case-insensitive, optional `SIG`; any other name, here or in a `*.close` `signal`, → `BAD_PARAMS`) |
-| `pane.read` | `{pane_id, mode: "screen"\|"tail", lines?, strip_ansi?}` | `{text, truncated}` |
+| `pane.read` | `{pane_id, mode: "screen"\|"tail"\|"rendered", lines?, strip_ansi?, after_seq?}` | `screen`/`tail` → `{text, truncated}`; `rendered` → `{text, seq, next_seq, dropped, truncated}` |
 | `pane.attach` | `{pane_id, cols?, rows?, mark_seen?}` | `{snapshot_b64, output_offset, size, live, ...}` then `pty.data` stream; the snapshot is replayable VT state (contents, colours, cursor, modes) (`mark_seen` default true; GUIs pass false and acknowledge on focus) |
 | `pane.detach` | `{pane_id}` | `{detached}` (also implicit on disconnect) |
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
@@ -95,6 +95,24 @@ clients can `subscribe {from_seq}` to replay.
 `until` accepts any lifecycle or attention state, plus `seen` and
 `attention_cleared`; a nonempty array matches any alternative in caller order.
 Without `after`, an already matching current state succeeds immediately.
+
+`pane.read` modes: `screen` returns the current grid as plain text (no
+scrollback). `tail` (default, `lines` default 200, max 5000) returns the
+last content lines from the rendered ring — cursor-correct (CR overwrites,
+repaints and alternate-screen grids resolved), same `{text, truncated}`
+shape as before. `rendered` adds the incremental cursor: pass `after_seq`
+(default 0 = oldest retained) and `lines` (default 200, max 5000); the
+reply's `seq` is the oldest retained line in the reply (or the head when
+empty), `next_seq` is the current head (pass back as the next `after_seq`),
+`dropped` means `after_seq` is older than retained scrollback, ahead of the
+head, or from before a restart (cursors are runtime-only, like
+`output_offset` — re-read from scratch), and `truncated` means the new
+range exceeded `lines` (the newest `lines` are returned, still
+cursor-continuous). Unknown pane → `NO_SUCH_PANE`. Reads are passive:
+never refused on agent state, never move the viewport. While a full-screen
+TUI owns the alternate grid, reads return the current alt grid; repaints
+bump the touched rows' sequences (poll again with `next_seq` for deltas)
+and nothing is appended to history. See docs/05 (rendered ring).
 
 `pane.get` adds `wait_baseline {pane_id, process_instance, agent_session_id,
 session_generation, lifecycle_seq, attention_seq}`. Capture it **before** submitting

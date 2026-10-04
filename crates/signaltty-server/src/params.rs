@@ -183,6 +183,7 @@ impl SplitDirection {
 pub enum ReadMode {
     Screen,
     Tail,
+    Rendered,
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,6 +237,7 @@ pub struct PaneRead {
     pub mode: Option<ReadMode>,
     pub strip_ansi: Option<bool>,
     pub lines: Option<u64>,
+    pub after_seq: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
