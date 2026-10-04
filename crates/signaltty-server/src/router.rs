@@ -1910,27 +1910,21 @@ async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Co
         }
     };
 
-    // 1. Cap check
-    let active_tasks = {
-        let s = ctx.store.read().unwrap();
-        s.tasks
-            .values()
-            .filter(|t| matches!(t.state, TaskState::Pending | TaskState::Working))
-            .count()
-    };
-    if active_tasks >= ctx.config.max_parallel_tasks {
-        return (
-            Response::err(
-                &req.id,
-                code::RATE_LIMITED,
-                format!(
-                    "active task limit reached ({}/{})",
-                    active_tasks, ctx.config.max_parallel_tasks
-                ),
-            ),
-            ConnEffect::default(),
-        );
-    }
+    // 1. Cap check and atomic reservation under store write lock
+    let reservation =
+        match crate::store::Store::reserve_task_slot(&ctx.store, ctx.config.max_parallel_tasks) {
+            Ok(guard) => guard,
+            Err((active, max)) => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::RATE_LIMITED,
+                        format!("active task limit reached ({active}/{max})"),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        };
 
     // 2. Resolve base_ref and target_branch
     let base_ref = p.base_ref.unwrap_or_else(|| "HEAD".to_string());
@@ -2161,10 +2155,7 @@ async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Co
         updated_at: now,
     };
 
-    {
-        let mut s = ctx.store.write().unwrap();
-        s.task_create(task.clone());
-    }
+    reservation.commit(task.clone());
     ctx.mark_persist();
 
     // 5. Background ready-wait + submit

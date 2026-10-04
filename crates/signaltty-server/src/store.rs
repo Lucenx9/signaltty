@@ -68,6 +68,7 @@ pub struct Store {
     publisher: Option<tokio::sync::broadcast::Sender<StoredEvent>>,
     ring_retained_after: u64,
     progress: HashMap<String, PaneProgress>,
+    pub task_reservations: usize,
 }
 
 impl Store {
@@ -86,6 +87,7 @@ impl Store {
             publisher: None,
             ring_retained_after: 0,
             progress: HashMap::new(),
+            task_reservations: 0,
         }
     }
 
@@ -351,6 +353,31 @@ impl Default for Store {
 
 pub type SharedStore = Arc<RwLock<Store>>;
 
+pub struct TaskReservation {
+    store: SharedStore,
+    active: bool,
+}
+
+impl TaskReservation {
+    pub fn commit(mut self, task: Task) -> StoredEvent {
+        let mut s = self.store.write().unwrap();
+        s.task_reservations = s.task_reservations.saturating_sub(1);
+        let ev = s.task_create(task);
+        self.active = false;
+        ev
+    }
+}
+
+impl Drop for TaskReservation {
+    fn drop(&mut self) {
+        if self.active {
+            if let Ok(mut s) = self.store.write() {
+                s.task_reservations = s.task_reservations.saturating_sub(1);
+            }
+        }
+    }
+}
+
 impl Store {
     /// Set lifecycle and publish its paired event only when changed.
     /// Callers hold the lock, so one event costs one lock cycle and the
@@ -494,6 +521,23 @@ impl Store {
             progress.transitions.insert("none", ev.seq);
         }
         Some(ev)
+    }
+
+    pub fn reserve_task_slot(
+        store: &SharedStore,
+        max: usize,
+    ) -> Result<TaskReservation, (usize, usize)> {
+        let mut s = store.write().unwrap();
+        let active =
+            s.tasks.values().filter(|t| !t.state.is_terminal()).count() + s.task_reservations;
+        if active >= max {
+            return Err((active, max));
+        }
+        s.task_reservations += 1;
+        Ok(TaskReservation {
+            store: Arc::clone(store),
+            active: true,
+        })
     }
 
     pub fn task_create(&mut self, task: Task) -> StoredEvent {
