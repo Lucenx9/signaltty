@@ -1,3 +1,5 @@
+# Run from the repo root after cargo build --workspace.
+REPO=${REPO:-$PWD}
 set -x
 export PATH="$REPO/target/debug:$PATH"
 rm -rf /tmp/orch-e2e && mkdir -p /tmp/orch-e2e/home && cd /tmp/orch-e2e

@@ -1,3 +1,5 @@
+# Run from the repo root after cargo build --workspace.
+REPO=${REPO:-$PWD}
 export PATH="$REPO/target/debug:$PATH"
 rm -rf /tmp/orch-c && mkdir -p /tmp/orch-c/home && cd /tmp/orch-c
 export XDG_DATA_HOME=/tmp/orch-c/data HOME=/tmp/orch-c/home
