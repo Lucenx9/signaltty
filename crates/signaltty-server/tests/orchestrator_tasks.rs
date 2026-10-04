@@ -1344,7 +1344,7 @@ async fn test_task_native_permission_block_and_answer() {
 #[tokio::test]
 async fn test_task_start_ref_safety_rejects_flag_injection_and_invalid_branches() {
     let repo = TempGitRepo::new();
-    let mut srv = TestServer::start().await;
+    let srv = TestServer::start().await;
     let mut c = srv.client().await;
 
     // 1. Branch starting with dash

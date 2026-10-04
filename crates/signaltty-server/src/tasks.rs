@@ -66,6 +66,12 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
 
     // 2. Base ref resolution
     let base_ref = p.base_ref.unwrap_or_else(|| "HEAD".to_string());
+    if let Err(e) = crate::git::validate_base_ref_format(&base_ref) {
+        return (
+            Response::err(&req.id, code::BAD_PARAMS, e),
+            ConnEffect::default(),
+        );
+    }
     let fetch_first = p.fetch_first.unwrap_or(false);
     let base_sha = match crate::git::resolve_base_ref(&p.repo, &base_ref, fetch_first) {
         Ok(sha) => sha,
@@ -89,6 +95,12 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
             format!("signaltty/{label_sanitized}-{short_id}")
         }
     };
+    if let Err(e) = crate::git::validate_branch_name(&branch) {
+        return (
+            Response::err(&req.id, code::BAD_PARAMS, e),
+            ConnEffect::default(),
+        );
+    }
     let preexisting_branch = crate::git::branch_exists(&p.repo, &branch);
     let worktree_path = match p.path {
         Some(path) => PathBuf::from(path),

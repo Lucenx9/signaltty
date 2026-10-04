@@ -463,3 +463,47 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 }
+
+/// Validate a branch name per `git check-ref-format --branch`.
+/// Rejects empty string, leading '-', or names invalid per git rules.
+pub fn validate_branch_name(branch: &str) -> Result<(), String> {
+    if branch.is_empty() || branch.starts_with('-') {
+        return Err(format!(
+            "invalid branch name '{branch}': cannot start with '-' or be empty"
+        ));
+    }
+    let out = Command::new("git")
+        .args(["check-ref-format", "--branch", branch])
+        .output()
+        .map_err(|e| format!("git check-ref-format failed: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "invalid branch name '{branch}' per git check-ref-format"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a base ref format.
+/// Rejects empty string, leading '-', or names invalid per git check-ref-format.
+pub fn validate_base_ref_format(base_ref: &str) -> Result<(), String> {
+    if base_ref.is_empty() || base_ref.starts_with('-') {
+        return Err(format!(
+            "invalid base_ref '{base_ref}': cannot start with '-' or be empty"
+        ));
+    }
+    // 40-character hex commit SHA is valid
+    if base_ref.len() == 40 && base_ref.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(());
+    }
+    let out = Command::new("git")
+        .args(["check-ref-format", "--allow-onelevel", base_ref])
+        .output()
+        .map_err(|e| format!("git check-ref-format failed: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "invalid base_ref '{base_ref}' per git check-ref-format"
+        ));
+    }
+    Ok(())
+}
