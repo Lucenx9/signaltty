@@ -22,6 +22,9 @@ struct Args {
     /// Agent detection overlays (default: $XDG_CONFIG_HOME/signaltty/agents).
     #[arg(long)]
     agents_dir: Option<PathBuf>,
+    /// Maximum parallel running tasks (default: 4).
+    #[arg(long = "max-tasks", alias = "max-parallel-tasks")]
+    max_tasks: Option<usize>,
 }
 
 #[tokio::main]
@@ -46,5 +49,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(d) = args.agents_dir {
         config.agents_dir = d;
     }
+    if let Some(m) = args.max_tasks {
+        config.max_parallel_tasks = m;
+    }
     serve(config).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn args_parse_max_tasks() {
+        let args = Args::parse_from(["signaltty-server", "--max-tasks", "8"]);
+        assert_eq!(args.max_tasks, Some(8));
+
+        let args_alias = Args::parse_from(["signaltty-server", "--max-parallel-tasks", "16"]);
+        assert_eq!(args_alias.max_tasks, Some(16));
+
+        let args_default = Args::parse_from(["signaltty-server"]);
+        assert_eq!(args_default.max_tasks, None);
+    }
 }

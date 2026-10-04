@@ -353,6 +353,7 @@ mod tests {
             plugin_dir: base.join("plugins"),
             agents_dir: base.join("agents"),
             integration_home: Some(base.join("home")),
+            max_parallel_tasks: crate::config::DEFAULT_MAX_PARALLEL_TASKS,
         };
         let mut store = Store::new();
         let pane = signaltty_core::model::Pane::new(
