@@ -143,6 +143,8 @@ research-external §workmux). Steps, in order:
    so `task.finish --discard` or plain `git worktree remove` deletes it).
 5. Background: wait for `idle` within `ready_timeout_s`, then submit the
    composed worker prompt (preamble + objective + constraints + acceptance criteria + expected output format via `compose_worker_prompt`) via the `pane.submit` path (same gate + activity check).
+   `submit_delay_ms` (default 300, the same default as `pane.submit`) is the
+   pause between the bracketed paste and Enter.
    Success → task `working`; ready-timeout or submit failure → task `failed`
    with `{stage: ready_timeout|submit_refused|activity_gate, …}` evidence; pane
    kept. Observe via `task.wait --until working` or `task.*` events.
@@ -245,8 +247,10 @@ Merge (`src/workflow/merge.rs` rules, VERIFIED workmux):
   `keep_branch: false`: durable task records favor post-merge inspection).
 - Cleanup failure → success result with `cleanup_error` set (workmux `Ok` +
   `cleanup_error`); the merge is not rolled back in the report. t3code skips
-  also apply: refuse cleanup while a foreign live pane's cwd is inside
-  (`PANES_ALIVE`) or porcelain shows branch mismatch / moved HEAD vs the merge
+  also apply: refuse cleanup while a foreign live pane's canonical cwd is
+  the worktree or a directory inside it (`PANES_ALIVE`; whole path components
+  after canonicalize, so `…/proj-other` does not match and a symlink does) or
+  porcelain shows branch mismatch / moved HEAD vs the merge
   result.
 - Records `disposition: merged` only through the store transition
   (`task_finish_record`), which re-checks `outcome == none` under the
@@ -260,8 +264,9 @@ Merge (`src/workflow/merge.rs` rules, VERIFIED workmux):
 Discard:
 
 - Allowed from any state without a disposition (working tasks: worker pane
-  closed first with SIGTERM). Refuses foreign live panes inside
-  (`PANES_ALIVE`), refuses non-recorded paths. Force-removes ONLY the recorded
+  closed first with SIGTERM). Refuses foreign live panes whose canonical cwd
+  is inside the worktree (`PANES_ALIVE`, same component boundary as merge),
+  refuses non-recorded paths. Force-removes ONLY the recorded
   worktree path (discard is explicit destruction; vibe-kanban-grade force is
   scoped to the task path, never a default elsewhere).
 - Branch kept unless `delete_branch: true` (still never when pre-existing).

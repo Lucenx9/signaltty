@@ -840,3 +840,125 @@ async fn test_second_finish_retries_cleanup_while_worktree_remains() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_finish_uses_canonical_worktree_boundary() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let repo = TempGitRepo::new();
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "prefix boundary"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    let wt = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+    let sibling = wt.with_file_name(format!(
+        "{}-other",
+        wt.file_name().unwrap().to_string_lossy()
+    ));
+    std::fs::create_dir_all(&sibling).unwrap();
+    let ws = c
+        .call(
+            "workspace.create",
+            json!({"cwd": sibling.to_string_lossy(), "name": "sibling"}),
+        )
+        .await
+        .unwrap();
+    c.call(
+        "pane.spawn",
+        json!({
+            "workspace_id": ws["workspace"]["id"],
+            "cwd": sibling.to_string_lossy(),
+            "argv": ["sleep", "60"],
+        }),
+    )
+    .await
+    .unwrap();
+
+    let discarded = c
+        .call(
+            "task.finish",
+            json!({"task_id": &task_id, "mode": "discard"}),
+        )
+        .await;
+    assert!(
+        discarded.is_ok(),
+        "sibling {} must not count as inside {}: {discarded:?}",
+        sibling.display(),
+        wt.display()
+    );
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "symlink boundary"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    let wt = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+    let link = std::env::temp_dir().join(format!(
+        "signaltty-wt-link-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::os::unix::fs::symlink(&wt, &link).unwrap();
+    let ws = c
+        .call(
+            "workspace.create",
+            json!({"cwd": link.to_string_lossy(), "name": "via-link"}),
+        )
+        .await
+        .unwrap();
+    let pane = c
+        .call(
+            "pane.spawn",
+            json!({
+                "workspace_id": ws["workspace"]["id"],
+                "cwd": link.to_string_lossy(),
+                "argv": ["sleep", "60"],
+            }),
+        )
+        .await
+        .unwrap();
+    let err = c
+        .call(
+            "task.finish",
+            json!({"task_id": &task_id, "mode": "discard"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with(code::PANES_ALIVE),
+        "symlink cwd must block finish, got {err}"
+    );
+    c.call("pane.close", json!({"pane_id": pane["pane"]["id"]}))
+        .await
+        .unwrap();
+    c.call(
+        "task.finish",
+        json!({"task_id": &task_id, "mode": "discard"}),
+    )
+    .await
+    .unwrap();
+    let _ = std::fs::remove_file(&link);
+
+    srv.shutdown().await;
+}

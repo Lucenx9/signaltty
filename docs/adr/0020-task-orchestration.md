@@ -112,7 +112,8 @@ What the code does where it diverges from the proposal above — docs
   the silent-worker watchdog (`worker_silent_timeout_s`, default 600 s, `0`
   disables), `last_assistant_message` flowing into pane `last_message` and
   turn-end evidence, ref-safety checks, and the composed worker preamble.
-- Background submit writes the prompt (fixed 100 ms paste/Enter delay) and
+- Background submit writes the prompt (`submit_delay_ms`, default 300, the
+  same paste/Enter delay as `pane.submit`) and
   moves the task to `working` on a successful write; it does not run the
   `pane.submit` activity gate.
 - `pane.spawn` stores an unknown `parent_pane_id` as-is (root unset) rather

@@ -391,6 +391,7 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         prompt,
         p.ready_timeout_s.unwrap_or(30),
         p.stall_timeout_s.unwrap_or(5),
+        Duration::from_millis(p.submit_delay_ms.unwrap_or(300)),
     );
 
     (
@@ -466,6 +467,7 @@ pub(crate) fn spawn_background_submit(
     prompt: String,
     ready_timeout_s: u64,
     stall_timeout_s: u64,
+    submit_delay: Duration,
 ) {
     let bg_submit_ctx = SubmitCtx {
         store: ctx.store.clone(),
@@ -551,7 +553,7 @@ pub(crate) fn spawn_background_submit(
             &bg_submit_ctx,
             &bg_pane_id,
             &prompt,
-            Duration::from_millis(100),
+            submit_delay,
             stall_timeout,
             true,
             false,
@@ -1112,7 +1114,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         for (pid, pane) in &s.panes {
             if Some(pid) != task.pane_id.as_ref()
                 && matches!(pane.live, LiveState::Live)
-                && pane.cwd.starts_with(&wt_str)
+                && cwd_inside_worktree(&pane.cwd, &task.worktree_path)
             {
                 return (
                     Response::err(
@@ -1499,6 +1501,20 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
     (Response::ok(&req.id, res), ConnEffect::default())
 }
 
+/// True when `cwd` is the worktree or a directory inside it.
+///
+/// Both sides are canonicalized, then compared on whole path components.
+/// A string prefix would treat `/data/proj-other` as inside `/data/proj`
+/// and would miss the same directory reached through a symlink.
+fn cwd_inside_worktree(cwd: &str, worktree: &std::path::Path) -> bool {
+    let Ok(worktree) = worktree.canonicalize() else {
+        return false;
+    };
+    std::path::Path::new(cwd)
+        .canonicalize()
+        .is_ok_and(|cwd| cwd.starts_with(worktree))
+}
+
 /// Second finish when a disposition is already stored but the recorded
 /// checkout is still on disk: retry removal only, do not merge again.
 fn retry_recorded_cleanup(
@@ -1518,7 +1534,7 @@ fn retry_recorded_cleanup(
         for (pid, pane) in &s.panes {
             if Some(pid.as_str()) != worker_pane_id
                 && matches!(pane.live, LiveState::Live)
-                && pane.cwd.starts_with(&wt_str)
+                && cwd_inside_worktree(&pane.cwd, worktree_path)
             {
                 return (
                     Response::err(

@@ -391,6 +391,9 @@ pub struct TaskStart {
     pub path: Option<String>,
     pub ready_timeout_s: Option<u64>,
     pub stall_timeout_s: Option<u64>,
+    /// Paste-to-Enter delay for the background first submit. Default 300,
+    /// the same value as `pane.submit`.
+    pub submit_delay_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

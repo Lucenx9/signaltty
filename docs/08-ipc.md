@@ -108,8 +108,8 @@ are synchronous errors (`BAD_PARAMS` / `IO_ERROR`) that create no task.
 Only the background ready-wait + prompt write produces `failed` tasks with
 `{stage: ready_timeout|submit_refused, …}` evidence. The background step
 waits for the worker pane to reach `idle`/`done` (default
-`ready_timeout_s: 30`), writes the composed prompt with a fixed 100 ms
-paste/Enter delay, and moves the task to `working` on a successful write —
+`ready_timeout_s: 30`), writes the composed prompt with `submit_delay_ms`
+(default 300, the same paste/Enter delay as `pane.submit`), and moves the task to `working` on a successful write —
 it does not run the `pane.submit` activity gate. There is no idempotency
 key: retries create new tasks. The merge target defaults to the recorded
 `target_branch`; when the start ran on a detached HEAD an explicit
@@ -131,7 +131,10 @@ cancel on client disconnect.
 `task.updated` with a top-level `task_id`. Conflict file names and a cleanup
 failure are stored on `task.finish_error`. A second finish is `BAD_PARAMS`
 once the recorded worktree is gone; while that path still exists the second
-finish retries removal and does not merge again.
+finish retries removal and does not merge again. A foreign live pane blocks
+finish only when its canonical cwd is the worktree or a directory inside it
+(`PANES_ALIVE`); comparison is on whole path components, so a sibling such as
+`…/proj-other` does not match and a symlink to the worktree does.
 
 `subscribe` accepts an optional `task_ids[]` server-side filter alongside
 `events`/`from_seq`: only events whose payload carries a matching `task_id`

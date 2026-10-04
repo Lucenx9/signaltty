@@ -1678,3 +1678,56 @@ async fn task_start_post_worktree_failure_leaves_failed_task_and_removable_check
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn task_start_honors_submit_delay_ms() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "honor submit delay"},
+                "agent": "codex",
+                "argv": ["sh"],
+                "submit_delay_ms": 1500,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap().to_string();
+    let wt = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt).await.unwrap();
+    let pane = c
+        .call("pane.get", json!({"pane_id": pane_id}))
+        .await
+        .unwrap();
+    assert_eq!(pane["pane"]["lifecycle"], "idle");
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let mid = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        mid["task"]["state"], "pending",
+        "submit_delay_ms must hold the first write"
+    );
+
+    let wait = c
+        .call(
+            "task.wait",
+            json!({"task_id": task_id, "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+
+    srv.shutdown().await;
+}
