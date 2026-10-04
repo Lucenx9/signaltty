@@ -1917,6 +1917,7 @@ async fn h_pane_submit(ctx: &Ctx, req: &Request, params: &Value) -> (Response, C
         stall_timeout,
         false,
         true,
+        crate::submit::PANE_SUBMIT_MAX_BYTES,
     )
     .await
     {

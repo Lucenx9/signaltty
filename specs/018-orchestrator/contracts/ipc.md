@@ -125,7 +125,14 @@ research-external §workmux). Steps, in order:
    first, Conductor-style) → record `base_sha` AND `target_branch` = the source
    repo's currently checked-out branch (detached HEAD → `target_branch` unset).
    Empty repo / unresolvable ref → synchronous `BAD_PARAMS` (nothing on disk
-   yet; pre-worktree validation creates no task). Empty objective → synchronous `BAD_PARAMS` (nothing created).
+   yet; pre-worktree validation creates no task). `contract.validate()` runs
+   before the slot reservation: an empty or over-32 KiB objective is
+   synchronous `BAD_PARAMS` and creates nothing. After the branch and base
+   sha exist, and still before the worktree, the composed worker prompt must
+   fit `32 KiB + preamble` for that task (the pane.submit cap stays 32 KiB;
+   the extra bytes are only the fixed preamble, so a maximum objective with
+   no constraints, criteria, or output format can be sent). A larger composed
+   body is `BAD_PARAMS` and creates no worktree.
 3. Under the per-path lock (vibe-kanban path mutex,
    `crates/worktree-manager/src/worktree_manager.rs`):
    `git worktree add -b <branch> <path> <base_sha>` (default branch

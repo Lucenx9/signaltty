@@ -154,7 +154,7 @@ tasks). IDs are opaque `task_…` / `tctx_…` strings.
 | `parent_pane_id?`, `root_pane_id?` | lineage written at start |
 | `relationship` | `fork`\|`subagent`, default `subagent` |
 | `label` | human label |
-| `contract` | objective (required, 1 byte … 32 KiB) + optional constraints, acceptance criteria list, output format |
+| `contract` | objective (required, 1 byte … 32 KiB) + optional constraints, acceptance criteria list, output format. `task.start` validates this before creating a worktree. The composed worker prompt may be 32 KiB plus that task's fixed preamble; a larger body is refused and creates nothing |
 | `agent?` | requested agent taxonomy kind |
 | `source_repo` | repo the worktree was cut from; the merge target lives here |
 | `target_branch?` | source repo's checked-out branch recorded at start (detached HEAD → unset; then finish needs an explicit `target_ref`) |

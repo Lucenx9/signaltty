@@ -1731,3 +1731,96 @@ async fn task_start_honors_submit_delay_ms() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn task_start_rejects_unsendable_contract_before_worktree() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let worktrees =
+        || String::from_utf8(repo.git(&["worktree", "list", "--porcelain"]).stdout).unwrap();
+    let before = worktrees();
+
+    let over = "x".repeat(signaltty_core::model::Contract::MAX_OBJECTIVE_BYTES + 1);
+    let err = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": over},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with(signaltty_proto::code::BAD_PARAMS),
+        "oversize objective must be BAD_PARAMS before a worktree, got {err}"
+    );
+    assert_eq!(
+        worktrees(),
+        before,
+        "oversize objective must create nothing"
+    );
+
+    let max = "y".repeat(signaltty_core::model::Contract::MAX_OBJECTIVE_BYTES);
+    let err = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {
+                    "objective": max,
+                    "constraints": "z".repeat(4096),
+                },
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with(signaltty_proto::code::BAD_PARAMS),
+        "composed prompt over the worker limit must be BAD_PARAMS, got {err}"
+    );
+    assert_eq!(
+        worktrees(),
+        before,
+        "an unsendable composed prompt must create nothing"
+    );
+
+    let max = "y".repeat(signaltty_core::model::Contract::MAX_OBJECTIVE_BYTES);
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": max},
+                "agent": "codex",
+                "argv": ["sh"],
+                "submit_delay_ms": 50,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap().to_string();
+    let wt = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt).await.unwrap();
+    let wait = c
+        .call(
+            "task.wait",
+            json!({"task_id": task_id, "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+    let got = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(got["task"]["state"], "working");
+    assert!(got["task"]["status_reason"].is_null());
+
+    srv.shutdown().await;
+}

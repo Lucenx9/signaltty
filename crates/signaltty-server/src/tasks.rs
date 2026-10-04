@@ -108,6 +108,12 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
             ConnEffect::default(),
         );
     }
+    if let Err(e) = p.contract.validate() {
+        return (
+            Response::err(&req.id, code::BAD_PARAMS, e.to_string()),
+            ConnEffect::default(),
+        );
+    }
 
     // Resolve agent and argv
     let (argv, _kind, agent_name) = match resolve_agent_and_argv(ctx, &p) {
@@ -174,6 +180,25 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         );
     }
     let preexisting_branch = crate::git::branch_exists(&p.repo, &branch);
+    // The composed body must be sendable before any checkout exists.
+    // pane.submit stays at 32 KiB; the worker cap grows by this task's
+    // fixed preamble so a maximum objective with no extra sections fits.
+    let prompt =
+        signaltty_core::model::compose_worker_prompt(&task_id, &branch, &base_sha, &p.contract);
+    let submit_max = crate::submit::worker_submit_max_bytes(&task_id, &branch, &base_sha);
+    if prompt.len() > submit_max {
+        return (
+            Response::err(
+                &req.id,
+                code::BAD_PARAMS,
+                format!(
+                    "composed worker prompt is {} bytes, over the {submit_max} byte submit limit",
+                    prompt.len()
+                ),
+            ),
+            ConnEffect::default(),
+        );
+    }
     let worktree_path = match p.path {
         Some(path) => PathBuf::from(path),
         None => crate::git::default_worktree_path(&p.repo, &branch),
@@ -383,7 +408,6 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
     ctx.mark_persist();
 
     // 5. Background ready check and prompt submit
-    let prompt = task.compose_worker_prompt();
     spawn_background_submit(
         ctx,
         task_id.clone(),
@@ -392,6 +416,7 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         p.ready_timeout_s.unwrap_or(30),
         p.stall_timeout_s.unwrap_or(5),
         Duration::from_millis(p.submit_delay_ms.unwrap_or(300)),
+        submit_max,
     );
 
     (
@@ -468,6 +493,7 @@ pub(crate) fn spawn_background_submit(
     ready_timeout_s: u64,
     stall_timeout_s: u64,
     submit_delay: Duration,
+    submit_max_bytes: usize,
 ) {
     let bg_submit_ctx = SubmitCtx {
         store: ctx.store.clone(),
@@ -557,6 +583,7 @@ pub(crate) fn spawn_background_submit(
             stall_timeout,
             true,
             false,
+            submit_max_bytes,
         )
         .await;
 

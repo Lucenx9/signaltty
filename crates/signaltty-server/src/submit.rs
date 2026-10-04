@@ -14,6 +14,25 @@ use crate::pty::PtyManager;
 use crate::router::Ctx;
 use crate::store::{SharedStore, StoredEvent};
 
+/// `pane.submit` body cap. The background worker prompt uses a higher cap
+/// ([`worker_submit_max_bytes`]) so a maximum-sized objective still fits
+/// after the fixed preamble.
+pub const PANE_SUBMIT_MAX_BYTES: usize = 32 * 1024;
+
+/// Bytes the background first submit may write: the pane cap plus the fixed
+/// preamble for this task (id, branch, base). A max objective with no extra
+/// sections fits; constraints or criteria beyond that do not.
+pub fn worker_submit_max_bytes(task_id: &str, branch: &str, base_sha: &str) -> usize {
+    let bare = signaltty_core::model::Contract {
+        objective: String::new(),
+        constraints: None,
+        acceptance_criteria: None,
+        output_format: None,
+    };
+    let wrapper = signaltty_core::model::compose_worker_prompt(task_id, branch, base_sha, &bare);
+    PANE_SUBMIT_MAX_BYTES + wrapper.len()
+}
+
 #[derive(Clone)]
 pub struct SubmitCtx {
     pub store: SharedStore,
@@ -84,7 +103,7 @@ impl From<SubmitError> for (String, String) {
 }
 
 /// Gated prompt submission:
-/// 1. Validate text length (1 byte .. 32 KiB).
+/// 1. Validate text length (`1..=max_bytes`). `pane.submit` passes 32 KiB.
 /// 2. Reject text that already contains `ESC[200~` or `ESC[201~` (`BAD_PARAMS`).
 ///    Stripping would change the prompt the worker sees, so the text is refused
 ///    whole, before the readiness gate and before any PTY write.
@@ -107,11 +126,12 @@ pub async fn submit_prompt(
     stall_timeout: Duration,
     allow_pending_task: bool,
     check_activity: bool,
+    max_bytes: usize,
 ) -> Result<SubmitOutcome, SubmitError> {
-    if text.is_empty() || text.len() > 32768 {
+    if text.is_empty() || text.len() > max_bytes {
         return Err(SubmitError::new(
             code::BAD_PARAMS,
-            "text must be 1 .. 32768 bytes",
+            format!("text must be 1 .. {max_bytes} bytes"),
         ));
     }
     // Reject, do not strip. A marker inside the text ends or opens paste mode

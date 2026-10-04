@@ -77,6 +77,13 @@ The submitted worker prompt is composed via `signaltty_core::model::compose_work
 - Acceptance Criteria (if present): `"\n## Acceptance Criteria\n- <item>\n"`
 - Expected Output Format (if present): `"\n## Expected Output Format\n<contract.output_format>\n"`
 
+`task.start` calls `Contract::validate` before reserving a slot or creating a
+worktree. `pane.submit` still rejects text over 32 KiB. The background first
+submit may send `32 KiB + preamble`, where the preamble is the fixed wrapper
+for that task id, branch, and base sha. A maximum objective with no extra
+sections fits. Extra sections that push the composed body over that limit are
+`BAD_PARAMS` and create no worktree.
+
 ### Result (structured handoff)
 
 Set once by `task.report`; second report on a terminal task is refused
