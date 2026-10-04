@@ -663,7 +663,7 @@ async fn cli_task_orchestration() {
         .current_dir(&repo_dir)
         .output();
     std::fs::write(
-        &repo_dir.join("README.md"),
+        repo_dir.join("README.md"),
         "# Test Repo
 ",
     )
@@ -686,7 +686,7 @@ async fn cli_task_orchestration() {
             "task",
             "start",
             "--repo",
-            &repo_dir.to_str().unwrap(),
+            repo_dir.to_str().unwrap(),
             "--objective",
             "Implement CLI task feature",
             "--label",

@@ -160,6 +160,7 @@ enum Command {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum TaskOp {
     /// Start a new orchestrated background task.
     Start {
@@ -1229,29 +1230,6 @@ fn integration_notice(result: &Value, json: bool) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn null_baseline_is_a_usage_error_not_a_current_state_wait() {
-        let err = parse_wait_baseline("null").unwrap_err();
-        assert!(matches!(err, CliError::Usage(_)));
-    }
-
-    #[test]
-    fn malformed_baseline_is_a_usage_error() {
-        let err = parse_wait_baseline("{not json").unwrap_err();
-        assert!(matches!(err, CliError::Usage(_)));
-    }
-
-    #[test]
-    fn object_baseline_passes_through() {
-        let baseline = parse_wait_baseline("{\"pane_id\":\"p\"}").unwrap();
-        assert_eq!(baseline["pane_id"], "p");
-    }
-}
-
 async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliError> {
     let mut c = Client::connect(&socket).await?;
     match op {
@@ -1422,5 +1400,28 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
             emit(json, &r, format!("canceled task {tid}"));
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn null_baseline_is_a_usage_error_not_a_current_state_wait() {
+        let err = parse_wait_baseline("null").unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn malformed_baseline_is_a_usage_error() {
+        let err = parse_wait_baseline("{not json").unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn object_baseline_passes_through() {
+        let baseline = parse_wait_baseline("{\"pane_id\":\"p\"}").unwrap();
+        assert_eq!(baseline["pane_id"], "p");
     }
 }
