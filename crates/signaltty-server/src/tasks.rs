@@ -1,8 +1,10 @@
 //! Task orchestration: task lifecycle, worktree checkout, agent worker pane spawn,
 //! and background prompt delivery.
 
+use crate::file_diff::ProcessGroup;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -1830,6 +1832,77 @@ fn cwd_inside_worktree(cwd: &str, worktree: &std::path::Path) -> bool {
         .is_ok_and(|cwd| cwd.starts_with(worktree))
 }
 
+async fn run_cli(
+    program: &str,
+    cwd: &str,
+    args: &[&str],
+) -> Result<std::process::Output, (String, String, Value)> {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.current_dir(cwd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
+        .process_group(0)
+        .kill_on_drop(true);
+
+    let child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err((
+                code::SPAWN_FAILED.to_string(),
+                format!("{program} binary not found"),
+                Value::Null,
+            ));
+        }
+        Err(e) => {
+            return Err((
+                code::IO_ERROR.to_string(),
+                format!("{program} spawn failed: {e}"),
+                Value::Null,
+            ));
+        }
+    };
+
+    let pid = child.id().map(|id| id as i32);
+    let mut group = ProcessGroup(pid);
+
+    let res = match tokio::time::timeout(Duration::from_secs(60), child.wait_with_output()).await {
+        Ok(Ok(output)) => {
+            group.0 = None;
+            output
+        }
+        Ok(Err(e)) => {
+            return Err((
+                code::IO_ERROR.to_string(),
+                format!("{program} failed: {e}"),
+                Value::Null,
+            ));
+        }
+        Err(_) => {
+            drop(group);
+            return Err((
+                code::TIMEOUT.to_string(),
+                format!("{program} timed out after 60s"),
+                Value::Null,
+            ));
+        }
+    };
+
+    if !res.status.success() {
+        let stderr = String::from_utf8_lossy(&res.stderr).trim().to_string();
+        return Err((
+            code::IO_ERROR.to_string(),
+            format!("{program} failed: {stderr}"),
+            json!({ "stderr": stderr }),
+        ));
+    }
+
+    Ok(res)
+}
+
 pub async fn h_task_pr_open(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
     let p: params::TaskPrOpen = match decode(params) {
         Ok(p) => p,
@@ -1959,140 +2032,35 @@ pub async fn h_task_pr_open(ctx: &Ctx, req: &Request, params: &Value) -> (Respon
         )
     };
 
-    let push_and_create =
-        tokio::task::spawn_blocking(move || -> Result<TaskPr, (String, String, Value)> {
-            // 1. git push -u origin <branch>
-            let push_res = std::process::Command::new("git")
-                .arg("-C")
-                .arg(&wt)
-                .args(["push", "-u", "origin", &branch])
-                .output();
-            let push_out = match push_res {
-                Ok(o) => o,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    return Err((
-                        code::SPAWN_FAILED.to_string(),
-                        "git binary not found".to_string(),
-                        Value::Null,
-                    ));
-                }
-                Err(e) => {
-                    return Err((
-                        code::IO_ERROR.to_string(),
-                        format!("git push failed: {e}"),
-                        Value::Null,
-                    ));
-                }
-            };
-            if !push_out.status.success() {
-                let stderr = String::from_utf8_lossy(&push_out.stderr).trim().to_string();
-                return Err((
-                    code::IO_ERROR.to_string(),
-                    format!("git push failed: {stderr}"),
-                    json!({ "stderr": stderr }),
-                ));
-            }
-
-            // 2. gh pr create --head <branch> --base <target_branch> --title <title> --body <body> (+ --draft)
-            let mut gh_cmd = std::process::Command::new("gh");
-            gh_cmd.current_dir(&wt);
-            gh_cmd.args([
-                "pr",
-                "create",
-                "--head",
-                &branch,
-                "--base",
-                &target_branch,
-                "--title",
-                &title,
-                "--body",
-                &body,
-            ]);
-            if draft {
-                gh_cmd.arg("--draft");
-            }
-            let gh_res = gh_cmd.output();
-            let gh_out = match gh_res {
-                Ok(o) => o,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    return Err((
-                        code::SPAWN_FAILED.to_string(),
-                        "gh binary not found".to_string(),
-                        Value::Null,
-                    ));
-                }
-                Err(e) => {
-                    return Err((
-                        code::IO_ERROR.to_string(),
-                        format!("gh pr create failed: {e}"),
-                        Value::Null,
-                    ));
-                }
-            };
-            if !gh_out.status.success() {
-                let stderr = String::from_utf8_lossy(&gh_out.stderr).trim().to_string();
-                return Err((
-                    code::IO_ERROR.to_string(),
-                    format!("gh pr create failed: {stderr}"),
-                    json!({ "stderr": stderr }),
-                ));
-            }
-
-            let stdout = String::from_utf8_lossy(&gh_out.stdout);
-            let url = stdout
-                .lines()
-                .map(str::trim)
-                .rfind(|l| !l.is_empty())
-                .ok_or_else(|| {
-                    (
-                        code::IO_ERROR.to_string(),
-                        "gh pr create produced no output".to_string(),
-                        Value::Null,
-                    )
-                })?
-                .to_string();
-
-            let number: u64 = url
-                .trim_end_matches('/')
-                .rsplit('/')
-                .next()
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(|| {
-                    (
-                        code::IO_ERROR.to_string(),
-                        format!("could not parse pull request number from '{url}'"),
-                        Value::Null,
-                    )
-                })?;
-
-            Ok(TaskPr {
-                number,
-                url,
-                state: PrState::Open,
-                checks: PrChecks::None,
-                review: PrReview::None,
-                checked_at: None,
-            })
-        });
-
-    let res = match tokio::time::timeout(Duration::from_secs(60), push_and_create).await {
-        Ok(Ok(inner)) => inner,
-        Ok(Err(join_err)) => {
-            return (
-                Response::err(&req.id, code::INTERNAL, format!("join error: {join_err}")),
+    if let Err((c, m, details)) = run_cli("git", &wt, &["push", "-u", "origin", &branch]).await {
+        return if details.is_null() {
+            (Response::err(&req.id, &c, m), ConnEffect::default())
+        } else {
+            (
+                Response::err_with_details(&req.id, &c, m, details),
                 ConnEffect::default(),
-            );
-        }
-        Err(_) => {
-            return (
-                Response::err(&req.id, code::TIMEOUT, "pr open timed out after 60s"),
-                ConnEffect::default(),
-            );
-        }
-    };
+            )
+        };
+    }
 
-    let pr = match res {
-        Ok(pr) => pr,
+    let mut gh_args = vec![
+        "pr",
+        "create",
+        "--head",
+        &branch,
+        "--base",
+        &target_branch,
+        "--title",
+        &title,
+        "--body",
+        &body,
+    ];
+    if draft {
+        gh_args.push("--draft");
+    }
+
+    let gh_out = match run_cli("gh", &wt, &gh_args).await {
+        Ok(out) => out,
         Err((c, m, details)) => {
             return if details.is_null() {
                 (Response::err(&req.id, &c, m), ConnEffect::default())
@@ -2103,6 +2071,45 @@ pub async fn h_task_pr_open(ctx: &Ctx, req: &Request, params: &Value) -> (Respon
                 )
             };
         }
+    };
+
+    let stdout = String::from_utf8_lossy(&gh_out.stdout);
+    let url = match stdout.lines().map(str::trim).rfind(|l| !l.is_empty()) {
+        Some(l) => l.to_string(),
+        None => {
+            return (
+                Response::err(&req.id, code::IO_ERROR, "gh pr create produced no output"),
+                ConnEffect::default(),
+            );
+        }
+    };
+
+    let number: u64 = match url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(n) => n,
+        None => {
+            return (
+                Response::err(
+                    &req.id,
+                    code::IO_ERROR,
+                    format!("could not parse pull request number from '{url}'"),
+                ),
+                ConnEffect::default(),
+            );
+        }
+    };
+
+    let pr = TaskPr {
+        number,
+        url,
+        state: PrState::Open,
+        checks: PrChecks::None,
+        review: PrReview::None,
+        checked_at: None,
     };
 
     let task = {
@@ -2178,111 +2185,72 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
         );
     }
 
-    let refresh_job = tokio::task::spawn_blocking(
-        move || -> Result<Vec<(String, TaskPr)>, (String, String, Value)> {
-            let mut results = Vec::new();
-            for (tid, src_repo, mut pr) in targets {
-                let mut gh_cmd = std::process::Command::new("gh");
-                gh_cmd.current_dir(&src_repo);
-                gh_cmd.args([
-                    "pr",
-                    "view",
-                    &pr.url,
-                    "--json",
-                    "state,reviewDecision,statusCheckRollup",
-                ]);
-                let gh_res = gh_cmd.output();
-                let gh_out = match gh_res {
-                    Ok(o) => o,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        return Err((
-                            code::SPAWN_FAILED.to_string(),
-                            "gh binary not found".to_string(),
-                            Value::Null,
-                        ));
-                    }
-                    Err(e) => {
-                        return Err((
-                            code::IO_ERROR.to_string(),
-                            format!("gh pr view failed: {e}"),
-                            Value::Null,
-                        ));
-                    }
-                };
-                if !gh_out.status.success() {
-                    let stderr = String::from_utf8_lossy(&gh_out.stderr).trim().to_string();
-                    return Err((
-                        code::IO_ERROR.to_string(),
-                        format!("gh pr view failed: {stderr}"),
-                        json!({ "stderr": stderr }),
-                    ));
-                }
-
-                let view_json: Value = serde_json::from_slice(&gh_out.stdout).map_err(|e| {
+    let mut refreshed_pairs = Vec::new();
+    for (tid, src_repo, mut pr) in targets {
+        let gh_out = match run_cli(
+            "gh",
+            &src_repo,
+            &[
+                "pr",
+                "view",
+                &pr.url,
+                "--json",
+                "state,reviewDecision,statusCheckRollup",
+            ],
+        )
+        .await
+        {
+            Ok(o) => o,
+            Err((c, m, details)) => {
+                return if details.is_null() {
+                    (Response::err(&req.id, &c, m), ConnEffect::default())
+                } else {
                     (
-                        code::IO_ERROR.to_string(),
-                        format!("failed to parse gh pr view JSON output: {e}"),
-                        Value::Null,
+                        Response::err_with_details(&req.id, &c, m, details),
+                        ConnEffect::default(),
                     )
-                })?;
-
-                if let Some(state_str) = view_json.get("state").and_then(|v| v.as_str()) {
-                    if let Some(st) = PrState::parse_gh(state_str) {
-                        pr.state = st;
-                    }
-                }
-
-                if let Some(rd_str) = view_json.get("reviewDecision").and_then(|v| v.as_str()) {
-                    pr.review = parse_review_decision(rd_str);
-                } else {
-                    pr.review = PrReview::None;
-                }
-
-                if let Some(checks_arr) = view_json
-                    .get("statusCheckRollup")
-                    .and_then(|v| v.as_array())
-                {
-                    pr.checks = rollup_status_checks(checks_arr);
-                } else {
-                    pr.checks = PrChecks::None;
-                }
-
-                pr.checked_at = Some(Utc::now());
-                results.push((tid, pr));
+                };
             }
-            Ok(results)
-        },
-    );
+        };
 
-    let res = match tokio::time::timeout(Duration::from_secs(60), refresh_job).await {
-        Ok(Ok(inner)) => inner,
-        Ok(Err(join_err)) => {
-            return (
-                Response::err(&req.id, code::INTERNAL, format!("join error: {join_err}")),
-                ConnEffect::default(),
-            );
-        }
-        Err(_) => {
-            return (
-                Response::err(&req.id, code::TIMEOUT, "pr refresh timed out after 60s"),
-                ConnEffect::default(),
-            );
-        }
-    };
-
-    let refreshed_pairs = match res {
-        Ok(pairs) => pairs,
-        Err((c, m, details)) => {
-            return if details.is_null() {
-                (Response::err(&req.id, &c, m), ConnEffect::default())
-            } else {
-                (
-                    Response::err_with_details(&req.id, &c, m, details),
+        let view_json: Value = match serde_json::from_slice(&gh_out.stdout) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::IO_ERROR,
+                        format!("failed to parse gh pr view JSON output: {e}"),
+                    ),
                     ConnEffect::default(),
-                )
-            };
+                );
+            }
+        };
+
+        if let Some(state_str) = view_json.get("state").and_then(|v| v.as_str()) {
+            if let Some(st) = PrState::parse_gh(state_str) {
+                pr.state = st;
+            }
         }
-    };
+
+        if let Some(rd_str) = view_json.get("reviewDecision").and_then(|v| v.as_str()) {
+            pr.review = parse_review_decision(rd_str);
+        } else {
+            pr.review = PrReview::None;
+        }
+
+        if let Some(checks_arr) = view_json
+            .get("statusCheckRollup")
+            .and_then(|v| v.as_array())
+        {
+            pr.checks = rollup_status_checks(checks_arr);
+        } else {
+            pr.checks = PrChecks::None;
+        }
+
+        pr.checked_at = Some(Utc::now());
+        refreshed_pairs.push((tid, pr));
+    }
 
     let refreshed_tasks = {
         let mut s = ctx.store.write().unwrap();
