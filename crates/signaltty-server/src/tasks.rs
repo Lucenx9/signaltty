@@ -1191,6 +1191,29 @@ fn close_worker(s: &mut Store, pane_id: &str) {
     s.clear_attention(pane_id, "task_closed");
 }
 
+/// Delete the task branch after its worktree is gone. A failed worktree
+/// removal keeps the branch checked out, so deleting is skipped and the
+/// first error stays the one reported. Returns whether the branch is gone.
+fn delete_task_branch(src_str: &str, branch: &str, cleanup_error: &mut Option<String>) -> bool {
+    if cleanup_error.is_some() {
+        return false;
+    }
+    match crate::git::git_output(src_str, &["branch", "-D", "--", branch]) {
+        Ok(out) if out.status.success() => true,
+        Ok(out) => {
+            *cleanup_error = Some(format!(
+                "branch deletion failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+            false
+        }
+        Err(e) => {
+            *cleanup_error = Some(format!("branch deletion error: {e}"));
+            false
+        }
+    }
+}
+
 /// Source worktree must hold no uncommitted work. A failed check is
 /// `IO_ERROR`, never "clean".
 fn source_clean(wt_str: &str) -> Result<(), (&'static str, String)> {
@@ -1379,20 +1402,8 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         // Remove worktree (herdr-guarded: see remove_task_worktree).
         let mut cleanup_error = remove_task_worktree(&src_str, &worktree_path);
 
-        // Delete branch if requested and not pre-existing
-        if should_delete_branch {
-            let b_out = crate::git::git_output(&src_str, &["branch", "-D", "--", &branch]);
-            if let Ok(ref out) = b_out {
-                if !out.status.success() {
-                    cleanup_error = Some(format!(
-                        "branch deletion failed: {}",
-                        String::from_utf8_lossy(&out.stderr).trim()
-                    ));
-                }
-            } else if let Err(ref e) = b_out {
-                cleanup_error = Some(format!("branch deletion error: {e}"));
-            }
-        }
+        let branch_deleted =
+            should_delete_branch && delete_task_branch(&src_str, &branch, &mut cleanup_error);
 
         let finish_error = cleanup_error
             .as_ref()
@@ -1403,7 +1414,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
                 outcome: DispositionOutcome::Discarded,
                 target_ref: None,
                 merged_sha: None,
-                branch_deleted: Some(should_delete_branch),
+                branch_deleted: Some(branch_deleted),
                 at: Some(Utc::now()),
             };
             if let Err((c, m)) = s.task_finish_record(&p.task_id, disposition, finish_error) {
@@ -1694,19 +1705,8 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
 
     // Delete branch if requested and not pre-existing
     let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch && unchanged;
-    if should_delete_branch {
-        let b_out = crate::git::git_output(&src_str, &["branch", "-D", "--", &branch]);
-        if let Ok(ref out) = b_out {
-            if !out.status.success() {
-                cleanup_error = Some(format!(
-                    "branch deletion failed: {}",
-                    String::from_utf8_lossy(&out.stderr).trim()
-                ));
-            }
-        } else if let Err(ref e) = b_out {
-            cleanup_error = Some(format!("branch deletion error: {e}"));
-        }
-    }
+    let branch_deleted =
+        should_delete_branch && delete_task_branch(&src_str, &branch, &mut cleanup_error);
 
     let finish_error = cleanup_error
         .as_ref()
@@ -1717,7 +1717,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
             outcome: DispositionOutcome::Merged,
             target_ref: Some(target.clone()),
             merged_sha: Some(head_sha.clone()),
-            branch_deleted: Some(should_delete_branch),
+            branch_deleted: Some(branch_deleted),
             at: Some(Utc::now()),
         };
         if let Err((c, m)) = s.task_finish_record(&p.task_id, disposition, finish_error) {
