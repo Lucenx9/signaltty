@@ -3,6 +3,10 @@
 
 use std::process::Command;
 
+pub fn git_output(cwd: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+    Command::new("git").arg("-C").arg(cwd).args(args).output()
+}
+
 use signaltty_core::model::GitInfo;
 
 fn git(cwd: &str, args: &[&str]) -> Option<String> {

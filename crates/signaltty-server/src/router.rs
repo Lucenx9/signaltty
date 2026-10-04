@@ -208,10 +208,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::TASK_FILE_DIFF => {
             return crate::tasks::h_task_file_diff(ctx, req, &req.params).await
         }
-        method::TASK_FINISH => Err((
-            code::BAD_PARAMS.to_string(),
-            format!("method '{}' not implemented in this phase", req.method),
-        )),
+        method::TASK_FINISH => return crate::tasks::h_task_finish(ctx, req, &req.params).await,
         _ => Err((
             code::UNKNOWN_METHOD.to_string(),
             format!("unknown method '{}'", req.method),

@@ -540,6 +540,13 @@ pub fn h_task_cancel(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Con
     match s.task_cancel(&p.task_id) {
         Ok(_) => {
             let task = s.tasks.get(&p.task_id).unwrap();
+            let pane_id = task.pane_id.clone();
+            if let Some(ref pid) = pane_id {
+                ctx.ptys.destroy(pid, Some("TERM"));
+                s.set_exited(pid, Some(0));
+            }
+            ctx.mark_persist();
+            let task = s.tasks.get(&p.task_id).unwrap();
             (
                 Response::ok(&req.id, json!({ "task": task })),
                 ConnEffect::default(),
@@ -869,5 +876,375 @@ pub async fn h_task_file_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Resp
             ConnEffect::default(),
         ),
         Err((c, m)) => (Response::err(&req.id, &c, m), ConnEffect::default()),
+    }
+}
+
+pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::TaskFinish = match decode(params) {
+        Ok(p) => p,
+        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+    };
+
+    let mode = p.mode.as_str();
+    if mode != "merge" && mode != "discard" {
+        return (
+            Response::err(
+                &req.id,
+                code::BAD_PARAMS,
+                format!("unsupported finish mode '{mode}', must be 'merge' or 'discard'"),
+            ),
+            ConnEffect::default(),
+        );
+    }
+
+    // Step 1: Read task under lock and validate preliminary rules
+    let (task_snapshot, pane_id, worktree_path, source_repo, branch, preexisting_branch) = {
+        let s = ctx.store.read().unwrap();
+        let task = match s.tasks.get(&p.task_id) {
+            Some(t) => t,
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        };
+
+        if task.disposition.outcome != signaltty_core::model::DispositionOutcome::None {
+            return (
+                Response::err(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    format!(
+                        "task '{}' already has a disposition ({:?})",
+                        p.task_id, task.disposition.outcome
+                    ),
+                ),
+                ConnEffect::default(),
+            );
+        }
+
+        if mode == "merge" && task.state != TaskState::Completed {
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    format!(
+                        "task must be completed to merge, currently {}",
+                        task.state.as_str()
+                    ),
+                    json!({ "state": task.state.as_str() }),
+                ),
+                ConnEffect::default(),
+            );
+        }
+
+        // Check foreign live panes inside the worktree
+        let wt_str = task.worktree_path.to_string_lossy().to_string();
+        for (pid, pane) in &s.panes {
+            if Some(pid) != task.pane_id.as_ref()
+                && matches!(pane.live, LiveState::Live)
+                && pane.cwd.starts_with(&wt_str)
+            {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::PANES_ALIVE,
+                        format!("foreign live pane '{pid}' is inside task worktree '{wt_str}'"),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        }
+
+        (
+            task.clone(),
+            task.pane_id.clone(),
+            task.worktree_path.clone(),
+            task.source_repo.clone(),
+            task.branch.clone(),
+            task.preexisting_branch,
+        )
+    };
+
+    let wt_str = worktree_path.to_string_lossy().to_string();
+    let src_str = source_repo.to_string_lossy().to_string();
+
+    if mode == "discard" {
+        let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch;
+
+        // Transition task to Canceled (if non-terminal) and record disposition first,
+        // so pane exit does not trigger auto-failure
+        let task_clone = {
+            let mut s = ctx.store.write().unwrap();
+            let Some(task) = s.tasks.get_mut(&p.task_id) else {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            };
+            let now = Utc::now();
+            if !task.state.is_terminal() {
+                let _ = task.transition_to(TaskState::Canceled, now);
+            }
+            task.disposition = Disposition {
+                outcome: signaltty_core::model::DispositionOutcome::Discarded,
+                target_ref: None,
+                merged_sha: None,
+                branch_deleted: Some(should_delete_branch),
+                at: Some(now),
+            };
+            task.updated_at = now;
+            let task_clone = task.clone();
+            let _ = s.emit(
+                signaltty_proto::event::TASK_UPDATED,
+                json!({ "task": task_clone }),
+            );
+            task_clone
+        };
+
+        // Close worker pane if live
+        if let Some(ref pid) = pane_id {
+            ctx.ptys.destroy(pid, Some("TERM"));
+            let mut s = ctx.store.write().unwrap();
+            s.set_exited(pid, Some(0));
+        }
+
+        // Remove worktree
+        let _ = crate::git::git_output(&src_str, &["worktree", "remove", "--force", &wt_str]);
+        if worktree_path.exists() {
+            let _ = std::fs::remove_dir_all(&worktree_path);
+        }
+        let _ = crate::git::git_output(&src_str, &["worktree", "prune"]);
+
+        // Delete branch if requested and not pre-existing
+        if should_delete_branch {
+            let _ = crate::git::git_output(&src_str, &["branch", "-D", &branch]);
+        }
+
+        ctx.mark_persist();
+        return (
+            Response::ok(&req.id, json!({ "task": task_clone })),
+            ConnEffect::default(),
+        );
+    }
+
+    // mode == "merge"
+    // Target resolution
+    let target = match p
+        .target_ref
+        .as_deref()
+        .or(task_snapshot.target_branch.as_deref())
+    {
+        Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+        _ => {
+            return (
+                Response::err(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    "task started with detached HEAD; explicit target_ref required",
+                ),
+                ConnEffect::default(),
+            );
+        }
+    };
+
+    // Verify checked-out branch in source repo
+    let cur_branch = match crate::git::git_output(&src_str, &["branch", "--show-current"]) {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        Err(e) => {
+            return (
+                Response::err(&req.id, code::IO_ERROR, format!("git branch failed: {e}")),
+                ConnEffect::default(),
+            );
+        }
+    };
+
+    if cur_branch != target {
+        return (
+            Response::err_with_details(
+                &req.id,
+                code::BAD_PARAMS,
+                format!(
+                    "source repo checked out branch '{cur_branch}' does not match target branch '{target}'"
+                ),
+                json!({ "expected": target, "actual": cur_branch }),
+            ),
+            ConnEffect::default(),
+        );
+    }
+
+    // Check source worktree dirt
+    if !p.ignore_dirty.unwrap_or(false) {
+        if let Ok(out) = crate::git::git_output(&wt_str, &["status", "--porcelain"]) {
+            let status = String::from_utf8_lossy(&out.stdout);
+            if !status.trim().is_empty() {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::BAD_PARAMS,
+                        "source worktree is dirty (uncommitted/staged/untracked changes would be lost)",
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        }
+    }
+
+    // Check target checkout dirt (tracked modifications)
+    if let Ok(out) = crate::git::git_output(
+        &src_str,
+        &["status", "--porcelain=v1", "--untracked-files=no"],
+    ) {
+        let status = String::from_utf8_lossy(&out.stdout);
+        if !status.trim().is_empty() {
+            return (
+                Response::err(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    "target checkout is dirty (tracked modifications present)",
+                ),
+                ConnEffect::default(),
+            );
+        }
+    }
+
+    // Execute merge
+    let merge_out =
+        match crate::git::git_output(&src_str, &["merge", "--no-ff", "--no-edit", &branch]) {
+            Ok(out) => out,
+            Err(e) => {
+                return (
+                    Response::err(&req.id, code::IO_ERROR, format!("git merge failed: {e}")),
+                    ConnEffect::default(),
+                );
+            }
+        };
+
+    if !merge_out.status.success() {
+        // Collect conflicted files
+        let conflicted_files: Vec<String> = if let Ok(diff_out) =
+            crate::git::git_output(&src_str, &["diff", "--name-only", "--diff-filter=U"])
+        {
+            String::from_utf8_lossy(&diff_out.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Abort merge
+        let _ = crate::git::git_output(&src_str, &["merge", "--abort"]);
+
+        // Verify target clean
+        let target_clean = crate::git::git_output(
+            &src_str,
+            &["status", "--porcelain=v1", "--untracked-files=no"],
+        )
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().is_empty())
+        .unwrap_or(true);
+        if !target_clean {
+            tracing::warn!("target repo remained dirty after merge --abort");
+        }
+
+        return (
+            Response::err_with_details(
+                &req.id,
+                code::MERGE_CONFLICT,
+                "merge conflict encountered during task.finish",
+                json!({ "conflicted": conflicted_files }),
+            ),
+            ConnEffect::default(),
+        );
+    }
+
+    // Get merge commit sha
+    let head_sha = match crate::git::git_output(&src_str, &["rev-parse", "HEAD"]) {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        Err(_) => String::new(),
+    };
+
+    // Close worker pane
+    if let Some(ref pid) = pane_id {
+        ctx.ptys.destroy(pid, Some("TERM"));
+        let mut s = ctx.store.write().unwrap();
+        s.set_exited(pid, Some(0));
+    }
+
+    // Clean up worktree
+    let mut cleanup_error = None;
+    let rm_out = crate::git::git_output(&src_str, &["worktree", "remove", "--force", &wt_str]);
+    let fs_rm = if worktree_path.exists() {
+        std::fs::remove_dir_all(&worktree_path)
+    } else {
+        Ok(())
+    };
+    let _ = crate::git::git_output(&src_str, &["worktree", "prune"]);
+
+    if let Err(e) = fs_rm {
+        cleanup_error = Some(format!("failed to remove worktree directory: {e}"));
+    } else if let Ok(ref out) = rm_out {
+        if !out.status.success() && worktree_path.exists() {
+            cleanup_error = Some(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+    }
+
+    // Delete branch if requested and not pre-existing
+    let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch;
+    if should_delete_branch {
+        let _ = crate::git::git_output(&src_str, &["branch", "-D", &branch]);
+    }
+
+    // Update task
+    let mut s = ctx.store.write().unwrap();
+    if let Some(task) = s.tasks.get_mut(&p.task_id) {
+        let now = Utc::now();
+        task.disposition = Disposition {
+            outcome: signaltty_core::model::DispositionOutcome::Merged,
+            target_ref: Some(target.clone()),
+            merged_sha: Some(head_sha.clone()),
+            branch_deleted: Some(should_delete_branch),
+            at: Some(now),
+        };
+        task.updated_at = now;
+        let task_clone = task.clone();
+        let _ = s.emit(
+            signaltty_proto::event::TASK_UPDATED,
+            json!({ "task": task_clone }),
+        );
+        drop(s);
+        ctx.mark_persist();
+
+        let mut res = json!({
+            "task": task_clone,
+            "merge": {
+                "target": target,
+                "sha": head_sha,
+            }
+        });
+        if let Some(err) = cleanup_error {
+            res["cleanup_error"] = json!(err);
+        }
+
+        (Response::ok(&req.id, res), ConnEffect::default())
+    } else {
+        (
+            Response::err(
+                &req.id,
+                code::NO_SUCH_TASK,
+                format!("no such task '{}'", p.task_id),
+            ),
+            ConnEffect::default(),
+        )
     }
 }
