@@ -119,10 +119,42 @@ re-sequence from 1 with a dropped-floor, so every pre-restart cursor
 reads as dropped (Phase 7's cursor-reset line must keep this: see
 `dropped_floor`).
 
-Performance: reconciling costs grid extraction per batch. Measured
-`feed()` throughput (release, 80×24): shell-like 3k lines ≈ 125 ms (was
-≈ 2 ms raw-splitting), TUI repaint 3k ≈ 49 ms (was ≈ 1 ms), bulk 1 MiB
-≈ 0.56 s (was ≈ 9 ms). ~30–60× relative, but absolute cost stays
-sub-millisecond per PTY read and microseconds per line — invisible next
-to PTY delivery itself, and it buys exact reads (50×-rewritten spinner =
-1 line; 500-char wrapped lines survive bit-for-bit).
+Performance: `feed()` walks PTY bytes on the legacy cut points
+(CR/LF + one-visual-row budget) and classifies each batch. Plain-ASCII
+batches in Ground state fuse into fast spans that are captured from the
+input side with zero grid reads; everything else reconciles from the
+grid exactly as before, so every legacy reconcile observes the same grid
+state at the same byte offset as the pre-fast-path code.
+
+The fast row simulation mirrors vt100 for ASCII (width-1 cells, wrap at
+`col == cols`, CR resets col, LF/VT/FF scroll at the bottom margin) and
+commits only after the simulated end cursor matches the parser's real
+cursor; any mismatch falls back to grid truth, and debug builds assert
+full grid sync after every feed. Groundness, partial UTF-8 (exact
+positional validity per utf8parse, not a counter) and the two sticky
+vt100 modes that affect plain layout (scroll region `CSI r`, origin mode
+`CSI ? 6 h` — vt100 ignores LNM/IRM/wrap-suppression/charsets, so those
+need no tracking) are scanned left to right with carry across feeds.
+Debug `cargo test` therefore cross-checks the fast path continuously:
+the fuzzer-hostile cases (repetitive streams, blank scrolls, split
+sequences, sticky modes, chunked PTY fragmentation) are pinned in
+`headless.rs` tests.
+
+Measured `feed()` throughput (release, 80×24, `cargo run --release -p
+signaltty-term --example ring_perf`): bulk 1 MiB ≈ 22 ms (vt100 floor
+≈ 13 ms; was ≈ 1.1 s reconciling per batch), shell-like 3k lines
+≈ 1.3 ms (floor ≈ 0.8 ms; was ≈ 63 ms), TUI repaint 3k ≈ 0.4 ms (floor
+≈ 0.3 ms; was ≈ 12 ms). Bulk is ~1.6× the parse floor — the ring keeps
+one String alloc per captured line (unavoidable: history owns the text)
+plus one screen-shift memmove per scroll. A release-only regression gate
+(`fast_ring_perf_regression`, ignored by default: `cargo test --release
+-p signaltty-term -- --ignored fast_ring_perf`) fails only on an
+algorithmic relapse toward per-batch reconciliation.
+
+Two legacy-matcher quirks are intentionally not preserved (no test
+pinned them; both were bugs): repetitive streams no longer duplicate
+lines (30×`"y"` read back as 41), and a blank LF on a full screen moves
+the top line to history instead of dropping it. vt100's own scrollback
+buffer was evaluated and rejected: its public API exposes only a
+screen-sized viewport with an offset, so scrolled-off rows are not
+enumerable without O(history) paging per feed.
