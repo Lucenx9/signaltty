@@ -1478,27 +1478,32 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
     };
     {
         let s = ctx.store.read().unwrap();
-        let Some(pane) = s.panes.get(&pid) else {
+        let Some(_pane) = s.panes.get(&pid) else {
             return Err((code::NO_SUCH_PANE.to_string(), pid.clone()));
         };
         // Harness mismatch check:
-        // If the pane already has an established non-unknown agent kind,
-        // and the incoming event's agent adapter kind does not match it:
-        // drop the event, never relabel or mutate the pane.
+        // 1. Agent header vs payload agent mismatch
         let incoming_kind = adapter.metadata().kind;
-        let is_specific = |k: signaltty_core::model::AgentKind| {
-            matches!(
-                k,
-                signaltty_core::model::AgentKind::Codex
-                    | signaltty_core::model::AgentKind::Claude
-                    | signaltty_core::model::AgentKind::Opencode
-                    | signaltty_core::model::AgentKind::Cursor
-            )
+        let payload_agent = event
+            .payload
+            .get("agent")
+            .and_then(|v| v.as_str())
+            .or_else(|| event.payload.get("harness").and_then(|v| v.as_str()));
+        let payload_mismatch = if let Some(pa) = payload_agent {
+            pa != agent && pa != incoming_kind.as_str()
+        } else {
+            false
         };
-        if is_specific(pane.agent.kind)
-            && is_specific(incoming_kind)
-            && pane.agent.kind != incoming_kind
-        {
+
+        // 2. Task wrapper-identity vs hook-harness mismatch
+        let task_mismatch = s.tasks.values().any(|t| {
+            t.pane_id.as_deref() == Some(&pid)
+                && t.agent
+                    .as_deref()
+                    .is_some_and(|a| a != incoming_kind.as_str())
+        });
+
+        if payload_mismatch || task_mismatch {
             return Ok((
                 json!({
                     "accepted": false,
