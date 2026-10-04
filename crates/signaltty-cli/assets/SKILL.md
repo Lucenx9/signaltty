@@ -60,6 +60,61 @@ signaltty wait --pane "$A" --until done --timeout 1800
 signaltty pane read "$A" --mode tail --lines 50
 ```
 
+## Orchestrating other agents
+
+When you are the orchestrator in a pane (work that splits into independent,
+mergeable pieces, each in its own worktree), spawn worker tasks instead of
+doing it all yourself. Do one thing yourself when the change is small,
+needs your checkout, or the pieces cannot be reviewed separately.
+
+The loop — exact commands (`--json` + `jq` to capture ids):
+
+```sh
+# 1. Start N tasks back-to-back (each returns at `pending`; prompt is submitted for you).
+A=$(signaltty --json task start --repo "$REPO" --context "$CTX" --label "api" \
+  --objective "Add the endpoint. Acceptance: cargo test passes." -- sh | jq -r .task.id)
+PA=$(signaltty --json task get "$A" | jq -r .task.pane_id)   # worker pane when needed
+# 2. Wait until all settle (default: terminal OR input_required).
+signaltty --json task wait --context "$CTX" --timeout 1800
+# 3. A task at input_required ended its turn without reporting (or went silent,
+#    or needs a permission): inspect, then follow up or answer.
+signaltty --json task get "$A" | jq '{state, status_reason}'
+signaltty --json pane read "$PA" --mode rendered --after-seq "$SEQ"  # incremental; feed next_seq back
+signaltty --json attention                          # who needs the user, ranked
+signaltty --json pane submit "$PA" --text "please report your result now"  # back to working
+signaltty decision answer --pane "$PA" --decision DID --option OID  # permissions only
+# 4. Review each diff against its own base, then finish explicitly.
+signaltty --json task diff "$A"
+signaltty --json task finish "$A" --merge                  # or --discard; --delete-branch only for task branches
+```
+
+Rules: cap is 4 parallel tasks (over-cap → `RATE_LIMITED`, nothing
+created). Never auto-merge: read `task diff` first. Workers report via
+`signaltty report --status completed|failed|rejected --summary …` (it reads
+`$SIGNALTTY_TASK` inside the worker pane). `task.wait` on a context ends at
+the first `input_required` too — loop until everything is terminal.
+`signaltty schema` is the exact contract when in doubt.
+
+Worked example (3 workers, one needs a nudge):
+
+```sh
+CTX=tctx_demo; REPO=$PWD
+for i in 1 2 3; do
+  signaltty --json task start --repo "$REPO" --context "$CTX" --label "worker-$i" \
+    --objective "task $i: <objective>. Acceptance: <criteria>." -- sh > "task$i.json"
+done
+signaltty --json task wait --context "$CTX" --until working --timeout 300   # background ready + submit
+# ... workers work; one ends its turn silently ...
+signaltty --json task wait --context "$CTX" --timeout 3600                     # ends at input_required
+T3=$(jq -r .task.id task3.json); P3=$(jq -r .pane.id task3.json)
+signaltty --json pane submit "$P3" --text "please report your result now"
+signaltty --json task wait --context "$CTX" --timeout 3600                     # all terminal
+for f in task1 task2 task3; do signaltty --json task diff "$(jq -r .task.id $f.json)"; done
+signaltty --json task finish "$(jq -r .task.id task1.json)" --merge
+signaltty --json task finish "$(jq -r .task.id task2.json)" --merge --delete-branch
+signaltty --json task finish "$(jq -r .task.id task3.json)" --discard
+```
+
 ## Reuse a pane for new work
 
 Capture the server's baseline before input, then wait for a newer matching transition:
