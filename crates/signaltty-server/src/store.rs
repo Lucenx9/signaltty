@@ -580,9 +580,13 @@ impl Store {
     }
 
     pub fn task_create(&mut self, task: Task) -> StoredEvent {
-        let task_clone = task.clone();
+        let payload = json!({
+            "task_id": task.id,
+            "context_id": task.context_id,
+            "task": task,
+        });
         self.tasks.insert(task.id.clone(), task);
-        self.emit(event::TASK_CREATED, json!({ "task": task_clone }))
+        self.emit(event::TASK_CREATED, payload)
     }
 
     fn emit_task_updated(&mut self, task: &Task, prev_state: Option<TaskState>) -> StoredEvent {
@@ -1056,6 +1060,11 @@ mod tests {
         // 1. Create
         let ev = store.task_create(task);
         assert_eq!(ev.name, "task.created");
+        assert_eq!(ev.payload["task_id"], task_id.as_str());
+        assert_eq!(
+            ev.payload["context_id"],
+            store.tasks[&task_id].context_id.as_str()
+        );
         assert!(store.tasks.contains_key(&task_id));
 
         // 2. Background ready
