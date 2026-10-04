@@ -35,11 +35,9 @@ impl AgentAdapter for CodexAdapter {
                 attention: Some(Attention::None),
                 message: None,
             },
-            "PreToolUse" | "PostToolUse" | "PreCompact" | "PostCompact" => LifecycleDecision {
-                lifecycle: Some(Lifecycle::Working),
-                attention: None,
-                message: None,
-            },
+            "PreToolUse" | "PostToolUse" | "PreCompact" | "PostCompact" | "SubagentStop" => {
+                LifecycleDecision::default()
+            }
             "PermissionRequest" => LifecycleDecision {
                 lifecycle: Some(Lifecycle::Blocked),
                 attention: Some(Attention::PermissionRequired),

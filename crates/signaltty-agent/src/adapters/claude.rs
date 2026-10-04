@@ -33,11 +33,9 @@ impl AgentAdapter for ClaudeAdapter {
                 attention: Some(Attention::None),
                 message: None,
             },
-            "PreToolUse" | "PostToolUse" | "PreCompact" => LifecycleDecision {
-                lifecycle: Some(Lifecycle::Working),
-                attention: None,
-                message: None,
-            },
+            "PreToolUse" | "PostToolUse" | "PreCompact" | "SubagentStop" => {
+                LifecycleDecision::default()
+            }
             "PermissionRequest" => LifecycleDecision {
                 lifecycle: Some(Lifecycle::Blocked),
                 attention: Some(Attention::PermissionRequired),
