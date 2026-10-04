@@ -10,7 +10,7 @@ Cursor CLIs + hooks, OSC 9/99/777, `portable-pty`/`vt100`/
 `notify-rust`/`ashpd`, XDG), docs 01–12, ADRs. Exit criteria: every
 choice below cites a verified upstream fact, not an assumption.
 
-### Phase 1 — Multiplexer core (next)
+### Phase 1 — Multiplexer core ✅ done
 
 Rust workspace (`core, proto, term, server, cli, testkit`); server
 owns PTYs via `portable-pty`; JSONL Unix-socket IPC `signaltty/1`;
@@ -21,7 +21,7 @@ notify, wait, status, daemon`). Exit criteria: useful as a
 lightweight multiplexer; GUI closure/crash never kills panes;
 integration tests with real PTYs green.
 
-### Phase 2 — Agent awareness
+### Phase 2 — Agent awareness ✅ done
 
 `signaltty-agent`: `AgentAdapter` trait + Codex/Claude/OpenCode/
 Cursor/Generic impls; hook shims + `integration install`; OSC 9/99/777
@@ -53,6 +53,29 @@ stdin, bounded concurrency, timeouts, `plugin.list`/`plugin.reload`)
 orchestration via semantic calls (new/split/wait/read/notify).
 Documented trust model (runs as user, no sandbox v1). Deferred to
 future work: read-only automation tokens, sandboxing spike.
+
+### Shipped since
+
+- `001-priority-sorted-sidebar`
+- `002-self-printing-schema`
+- `003-inline-approvals`
+- `004-close-workspace-gui`
+- `005-agent-manifests-proc`
+- `006-agent-skill-handles-audit`
+- `007-notif-actions-diff`
+- `008-qa-reliability`
+- `009-ui-refinement`
+- `010-automatic-agent-hooks`
+- `011-codex-pane-runtime`
+- `012-workspace-visual-hierarchy`
+- `013-local-agent-workflows`
+- `014-file-diff-review`
+- `015-agent-ready-repository`
+- `016-agent-event-recovery`
+- `017-themes`
+- `018-orchestrator`
+- `019-task-board`
+
 
 ## Known technical risks
 
