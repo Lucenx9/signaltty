@@ -49,7 +49,7 @@ are new tasks in the same context.
 | `pending → working` | background ready-wait + submit accepted (server-owned; survives client disconnect; cancelled by cancel/discard/shutdown) |
 | `pending → failed` | spawn/submit/ready failure, with evidence (`{stage, …}`; restart recovery uses `stage: "restart"`) |
 | `pending/working/input_required → canceled` | `task.cancel`, or `finish --discard` from non-terminal |
-| `working ⇄ input_required` | worker blocked hook ⇄ answer/activity; ALSO `working → input_required` on worker lifecycle `done` with no report (`{reason: "turn_ended_without_report", last_message?}`), and `input_required → working` on an accepted follow-up submit |
+| `working ⇄ input_required` | worker blocked hook ⇄ answer/activity; ALSO `working → input_required` on worker lifecycle `done` with no report (`{reason: "turn_ended_without_report", last_message?}`), on silent-worker watchdog expiry (`{reason: "worker_silent", timeout_s}`), and `input_required → working` on an accepted follow-up submit |
 | `working/input_required → completed/failed/rejected` | `task.report` status |
 | `working/input_required/pending → failed` | worker pane death, restart recovery (evidence, once) |
 

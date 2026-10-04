@@ -111,7 +111,11 @@ research-external §workmux). Steps, in order:
 1. Cap check: non-terminal task count < `max_parallel_tasks` (default 4; server
    `--max-tasks` / config), else synchronous `RATE_LIMITED` error — before
    creating anything (backpressure stays synchronous even though start is async).
-2. Resolve `base_ref` (default `HEAD`; `fetch_first` runs `git fetch origin`
+2. Ref & branch validation: `base_ref` and `branch` (if provided) are validated
+   against git reference rules via `git check-ref-format` (rejecting leading `-`,
+   `--`, and illegal ref control characters; returns synchronous `BAD_PARAMS` before
+   any git or disk operations).
+   Resolve `base_ref` (default `HEAD`; `fetch_first` runs `git fetch origin`
    first, Conductor-style) → record `base_sha` AND `target_branch` = the source
    repo's currently checked-out branch (detached HEAD → `target_branch` unset).
    Empty repo / unresolvable ref → failed task with evidence (nothing on disk
@@ -240,6 +244,32 @@ Discard:
 checkout + branch preserved for inspection (the "stop, keep everything" path).
 Terminal → `BAD_PARAMS`. (Discard = cancel + remove worktree; separate verbs,
 separate intents.)
+
+### Hook receiver and adapter integration
+
+- **Harness mismatch drop**: When a pane has been identified with a specific agent
+  harness (e.g. `codex`), hook events from an incompatible harness (e.g. `claude`)
+  are rejected without modifying pane state or agent kind:
+  `{"accepted": false, "dropped": true, "reason": "harness_mismatch"}`.
+- **Unparseable / unrecognized hook drop**: Malformed or unhandled hook payloads that
+  do not convey lifecycle, attention, session identity, notification, or decision
+  data are dropped without mutating state:
+  `{"accepted": false, "dropped": true, "reason": "unrecognized_hook"}`.
+- **`last_assistant_message` capture**: `Stop` and `agent-turn-complete` hook payloads
+  containing `last_assistant_message` record this text into pane `last_message` and
+  task evidence `last_message` when a turn ends without a structured report.
+- **Permission & Notification text flow**: `PermissionRequest` and `Notification` prompt
+  or message text flows into pane `last_message` and appears immediately in
+  `attention.pending` and UI listings to indicate what action is blocked.
+
+### Silent-worker watchdog
+
+- A task in `working` state with no hook events and no PTY output for
+  `worker_silent_timeout_s` (config `worker_silent_timeout_s`, CLI `--worker-silent-timeout`,
+  environment `SIGNALTTY_WORKER_SILENT_TIMEOUT_S`, default 600s / 10 minutes; set to `0`
+  to disable) automatically transitions to `input_required` with
+  `status_reason: {"reason": "worker_silent", "timeout_s": N}` so the orchestrator
+  wait loop is notified rather than hanging indefinitely.
 
 ## Events
 
