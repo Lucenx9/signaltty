@@ -426,6 +426,7 @@ mod tests {
             finish_error: None,
             worker_pid: None,
             worker_cmd: None,
+            client_request_id: None,
             created_at: now,
             updated_at: now,
         }

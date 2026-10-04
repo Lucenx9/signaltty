@@ -98,10 +98,16 @@ recency — the same order `focus.next_unread` uses for its single winner
   "acceptance_criteria?": ["…"], "output_format?": "…"},
  "agent?": "claude|codex|…", "argv?": ["…"], "label?": "…",
  "parent_pane_id?": "pane_…", "context_id?": "tctx_…",
- "repo": "/abs/path", "base_ref?": "HEAD", "fetch_first?": false,
+ "client_request_id?": "…", "repo": "/abs/path", "base_ref?": "HEAD", "fetch_first?": false,
  "branch?": "…", "path?": "/abs/worktree/path",
  "ready_timeout_s?": 30, "stall_timeout_s?": 5}
 ```
+
+`client_request_id` is an optional idempotency key: a later start with the same
+key (also after a server restart; it is stored on the task) returns the
+existing `{task, pane}` and creates no second worktree, pane or task (`pane` is
+`null` when the task has none, e.g. after a restart). A different key, or none,
+starts a new task.
 
 → `{task, pane}` with the task `pending`. Steps 1–4 run synchronously (fast,
 bounded); step 5 runs server-side in the background (owned by the server —

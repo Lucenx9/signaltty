@@ -178,6 +178,7 @@ async fn snapshot_roundtrips_orchestrator_tasks_and_lineage() {
         finish_error: None,
         worker_pid: Some(1234),
         worker_cmd: Some(vec!["sh".into()]),
+        client_request_id: None,
         created_at: now,
         updated_at: now,
     };
@@ -1950,5 +1951,46 @@ async fn pane_spawn_unknown_parent_is_no_such_pane() {
     );
     let st = c.call("server.status", json!({})).await.unwrap();
     assert_eq!(st["live_panes"], 0);
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn task_start_client_request_id_is_idempotent_across_restart() {
+    let repo = TempGitRepo::new();
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let params = |id: Option<&str>| {
+        let mut p = json!({
+            "repo": repo.path().to_string_lossy(),
+            "contract": {"objective": "idempotent"},
+            "argv": ["sleep", "30"],
+        });
+        if let Some(id) = id {
+            p["client_request_id"] = json!(id);
+        }
+        p
+    };
+    let first = c.call("task.start", params(Some("req-1"))).await.unwrap();
+    let again = c.call("task.start", params(Some("req-1"))).await.unwrap();
+    assert_eq!(first["task"]["id"], again["task"]["id"]);
+    assert_eq!(first["pane"]["id"], again["pane"]["id"]);
+    assert_eq!(first["task"]["client_request_id"], "req-1");
+    let st = c.call("server.status", json!({})).await.unwrap();
+    assert_eq!(st["live_panes"], 1, "no second pane");
+    let list = c.call("task.list", json!({})).await.unwrap();
+    assert_eq!(list["tasks"].as_array().unwrap().len(), 1);
+
+    let other = c.call("task.start", params(Some("req-2"))).await.unwrap();
+    assert_ne!(first["task"]["id"], other["task"]["id"]);
+    let none = c.call("task.start", params(None)).await.unwrap();
+    assert_ne!(first["task"]["id"], none["task"]["id"]);
+
+    drop(c);
+    srv.restart().await;
+    let mut c = srv.client().await;
+    let after = c.call("task.start", params(Some("req-1"))).await.unwrap();
+    assert_eq!(first["task"]["id"], after["task"]["id"]);
+    let list = c.call("task.list", json!({})).await.unwrap();
+    assert_eq!(list["tasks"].as_array().unwrap().len(), 3);
     srv.shutdown().await;
 }

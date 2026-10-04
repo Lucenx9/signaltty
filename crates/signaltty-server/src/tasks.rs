@@ -115,6 +115,33 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         );
     }
 
+    // Idempotent retry: the same client_request_id returns the existing task.
+    // ponytail: the lookup key doubles as a path-lock key to serialize
+    // concurrent duplicates; a dedicated map if this ever needs pruning.
+    let _request_guard = match &p.client_request_id {
+        Some(id) => Some(
+            ctx.worktrees
+                .path_lock(std::path::Path::new(&format!("client-request:{id}")))
+                .lock_owned()
+                .await,
+        ),
+        None => None,
+    };
+    if let Some(id) = &p.client_request_id {
+        let s = ctx.store.read().unwrap();
+        if let Some(task) = s
+            .tasks
+            .values()
+            .find(|t| t.client_request_id.as_deref() == Some(id))
+        {
+            let pane = task.pane_id.as_ref().and_then(|pid| s.panes.get(pid));
+            return (
+                Response::ok(&req.id, json!({ "task": task, "pane": pane })),
+                ConnEffect::default(),
+            );
+        }
+    }
+
     // Resolve agent and argv
     let (argv, _kind, agent_name) = match resolve_agent_and_argv(ctx, &p) {
         Ok(res) => res,
@@ -254,6 +281,7 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         finish_error: None,
         worker_pid: None,
         worker_cmd: Some(argv.clone()),
+        client_request_id: p.client_request_id.clone(),
         created_at: now,
         updated_at: now,
     };

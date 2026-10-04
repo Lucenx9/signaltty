@@ -34,6 +34,7 @@ Top-level entity in `signaltty-core/src/model.rs`, stored in
 | `status_reason` | optional | A2A-style failure / interrupt evidence ({stage\|reason,...}, input_required evidence) |
 | `finish_error` | optional | Failed-finish evidence. Conflict files (`conflicted[]`, plus `target_dirty` / `abort_ok` when abort does not leave the target clean) are stored without a disposition so finish can be retried. A cleanup failure is `{cleanup_error}` on a recorded disposition; the next finish retries removal while `worktree_path` still exists and clears this field when removal succeeds. |
 | `worker_pid`, `worker_cmd` | optional | Crash-vs-recycle evidence (workmux `AgentState.pane_pid/command/boot_id`, `src/state/types.rs`) |
+| `client_request_id` | optional | Caller idempotency key from `task.start`; the same key returns the existing task (persisted, survives restart) |
 | `created_at`, `updated_at` | timestamps | |
 
 ### TaskState

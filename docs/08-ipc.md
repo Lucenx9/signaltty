@@ -84,7 +84,7 @@ clients can `subscribe {from_seq}` to replay.
 | `subscribe` | `{events?: ["agent.*","attention.*",…], from_seq?}` | `{subscribed, seq, replay?}` then complete replay/live stream |
 | `wait` | `{pane_id, until: string\|string[], after?: wait_baseline, timeout_s?}` | `{satisfied, outcome, transition_seq, lifecycle, attention}` or `TIMEOUT` / `IDENTITY_CHANGED` |
 | `focus.next_unread` | — | `{pane_id?}` (severity→recency order) |
-| `task.start` | `{repo, contract: {objective, constraints?, output_format?, acceptance_criteria?}, agent?, label?, parent_pane_id?, context_id?, base_ref?, fetch_first?, branch?, path?, ready_timeout_s?, stall_timeout_s?, submit_delay_ms?, argv?}` | `{task, pane}` (starts worker at `pending`; background ready-wait and prompt submit transitions to `working`; objective over 32 KiB, or a composed prompt over 32 KiB plus the fixed preamble, is `BAD_PARAMS` and creates no worktree) |
+| `task.start` | `{repo, contract: {objective, constraints?, output_format?, acceptance_criteria?}, agent?, label?, parent_pane_id?, context_id?, client_request_id?, base_ref?, fetch_first?, branch?, path?, ready_timeout_s?, stall_timeout_s?, submit_delay_ms?, argv?}` | `{task, pane}` (starts worker at `pending`; background ready-wait and prompt submit transitions to `working`; objective over 32 KiB, or a composed prompt over 32 KiB plus the fixed preamble, is `BAD_PARAMS` and creates no worktree; the same `client_request_id` returns the existing task and pane instead of creating another) |
 | `task.get` | `{task_id}` | `{task}` |
 | `task.list` | `{context_id?, state?, limit?}` | `{tasks: [...]}` |
 | `task.wait` | `{task_id?, context_id?, until?: string|string[], timeout_s?}` | `{satisfied, tasks: [...]}` (default `until: settled`) |

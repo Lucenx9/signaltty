@@ -384,6 +384,7 @@ pub struct TaskStart {
     pub label: Option<String>,
     pub parent_pane_id: Option<String>,
     pub context_id: Option<String>,
+    pub client_request_id: Option<String>,
     pub relationship: Option<Relationship>,
     pub base_ref: Option<String>,
     pub fetch_first: Option<bool>,

@@ -31,6 +31,7 @@ struct Args {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Ensure the session server is running (start detached if needed).
     Daemon,
@@ -204,6 +205,9 @@ enum TaskOp {
         parent_pane: Option<String>,
         #[arg(long)]
         context: Option<String>,
+        /// Idempotency key: a retry with the same key returns the existing task.
+        #[arg(long)]
+        client_request_id: Option<String>,
         #[arg(long)]
         base_ref: Option<String>,
         #[arg(long)]
@@ -1398,6 +1402,7 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
             label,
             parent_pane,
             context,
+            client_request_id,
             base_ref,
             fetch_first,
             branch,
@@ -1445,6 +1450,9 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
             }
             if let Some(ctx) = context {
                 p["context_id"] = json!(ctx);
+            }
+            if let Some(id) = client_request_id {
+                p["client_request_id"] = json!(id);
             }
             if let Some(br) = base_ref {
                 p["base_ref"] = json!(br);

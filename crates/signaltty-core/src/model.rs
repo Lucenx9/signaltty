@@ -908,6 +908,9 @@ pub struct Task {
     pub worker_pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker_cmd: Option<Vec<String>>,
+    /// Caller-chosen idempotency key for `task.start`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_request_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -1442,6 +1445,7 @@ mod tests {
             finish_error: None,
             worker_pid: None,
             worker_cmd: None,
+            client_request_id: None,
             created_at: now,
             updated_at: now,
         };
