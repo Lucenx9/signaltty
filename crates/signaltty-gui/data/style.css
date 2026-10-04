@@ -300,6 +300,20 @@ toolbarview > .top-bar headerbar button.image-button:checked {
   opacity: 1;
 }
 
+/* Sidebar resize handle: sits flush along the trailing edge of the
+ * sidebar. Transparent normally, with a subtle accent line on hover. */
+.sidebar-handle {
+  min-width: 6px;
+  background-color: transparent;
+  transition: background-color 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.sidebar-handle:hover,
+.sidebar-handle:focus-visible,
+.sidebar-handle:active {
+  background-color: alpha(var(--accent-bg-color), 0.25);
+}
+
 /* ---- header: "needs you" button -------------------------------------- */
 
 /* A pill tinted by the worst attention it counts — the same colours as
@@ -582,7 +596,8 @@ button.pill:focus-visible {
 .reduced-motion .decision-options button,
 .reduced-motion button.pill,
 .reduced-motion .resume-button,
-.reduced-motion .attention-button {
+.reduced-motion .attention-button,
+.reduced-motion .sidebar-handle {
   transition: none;
 }
 .reduced-motion .row-close:active,

@@ -20,4 +20,4 @@ pub use model::{
     TaskResult, TaskResultStatus, Workspace,
 };
 pub use state::{Attention, Lifecycle, TaskState};
-pub use theme::{Appearance, GuiPreference, Theme};
+pub use theme::{clamp_sidebar_width, Appearance, GuiPreference, Theme};

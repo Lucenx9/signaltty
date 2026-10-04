@@ -57,6 +57,17 @@ struct TabEntry {
 }
 
 /// Weak divider widgets keyed like [`crate::dividers::Dividers`].
+/// Width of the drag strip on the sidebar's trailing edge.
+const SIDEBAR_HANDLE_PX: i32 = 6;
+
+fn sidebar_pointer_width(width: i32, direction: gtk4::TextDirection, x: f64) -> f64 {
+    if direction == gtk4::TextDirection::Rtl {
+        f64::from(width) - x
+    } else {
+        x
+    }
+}
+
 type PanedWidgets = HashMap<(String, Vec<bool>), glib::WeakRef<gtk4::Paned>>;
 
 /// Header button: how many panes need you; click jumps to the next.
@@ -72,6 +83,7 @@ pub struct App {
     toasts: adw::ToastOverlay,
     banner: adw::Banner,
     split_view: adw::OverlaySplitView,
+    sidebar_overlay: gtk4::Overlay,
     title: gtk4::Label,
     title_context: gtk4::Label,
     title_mark: gtk4::Label,
@@ -137,6 +149,19 @@ impl App {
         let sidebar_page = adw::ToolbarView::new();
         sidebar_page.add_top_bar(&sidebar_header);
         sidebar_page.set_content(Some(&sidebar.widget));
+
+        let sidebar_overlay = gtk4::Overlay::new();
+        sidebar_overlay.set_child(Some(&sidebar_page));
+
+        let sidebar_handle = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        sidebar_handle.add_css_class("sidebar-handle");
+        sidebar_handle.set_halign(gtk4::Align::End);
+        sidebar_handle.set_vexpand(true);
+        sidebar_handle.set_width_request(SIDEBAR_HANDLE_PX);
+        sidebar_handle.set_cursor_from_name(Some("col-resize"));
+        sidebar_handle.set_focusable(true);
+        sidebar_handle.update_property(&[gtk4::accessible::Property::Label("Resize Sidebar")]);
+        sidebar_overlay.add_overlay(&sidebar_handle);
 
         // ---- content header ----
         // Left-aligned breadcrumb (Linear-style): mark · name · context.
@@ -230,7 +255,8 @@ impl App {
         content_page.set_content(Some(&content));
 
         let split_view = adw::OverlaySplitView::new();
-        split_view.set_sidebar(Some(&sidebar_page));
+        split_view.set_sidebar_width_unit(adw::LengthUnit::Px);
+        split_view.set_sidebar(Some(&sidebar_overlay));
         split_view.set_content(Some(&content_page));
         split_view.set_min_sidebar_width(260.0);
         split_view.set_max_sidebar_width(340.0);
@@ -252,6 +278,7 @@ impl App {
             toasts,
             banner,
             split_view,
+            sidebar_overlay,
             title,
             title_context,
             title_mark,
@@ -289,6 +316,31 @@ impl App {
             me: RefCell::new(Weak::new()),
         });
         app.me.replace(Rc::downgrade(&app));
+        let keys = gtk4::EventControllerKey::new();
+        let w = app.weak();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            let delta = match key {
+                gtk4::gdk::Key::Left => -10.0,
+                gtk4::gdk::Key::Right => 10.0,
+                _ => return glib::Propagation::Proceed,
+            };
+            let Some(a) = w.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            let delta = if a.sidebar_overlay.direction() == gtk4::TextDirection::Rtl {
+                -delta
+            } else {
+                delta
+            };
+            let width = a
+                .preference()
+                .sidebar_width
+                .map(f64::from)
+                .unwrap_or_else(|| f64::from(a.sidebar_overlay.width()));
+            a.set_sidebar_width(signaltty_core::clamp_sidebar_width(width + delta));
+            glib::Propagation::Stop
+        });
+        sidebar_handle.add_controller(keys);
         app.install_actions(application);
         app.connect_signals();
         app.apply_preference(app.preference());
@@ -479,6 +531,42 @@ impl App {
             }
             None => glib::ControlFlow::Break,
         });
+
+        // Measure the pointer from the sidebar's fixed leading edge. In RTL,
+        // GTK's local coordinates follow the moving left edge, so subtract
+        // from the current overlay width to measure from the right edge.
+        let drag = gtk4::GestureDrag::new();
+        let overlay = self.sidebar_overlay.clone();
+        drag.connect_drag_begin(move |g, x, _| {
+            let width = sidebar_pointer_width(overlay.width(), overlay.direction(), x);
+            if width < f64::from(overlay.width() - SIDEBAR_HANDLE_PX) {
+                g.set_state(gtk4::EventSequenceState::Denied);
+            }
+        });
+        let split = self.split_view.clone();
+        let overlay = self.sidebar_overlay.clone();
+        drag.connect_drag_update(move |g, dx, _| {
+            let Some((x, _)) = g.start_point() else {
+                return;
+            };
+            let width = sidebar_pointer_width(overlay.width(), overlay.direction(), x + dx);
+            let w = f64::from(signaltty_core::clamp_sidebar_width(width));
+            split.set_min_sidebar_width(w);
+            split.set_max_sidebar_width(w);
+        });
+        let w = self.weak();
+        drag.connect_drag_end(move |g, dx, _| {
+            let (Some((x, _)), Some(a)) = (g.start_point(), w.upgrade()) else {
+                return;
+            };
+            let width = sidebar_pointer_width(
+                a.sidebar_overlay.width(),
+                a.sidebar_overlay.direction(),
+                x + dx,
+            );
+            a.set_sidebar_width(signaltty_core::clamp_sidebar_width(width));
+        });
+        self.sidebar_overlay.add_controller(drag);
     }
 
     fn restyle_terminals(&self) {
@@ -686,6 +774,15 @@ impl App {
         }
     }
 
+    pub(crate) fn set_sidebar_width(&self, width: u32) {
+        let w = signaltty_core::clamp_sidebar_width(f64::from(width));
+        self.split_view.set_min_sidebar_width(f64::from(w));
+        self.split_view.set_max_sidebar_width(f64::from(w));
+        let mut pref = self.preference.borrow_mut();
+        pref.sidebar_width = Some(w);
+        crate::preferences::save_preference(&pref);
+    }
+
     pub(crate) fn apply_preference(&self, pref: signaltty_core::theme::GuiPreference) {
         *self.preference.borrow_mut() = pref;
 
@@ -700,6 +797,12 @@ impl App {
             self.window.remove_css_class(t.css_class());
         }
         self.window.add_css_class(pref.theme.css_class());
+
+        // `parse` already clamped it; None keeps the 260–340 fraction default.
+        if let Some(w) = pref.sidebar_width {
+            self.split_view.set_min_sidebar_width(f64::from(w));
+            self.split_view.set_max_sidebar_width(f64::from(w));
+        }
 
         self.sync_desktop_preferences();
         self.restyle_terminals();

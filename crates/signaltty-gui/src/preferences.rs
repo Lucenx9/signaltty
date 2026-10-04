@@ -273,6 +273,22 @@ mod tests {
         let pref = GuiPreference {
             appearance: Appearance::Dark,
             theme: Theme::Ocean,
+            ..Default::default()
+        };
+        save_preference_to(&file, &pref);
+        let loaded = load_preference_from(&file);
+        assert_eq!(loaded, pref);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_and_load_roundtrip_with_sidebar_width() {
+        let dir = test_unique_dir();
+        let file = dir.join("gui.json");
+        let pref = GuiPreference {
+            appearance: Appearance::Dark,
+            theme: Theme::Grove,
+            sidebar_width: Some(380),
         };
         save_preference_to(&file, &pref);
         let loaded = load_preference_from(&file);
@@ -303,6 +319,7 @@ mod tests {
             GuiPreference {
                 appearance: Appearance::System,
                 theme: Theme::Ember,
+                ..Default::default()
             }
         );
         let _ = std::fs::remove_dir_all(&dir);
