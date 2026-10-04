@@ -704,13 +704,15 @@ pub(crate) fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
         let s = ctx.store.read().unwrap();
         match &p.parent_pane_id {
             Some(parent_id) => {
-                let root = s.panes.get(parent_id).and_then(|parent| {
-                    parent
-                        .root_pane_id
-                        .clone()
-                        .or_else(|| Some(parent.id.clone()))
-                });
-                (Some(parent_id.clone()), root)
+                let parent = s
+                    .panes
+                    .get(parent_id)
+                    .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), parent_id.clone()))?;
+                let root = parent
+                    .root_pane_id
+                    .clone()
+                    .unwrap_or_else(|| parent.id.clone());
+                (Some(parent_id.clone()), Some(root))
             }
             None => (None, None),
         }

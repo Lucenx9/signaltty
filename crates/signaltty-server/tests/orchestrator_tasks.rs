@@ -109,14 +109,26 @@ async fn snapshot_roundtrips_orchestrator_tasks_and_lineage() {
         .unwrap();
     let tab_id = tab["tab"]["id"].as_str().unwrap();
 
+    let parent = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws_id, "tab_id": tab_id, "argv": ["sh"]}),
+        )
+        .await
+        .unwrap();
+    let parent_id = parent["pane"]["id"].as_str().unwrap();
+    let tab2 = c
+        .call("tab.create", json!({"workspace_id": ws_id, "title": "t2"}))
+        .await
+        .unwrap();
     let pane = c
         .call(
             "pane.spawn",
             json!({
                 "workspace_id": ws_id,
-                "tab_id": tab_id,
+                "tab_id": tab2["tab"]["id"],
                 "argv": ["sh"],
-                "parent_pane_id": "parent_p1",
+                "parent_pane_id": parent_id,
                 "label": "subagent-1",
                 "relationship": "subagent"
             }),
@@ -1913,5 +1925,30 @@ async fn task_wait_unknown_until_is_bad_params() {
             "unknown until must be BAD_PARAMS, got {err}"
         );
     }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn pane_spawn_unknown_parent_is_no_such_pane() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let ws = c
+        .call("workspace.create", json!({"name": "pp", "cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let ws_id = ws["workspace"]["id"].as_str().unwrap();
+    let err = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws_id, "argv": ["sh"], "parent_pane_id": "nope"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with(signaltty_proto::code::NO_SUCH_PANE),
+        "got {err}"
+    );
+    let st = c.call("server.status", json!({})).await.unwrap();
+    assert_eq!(st["live_panes"], 0);
     srv.shutdown().await;
 }
