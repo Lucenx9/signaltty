@@ -1,0 +1,182 @@
+//! Gated prompt delivery: readiness check, bracketed-paste wrap, delayed Enter,
+//! and activity-gate wait baseline.
+
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use signaltty_core::model::LiveState;
+use signaltty_core::state::{Lifecycle, TaskState};
+use signaltty_proto::code;
+use tokio::sync::broadcast;
+
+use crate::params::{bad_params, ParamError};
+use crate::router::Ctx;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmitOutcome {
+    pub submitted: bool,
+    pub outcome: String,
+    pub transition_seq: u64,
+    pub lifecycle: String,
+    pub attention: String,
+}
+
+/// Gated prompt submission:
+/// 1. Validate text length (1 byte .. 32 KiB).
+/// 2. Gate on pane lifecycle (`idle` or `done`) and live state.
+///    - If `!allow_pending_task` and worker pane is still `pending`, refuse `AGENT_NOT_READY`.
+///    - If working/blocked, refuse `AGENT_BUSY`.
+///    - If unknown/failed, refuse `AGENT_NOT_READY`.
+///    - If exited, refuse `PANE_EXITED`.
+/// 3. Record pre-submit `WaitBaseline`.
+/// 4. Write bracketed paste (`\x1b[200~text\x1b[201~`).
+/// 5. Sleep `submit_delay`.
+/// 6. Write `\r`.
+/// 7. Activity gate: wait up to `stall_timeout` for a newer `working` or `blocked` transition.
+/// 8. If worker pane belongs to an `input_required` task, resume it to `working`.
+pub async fn submit_prompt(
+    ctx: &Ctx,
+    pane_id: &str,
+    text: &str,
+    submit_delay: Duration,
+    stall_timeout: Duration,
+    allow_pending_task: bool,
+) -> Result<SubmitOutcome, ParamError> {
+    if text.is_empty() || text.len() > 32768 {
+        return Err(bad_params("text must be 1 .. 32768 bytes"));
+    }
+
+    let baseline = {
+        let s = ctx.store.read().unwrap();
+        let pane = s
+            .panes
+            .get(pane_id)
+            .ok_or_else(|| (code::NO_SUCH_PANE.into(), pane_id.to_string()))?;
+
+        if !matches!(pane.live, LiveState::Live) {
+            return Err((
+                code::PANE_EXITED.into(),
+                format!("pane '{pane_id}' has exited"),
+            ));
+        }
+
+        if !allow_pending_task
+            && s.tasks
+                .values()
+                .any(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::Pending)
+        {
+            return Err((
+                code::AGENT_NOT_READY.into(),
+                "worker pane task is still pending background submit".into(),
+            ));
+        }
+
+        match pane.lifecycle {
+            Lifecycle::Working | Lifecycle::Blocked => {
+                return Err((
+                    code::AGENT_BUSY.into(),
+                    format!("agent is {}", pane.lifecycle.as_str()),
+                ));
+            }
+            Lifecycle::Unknown | Lifecycle::Failed => {
+                return Err((
+                    code::AGENT_NOT_READY.into(),
+                    format!("agent is {}", pane.lifecycle.as_str()),
+                ));
+            }
+            Lifecycle::Exited => {
+                return Err((
+                    code::PANE_EXITED.into(),
+                    format!("pane '{pane_id}' has exited"),
+                ));
+            }
+            Lifecycle::Idle | Lifecycle::Done => {}
+        }
+
+        s.wait_baseline(pane_id)
+    };
+
+    // Bracketed paste wrap: ESC[200~ text ESC[201~
+    let paste = format!("\x1b[200~{text}\x1b[201~");
+    ctx.ptys
+        .input(pane_id, paste.as_bytes())
+        .map_err(|e| (code::IO_ERROR.into(), format!("PTY input error: {e}")))?;
+
+    tokio::time::sleep(submit_delay).await;
+
+    // Send Enter (\r)
+    ctx.ptys
+        .input(pane_id, b"\r")
+        .map_err(|e| (code::IO_ERROR.into(), format!("PTY input error: {e}")))?;
+
+    // Activity gate
+    let outcomes = ["working", "blocked"];
+    let deadline = tokio::time::Instant::now() + stall_timeout;
+    let mut rx = ctx.bcast.subscribe();
+    let mut tick = tokio::time::interval(Duration::from_millis(50));
+
+    loop {
+        {
+            let s = ctx.store.read().unwrap();
+            let Some(pane) = s.panes.get(pane_id) else {
+                return Err((code::NO_SUCH_PANE.into(), pane_id.to_string()));
+            };
+            if !matches!(pane.live, LiveState::Live) {
+                return Err((
+                    code::PANE_EXITED.into(),
+                    format!("pane '{pane_id}' exited while waiting for activity"),
+                ));
+            }
+            for outcome in &outcomes {
+                let transition = s.matching_transition(pane_id, outcome).unwrap_or(0);
+                let satisfied = match &baseline {
+                    Some(after) => transition > after.threshold(outcome),
+                    None => pane.lifecycle.as_str() == *outcome,
+                };
+                if satisfied {
+                    drop(s);
+                    // Accepted submit on an input_required worker pane moves task back to working
+                    {
+                        let mut s = ctx.store.write().unwrap();
+                        let target_task_id = s
+                            .tasks
+                            .values()
+                            .find(|t| {
+                                t.pane_id.as_deref() == Some(pane_id)
+                                    && t.state == TaskState::InputRequired
+                            })
+                            .map(|t| t.id.clone());
+                        if let Some(tid) = target_task_id {
+                            s.task_resume_working(&tid);
+                        }
+                    }
+                    let s = ctx.store.read().unwrap();
+                    let pane = s.panes.get(pane_id).unwrap();
+                    return Ok(SubmitOutcome {
+                        submitted: true,
+                        outcome: (*outcome).to_string(),
+                        transition_seq: transition,
+                        lifecycle: pane.lifecycle.as_str().to_string(),
+                        attention: pane.attention.as_str().to_string(),
+                    });
+                }
+            }
+        }
+
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(deadline) => {
+                return Err((
+                    code::TIMEOUT.into(),
+                    "activity gate timed out waiting for working or blocked after submit".into(),
+                ));
+            }
+            _ = tick.tick() => {}
+            event = rx.recv() => {
+                if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                    return Err((code::INTERNAL.into(), "event bus closed".into()));
+                }
+            }
+        }
+    }
+}

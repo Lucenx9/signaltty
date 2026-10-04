@@ -664,6 +664,20 @@ impl Store {
             .values_mut()
             .find(|t| t.pane_id.as_deref() == Some(pane_id))
     }
+
+    pub fn task_resume_working(&mut self, task_id: &str) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            if task.state != TaskState::InputRequired {
+                return None;
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::Working, now).ok()?;
+            (task.clone(), prev_state)
+        };
+        Some(self.emit_task_updated(&task_clone, Some(prev_state)))
+    }
 }
 
 #[cfg(test)]
