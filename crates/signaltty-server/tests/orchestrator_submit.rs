@@ -543,3 +543,184 @@ async fn submit_follow_up_on_input_required_task_resumes_working() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn submit_accepts_blocked_input_required_without_decision_and_refuses_permission() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let ws = c
+        .call(
+            "workspace.create",
+            json!({"cwd": repo.path().to_string_lossy(), "name": "ws"}),
+        )
+        .await
+        .unwrap();
+    let ws_id = ws["workspace"]["id"].as_str().unwrap();
+
+    // 1. Case A: Blocked with permission_required -> REFUSED
+    let t1 = c
+        .call("tab.create", json!({"workspace_id": ws_id}))
+        .await
+        .unwrap();
+    let p1 = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws_id, "tab_id": t1["tab"]["id"], "argv": ["cat"]}),
+        )
+        .await
+        .unwrap();
+    let pane_id_1 = p1["pane"]["id"].as_str().unwrap().to_string();
+
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "claude",
+            "event": "Notification",
+            "pane_id": pane_id_1,
+            "payload": {
+                "notification_type": "permission_prompt",
+                "message": "Allow command?",
+                "session_id": "sess-perm"
+            }
+        }),
+    )
+    .await
+    .unwrap();
+
+    let err_perm = c
+        .call(
+            "pane.submit",
+            json!({
+                "pane_id": pane_id_1,
+                "text": "yes please",
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err_perm.starts_with(code::AGENT_BUSY),
+        "expected AGENT_BUSY for permission_required, got {err_perm}"
+    );
+
+    // 2. Case B: Blocked with pending_decision -> REFUSED
+    let t2 = c
+        .call("tab.create", json!({"workspace_id": ws_id}))
+        .await
+        .unwrap();
+    let p2 = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws_id, "tab_id": t2["tab"]["id"], "argv": ["cat"]}),
+        )
+        .await
+        .unwrap();
+    let pane_id_2 = p2["pane"]["id"].as_str().unwrap().to_string();
+
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "codex",
+            "event": "PermissionRequest",
+            "pane_id": pane_id_2,
+            "decision": {
+                "id": "dec_1",
+                "prompt": "Pick an option",
+                "options": [{"id": "opt1", "label": "Option 1"}]
+            },
+            "payload": {"session_id": "sess-dec"}
+        }),
+    )
+    .await
+    .unwrap();
+
+    let err_dec = c
+        .call(
+            "pane.submit",
+            json!({
+                "pane_id": pane_id_2,
+                "text": "my answer",
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err_dec.starts_with(code::AGENT_BUSY),
+        "expected AGENT_BUSY for pending_decision, got {err_dec}"
+    );
+
+    // 3. Case C: Blocked + attention input_required with NO pending_decision -> ACCEPTED
+    let t3 = c
+        .call("tab.create", json!({"workspace_id": ws_id}))
+        .await
+        .unwrap();
+    let p3 = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws_id, "tab_id": t3["tab"]["id"], "argv": ["cat"]}),
+        )
+        .await
+        .unwrap();
+    let pane_id_3 = p3["pane"]["id"].as_str().unwrap().to_string();
+
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "claude",
+            "event": "Notification",
+            "pane_id": pane_id_3,
+            "payload": {
+                "notification_type": "idle_prompt",
+                "message": "waiting for text",
+                "session_id": "sess-idle-prompt"
+            }
+        }),
+    )
+    .await
+    .unwrap();
+
+    let pane_get = c
+        .call("pane.get", json!({"pane_id": pane_id_3}))
+        .await
+        .unwrap();
+    assert_eq!(pane_get["pane"]["lifecycle"], "blocked");
+    assert_eq!(pane_get["pane"]["attention"], "input_required");
+    assert!(pane_get["pane"]["pending_decision"].is_null());
+
+    let sock = srv.socket.clone();
+    let pid = pane_id_3.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if let Ok(mut c2) = signaltty_testkit::TestClient::connect(&sock).await {
+            let _ = c2
+                .call(
+                    "hook-event",
+                    json!({
+                        "agent": "claude",
+                        "event": "UserPromptSubmit",
+                        "pane_id": pid,
+                        "payload": {"session_id": "sess-idle-prompt"}
+                    }),
+                )
+                .await;
+        }
+    });
+
+    let res = c
+        .call(
+            "pane.submit",
+            json!({
+                "pane_id": pane_id_3,
+                "text": "here is my text",
+                "submit_delay_ms": 10,
+                "stall_timeout_s": 2,
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res["submitted"], true);
+
+    srv.shutdown().await;
+}
