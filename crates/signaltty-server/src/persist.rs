@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use signaltty_term::HeadlessBackend;
 
 use signaltty_core::model::{LiveState, Notification, Pane, RestoreState, Tab, Task, Workspace};
-use signaltty_core::state::TaskState;
 use signaltty_term::TerminalBackend;
 
 use crate::config::Config;
@@ -190,13 +189,24 @@ pub fn apply(store: &SharedStore, terms: &Mutex<HeadlessBackend>, mut loaded: Lo
     for n in loaded.snapshot.notifications {
         s.push_notification(n);
     }
-    for mut task in loaded.snapshot.tasks {
-        if task.state == TaskState::Pending {
-            task.state = TaskState::Failed;
-            task.status_reason = Some(serde_json::json!({"stage": "restart"}));
-            task.updated_at = Utc::now();
-        }
+    // Recovery: no process survives a restart (docs/09), so every
+    // non-terminal task's worker is dead. Fail them with evidence via the
+    // `task_fail` transition (pairs mutate + emit per the AGENTS.md rule);
+    // completed work, results, dispositions, and checkouts stay intact.
+    // Read cursors are runtime-only: `restore_surface` already reset them
+    // so pre-restart cursors read as dropped (headless `dropped_floor`).
+    let stale: Vec<String> = loaded
+        .snapshot
+        .tasks
+        .iter()
+        .filter(|t| !t.state.is_terminal())
+        .map(|t| t.id.clone())
+        .collect();
+    for task in loaded.snapshot.tasks {
         s.tasks.insert(task.id.clone(), task);
+    }
+    for id in stale {
+        s.task_fail(&id, Some(serde_json::json!({"stage": "restart"})));
     }
 }
 
