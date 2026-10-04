@@ -48,6 +48,11 @@ pub fn parse_max_tasks(val: Option<&str>) -> usize {
         .unwrap_or(DEFAULT_MAX_PARALLEL_TASKS)
 }
 
+pub fn parse_worker_silent_timeout(val: Option<&str>) -> u64 {
+    val.and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_WORKER_SILENT_TIMEOUT_S)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,9 +91,4 @@ mod tests {
 
         std::env::remove_var("SIGNALTTY_MAX_PARALLEL_TASKS");
     }
-}
-
-pub fn parse_worker_silent_timeout(val: Option<&str>) -> u64 {
-    val.and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(DEFAULT_WORKER_SILENT_TIMEOUT_S)
 }
