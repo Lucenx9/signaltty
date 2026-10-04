@@ -1,8 +1,13 @@
-//! Task chip for a worker pane: label, state word, and a tooltip.
+//! Task chip for a worker pane: a "Task" prefix, optional label, state
+//! word, and a tooltip.
 //!
-//! Pure mapping and the pane-keyed cache live here so headless tests
-//! cover present / absent / update. The widget only paints that view.
-//! Colours are the theme tokens in `data/style.css` (`task-*` classes).
+//! The prefix keeps the chip from reading as a second lifecycle word
+//! next to "Idle" or "Working" on the pane. A label that repeats the
+//! adjacent workspace or pane name is omitted; it stays in the tooltip
+//! and the accessible name. Pure mapping and the pane-keyed cache live
+//! here so headless tests cover present / absent / update. The widget
+//! only paints that view. Colours are the theme tokens in
+//! `data/style.css` (`task-*` classes).
 
 use std::collections::HashMap;
 
@@ -22,10 +27,17 @@ pub const TASK_CHIP_CLASSES: [&str; 7] = [
     "task-rejected",
 ];
 
+/// Visible category so the chip is a task, not another lifecycle word.
+pub const TASK_KIND: &str = "Task";
+
 /// What the chip shows. Built without GTK so tests can pin every state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskChipView {
+    pub kind: &'static str,
     pub label: String,
+    /// False when `label` repeats the workspace or pane name beside the
+    /// chip. The label still fills `tooltip` and `accessible_name`.
+    pub show_label: bool,
     /// `from <orchestrator>`, only when the parent name stays short.
     pub lineage: Option<String>,
     pub state: &'static str,
@@ -67,23 +79,49 @@ pub fn state_class(state: TaskState) -> &'static str {
 
 /// Map one task onto the chip. `parent_label` is the orchestrator pane's
 /// label or title; a long or identical name stays in the tooltip only.
-pub fn task_chip(task: &Task, parent_label: Option<&str>) -> TaskChipView {
+/// `context_name` is the workspace or pane name drawn beside this chip.
+/// When the task label equals that name, or is contained in it, the
+/// chip shows the state without repeating the name.
+pub fn task_chip(
+    task: &Task,
+    parent_label: Option<&str>,
+    context_name: Option<&str>,
+) -> TaskChipView {
     let label = display_label(task);
     let state = state_word(task.state);
     let lineage = lineage_phrase(&label, parent_label);
-    let mut accessible_name = format!("{label}, {}", state_name(task.state));
+    let show_label = match context_name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => !label_repeats_name(&label, name),
+        None => true,
+    };
+    let mut accessible_name = format!("{TASK_KIND} {label}, {}", state_name(task.state));
     if let Some(line) = &lineage {
         accessible_name.push_str(", ");
         accessible_name.push_str(line);
     }
     TaskChipView {
+        kind: TASK_KIND,
         label,
+        show_label,
         lineage,
         state,
         css_class: state_class(task.state),
         tooltip: tooltip(task, parent_label),
         accessible_name,
     }
+}
+
+/// The label repeats the name beside the chip when it is that name or
+/// a piece of it (`parser` beside `fix-parser`). Comparison is
+/// case-insensitive. The other direction does not match: a longer
+/// label than the name is still shown.
+fn label_repeats_name(label: &str, name: &str) -> bool {
+    let label = label.trim();
+    let name = name.trim();
+    if label.is_empty() || name.is_empty() {
+        return false;
+    }
+    name.to_lowercase().contains(&label.to_lowercase())
 }
 
 fn display_label(task: &Task) -> String {
@@ -119,6 +157,10 @@ fn lineage_phrase(task_label: &str, parent_label: Option<&str>) -> Option<String
 
 fn tooltip(task: &Task, parent_label: Option<&str>) -> String {
     let mut lines = Vec::new();
+    let label = display_label(task);
+    if !label.is_empty() {
+        lines.push(label);
+    }
     let objective = collapse(&task.contract.objective);
     if !objective.is_empty() {
         lines.push(clip_chars(&objective, 240));
@@ -275,6 +317,7 @@ fn set_label(label: &gtk4::Label, text: &str) {
 /// rewrite the same labels.
 pub struct TaskChipWidget {
     pub root: gtk4::Box,
+    kind: gtk4::Label,
     label: gtk4::Label,
     lineage: gtk4::Label,
     state: gtk4::Label,
@@ -282,18 +325,23 @@ pub struct TaskChipWidget {
 
 impl TaskChipWidget {
     pub fn new() -> TaskChipWidget {
-        let root = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        let root = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
         root.add_css_class("task-chip");
         root.set_valign(gtk4::Align::Center);
         root.set_halign(gtk4::Align::Start);
+        root.set_hexpand(false);
         root.set_visible(false);
         root.set_accessible_role(gtk4::AccessibleRole::Group);
 
         let text = || {
             let label = gtk4::Label::new(None);
             label.set_accessible_role(gtk4::AccessibleRole::Presentation);
+            label.set_hexpand(false);
+            label.set_xalign(0.0);
             label
         };
+        let kind = text();
+        kind.add_css_class("task-chip-kind");
         let label = text();
         label.add_css_class("task-chip-label");
         label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
@@ -303,15 +351,13 @@ impl TaskChipWidget {
         lineage.set_visible(false);
         let state = text();
         state.add_css_class("task-chip-state");
-        // "Completed" is the longest state word; reserving it keeps
-        // a state change from shifting the header.
-        state.set_width_chars(9);
-        state.set_xalign(0.0);
+        root.append(&kind);
         root.append(&label);
         root.append(&lineage);
         root.append(&state);
         TaskChipWidget {
             root,
+            kind,
             label,
             lineage,
             state,
@@ -324,7 +370,13 @@ impl TaskChipWidget {
             return;
         };
         set_state_class(&self.root, view.css_class);
-        set_label(&self.label, &view.label);
+        set_label(&self.kind, view.kind);
+        if view.show_label {
+            set_label(&self.label, &view.label);
+            self.label.set_visible(true);
+        } else {
+            self.label.set_visible(false);
+        }
         match &view.lineage {
             Some(line) => {
                 set_label(&self.lineage, line);
@@ -380,7 +432,7 @@ mod tests {
     }
 
     fn view(state: TaskState, parent: Option<&str>) -> TaskChipView {
-        task_chip(&task(state), parent)
+        task_chip(&task(state), parent, None)
     }
 
     #[test]
@@ -412,6 +464,8 @@ mod tests {
             assert!(css.contains(&format!(".task-chip.{class}")), "{class}");
         }
         assert!(css.contains(".high-contrast .task-chip"));
+        assert!(css.contains(".task-chip-kind"));
+        assert!(css.contains(".high-contrast .task-chip-kind"));
     }
 
     #[test]
@@ -432,14 +486,47 @@ mod tests {
             "{}",
             chip.tooltip
         );
-        assert_eq!(chip.accessible_name, "fix-parser, Working");
+        assert_eq!(chip.accessible_name, "Task fix-parser, Working");
+        assert!(chip.tooltip.starts_with("fix-parser\n"), "{}", chip.tooltip);
     }
 
     #[test]
     fn input_required_accessible_name_says_the_full_state() {
         let chip = view(TaskState::InputRequired, None);
         assert_eq!(chip.state, "Input");
-        assert_eq!(chip.accessible_name, "fix-parser, Input required");
+        assert_eq!(chip.accessible_name, "Task fix-parser, Input required");
+    }
+
+    #[test]
+    fn label_hides_when_it_repeats_the_adjacent_name() {
+        let same = task_chip(&task(TaskState::Working), None, Some("fix-parser"));
+        assert!(!same.show_label);
+        assert_eq!(same.label, "fix-parser");
+        assert_eq!(same.kind, "Task");
+        assert_eq!(same.state, "Working");
+        assert_eq!(same.accessible_name, "Task fix-parser, Working");
+        assert!(same.tooltip.contains("fix-parser"), "{}", same.tooltip);
+
+        let contained = task_chip(
+            &task(TaskState::Working),
+            None,
+            Some("workspace fix-parser"),
+        );
+        assert!(!contained.show_label);
+
+        let case = task_chip(&task(TaskState::Working), None, Some("Fix-Parser"));
+        assert!(!case.show_label);
+
+        let different = task_chip(&task(TaskState::Working), None, Some("worker"));
+        assert!(different.show_label);
+        assert_eq!(different.label, "fix-parser");
+
+        // A longer label is not "contained in" the shorter name.
+        let shorter = task_chip(&task(TaskState::Working), None, Some("parser"));
+        assert!(shorter.show_label);
+
+        let unnamed = task_chip(&task(TaskState::Working), None, Some("  "));
+        assert!(unnamed.show_label);
     }
 
     #[test]
@@ -468,7 +555,11 @@ mod tests {
 
         let pending = task(TaskState::Pending);
         assert!(index.apply_event(event::TASK_CREATED, &serde_json::json!({ "task": pending })));
-        let created = task_chip(index.get("pane_worker").unwrap(), Some("orchestrator"));
+        let created = task_chip(
+            index.get("pane_worker").unwrap(),
+            Some("orchestrator"),
+            None,
+        );
         assert_eq!(created.state, "Pending");
         assert_eq!(created.css_class, "task-pending");
         assert_eq!(created.lineage.as_deref(), Some("from orchestrator"));
@@ -479,7 +570,11 @@ mod tests {
             event::TASK_UPDATED,
             &serde_json::json!({ "task": working, "prev_state": "pending" })
         ));
-        let updated = task_chip(index.get("pane_worker").unwrap(), Some("orchestrator"));
+        let updated = task_chip(
+            index.get("pane_worker").unwrap(),
+            Some("orchestrator"),
+            None,
+        );
         assert_eq!(updated.label, "fix-parser");
         assert_eq!(updated.state, "Working");
         assert_eq!(updated.css_class, "task-working");

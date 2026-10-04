@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! ╭──────────────────────────────────────────────────────────────╮
-//! │ ◌ claude  Working               Approval   ⫿ ⊟ ×   [Resume] │
+//! │ ◌ worker Idle [Task Working]    Approval   ⫿ ⊟ ×   [Resume] │
 //! │ terminal …                                                   │
 //! ╰──────────────────────────────────────────────────────────────╯
 //! ```
@@ -131,7 +131,7 @@ impl PaneWidget {
         subtitle.add_css_class("dimmed");
         subtitle.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         subtitle.set_xalign(0.0);
-        subtitle.set_hexpand(true);
+        subtitle.set_hexpand(false);
         let badge = AttentionBadge::new();
         let task_chip = TaskChipWidget::new();
 
@@ -181,18 +181,22 @@ impl PaneWidget {
             resume.connect_clicked(move |_| on_action(&pid, PaneAction::Resume));
         }
 
-        // Status (recedes on unfocused panes) | attention (never
-        // recedes) | actions (on hover/focus).
+        // Title cluster (lifecycle, name, lifecycle word, task chip),
+        // then attention (never recedes) and actions (on hover/focus).
+        // No child of the cluster expands, so spare width stays ahead
+        // of the trailing controls. Those controls keep their space
+        // while hidden, and the chip stays with the title instead of
+        // floating in that reserved gap.
         let info = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         info.add_css_class("pane-info");
         info.set_hexpand(true);
         info.append(&lifecycle.widget);
         info.append(&title);
         info.append(&subtitle);
+        info.append(&task_chip.root);
         let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         header.add_css_class("pane-header");
         header.append(&info);
-        header.append(&task_chip.root);
         header.append(&badge.widget);
         header.append(&resume);
         header.append(&actions);
@@ -555,6 +559,7 @@ impl PaneWidget {
             LiveState::Live => {}
         }
         self.subtitle.set_text(&context.join(" · "));
+        self.prefer_chip_ellipsize();
         self.lifecycle.set(status::effective_lifecycle(pane));
         self.badge.set(pane.attention);
         status::set_attention_class(&self.root, pane.attention);
@@ -572,6 +577,20 @@ impl PaneWidget {
     /// Paint the worker chip in place. `None` hides it. Never touches the VTE.
     pub fn set_task_chip(&self, view: Option<&TaskChipView>) {
         self.task_chip.set(view);
+        self.prefer_chip_ellipsize();
+    }
+
+    /// A short title keeps its full width while a chip is showing, so
+    /// the chip's label is what ellipsizes in a narrow pane. Long
+    /// titles still ellipsize. Hiding the chip restores the usual title.
+    fn prefer_chip_ellipsize(&self) {
+        let short_title = self.title.text().chars().count() <= 24;
+        let protect = self.task_chip.root.is_visible() && short_title;
+        self.title.set_ellipsize(if protect {
+            gtk4::pango::EllipsizeMode::None
+        } else {
+            gtk4::pango::EllipsizeMode::End
+        });
     }
 
     /// Toggle the inline decision bar. Buttons rebuild only when the

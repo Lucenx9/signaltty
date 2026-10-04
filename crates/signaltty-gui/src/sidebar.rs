@@ -8,7 +8,7 @@
 //!
 //! ```text
 //!  [AS] api-server            ◌ Working     mark · name · status slot
-//!  [fix-parser Working] Bash…               task chips, then headline
+//!  [Task Working] Bash…                     task chips, then headline
 //!  feat/auth                     Claude     branch/dir · agents
 //! ```
 //!

@@ -104,17 +104,19 @@
   box-shadow: inset 0 0 0 1px alpha(var(--error-bg-color), 0.25);
 }
 
-/* Task chip: label + state on a worker pane. Colour is the state;
- * the pill stays one line so a state change does not reflow the header. */
+/* Task chip: "Task" plus the task state, so it is not a second
+ * lifecycle word next to the pane's Idle/Working. The pill hugs its
+ * text. The task name ellipsizes; a short pane title does not. */
 .task-chip {
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 999px;
   font-size: 0.78em;
   font-weight: 600;
   background-color: alpha(currentColor, 0.08);
   box-shadow: inset 0 0 0 1px alpha(currentColor, 0.14);
 }
-.task-chip-label { font-weight: 600; }
+.task-chip-kind { font-weight: 500; opacity: 0.72; }
+.task-chip-label { font-weight: 600; min-width: 0; }
 .task-chip-lineage { font-weight: 500; opacity: 0.72; }
 .task-chip-state { font-weight: 600; }
 .task-chip.task-pending { color: alpha(currentColor, 0.75); }
@@ -973,6 +975,7 @@ button.pill:focus-visible {
 .high-contrast .task-chip {
   box-shadow: inset 0 0 0 1px currentColor;
 }
+.high-contrast .task-chip-kind,
 .high-contrast .task-chip-lineage { opacity: 1; }
 .high-contrast .ws-mark { box-shadow: inset 0 0 0 1px currentColor; }
 

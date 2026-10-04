@@ -1671,3 +1671,466 @@ fn file_diff_reader_uses_native_numbered_selectable_controls() {
     window.destroy();
     style.set_color_scheme(adw::ColorScheme::Default);
 }
+
+/// Worker chip sits in the pane title cluster, hugs its text, and drops
+/// a label that repeats the workspace name. Screenshots land in
+/// `$SIGNALTTY_UI_EVIDENCE` when that directory is set.
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn worker_chip_sits_with_the_pane_title() {
+    let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+    let config = std::env::temp_dir().join(format!("signaltty-chip-scene-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    let contrast = std::env::var("ADW_DEBUG_HIGH_CONTRAST").ok().as_deref() == Some("1");
+
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    gtk4::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
+    let snapshot = chip_scene_snapshot();
+    {
+        let mut model = app.model.borrow_mut();
+        model.cache.workspaces = vec![snapshot.workspace.clone()];
+        model
+            .cache
+            .snapshots
+            .insert(snapshot.workspace.id.clone(), snapshot.clone());
+        assert!(model.tasks.apply_event(
+            signaltty_proto::event::TASK_CREATED,
+            &json!({"task": chip_scene_task("fix-parser")}),
+        ));
+    }
+    app.show_workspace("fix");
+    app.sidebar.update(vec![crate::sidebar::summarize(
+        &snapshot.workspace,
+        &snapshot.panes,
+    )]);
+    app.paint_task_chips();
+    app.widgets.borrow()["pane_fix"].feed(b"parser worker\r\n");
+    app.window.set_default_size(1280, 800);
+    app.present();
+    let window = app.window.clone().upcast::<gtk4::Widget>();
+    wait_ui(|| {
+        try_header(&window, "worker").is_some_and(|header| {
+            header.width() > 400
+                && try_descendant(&header, "task-chip").is_some_and(|chip| chip.width() > 20)
+        })
+    });
+
+    let paint = |appearance, theme: signaltty_core::theme::Theme, name: &str| {
+        app.set_theme(theme);
+        app.set_appearance(appearance);
+        let window = app.window.clone().upcast::<gtk4::Widget>();
+        wait_ui(|| app.window.width() > 1000);
+        assert_chip_cluster(&window);
+        capture_workflow(&app.window, name);
+    };
+    if contrast {
+        app.set_theme(signaltty_core::theme::Theme::Signal);
+        app.set_appearance(signaltty_core::theme::Appearance::Dark);
+        wait_ui(|| app.window.has_css_class("high-contrast"));
+        paint(
+            signaltty_core::theme::Appearance::Dark,
+            signaltty_core::theme::Theme::Signal,
+            "signal-dark-high-contrast",
+        );
+        app.window.destroy();
+        match previous_config {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        return;
+    }
+    paint(
+        signaltty_core::theme::Appearance::Light,
+        signaltty_core::theme::Theme::Signal,
+        "signal-light",
+    );
+    paint(
+        signaltty_core::theme::Appearance::Dark,
+        signaltty_core::theme::Theme::Signal,
+        "signal-dark",
+    );
+    paint(
+        signaltty_core::theme::Appearance::Dark,
+        signaltty_core::theme::Theme::Grove,
+        "grove-dark",
+    );
+    app.set_theme(signaltty_core::theme::Theme::Signal);
+    app.set_appearance(signaltty_core::theme::Appearance::Dark);
+
+    let mut split = snapshot.clone();
+    let mut sibling = split.panes[0].clone();
+    sibling.id = "pane_shell".into();
+    sibling.title = "notes".into();
+    sibling.last_message = None;
+    split.panes.push(sibling);
+    split.tabs[0].layout = Some(signaltty_core::Layout::Split {
+        dir: signaltty_core::SplitDir::Right,
+        ratio: 0.42,
+        first: Box::new(signaltty_core::Layout::Pane {
+            pane_id: "pane_fix".into(),
+        }),
+        second: Box::new(signaltty_core::Layout::Pane {
+            pane_id: "pane_shell".into(),
+        }),
+    });
+    {
+        let mut model = app.model.borrow_mut();
+        model.cache.workspaces = vec![split.workspace.clone()];
+        model
+            .cache
+            .snapshots
+            .insert(split.workspace.id.clone(), split.clone());
+    }
+    app.show_workspace("fix");
+    app.sidebar.update(vec![crate::sidebar::summarize(
+        &split.workspace,
+        &split.panes,
+    )]);
+    app.paint_task_chips();
+    let window = app.window.clone().upcast::<gtk4::Widget>();
+    wait_ui(|| try_pane(&window, "worker").is_some_and(|pane| pane.width() > 100));
+    for _ in 0..4 {
+        let width = try_pane(&window, "worker").unwrap().width();
+        if (360..=440).contains(&width) {
+            break;
+        }
+        let paned = find_widget::<gtk4::Paned>(&window).unwrap();
+        // Production panes keep their natural width. This shot needs a
+        // ~400px worker, so the test divider is allowed to shrink.
+        paned.set_shrink_start_child(true);
+        paned.set_shrink_end_child(true);
+        let total = paned.width().max(1) as f32;
+        let ratio = (400.0 / total).clamp(0.2, 0.8);
+        {
+            let mut model = app.model.borrow_mut();
+            if let Some(signaltty_core::Layout::Split { ratio: slot, .. }) =
+                model.tabs[0].layout.as_mut()
+            {
+                *slot = ratio;
+            }
+            if let Some(signaltty_core::Layout::Split { ratio: slot, .. }) = model
+                .cache
+                .snapshots
+                .get_mut("fix")
+                .and_then(|snap| snap.tabs[0].layout.as_mut())
+            {
+                *slot = ratio;
+            }
+        }
+        app.render_tabs();
+        let paned = find_widget::<gtk4::Paned>(&window).unwrap();
+        paned.set_shrink_start_child(true);
+        paned.set_shrink_end_child(true);
+        app.dividers.suppressing(|| paned.set_position(400));
+        let deadline = Instant::now() + std::time::Duration::from_millis(400);
+        while Instant::now() < deadline {
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    let pane_width = try_pane(&window, "worker").unwrap().width();
+    let paned = find_widget::<gtk4::Paned>(&window).unwrap();
+    assert!(
+        (360..=440).contains(&pane_width),
+        "worker pane is {pane_width}px, wanted about 400 (paned {} pos {})",
+        paned.width(),
+        paned.position()
+    );
+    assert_chip_cluster(&window);
+    assert!(
+        !label_with_class(&try_header(&window, "worker").unwrap(), "pane-title")
+            .layout()
+            .is_ellipsized(),
+        "pane title ellipsized in a narrow pane"
+    );
+    capture_workflow(&app.window, "signal-dark-narrow");
+
+    assert!(app.model.borrow_mut().tasks.apply_event(
+        signaltty_proto::event::TASK_UPDATED,
+        &json!({"task": chip_scene_task("parser-recovery")}),
+    ));
+    app.paint_task_chips();
+    let deadline = Instant::now() + std::time::Duration::from_millis(200);
+    while Instant::now() < deadline {
+        while glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let header = try_header(&window, "worker").unwrap();
+    let title = label_with_class(&header, "pane-title");
+    let chip_label = label_with_class(&header, "task-chip-label");
+    assert!(
+        !title.layout().is_ellipsized(),
+        "title ellipsized before the task label"
+    );
+    assert!(
+        chip_label.layout().is_ellipsized(),
+        "task label did not ellipsize in a {}px pane (label width {})",
+        try_pane(&window, "worker").unwrap().width(),
+        chip_label.width()
+    );
+    let chip = try_descendant(&header, "task-chip").unwrap();
+    let actions = try_descendant(&header, "pane-actions").unwrap();
+    let chip_box = widget_bounds(&chip, &header);
+    let actions_box = widget_bounds(&actions, &header);
+    assert!(
+        chip_box.x + chip_box.w <= actions_box.x + 1.0,
+        "chip overlaps the header actions"
+    );
+
+    app.window.destroy();
+    match previous_config {
+        Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+        None => std::env::remove_var("XDG_CONFIG_HOME"),
+    }
+}
+
+fn chip_scene_snapshot() -> crate::refresh::Snapshot {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut value = fixture("fix");
+    value["workspace"]["name"] = json!("fix-parser");
+    value["workspace"]["git"] = json!({"branch": "fix/parser"});
+    value["workspace"]["created_at"] = json!(now);
+    value["workspace"]["updated_at"] = json!(now);
+    value["panes"][0]["title"] = json!("worker");
+    value["panes"][0]["last_message"] = json!("session started");
+    value["panes"][0]["lifecycle"] = json!("idle");
+    value["panes"][0]["cwd"] = json!("/tmp/fix/parser");
+    value["panes"][0]["created_at"] = json!(now);
+    value["panes"][0]["last_activity_at"] = json!(now);
+    serde_json::from_value(value).unwrap()
+}
+
+fn chip_scene_task(label: &str) -> Value {
+    let now = chrono::Utc::now().to_rfc3339();
+    json!({
+        "id": "task_fix",
+        "context_id": "tctx_fix",
+        "pane_id": "pane_fix",
+        "label": label,
+        "contract": {"objective": "Tighten the parser"},
+        "source_repo": "/tmp/repo",
+        "worktree_path": "/tmp/wt",
+        "branch": "fix/parser",
+        "base_ref": "HEAD",
+        "base_sha": "0123456789abcdef",
+        "state": "working",
+        "created_at": now,
+        "updated_at": now
+    })
+}
+
+struct WidgetBounds {
+    x: f64,
+    w: f64,
+}
+
+fn widget_bounds(widget: &gtk4::Widget, origin: &gtk4::Widget) -> WidgetBounds {
+    let point = widget
+        .compute_point(origin, &gtk4::graphene::Point::new(0.0, 0.0))
+        .expect("widget coordinates");
+    WidgetBounds {
+        x: f64::from(point.x()),
+        w: widget.width() as f64,
+    }
+}
+
+fn walk_widgets(root: &gtk4::Widget, visit: &mut dyn FnMut(&gtk4::Widget) -> bool) -> bool {
+    if visit(root) {
+        return true;
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if walk_widgets(&widget, visit) {
+            return true;
+        }
+        child = widget.next_sibling();
+    }
+    false
+}
+
+fn try_descendant(root: &gtk4::Widget, class: &str) -> Option<gtk4::Widget> {
+    let mut found = None;
+    walk_widgets(root, &mut |widget| {
+        if widget.has_css_class(class) {
+            found = Some(widget.clone());
+            true
+        } else {
+            false
+        }
+    });
+    found
+}
+
+fn visible_label_texts(root: &gtk4::Widget) -> Vec<String> {
+    let mut texts = Vec::new();
+    walk_widgets(root, &mut |widget| {
+        if !widget.is_visible() {
+            return false;
+        }
+        if let Some(label) = widget.downcast_ref::<gtk4::Label>() {
+            let text = label.text().to_string();
+            if !text.is_empty() {
+                texts.push(text);
+            }
+        }
+        false
+    });
+    texts
+}
+
+fn try_header(window: &gtk4::Widget, title: &str) -> Option<gtk4::Widget> {
+    let mut found = None;
+    walk_widgets(window, &mut |widget| {
+        if widget.has_css_class("pane-header")
+            && visible_label_texts(widget).iter().any(|text| text == title)
+        {
+            found = Some(widget.clone());
+            true
+        } else {
+            false
+        }
+    });
+    found
+}
+
+fn try_pane(window: &gtk4::Widget, title: &str) -> Option<gtk4::Widget> {
+    let mut found = None;
+    walk_widgets(window, &mut |widget| {
+        if widget.has_css_class("pane")
+            && visible_label_texts(widget).iter().any(|text| text == title)
+        {
+            found = Some(widget.clone());
+            true
+        } else {
+            false
+        }
+    });
+    found
+}
+
+fn label_with_class(root: &gtk4::Widget, class: &str) -> gtk4::Label {
+    let mut found = None;
+    walk_widgets(root, &mut |widget| {
+        if let Some(label) = widget.downcast_ref::<gtk4::Label>() {
+            if label.has_css_class(class) {
+                found = Some(label.clone());
+                return true;
+            }
+        }
+        false
+    });
+    found.unwrap_or_else(|| panic!("missing label .{class}"))
+}
+
+/// Content width minus visible children. GTK's `width()` is the content
+/// box, so CSS padding is outside this number and the remainder is the
+/// box's inter-child spacing. A reserved label width shows up here.
+fn chip_content_slack(chip: &gtk4::Widget) -> i32 {
+    let mut content = 0;
+    let mut child = chip.first_child();
+    while let Some(widget) = child {
+        if widget.is_visible() {
+            content += widget.width();
+        }
+        child = widget.next_sibling();
+    }
+    chip.width() - content
+}
+
+/// Horizontal CSS padding, from the border box (`compute_bounds`) minus
+/// the content box (`width()`).
+fn chip_horizontal_padding(chip: &gtk4::Widget, origin: &gtk4::Widget) -> f32 {
+    let bounds = chip.compute_bounds(origin).expect("chip bounds");
+    bounds.width() - chip.width() as f32
+}
+
+fn assert_chip_cluster(window: &gtk4::Widget) {
+    let header = try_header(window, "worker").expect("worker header");
+    let title = label_with_class(&header, "pane-title");
+    let subtitle = label_with_class(&header, "pane-subtitle");
+    let chip = try_descendant(&header, "task-chip").expect("header chip");
+    let actions = try_descendant(&header, "pane-actions").expect("pane actions");
+    assert_eq!(title.text(), "worker");
+    assert_eq!(subtitle.text(), "Idle");
+    assert_eq!(
+        visible_label_texts(&chip),
+        vec![
+            "Task".to_string(),
+            "fix-parser".to_string(),
+            "Working".to_string()
+        ]
+    );
+    let title_box = widget_bounds(title.upcast_ref(), &header);
+    let subtitle_box = widget_bounds(subtitle.upcast_ref(), &header);
+    let chip_box = widget_bounds(&chip, &header);
+    let actions_box = widget_bounds(&actions, &header);
+    let gap = chip_box.x - (subtitle_box.x + subtitle_box.w);
+    assert!(
+        (4.0..20.0).contains(&gap),
+        "chip detached from the title cluster by {gap}px"
+    );
+    assert!(
+        chip_box.x >= title_box.x + title_box.w - 1.0,
+        "chip overlaps the pane title"
+    );
+    assert!(
+        chip_box.x + chip_box.w <= actions_box.x + 1.0,
+        "chip overlaps the header actions"
+    );
+    assert!(
+        !title.layout().is_ellipsized(),
+        "pane title ellipsized while the chip is showing"
+    );
+    let slack = chip_content_slack(&chip);
+    let padding = chip_horizontal_padding(&chip, &header);
+    assert!(
+        (6..=10).contains(&slack),
+        "header chip content slack is {slack}px (width {}, padding {padding})",
+        chip.width()
+    );
+    assert!(
+        (14.0..18.0).contains(&padding),
+        "header chip horizontal padding is {padding}px"
+    );
+    let tip = chip.tooltip_text().unwrap_or_default().to_string();
+    assert!(tip.contains("fix-parser"), "{tip}");
+
+    let tasks = try_descendant(window, "workspace-tasks").expect("sidebar chips");
+    let side = try_descendant(&tasks, "task-chip").expect("sidebar chip");
+    assert_eq!(
+        visible_label_texts(&side),
+        vec!["Task".to_string(), "Working".to_string()]
+    );
+    let side_slack = chip_content_slack(&side);
+    let side_padding = chip_horizontal_padding(&side, &tasks);
+    assert!(
+        (2..=6).contains(&side_slack),
+        "sidebar chip content slack is {side_slack}px (width {}, padding {side_padding})",
+        side.width()
+    );
+    assert!(
+        (14.0..18.0).contains(&side_padding),
+        "sidebar chip horizontal padding is {side_padding}px"
+    );
+    let side_tip = side.tooltip_text().unwrap_or_default().to_string();
+    assert!(side_tip.contains("fix-parser"), "{side_tip}");
+}
