@@ -20,7 +20,7 @@ fn cli(socket: &std::path::Path, args: &[&str]) -> (bool, String) {
 fn cli_json(socket: &std::path::Path, args: &[&str]) -> Value {
     let mut full = vec!["--json"];
     full.extend(args.iter());
-    let (ok, text) = cli(socket, &full);
+    let (ok, _text) = cli(socket, &full);
     assert!(ok, "cli failed: {text}");
     serde_json::from_str(text.trim()).expect("valid JSON")
 }
@@ -146,7 +146,7 @@ async fn cli_decision_answer_flow() {
     // `new` spawns a plain shell pane; re-hinting is not supported, so drive
     // the flow through hook-event + decision.answer against the recorded kind:
     // plain panes are read-only, which the CLI must surface, not fake.
-    let (ok, text) = cli(
+    let (ok, _text) = cli(
         &srv.socket,
         &[
             "hook-event",
@@ -164,7 +164,7 @@ async fn cli_decision_answer_flow() {
     let g = cli_json(&srv.socket, &["pane", "get", &pane]);
     assert_eq!(g["pane"]["pending_decision"]["id"], "d1");
     // Human `pane get` prints the prompt plus one line per option.
-    let (ok, text) = cli(&srv.socket, &["pane", "get", &pane]);
+    let (ok, _text) = cli(&srv.socket, &["pane", "get", &pane]);
     assert!(ok, "{text}");
     assert!(text.contains("Allow?"), "{text}");
     assert!(text.contains("once — Once"), "{text}");
@@ -322,7 +322,7 @@ async fn cli_workspace_diff_reports_counts() {
     let ws = new["workspace_id"].as_str().unwrap().to_string();
     let d = cli_json(&srv.socket, &["workspace", "diff", &ws]);
     assert_eq!(d["added"], 1);
-    let (ok, text) = cli(&srv.socket, &["workspace", "diff", &ws]);
+    let (ok, _text) = cli(&srv.socket, &["workspace", "diff", &ws]);
     assert!(ok, "{text}");
     assert!(text.contains("+1 -0 a.txt"), "{text}");
     assert!(text.contains("total +1 -0"), "{text}");
@@ -359,7 +359,7 @@ async fn cli_integration_status_lists_manifests() {
     assert_eq!(wrap["manifest"]["ok"], true);
     let broken = manifests.iter().find(|m| m["name"] == "broken").unwrap();
     assert_eq!(broken["manifest"]["ok"], false);
-    let (ok, text) = cli(&srv.socket, &["integration", "status"]);
+    let (ok, _text) = cli(&srv.socket, &["integration", "status"]);
     assert!(ok, "{text}");
     assert!(text.contains("manifest wrap: kind=codex"), "{text}");
     assert!(text.contains("BROKEN"), "{text}");
@@ -456,7 +456,7 @@ async fn cli_integration_install_uninstall() {
 #[tokio::test]
 async fn cli_human_output_and_errors() {
     let srv = TestServer::start().await;
-    let (ok, text) = cli(&srv.socket, &["status"]);
+    let (ok, _text) = cli(&srv.socket, &["status"]);
     assert!(ok);
     assert!(text.contains("workspaces"), "{text}");
     // Unknown pane → nonzero exit + message on stderr.
@@ -714,6 +714,112 @@ async fn cli_task_orchestration() {
     // 4. task cancel
     let cancel = cli_json(&srv.socket, &["task", "cancel", &task_id]);
     assert_eq!(cancel["task"]["state"], "canceled");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_cli_phase5_report_attention_wait() {
+    let repo_dir = std::env::temp_dir().join(format!(
+        "signaltty-clitest-phase5-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos()
+    ));
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    let _ = std::process::Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.name", "Orchestrator Test"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.email", "orch@test.local"])
+        .current_dir(&repo_dir)
+        .output();
+    std::fs::write(repo_dir.join("README.md"), "# Test\n").unwrap();
+    let _ = std::process::Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(&repo_dir)
+        .output();
+
+    let srv = TestServer::start().await;
+
+    // Start a task
+    let start = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "start",
+            "--repo",
+            repo_dir.to_str().unwrap(),
+            "--objective",
+            "Phase 5 CLI objective",
+            "--context",
+            "ctx_cli_p5",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    let pane_id = start["pane"]["id"].as_str().unwrap().to_string();
+
+    // 1. attention command
+    let att = cli_json(&srv.socket, &["attention"]);
+    assert!(att["panes"].is_array());
+    let (att_ok, _att_text) = cli(&srv.socket, &["attention"]);
+    assert!(att_ok);
+
+    // 2. task wait with positional syntax
+    // Waiting on empty context matches immediately
+    let wait_ctx = cli_json(
+        &srv.socket,
+        &["task", "wait", "--context", "ctx_nonexistent"],
+    );
+    assert_eq!(wait_ctx["tasks"].as_array().unwrap().len(), 0);
+
+    // 3. report command with --task
+    let rep = cli_json(
+        &srv.socket,
+        &[
+            "report",
+            "--task",
+            &task_id,
+            "--status",
+            "completed",
+            "--summary",
+            "Phase 5 task reported via CLI",
+        ],
+    );
+    assert_eq!(rep["task"]["state"], "completed");
+    assert_eq!(
+        rep["task"]["result"]["summary"],
+        "Phase 5 task reported via CLI"
+    );
+
+    // Human output check
+    let (ok, _text) = cli(
+        &srv.socket,
+        &[
+            "report",
+            "--pane",
+            &pane_id,
+            "--status",
+            "completed",
+            "--summary",
+            "Second report",
+        ],
+    );
+    assert!(!ok, "second report should fail");
 
     srv.shutdown().await;
 }
