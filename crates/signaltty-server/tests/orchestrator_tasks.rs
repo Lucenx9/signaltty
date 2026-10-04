@@ -1564,3 +1564,67 @@ async fn test_last_message_capture_from_stop_and_permission_hooks() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_silent_worker_watchdog_transitions_to_input_required() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start_with_env(&[("SIGNALTTY_WORKER_SILENT_TIMEOUT_S", "1")]).await;
+    let mut c = srv.client().await;
+
+    let res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Silent watchdog test"},
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+
+    let task_id = res["task"]["id"].as_str().unwrap().to_string();
+    let pane_id = res["pane"]["id"].as_str().unwrap().to_string();
+    let wt_path = std::path::PathBuf::from(res["task"]["worktree_path"].as_str().unwrap());
+
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt_path).await.unwrap();
+
+    let wait = c
+        .call(
+            "task.wait",
+            json!({
+                "task_id": &task_id,
+                "until": "working",
+                "timeout_s": 5,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+
+    // Wait for watchdog to transition task to input_required with reason worker_silent
+    let wait_settled = c
+        .call(
+            "task.wait",
+            json!({
+                "task_id": &task_id,
+                "until": "settled",
+                "timeout_s": 5,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait_settled["satisfied"], true);
+    assert_eq!(wait_settled["state"], "input_required");
+
+    let task_get = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(task_get["task"]["state"], "input_required");
+    assert_eq!(task_get["task"]["status_reason"]["reason"], "worker_silent");
+
+    srv.shutdown().await;
+}

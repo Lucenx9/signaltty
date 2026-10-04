@@ -51,10 +51,22 @@ impl TestServer {
         Self::start_with_dirs(plugin_dir, None).await
     }
 
+    pub async fn start_with_env(envs: &[(&str, &str)]) -> TestServer {
+        Self::start_internal(None, None, envs).await
+    }
+
     /// Start with explicit plugin + agents dirs (None = server default).
     pub async fn start_with_dirs(
         plugin_dir: Option<&Path>,
         agents_dir: Option<&Path>,
+    ) -> TestServer {
+        Self::start_internal(plugin_dir, agents_dir, &[]).await
+    }
+
+    async fn start_internal(
+        plugin_dir: Option<&Path>,
+        agents_dir: Option<&Path>,
+        extra_envs: &[(&str, &str)],
     ) -> TestServer {
         let ns = format!("st-{}", unique());
         let temp_dir = std::env::temp_dir();
@@ -86,6 +98,9 @@ impl TestServer {
             .env("XDG_CONFIG_HOME", integration_home.join(".config"))
             .env("XDG_DATA_HOME", integration_home.join(".local/share"))
             .env("HOME", &integration_home);
+        for (k, v) in extra_envs {
+            cmd.env(k, v);
+        }
         let mut child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
