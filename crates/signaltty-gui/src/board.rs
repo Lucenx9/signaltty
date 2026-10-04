@@ -12,7 +12,7 @@ use std::rc::Rc;
 use chrono::{DateTime, Utc};
 use gtk4::prelude::*;
 use libadwaita::prelude::*;
-use signaltty_core::{DispositionOutcome, PrChecks, PrReview, PrState, Task, TaskPr, TaskState};
+use signaltty_core::{DispositionOutcome, PrChecks, PrReview, PrState, Task, TaskState};
 
 use crate::task_chip::{state_class, state_word};
 
@@ -394,7 +394,7 @@ pub fn present(
 mod tests {
     use super::*;
     use chrono::{Duration, TimeZone};
-    use signaltty_core::{Contract, Disposition, Relationship};
+    use signaltty_core::{Contract, Disposition, Relationship, TaskPr};
     use std::path::PathBuf;
 
     fn make_task(

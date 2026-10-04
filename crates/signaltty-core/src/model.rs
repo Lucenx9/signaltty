@@ -868,18 +868,13 @@ impl Default for Disposition {
 }
 
 /// Pull request state on the forge (e.g. GitHub).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PrState {
+    #[default]
     Open,
     Merged,
     Closed,
-}
-
-impl Default for PrState {
-    fn default() -> Self {
-        Self::Open
-    }
 }
 
 impl PrState {
@@ -894,35 +889,25 @@ impl PrState {
 }
 
 /// Rollup status of CI checks on a pull request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PrChecks {
+    #[default]
     None,
     Pending,
     Passing,
     Failing,
 }
 
-impl Default for PrChecks {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 /// Review decision status on a pull request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PrReview {
+    #[default]
     None,
     ReviewRequired,
     Approved,
     ChangesRequested,
-}
-
-impl Default for PrReview {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Forge pull request associated with an orchestrated task.

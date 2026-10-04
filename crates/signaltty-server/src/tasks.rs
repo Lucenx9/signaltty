@@ -1830,10 +1830,6 @@ fn cwd_inside_worktree(cwd: &str, worktree: &std::path::Path) -> bool {
         .is_ok_and(|cwd| cwd.starts_with(worktree))
 }
 
-/// Second finish when a disposition is already stored but the recorded
-/// checkout is still on disk: retry removal only, do not merge again.
-#[allow(clippy::too_many_arguments)]
-
 pub async fn h_task_pr_open(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
     let p: params::TaskPrOpen = match decode(params) {
         Ok(p) => p,
@@ -2046,8 +2042,7 @@ pub async fn h_task_pr_open(ctx: &Ctx, req: &Request, params: &Value) -> (Respon
             let url = stdout
                 .lines()
                 .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .last()
+                .rfind(|l| !l.is_empty())
                 .ok_or_else(|| {
                     (
                         code::IO_ERROR.to_string(),
@@ -2164,7 +2159,7 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
         } else {
             s.tasks
                 .values()
-                .filter(|t| t.pr.as_ref().map_or(false, |pr| pr.state == PrState::Open))
+                .filter(|t| t.pr.as_ref().is_some_and(|pr| pr.state == PrState::Open))
                 .map(|t| {
                     (
                         t.id.clone(),
@@ -2309,6 +2304,9 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
     )
 }
 
+/// Second finish when a disposition is already stored but the recorded
+/// checkout is still on disk: retry removal only, do not merge again.
+#[allow(clippy::too_many_arguments)]
 fn retry_recorded_cleanup(
     ctx: &Ctx,
     req_id: &str,
