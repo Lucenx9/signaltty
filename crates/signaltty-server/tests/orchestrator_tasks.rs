@@ -2200,3 +2200,53 @@ async fn explicit_argv_task_with_an_unknown_agent_name_does_not_drop_hooks() {
     assert_ne!(r["dropped"], true, "{r}");
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn watchdog_transition_reaches_the_snapshot() {
+    let repo = TempGitRepo::new();
+    // 3 s of silence: the debounced flusher (2 s ticks) has already consumed
+    // the hook-driven persist mark by the time the watchdog fires.
+    let srv = TestServer::start_with_env(&[("SIGNALTTY_WORKER_SILENT_TIMEOUT_S", "3")]).await;
+    let mut c = srv.client().await;
+    let res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Silent snapshot"},
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = res["task"]["id"].as_str().unwrap().to_string();
+    let pane_id = res["pane"]["id"].as_str().unwrap().to_string();
+    let wt_path = std::path::PathBuf::from(res["task"]["worktree_path"].as_str().unwrap());
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt_path).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
+    let wait = c
+        .call(
+            "task.wait",
+            json!({"task_id": &task_id, "until": "input_required", "timeout_s": 10}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+
+    // Another flusher tick later the snapshot must carry the transition.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let snap: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(srv.state_dir.join("snapshot.json")).unwrap())
+            .unwrap();
+    let task = snap["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == task_id.as_str())
+        .unwrap();
+    assert_eq!(task["state"], "input_required", "{task}");
+    srv.shutdown().await;
+}

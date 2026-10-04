@@ -159,8 +159,11 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                         .collect()
                 };
 
+                if silent_tasks.is_empty() {
+                    continue;
+                }
+                let mut s = ctx.store.write().unwrap();
                 for (task_id, _pid) in silent_tasks {
-                    let mut s = ctx.store.write().unwrap();
                     if let Some(t) = s.tasks.get(&task_id) {
                         if t.state == signaltty_core::TaskState::Working {
                             let evidence = serde_json::json!({
@@ -171,6 +174,8 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                drop(s);
+                ctx.mark_persist();
             }
         });
     }
