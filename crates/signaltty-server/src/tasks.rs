@@ -1563,10 +1563,17 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
                 &src_str,
                 &["status", "--porcelain=v1", "--untracked-files=no"],
             );
+            // A failed restore must not read as a plain timeout (contract:
+            // IO_ERROR whenever the target may be left mid-merge).
+            let restored = abort_ok && matches!(target_clean, Ok(true));
             return (
                 Response::err_with_details(
                     &req.id,
-                    code::TIMEOUT,
+                    if restored {
+                        code::TIMEOUT
+                    } else {
+                        code::IO_ERROR
+                    },
                     format!(
                         "git merge timed out after {} ms",
                         ctx.config.merge_timeout_ms
