@@ -885,22 +885,31 @@ impl App {
         }
     }
 
-    /// Header and sidebar chips from the pane-keyed cache. Widgets
-    /// already on screen are updated; terminals are not rebuilt.
+    /// Header and sidebar chips from the pane-keyed cache. The header
+    /// compares the task label with the pane title; the sidebar compares
+    /// it with the workspace name. Widgets already on screen are updated;
+    /// terminals are not rebuilt.
     fn paint_task_chips(&self) {
         let (by_pane, by_workspace) = {
             let model = self.model.borrow();
-            let mut labels: HashMap<String, String> = HashMap::new();
+            let mut parent_labels: HashMap<String, String> = HashMap::new();
+            let mut pane_titles: HashMap<String, String> = HashMap::new();
             let mut workspace_of: HashMap<String, String> = HashMap::new();
+            let mut workspace_names: HashMap<String, String> = HashMap::new();
             for snapshot in model.cache.snapshots.values() {
+                workspace_names.insert(
+                    snapshot.workspace.id.clone(),
+                    snapshot.workspace.name.clone(),
+                );
                 for pane in &snapshot.panes {
-                    let label = pane
+                    let parent = pane
                         .label
                         .as_deref()
                         .map(str::trim)
                         .filter(|s| !s.is_empty())
                         .unwrap_or(pane.title.as_str());
-                    labels.insert(pane.id.clone(), label.to_string());
+                    parent_labels.insert(pane.id.clone(), parent.to_string());
+                    pane_titles.insert(pane.id.clone(), pane.title.trim().to_string());
                     workspace_of.insert(pane.id.clone(), snapshot.workspace.id.clone());
                 }
             }
@@ -913,16 +922,26 @@ impl App {
                 let parent = task
                     .parent_pane_id
                     .as_deref()
-                    .and_then(|id| labels.get(id))
+                    .and_then(|id| parent_labels.get(id))
                     .map(String::as_str);
-                let view = task_chip::task_chip(task, parent);
+                let pane_name = pane_titles
+                    .get(pane_id)
+                    .map(String::as_str)
+                    .filter(|name| !name.is_empty());
+                by_pane.insert(
+                    pane_id.to_string(),
+                    task_chip::task_chip(task, parent, pane_name),
+                );
                 if let Some(ws) = workspace_of.get(pane_id) {
+                    let ws_name = workspace_names
+                        .get(ws)
+                        .map(String::as_str)
+                        .filter(|name| !name.is_empty());
                     by_workspace
                         .entry(ws.clone())
                         .or_default()
-                        .push(view.clone());
+                        .push(task_chip::task_chip(task, parent, ws_name));
                 }
-                by_pane.insert(pane_id.to_string(), view);
             }
             (by_pane, by_workspace)
         };
