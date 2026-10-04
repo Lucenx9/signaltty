@@ -531,7 +531,7 @@ function sessionId(event) {
   return p.sessionID ?? p.sessionId ?? p.session_id ?? event.sessionID ?? null;
 }
 
-const SignalttyPlugin = async () => ({
+const SignalttyPlugin = async (_ctx) => ({
   event: async ({ event }) => {
     const sid = sessionId(event);
     switch (event.type) {
@@ -559,8 +559,71 @@ const SignalttyPlugin = async () => ({
         break;
     }
   },
+  dispose: async () => {},
 });
 
-export default SignalttyPlugin;
+// OpenCode 2 (`serve`) subscribes via `setup` with `{ type, data }` events;
+// translate the execution family to the v1 `{ type, properties }` shapes above.
+// Never throws: a throw here surfaces as a failed-plugin error in the host.
+async function setupSignaltty(ctx) {
+  const noop = async () => {};
+  try {
+    if (!ctx || typeof ctx.event?.subscribe !== "function") return noop;
+    let hooks;
+    try {
+      hooks = await SignalttyPlugin(ctx);
+    } catch {
+      return noop;
+    }
+    if (!hooks || typeof hooks.event !== "function") return noop;
+    const controller = new AbortController();
+    const translate = (type, data) => {
+      const properties = data ?? {};
+      if (type === "session.execution.started") {
+        return { type: "session.status", properties: { ...properties, status: { type: "busy" } } };
+      }
+      if (
+        type === "session.execution.succeeded" ||
+        type === "session.execution.failed" ||
+        type === "session.execution.interrupted"
+      ) {
+        return { type: "session.status", properties: { ...properties, status: { type: "idle" } } };
+      }
+      return { type, properties };
+    };
+    const consuming = (async () => {
+      for await (const input of ctx.event.subscribe({ signal: controller.signal })) {
+        if (controller.signal.aborted) break;
+        if (!input || typeof input.type !== "string") continue;
+        try {
+          await hooks.event({ event: translate(input.type, input.data) });
+        } catch {
+          // never break the host event loop
+        }
+      }
+    })().catch(() => {});
+    return async () => {
+      try {
+        controller.abort();
+        await consuming;
+        await hooks.dispose?.();
+      } catch {
+        // unload must not fail the plugin
+      }
+    };
+  } catch {
+    return noop;
+  }
+}
+
+// OpenCode 1 requires a callable default; OpenCode 2 validates a plugin object
+// with an id and a setup (or effect) function.
+export default process.env.SIGNALTTY_OPENCODE_PLUGIN_API === "v1"
+  ? SignalttyPlugin
+  : {
+      id: "signaltty",
+      server: SignalttyPlugin,
+      setup: setupSignaltty,
+    };
 export { SignalttyPlugin };
 "#;

@@ -135,6 +135,23 @@ fn foreign_opencode_plugin_is_never_overwritten_or_removed() {
 }
 
 #[test]
+fn opencode_plugin_default_export_satisfies_v1_and_v2_loaders() {
+    let f = Fixture::new();
+    let report = f.hooks.install("opencode").unwrap();
+    assert!(report.changed);
+    let source = fs::read_to_string(&report.file).unwrap();
+    // v2 loader: "Plugin must export a default definition with an id and an
+    // effect or setup function." v1 loader needs a callable default with
+    // server(). The conditional default below serves both hosts.
+    assert!(source.contains("export default"));
+    assert!(source.contains("export { SignalttyPlugin }"));
+    assert!(source.contains("id: \"signaltty\""));
+    assert!(source.contains("server: SignalttyPlugin"));
+    assert!(source.contains("setup: setupSignaltty"));
+    assert!(source.contains("SIGNALTTY_OPENCODE_PLUGIN_API"));
+}
+
+#[test]
 fn encoded_reporter_path_executes_without_shell_interpretation() {
     let f = Fixture::new();
     let report = f.hooks.install("claude").unwrap();
