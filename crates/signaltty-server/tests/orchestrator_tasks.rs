@@ -689,3 +689,155 @@ async fn task_start_agent_and_argv_resolution() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn task_start_concurrent_calls_respect_atomic_reservation() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    // Start 3 tasks (leaving exactly 1 slot available out of 4)
+    for i in 0..3 {
+        let res = c
+            .call(
+                "task.start",
+                json!({
+                    "repo": repo.path().to_string_lossy(),
+                    "contract": {"objective": format!("Objective {i}")},
+                    "label": format!("worker-{i}"),
+                    "argv": ["sh"],
+                }),
+            )
+            .await;
+        assert!(res.is_ok());
+    }
+
+    let mut c1 = srv.client().await;
+    let mut c2 = srv.client().await;
+    let repo_path = repo.path().to_string_lossy().to_string();
+
+    let fut1 = c1.call(
+        "task.start",
+        json!({
+            "repo": repo_path.clone(),
+            "contract": {"objective": "Concurrent 1"},
+            "label": "worker-c1",
+            "argv": ["sh"],
+        }),
+    );
+    let fut2 = c2.call(
+        "task.start",
+        json!({
+            "repo": repo_path.clone(),
+            "contract": {"objective": "Concurrent 2"},
+            "label": "worker-c2",
+            "argv": ["sh"],
+        }),
+    );
+
+    let (res1, res2) = tokio::join!(fut1, fut2);
+
+    let ok_count = [res1.is_ok(), res2.is_ok()].iter().filter(|&&b| b).count();
+    let rate_limited_count = [res1.as_ref().err(), res2.as_ref().err()]
+        .into_iter()
+        .flatten()
+        .filter(|e| e.starts_with(signaltty_proto::code::RATE_LIMITED))
+        .count();
+
+    assert_eq!(
+        ok_count, 1,
+        "Exactly one concurrent task.start must succeed"
+    );
+    assert_eq!(
+        rate_limited_count, 1,
+        "Exactly one concurrent task.start must be RATE_LIMITED"
+    );
+
+    let list = c.call("task.list", json!({})).await.unwrap();
+    assert_eq!(
+        list["tasks"].as_array().unwrap().len(),
+        4,
+        "Total active tasks must not exceed cap of 4"
+    );
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn task_start_counts_input_required_towards_cap() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    // Start 4 tasks
+    let res0 = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Objective 0"},
+                "label": "worker-0",
+                "argv": ["sh"],
+                "agent": "codex",
+            }),
+        )
+        .await
+        .unwrap();
+
+    for i in 1..4 {
+        c.call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": format!("Objective {i}")},
+                "label": format!("worker-{i}"),
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let worker_pane = res0["task"]["pane_id"].as_str().unwrap();
+    let driver = FakeAgentPane::new(worker_pane, "codex");
+    let wt = std::path::PathBuf::from(res0["task"]["worktree_path"].as_str().unwrap());
+    driver.session_start(&mut c, &wt).await.unwrap();
+
+    let wait = c
+        .call(
+            "task.wait",
+            json!({"task_id": res0["task"]["id"], "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+
+    // Stop hook event moves working task to InputRequired
+    driver.stop(&mut c).await.unwrap();
+
+    let get = c
+        .call("task.get", json!({"task_id": res0["task"]["id"]}))
+        .await
+        .unwrap();
+    assert_eq!(get["task"]["state"], "input_required");
+
+    // Attempting a 5th task must be RATE_LIMITED because InputRequired counts against cap
+    let res5 = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Fifth objective"},
+                "argv": ["sh"],
+            }),
+        )
+        .await;
+
+    let err = res5.unwrap_err();
+    assert!(
+        err.starts_with(signaltty_proto::code::RATE_LIMITED),
+        "Expected RATE_LIMITED, got: {err}"
+    );
+
+    srv.shutdown().await;
+}
