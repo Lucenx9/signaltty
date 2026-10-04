@@ -208,13 +208,13 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
 /// Present the Task Board dialog.
 ///
 /// If tasks is empty, displays an `adw::StatusPage`. Otherwise displays 4 columns
-/// side by side. Clicking any card with an associated `pane_id` closes the dialog
-/// and invokes `on_focus_pane(pane_id)`.
+/// side by side. Activating a card with a `pane_id` closes the dialog.
+/// `on_closed` runs once the dialog is gone, with the chosen pane if any, so
+/// focusing that pane is not undone by the close restoring the old focus.
 pub fn present(
     window: &libadwaita::ApplicationWindow,
     tasks: &[Task],
-    on_focus_pane: impl Fn(&str) + 'static,
-    on_closed: impl Fn() + 'static,
+    on_closed: impl FnOnce(Option<String>) + 'static,
 ) -> libadwaita::Dialog {
     let dialog = libadwaita::Dialog::new();
     dialog.set_title("Task Board");
@@ -225,7 +225,7 @@ pub fn present(
     let header = libadwaita::HeaderBar::new();
     body.append(&header);
 
-    let on_focus_pane = Rc::new(on_focus_pane);
+    let chosen: Rc<RefCell<Option<String>>> = Rc::default();
 
     if tasks.is_empty() {
         let status_page = libadwaita::StatusPage::new();
@@ -311,15 +311,15 @@ pub fn present(
 
             // Mouse and keyboard both land in `row-activated`.
             let dlg = dialog.downgrade();
-            let on_focus = on_focus_pane.clone();
+            let chosen = chosen.clone();
             list.connect_row_activated(move |_, row| {
                 let Some(Some(pane_id)) = pane_ids.get(row.index() as usize) else {
                     return;
                 };
+                chosen.replace(Some(pane_id.clone()));
                 if let Some(d) = dlg.upgrade() {
                     d.close();
                 }
-                on_focus(pane_id);
             });
 
             scroll.set_child(Some(&list));
@@ -333,7 +333,7 @@ pub fn present(
     let on_closed = RefCell::new(Some(on_closed));
     dialog.connect_closed(move |_| {
         if let Some(cb) = on_closed.borrow_mut().take() {
-            cb();
+            cb(chosen.take());
         }
     });
 

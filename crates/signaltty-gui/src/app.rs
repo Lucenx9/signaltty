@@ -1899,26 +1899,19 @@ impl App {
         }
         let tasks: Vec<signaltty_core::Task> = self.model.borrow().tasks.iter().cloned().collect();
         let weak = self.weak();
-        let close_weak = self.weak();
-        let dialog = crate::board::present(
-            &self.window,
-            &tasks,
-            move |pane_id| {
-                if let Some(app) = weak.upgrade() {
-                    app.focus_pane(pane_id);
+        let dialog = crate::board::present(&self.window, &tasks, move |chosen| {
+            let Some(app) = weak.upgrade() else { return };
+            app.board_dialog.borrow_mut().take();
+            if let Some(pane_id) = chosen {
+                // After GTK hands focus back to the old pane, or that
+                // focus-in counts as a newer navigation and wins.
+                glib::idle_add_local_once(move || app.focus_pane(&pane_id));
+            } else if let Some(id) = app.current_pane_id() {
+                if let Some(w) = app.widgets.borrow().get(&id) {
+                    w.focus();
                 }
-            },
-            move || {
-                if let Some(app) = close_weak.upgrade() {
-                    app.board_dialog.borrow_mut().take();
-                    if let Some(id) = app.current_pane_id() {
-                        if let Some(w) = app.widgets.borrow().get(&id) {
-                            w.focus();
-                        }
-                    }
-                }
-            },
-        );
+            }
+        });
         *self.board_dialog.borrow_mut() = Some(dialog);
     }
 

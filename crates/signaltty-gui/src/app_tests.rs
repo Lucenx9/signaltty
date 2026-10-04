@@ -2011,20 +2011,39 @@ fn task_board_shows_columns_and_navigates_to_pane() {
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
     gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
-    let (actor, _requests) = IpcHandle::test_channel();
+    let (actor, mut requests) = IpcHandle::test_channel();
+    // Card activation focuses through `pane.get`; answer it from workspace b.
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call { method, reply, .. } = request {
+                let result = match method.as_str() {
+                    "pane.get" => Ok(json!({"pane": fixture("b")["panes"][0]})),
+                    "test.stop" => {
+                        let _ = reply.send(Ok(Value::Null));
+                        break;
+                    }
+                    _ => Ok(json!({})),
+                };
+                let _ = reply.send(result);
+            }
+        }
+    });
     let (ui, _) = tokio::sync::mpsc::unbounded_channel();
     let app = App::new(&application, actor, ui);
     gtk4::Settings::default()
         .unwrap()
         .set_gtk_enable_animations(false);
     let snapshot = chip_scene_snapshot();
+    let other: crate::refresh::Snapshot = serde_json::from_value(fixture("b")).unwrap();
     {
         let mut model = app.model.borrow_mut();
-        model.cache.workspaces = vec![snapshot.workspace.clone()];
-        model
-            .cache
-            .snapshots
-            .insert(snapshot.workspace.id.clone(), snapshot.clone());
+        model.cache.workspaces = vec![snapshot.workspace.clone(), other.workspace.clone()];
+        for snap in [&snapshot, &other] {
+            model
+                .cache
+                .snapshots
+                .insert(snap.workspace.id.clone(), snap.clone());
+        }
     }
     app.show_workspace("fix");
     app.window.set_default_size(1280, 800);
@@ -2048,7 +2067,7 @@ fn task_board_shows_columns_and_navigates_to_pane() {
             json!({
                 "id": "task_working_1",
                 "context_id": "ctx1",
-                "pane_id": "pane_fix",
+                "pane_id": "pane_b",
                 "label": "Implement Task Board",
                 "contract": {"objective": "Build task board view"},
                 "agent": "codex",
@@ -2153,13 +2172,19 @@ fn task_board_shows_columns_and_navigates_to_pane() {
             dialog.close();
             wait_ui(|| app.window.visible_dialog().is_none());
         } else {
-            // Test activating a card row to focus pane and close dialog
+            // The first card is the Working task in workspace b.
+            assert_eq!(app.current_pane_id().as_deref(), Some("pane_fix"));
             let row = find_widget::<gtk4::ListBoxRow>(&dialog.child().unwrap()).unwrap();
             row.activate();
             wait_ui(|| app.window.visible_dialog().is_none());
+            wait_ui(|| app.current_pane_id().as_deref() == Some("pane_b"));
         }
     }
 
+    glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
+    worker.join().unwrap();
     app.window.destroy();
     match previous_config {
         Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
