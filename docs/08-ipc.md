@@ -64,7 +64,7 @@ clients can `subscribe {from_seq}` to replay.
 | `tab.close` | `{tab_id, signal?}` | `{closed}` |
 | `tab.set_layout` | `{tab_id, layout}` | `{tab}` |
 | `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
-| `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?}` | `{pane, integration?}` |
+| `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?, parent_pane_id?, label?, relationship?}` | `{pane, integration?}` |
 | `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane, integration?}` (new sibling) |
 | `pane.get` | `{pane_id}` | `{pane, wait_baseline}` |
 | `pane.input` | `{pane_id, data_b64}` | `{written}` |
@@ -76,6 +76,7 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
 | `pane.resume` | `{pane_id}` | `{pane, integration?}` (spawns adapter resume argv; errors unless restored+resumable) |
 | `pane.mark_seen` | `{pane_id}` | `{pane}` (records reading; clears ordinary attention while preserving unanswered decisions and their required attention) |
+| `pane.submit` | `{pane_id, text, submit_delay_ms?, stall_timeout_s?}` | `{submitted, outcome, transition_seq, lifecycle}` (bracketed paste + delayed Enter; gate checks lifecycle, resumes `input_required` to `working`) |
 | `decision.answer` | `{pane_id, decision_id, option_id}` | `{answered, lifecycle?, attention?}` (delivers through a live native permission waiter or the pane adapter's channel and consumes the id; stale/consumed ids → `NO_SUCH_DECISION`, unknown option or channelless adapter → `BAD_PARAMS`) |
 | `notify` | `{pane_id?, title, body?, severity?}` | `{notification}` |
 | `hook-event` | `{agent, event, pane_id?, client_pid?, payload?, message?, title?, severity?, decision?}` | `{accepted, agent, event, pane_id, lifecycle?, attention?}` (adapter classification; pane by explicit id or `client_pid` ancestry; `decision: {id, prompt, options[{id, label}]}` sets/supersedes the pane's pending decision, captured `answerable` iff the adapter has a channel) |
@@ -83,6 +84,11 @@ clients can `subscribe {from_seq}` to replay.
 | `subscribe` | `{events?: ["agent.*","attention.*",…], from_seq?}` | `{subscribed, seq, replay?}` then complete replay/live stream |
 | `wait` | `{pane_id, until: string\|string[], after?: wait_baseline, timeout_s?}` | `{satisfied, outcome, transition_seq, lifecycle, attention}` or `TIMEOUT` / `IDENTITY_CHANGED` |
 | `focus.next_unread` | — | `{pane_id?}` (severity→recency order) |
+| `task.start` | `{repo, contract: {objective, constraints?, output_format?, acceptance_criteria?}, agent?, label?, parent_pane_id?, context_id?, base_ref?, fetch_first?, branch?, path?, ready_timeout_s?, stall_timeout_s?, argv?}` | `{task, pane}` (starts worker at `pending`; background ready-wait and prompt submit transitions to `working`) |
+| `task.get` | `{task_id}` | `{task}` |
+| `task.list` | `{context_id?, state?, limit?}` | `{tasks: [...]}` |
+| `task.wait` | `{task_id?, context_id?, until?: string|string[], timeout_s?}` | `{satisfied, tasks: [...]}` (default `until: settled`) |
+| `task.cancel` | `{task_id}` | `{task}` |
 | `plugin.list` | — | `{dir, plugins[], failures[]}` (hooks with runs/errors/last_error; see 13) |
 | `plugin.reload` | — | same as `plugin.list` after re-scan (stats reset) |
 
