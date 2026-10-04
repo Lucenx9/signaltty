@@ -1,7 +1,7 @@
 # 11 — Crate & Module Layout
 
-Cargo workspace, Rust 2021+, MSRV 1.85 (matches `alacritty_terminal`
-floor if later adopted; `vt100` needs only 1.70).
+Cargo workspace, edition 2021, MSRV 1.92 (required by the locked GTK dependency
+family). Development uses `rust-toolchain.toml`; CI checks the minimum separately.
 
 ```text
 Cargo.toml                  # workspace
@@ -30,7 +30,7 @@ crates/
 
 ## Dependency rules
 
-- `core`: `serde, uuid, chrono|time, thiserror` only. No async, no OS.
+- `core`: `serde, serde_json, uuid, chrono, thiserror` only. No async, no OS calls.
 - `proto` → `core`. `term` → `core` (+`vt100`, `vte`).
 - `server` → `core, proto, term, agent, integration` (+`tokio, portable-pty`,
   `serde_json`, `nix`, `base64`).
@@ -44,6 +44,12 @@ crates/
 
 - `integration` → `serde, serde_json, thiserror, nix` only; filesystem hook
   installation shared by server/CLI, never GTK or server dependencies.
+
+`scripts/check-quality.py architecture` validates resolved Cargo package identities,
+including aliases and transitive normal/build edges. It checks the core/proto direct
+allowlists, toolkit exclusion outside GUI, and server/PTY exclusion from clients.
+Dev-only edges are excluded so integration test fixtures can use testkit. This does
+not prove absence of OS calls in source; that remains a code-review responsibility.
 
 ## Binaries
 

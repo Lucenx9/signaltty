@@ -1,6 +1,6 @@
 # AGENTS.md
 
-signaltty: native Linux workspace for parallel AI coding agents. Rust workspace (edition 2021, rust 1.85): JSONL-over-Unix-socket server owns PTYs/state, GTK4/libadwaita GUI + CLI are clients.
+signaltty: native Linux workspace for parallel AI coding agents. Rust workspace (edition 2021, minimum Rust 1.92, development toolchain in `rust-toolchain.toml`): JSONL-over-Unix-socket server owns PTYs/state, GTK4/libadwaita GUI + CLI are clients.
 
 ## Layout
 
@@ -19,29 +19,27 @@ Fresh environment? Run this first (bash + git only):
 
 ```sh
 scripts/setup-agent.sh all       # pinned skills + spec-kit commands + git hooks
+scripts/verify.sh doctor         # Rust, native libraries and display-test tools
 ```
 
-Skills do the heavy lifting every phase — load them before working, per
-`docs/15-agent-skills.md` (Specify → `grill-with-docs`; Plan → `architect`;
-Implement → `implement` + `tdd` + `karpathy-guidelines` + `principle-*`;
-Review → `code-review` + `interrogate`; Verify → `prove-it-works`; UI →
-`frontend-design` + emilkowalski set). CI runs fmt + clippy + tests on every push.
+Load skills for the current task using `docs/15-agent-skills.md`.
+Before completing a change, read `.agents/skills/verify-signaltty/SKILL.md`.
+Environment setup, worktree isolation, handoffs and proof limits are in
+`docs/17-agent-development.md`. CI runs the same full verification command.
 
 ## Commands
 
 System deps for the GUI: gtk4, libadwaita, vte (via pkg-config).
 
 ```sh
-cargo build --workspace
-cargo test --workspace            # all green before finishing
-cargo clippy --workspace --all-targets
-cargo fmt --check
+scripts/verify.sh fast            # tooling, fmt, architecture, warning policy, build/tests
+scripts/verify.sh full            # also server QA, isolated GTK tests and benchmark
 ```
 
 GUI tests needing a display are `#[ignore]`d; run them explicitly:
 
 ```sh
-dbus-run-session -- cargo test -p signaltty-gui -- --ignored --test-threads=1 <name>
+GTK_A11Y=none xvfb-run -a dbus-run-session -- cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1
 ```
 
 Server integration tests live in `crates/signaltty-server/tests/` and use `signaltty-testkit` (ephemeral socket + state dir per test).

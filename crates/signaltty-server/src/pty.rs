@@ -11,8 +11,8 @@ use chrono::Utc;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize as PtySizeRaw};
 use tokio::sync::broadcast;
 
-use signaltty_core::model::{LiveState, PtySize, RestoreState};
-use signaltty_core::state::{Attention, Lifecycle};
+use signaltty_core::model::PtySize;
+use signaltty_core::state::Attention;
 use signaltty_term::{HeadlessBackend, OscEvent, OscScanner, TerminalBackend};
 
 use crate::store::{SharedStore, StoredEvent};
@@ -272,7 +272,8 @@ impl PtyManager {
             }
         }
         if broadcast_data {
-            let seq = self.store.write().map(|mut s| s.next_seq()).unwrap_or(0);
+            let mut store = self.store.write().unwrap();
+            let seq = store.next_seq();
             let _ = self.bcast.send(StoredEvent {
                 seq,
                 name: signaltty_proto::event::PTY_DATA.to_string(),
@@ -303,8 +304,7 @@ impl PtyManager {
                         _ => None,
                     }
                 };
-                if let Some(ev) = changed {
-                    let _ = self.bcast.send(ev);
+                if changed.is_some() {
                     self.mark_persist();
                 }
             }
@@ -315,7 +315,6 @@ impl PtyManager {
             } => {
                 crate::router::push_notification(
                     &self.store,
-                    &self.bcast,
                     pane_id,
                     title.as_deref(),
                     &body,
@@ -325,14 +324,10 @@ impl PtyManager {
                 self.mark_persist();
             }
             OscEvent::Bell => {
-                let ev = self
-                    .store
+                self.store
                     .write()
                     .unwrap()
                     .raise_attention(pane_id, Attention::Unread);
-                if let Some(ev) = ev {
-                    let _ = self.bcast.send(ev);
-                }
             }
         }
     }
@@ -340,28 +335,7 @@ impl PtyManager {
     fn on_exit(&self, pane_id: &str, code: Option<i32>) {
         self.handles.lock().unwrap().remove(pane_id);
         // Viewers belong to connections, so they survive a child restart.
-        let mut outbound = Vec::new();
-        {
-            let mut s = self.store.write().unwrap();
-            if let Some(p) = s.panes.get_mut(pane_id) {
-                p.live = LiveState::Exited { code };
-                p.restore_state = RestoreState::Exited;
-                p.last_activity_at = Utc::now();
-                outbound.push(s.emit(
-                    signaltty_proto::event::PANE_EXITED,
-                    serde_json::json!({"pane_id": pane_id, "code": code}),
-                ));
-            }
-            // One lock for the whole exit: transitions ride along.
-            outbound.extend(s.set_lifecycle(pane_id, Lifecycle::Exited));
-            outbound.extend(s.raise_attention(pane_id, Attention::Unread));
-            // A decision outlives nothing: the bar renders read-only
-            // nowhere once the child is gone.
-            outbound.extend(s.clear_decision(pane_id, "pane_exited"));
-        }
-        for ev in outbound {
-            let _ = self.bcast.send(ev);
-        }
+        self.store.write().unwrap().set_exited(pane_id, code);
         self.mark_persist();
     }
 
@@ -471,7 +445,7 @@ impl PtyManager {
     }
 }
 
-fn parse_signal(sig: &str) -> Result<nix::sys::signal::Signal, String> {
+pub(crate) fn parse_signal(sig: &str) -> Result<nix::sys::signal::Signal, String> {
     use nix::sys::signal::Signal::*;
     let s = sig.to_ascii_uppercase();
     let s = s.strip_prefix("SIG").unwrap_or(&s);

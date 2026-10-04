@@ -6,9 +6,9 @@ otherwise.
 
 ## What is persisted
 
-Snapshot file (atomic write: tmp + fsync + rename) at
+Snapshot file (temporary write + rename; no fsync) at
 `$XDG_STATE_HOME/signaltty/snapshot.json`, debounced (≤1 write/2s)
-plus on every structural change and on SIGTERM:
+with structural changes marking a pending save, plus on shutdown/SIGTERM:
 
 - server: `version`, `saved_at`, `protocol`
 - workspaces: `id, name, cwd, tabs[], active_tab_id, git cache`
@@ -69,3 +69,11 @@ no live native answer channel; the provider owns any new permission prompt.
 Git worktree association is recovered from the persisted workspace cwd and
 Git's registrations. Closing or restoring a workspace never removes a checkout.
 Terminal search and pane zoom are client view state, not saved layout changes.
+
+## Event continuity
+
+The event journal has separate durable sequence reservations and retained-history
+evidence; state records are synced before publication. Runtime wait baselines identify
+a live process instance and are invalidated by restart, never persisted in Pane. These
+guarantees do not strengthen snapshot/tail durability. See
+[IPC recovery](08-ipc.md) and [ADR-0018](adr/0018-event-recovery-and-work-baselines.md).

@@ -1,0 +1,11 @@
+{
+  "baseline_commit": "bb91637052ddf92f2942b6963977222f739b1d78",
+  "instructions": "Run each task in its own disposable worktree. Apply the workflow variant being evaluated without changing the task prompt. Check acceptance independently and repeat trials.",
+  "tasks": [
+    {"id": "bootstrap", "prompt": "Build and verify this repository in a fresh supported Linux environment. Report exact commands and remaining verification limits.", "acceptance": ["Workspace builds and ordinary tests pass", "Ignored GUI tests execute", "Missing prerequisites and unrun checks are reported honestly"]},
+    {"id": "ipc-contract", "prompt": "Add a read-only workspace.exists IPC method accepting the existing workspace handle convention and returning whether it resolves. Preserve typed parameter errors and document the contract.", "acceptance": ["Real-socket tests cover existing, missing and mistyped handles", "No state or events change", "Schema and IPC documentation agree"]},
+    {"id": "warning", "prompt": "Resolve the suspicious_open_options warning in the audit writer while preserving rotation and audit retention behavior.", "acceptance": ["Clippy warning disappears without a lint suppression", "Existing audit tests pass", "Rotation behavior is unchanged"]},
+    {"id": "gui-empty-state", "prompt": "Improve the empty Working Tree Changes state so it clearly explains there are no changes and remains readable in a narrow window in light and dark themes.", "acceptance": ["Actual native screenshots show all required text", "Keyboard navigation and focus still work", "Existing changes and diff reader tests pass"]},
+    {"id": "handoff", "prompt": "Start implementing the workspace.exists task, then hand off after the first failing behavioral test. A fresh agent must complete it using only repository artifacts.", "acceptance": ["Handoff records intent, decisions, test command and remaining work", "Fresh agent completes the public contract", "No unrelated files or checkouts are modified"]}
+  ]
+}

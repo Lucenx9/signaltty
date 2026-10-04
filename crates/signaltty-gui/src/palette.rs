@@ -21,6 +21,7 @@ struct Choice {
     target: Target,
 }
 
+/// Presents the command and workspace palette dialog over the specified application window.
 pub fn present(
     window: &adw::ApplicationWindow,
     workspaces: &[Workspace],
@@ -40,6 +41,7 @@ pub fn present(
     body.append(&entry);
     let list = gtk4::ListBox::new();
     list.add_css_class("boxed-list");
+    list.set_valign(gtk4::Align::Start);
     list.set_margin_start(18);
     list.set_margin_end(18);
     list.set_margin_bottom(18);

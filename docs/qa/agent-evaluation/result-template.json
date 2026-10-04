@@ -1,0 +1,19 @@
+{
+  "task_id": null,
+  "trial": null,
+  "workflow_variant": null,
+  "baseline_commit": null,
+  "final_commit": null,
+  "model_and_harness": null,
+  "environment_and_resources": null,
+  "acceptance_results": [],
+  "evidence_paths": [],
+  "human_interventions": null,
+  "regressions": null,
+  "setup_seconds": null,
+  "task_seconds": null,
+  "tokens": null,
+  "cost": null,
+  "infrastructure_failures": [],
+  "independent_reviewer": null
+}

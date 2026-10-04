@@ -56,8 +56,7 @@ impl Drop for Waiting<'_> {
             None
         };
         drop(store);
-        if let Some(event) = event {
-            let _ = self.ctx.bcast.send(event);
+        if event.is_some() {
             self.ctx.mark_persist();
         }
     }
@@ -95,16 +94,13 @@ pub fn answer(ctx: &Ctx, pane_id: &str, id: &str, option: &str) -> Result<Value,
                 && tokio::time::Instant::now() < route.deadline
         })
         .ok_or_else(|| (code::NO_SUCH_DECISION.to_owned(), id.to_owned()))?;
-    let event = store.answer_decision(pane_id, id, option).unwrap();
-    let cleared = store.mark_seen(pane_id, "decision_answer");
+    store.answer_decision(pane_id, id, option).unwrap();
+    store.mark_seen(pane_id, "decision_answer");
     let pane = &store.panes[pane_id];
     let result = json!({"answered":true,"lifecycle":pane.lifecycle.as_str(),"attention":pane.attention.as_str()});
     let delivered = route.sender.send(verdict).is_ok();
     drop(store);
-    let _ = ctx.bcast.send(event);
-    if let Some(event) = cleared {
-        let _ = ctx.bcast.send(event);
-    }
+
     ctx.mark_persist();
     if delivered {
         Ok(result)
@@ -201,7 +197,15 @@ async fn wait_inner(ctx: &Ctx, value: &Value) -> Result<Value, (String, String)>
                         && p.agent.agent_session_id.as_deref() == Some(&permission.session_id)
                         && p.pending_decision.as_ref().is_some_and(|d| d.id == id && d.answerable)
                 });
-                if !still_current { return Ok(json!({"accepted":true,"native_verdict":Value::Null,"cancelled":"moved_on"})); }
+                if !still_current {
+                    // The event arm may have won before the grant was queued,
+                    // then waited for the answer's Store lock. Recheck the grant
+                    // after that lock so consumption cannot masquerade as cancellation.
+                    if let Ok(verdict) = receiver.try_recv() {
+                        return Ok(json!({"accepted":true,"native_verdict":verdict}));
+                    }
+                    return Ok(json!({"accepted":true,"native_verdict":Value::Null,"cancelled":"moved_on"}));
+                }
             }
         }
     }

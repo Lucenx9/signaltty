@@ -134,8 +134,11 @@ enum Command {
     Wait {
         #[arg(long)]
         pane: String,
+        #[arg(long, required = true, value_delimiter = ',')]
+        until: Vec<String>,
+        /// JSON wait_baseline captured from pane get before submitting work.
         #[arg(long)]
-        until: String,
+        after_baseline: Option<String>,
         #[arg(long)]
         timeout: Option<u64>,
     },
@@ -356,6 +359,17 @@ fn shell_cmd() -> Vec<String> {
     vec![std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())]
 }
 
+/// Parse `--after-baseline` JSON. An explicit `null` (e.g. from `jq .wait_baseline`
+/// on a failed `pane get`) must not silently become a current-state wait.
+fn parse_wait_baseline(raw: &str) -> Result<Value, CliError> {
+    let baseline: Value = serde_json::from_str(raw)
+        .map_err(|e| CliError::Usage(format!("invalid wait baseline: {e}")))?;
+    if baseline.is_null() {
+        return Err(CliError::Usage("wait baseline must not be null".into()));
+    }
+    Ok(baseline)
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -363,6 +377,10 @@ async fn main() {
         eprintln!("signaltty: {e}");
         std::process::exit(1);
     }
+    // Exit without dropping the runtime: attach's pending stdin read sits on
+    // a blocking thread that would hold shutdown until the next keypress.
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    std::process::exit(0);
 }
 
 async fn run(args: Args) -> Result<(), CliError> {
@@ -768,10 +786,14 @@ async fn run(args: Args) -> Result<(), CliError> {
         Command::Wait {
             pane,
             until,
+            after_baseline,
             timeout,
         } => {
             let mut c = Client::connect(&socket).await?;
             let mut p = json!({"pane_id": pane, "until": until});
+            if let Some(baseline) = after_baseline {
+                p["after"] = parse_wait_baseline(&baseline)?;
+            }
             if let Some(t) = timeout {
                 p["timeout_s"] = json!(t);
             }
@@ -1061,5 +1083,28 @@ fn integration_notice(result: &Value, json: bool) {
         if let Some(notice) = result["integration"]["notice"].as_str() {
             eprintln!("{notice}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn null_baseline_is_a_usage_error_not_a_current_state_wait() {
+        let err = parse_wait_baseline("null").unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn malformed_baseline_is_a_usage_error() {
+        let err = parse_wait_baseline("{not json").unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn object_baseline_passes_through() {
+        let baseline = parse_wait_baseline("{\"pane_id\":\"p\"}").unwrap();
+        assert_eq!(baseline["pane_id"], "p");
     }
 }

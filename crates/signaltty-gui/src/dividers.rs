@@ -171,9 +171,9 @@ impl Dividers {
         }
     }
 
-    /// A send landed; the echoed ratio becomes the baseline (the
-    /// server may have clamped it).
-    pub fn send_succeeded(&self, tab_id: &str, path: &[bool], confirmed: f32) {
+    /// A send of `sent` landed; the echoed ratio becomes the baseline (the
+    /// server may have clamped it). A newer drag stays queued.
+    pub fn send_succeeded(&self, tab_id: &str, path: &[bool], sent: f32, confirmed: f32) {
         if let Some(entry) = self
             .tabs
             .borrow_mut()
@@ -181,7 +181,9 @@ impl Dividers {
             .and_then(|t| t.get_mut(path))
         {
             entry.applied = confirmed;
-            entry.pending = None;
+            if entry.pending.is_some_and(|(ratio, _)| ratio == sent) {
+                entry.pending = None;
+            }
         }
     }
 
@@ -271,10 +273,30 @@ mod tests {
         let cmds = d.tick(&[live("tab", &[], 1000)], t0 + RATIO_SETTLE);
         assert_eq!(cmds.len(), 1);
         assert!(matches!(cmds[0], Command::Send { ratio, .. } if (ratio - 0.4).abs() < 1e-6));
-        d.send_succeeded("tab", &[], 0.4);
+        d.send_succeeded("tab", &[], 0.4, 0.4);
         assert!(d
             .tick(&[live("tab", &[], 1000)], t0 + RATIO_SETTLE * 2)
             .is_empty());
+    }
+
+    #[test]
+    fn drag_during_send_survives_its_success() {
+        let d = Dividers::new();
+        d.track("tab", vec![], 0.25);
+        d.placed("tab", &[]);
+        let t0 = now();
+        d.position_changed("tab", &[], 400, 1000, t0);
+        assert_eq!(
+            d.tick(&[live("tab", &[], 1000)], t0 + RATIO_SETTLE).len(),
+            1
+        );
+        // A second drag lands while the first send is still in flight.
+        let t1 = t0 + RATIO_SETTLE * 2;
+        d.position_changed("tab", &[], 600, 1000, t1);
+        d.send_succeeded("tab", &[], 0.4, 0.4);
+        let cmds = d.tick(&[live("tab", &[], 1000)], t1 + RATIO_SETTLE);
+        assert_eq!(cmds.len(), 1);
+        assert!(matches!(cmds[0], Command::Send { ratio, .. } if (ratio - 0.6).abs() < 1e-6));
     }
 
     #[test]

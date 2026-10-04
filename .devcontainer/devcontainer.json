@@ -1,0 +1,6 @@
+{
+  "name": "signaltty development",
+  "remoteUser": "ubuntu",
+  "build": {"dockerfile": "Dockerfile", "context": ".."},
+  "postCreateCommand": "scripts/verify.sh doctor"
+}

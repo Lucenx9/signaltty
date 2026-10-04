@@ -69,7 +69,7 @@ impl AgentAdapter for CodexAdapter {
             "PermissionRequest" => Some(NotificationDraft {
                 title: "Codex needs approval".to_string(),
                 body: ev
-                    .payload_str("tool")
+                    .payload_str("tool_name")
                     .or_else(|| ev.payload_str("description")),
                 severity: NotificationSeverity::Warning,
             }),
@@ -119,6 +119,17 @@ mod tests {
             hook: hook.to_string(),
             payload,
         }
+    }
+
+    #[test]
+    fn permission_notification_names_the_tool() {
+        let n = CodexAdapter
+            .notification_event(&ev(
+                "PermissionRequest",
+                json!({"session_id": "s", "tool_name": "Bash", "tool_input": {}}),
+            ))
+            .unwrap();
+        assert_eq!(n.body.as_deref(), Some("Bash"));
     }
 
     #[test]

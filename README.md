@@ -11,7 +11,7 @@ executable plugins) are done.
 ## Quick start
 
 ```bash
-cargo build --release
+cargo build --workspace
 ./target/debug/signaltty daemon          # start the session server
 ./target/debug/signaltty integration install claude # optional: agents typed inside a shell
 ./target/debug/signaltty new --cwd ~/code/project -- codex
@@ -152,10 +152,15 @@ systemctl --user enable --now signaltty-server
 ## Development
 
 ```bash
-cargo build --workspace
-cargo test --workspace        # 60+ tests: unit + real-PTY integration + CLI e2e
-cargo clippy --workspace --all-targets
+scripts/setup-dev.sh --system # Ubuntu 26.04; installs packages and pinned Rust components
+scripts/verify.sh doctor
+scripts/verify.sh full
 ```
+
+The development container uses the same setup. Other Linux distributions can
+install equivalents of `scripts/dev-packages.txt`, then run `scripts/setup-dev.sh`.
+See [agent development](docs/17-agent-development.md) for checks, evidence,
+worktree isolation and native desktop verification limits.
 
 ## Design rule
 

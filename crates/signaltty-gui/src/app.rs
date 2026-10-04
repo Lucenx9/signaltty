@@ -6,7 +6,7 @@
 //! AdwOverlaySplitView
 //! ├─ sidebar  AdwToolbarView: [+ Workspaces] / workspace rows
 //! └─ content  AdwToolbarView
-//!    ├─ header  [sidebar] workspace · path       [● 2] [tab+] [menu]
+//!    ├─ header  [sidebar] workspace · agent      [● 2] [tab+] [menu]
 //!    ├─ banner  (server connection lost)
 //!    ├─ AdwTabBar (autohides with one tab)
 //!    └─ AdwTabView → per tab: Bin.tab-page → Paned splits → pane cards
@@ -585,7 +585,7 @@ impl App {
                     .and_then(|l| serde_json::from_value::<Layout>(l.clone()).ok())
                     .and_then(|l| l.ratio_at_path(path))
                     .unwrap_or(ratio);
-                self.dividers.send_succeeded(tab_id, path, confirmed);
+                self.dividers.send_succeeded(tab_id, path, ratio, confirmed);
             }
             Err(_) => {
                 let alive = self
@@ -920,13 +920,16 @@ impl App {
         self.title.set_text(&self.display_title(&ws));
         sidebar::set_mark(&self.title_mark, &ws.id, &ws.name);
         self.title_mark.set_visible(true);
+        // The permanent line is the workspace and its agents. The
+        // filesystem path (and branch) is a tooltip, not a second title.
+        let agents = sidebar::summarize(&ws, &snapshot.panes).agents;
         let place = tilde(&ws.cwd);
-        let context = match &ws.git.branch {
+        let tooltip = match ws.git.branch.as_deref().filter(|b| !b.trim().is_empty()) {
             Some(branch) => format!("{branch} · {place}"),
             None => place,
         };
-        self.title_context.set_text(&context);
-        self.title_context.set_tooltip_text(Some(&context));
+        self.title_context.set_text(&agents);
+        self.title_context.set_tooltip_text(Some(&tooltip));
         let has_tabs = !snapshot.tabs.is_empty();
         {
             let mut m = self.model.borrow_mut();

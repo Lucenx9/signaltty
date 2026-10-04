@@ -67,6 +67,16 @@ pub fn decision_render(decision: &Decision) -> DecisionRender {
     }
 }
 
+/// The one suggested answer on a gate: allow once. Session-scoped allow
+/// and deny stay secondary so the bar has a single primary.
+fn decision_is_primary(id: &str, label: &str) -> bool {
+    let id = id.trim();
+    let label = label.trim();
+    id.eq_ignore_ascii_case("once")
+        || label.eq_ignore_ascii_case("allow once")
+        || label.eq_ignore_ascii_case("once")
+}
+
 const PCRE2_MULTILINE: u32 = 0x00000400;
 
 type ActionCallback = Box<dyn Fn(&str, PaneAction)>;
@@ -337,9 +347,9 @@ impl PaneWidget {
 
         // Input: VTE translates keys to bytes; forward to the server PTY.
         {
-            let w = Rc::clone(&w);
-            let term = w.term.clone();
-            term.connect_commit(move |_, text: &str, _| {
+            let weak = Rc::downgrade(&w);
+            w.term.connect_commit(move |_, text: &str, _| {
+                let Some(w) = weak.upgrade() else { return };
                 if !w.live.get() {
                     return;
                 }
@@ -355,10 +365,10 @@ impl PaneWidget {
         }
         // Focus = explicit per-pane interaction: clear attention.
         {
-            let w = Rc::clone(&w);
+            let weak = Rc::downgrade(&w);
             let on_focus = cb.on_focus;
-            let term = w.term.clone();
-            term.connect_has_focus_notify(move |term| {
+            w.term.connect_has_focus_notify(move |term| {
+                let Some(w) = weak.upgrade() else { return };
                 if term.has_focus() {
                     w.send("pane.mark_seen", json!({"pane_id": w.pane_id}));
                     on_focus(&w.pane_id);
@@ -572,6 +582,7 @@ impl PaneWidget {
                     while let Some(child) = self.decision_options.first_child() {
                         self.decision_options.remove(&child);
                     }
+                    let mut primary_used = false;
                     for (option_id, label) in &rendered.options {
                         let text = gtk4::Label::new(Some(label));
                         text.set_wrap(true);
@@ -580,6 +591,10 @@ impl PaneWidget {
                         let button = gtk4::Button::new();
                         button.set_child(Some(&text));
                         button.add_css_class("pill");
+                        if !primary_used && decision_is_primary(option_id, label) {
+                            button.add_css_class("suggested-action");
+                            primary_used = true;
+                        }
                         button.update_property(&[gtk4::accessible::Property::Label(label)]);
                         button.set_tooltip_text(Some(label));
                         button.set_focus_on_click(false);
@@ -645,6 +660,27 @@ mod tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn dropped_pane_widget_is_freed() {
+        libadwaita::init().unwrap();
+        let (actor, _requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "freed",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let weak = Rc::downgrade(&pane);
+        drop(pane);
+        assert!(
+            weak.upgrade().is_none(),
+            "terminal signal handlers keep the pane alive"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
     fn terminal_search_is_literal_and_keeps_the_terminal() {
         libadwaita::init().unwrap();
         let (actor, _requests) = IpcHandle::test_channel();
@@ -692,6 +728,16 @@ mod tests {
             ]
         );
         assert!(!r.read_only);
+    }
+
+    #[test]
+    fn allow_once_is_the_only_primary_answer() {
+        assert!(decision_is_primary("once", "Allow once"));
+        assert!(decision_is_primary("once", "Once"));
+        assert!(decision_is_primary("other", "Allow once"));
+        assert!(!decision_is_primary("always", "Allow for this session"));
+        assert!(!decision_is_primary("session", "Allow for this session"));
+        assert!(!decision_is_primary("deny", "Deny"));
     }
 
     #[test]
