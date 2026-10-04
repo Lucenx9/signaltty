@@ -243,6 +243,24 @@ enum TaskOp {
         #[arg(long)]
         timeout: Option<u64>,
     },
+    /// View diff of task worktree vs base commit.
+    Diff { id: String },
+    /// View diff of a specific file in task worktree vs base commit.
+    FileDiff { id: String, path: String },
+    /// Explicitly merge or discard a completed/working task.
+    Finish {
+        id: String,
+        #[arg(long, conflicts_with = "discard")]
+        merge: bool,
+        #[arg(long)]
+        discard: bool,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long)]
+        delete_branch: bool,
+        #[arg(long)]
+        ignore_dirty: bool,
+    },
     /// Cancel an orchestrated task.
     Cancel { id: String },
 }
@@ -1530,6 +1548,136 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
             let r = c.call("task.wait", p).await?;
             let count = r["tasks"].as_array().map(|a| a.len()).unwrap_or(0);
             emit(json, &r, format!("satisfied: {count} tasks"));
+            Ok(())
+        }
+        TaskOp::Diff { id } => {
+            let r = c.call("task.diff", json!({ "task_id": id })).await?;
+            let mut human = String::new();
+            for f in r["files"].as_array().cloned().unwrap_or_default() {
+                let path = f["path"].as_str().unwrap_or("?");
+                if f["untracked"].as_bool().unwrap_or(false) {
+                    human.push_str(&format!("?? {path}\n"));
+                } else if f["binary"].as_bool().unwrap_or(false) {
+                    human.push_str(&format!("bin {path}\n"));
+                } else {
+                    human.push_str(&format!(
+                        "+{} -{} {path}\n",
+                        f["added"].as_u64().unwrap_or(0),
+                        f["removed"].as_u64().unwrap_or(0),
+                    ));
+                }
+            }
+            for g in r["dirs"].as_array().cloned().unwrap_or_default() {
+                human.push_str(&format!(
+                    "{}/ +{} -{}\n",
+                    g["dir"].as_str().unwrap_or("?"),
+                    g["added"].as_u64().unwrap_or(0),
+                    g["removed"].as_u64().unwrap_or(0),
+                ));
+            }
+            human.push_str(&format!(
+                "total +{} -{}\n",
+                r["added"].as_u64().unwrap_or(0),
+                r["removed"].as_u64().unwrap_or(0),
+            ));
+            emit(json, &r, human.trim_end().to_string());
+            Ok(())
+        }
+        TaskOp::FileDiff { id, path } => {
+            let r = c
+                .call("task.file_diff", json!({ "task_id": id, "path": path }))
+                .await?;
+            let mut human = String::new();
+            if r["untracked"].as_bool().unwrap_or(false) {
+                human.push_str(&format!(
+                    "untracked {}\n",
+                    r["path"].as_str().unwrap_or("?")
+                ));
+            } else {
+                human.push_str(&format!("diff {}\n", r["path"].as_str().unwrap_or("?")));
+            }
+            if let Some(content) = r.get("content") {
+                if let Some(kind) = content.get("kind").and_then(|k| k.as_str()) {
+                    match kind {
+                        "text" => {
+                            if let Some(hunks) = content.get("hunks").and_then(|h| h.as_array()) {
+                                for hunk in hunks {
+                                    if let Some(header) =
+                                        hunk.get("header").and_then(|h| h.as_str())
+                                    {
+                                        human.push_str(&format!("@@ {header} @@\n"));
+                                    }
+                                    if let Some(lines) =
+                                        hunk.get("lines").and_then(|l| l.as_array())
+                                    {
+                                        for l in lines {
+                                            let text = l
+                                                .get("text")
+                                                .and_then(|t| t.as_str())
+                                                .unwrap_or("");
+                                            let origin = l
+                                                .get("origin")
+                                                .and_then(|o| o.as_str())
+                                                .unwrap_or(" ");
+                                            human.push_str(&format!("{origin}{text}\n"));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "binary" => human.push_str("(binary file)\n"),
+                        "unchanged" => human.push_str("(unchanged)\n"),
+                        _ => {}
+                    }
+                }
+            }
+            emit(json, &r, human.trim_end().to_string());
+            Ok(())
+        }
+        TaskOp::Finish {
+            id,
+            merge,
+            discard,
+            target,
+            delete_branch,
+            ignore_dirty,
+        } => {
+            let mode = if merge {
+                "merge"
+            } else if discard {
+                "discard"
+            } else {
+                return Err(CliError::Usage("must specify --merge or --discard".into()));
+            };
+            let mut p = json!({
+                "task_id": id,
+                "mode": mode,
+            });
+            if let Some(t) = target {
+                p["target_ref"] = json!(t);
+            }
+            if delete_branch {
+                p["delete_branch"] = json!(true);
+            }
+            if ignore_dirty {
+                p["ignore_dirty"] = json!(true);
+            }
+            let r = c.call("task.finish", p).await?;
+            let tid = r["task"]["id"].as_str().unwrap_or("?").to_string();
+            let outcome = r["task"]["disposition"]["outcome"].as_str().unwrap_or("?");
+            let mut summary = format!("finished task {tid}: {outcome}");
+            if let Some(merge) = r.get("merge") {
+                if let (Some(target), Some(sha)) = (
+                    merge.get("target").and_then(|t| t.as_str()),
+                    merge.get("sha").and_then(|s| s.as_str()),
+                ) {
+                    summary.push_str(&format!(" into {target} ({sha})"));
+                }
+            }
+            if let Some(err) = r.get("cleanup_error").and_then(|e| e.as_str()) {
+                summary.push_str(&format!(" (cleanup warning: {err})"));
+            }
+            emit(json, &r, summary);
             Ok(())
         }
         TaskOp::Cancel { id } => {

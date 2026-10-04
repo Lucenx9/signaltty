@@ -14,7 +14,9 @@ fn cli(socket: &std::path::Path, args: &[&str]) -> (bool, String) {
         .output()
         .expect("run signaltty");
     let text = String::from_utf8(out.stdout).unwrap();
-    (out.status.success(), text)
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let full = if text.is_empty() { err } else { text };
+    (out.status.success(), full)
 }
 
 fn cli_json(socket: &std::path::Path, args: &[&str]) -> Value {
@@ -820,6 +822,145 @@ async fn test_cli_phase5_report_attention_wait() {
         ],
     );
     assert!(!ok, "second report should fail");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_task_diff_and_finish() {
+    let repo_dir = std::env::temp_dir().join(format!(
+        "signaltty-clifin-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos()
+    ));
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    let _ = std::process::Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.name", "Orchestrator Test"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.email", "orch@test.local"])
+        .current_dir(&repo_dir)
+        .output();
+    std::fs::write(repo_dir.join("README.md"), "# Test Repo\n").unwrap();
+    let _ = std::process::Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(&repo_dir)
+        .output();
+
+    let srv = TestServer::start().await;
+
+    // Start a task
+    let start = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "start",
+            "--repo",
+            repo_dir.to_str().unwrap(),
+            "--objective",
+            "Test diff and finish via CLI",
+            "--branch",
+            "cli-feature",
+            "--json",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    let wt_path = std::path::PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+
+    // Write a file in worktree
+    std::fs::write(wt_path.join("feature.txt"), "hello world\n").unwrap();
+
+    // 1. task diff
+    let diff = cli_json(&srv.socket, &["task", "diff", &task_id]);
+    assert_eq!(diff["task_id"], task_id);
+    let files = diff["files"].as_array().unwrap();
+    assert!(files
+        .iter()
+        .any(|f| f["path"] == "feature.txt" && f["untracked"] == true));
+
+    // 2. task file-diff
+    let file_diff = cli_json(&srv.socket, &["task", "file-diff", &task_id, "feature.txt"]);
+    assert_eq!(file_diff["task_id"], task_id);
+    assert_eq!(file_diff["path"], "feature.txt");
+    assert_eq!(file_diff["untracked"], true);
+
+    // Commit change so worktree is clean for merge
+    let _ = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&wt_path)
+        .args(&["add", "feature.txt"])
+        .output();
+    let _ = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&wt_path)
+        .args(&["commit", "-m", "feature added"])
+        .output();
+
+    // Report completed
+    let _ = cli_json(
+        &srv.socket,
+        &[
+            "report",
+            "--task",
+            &task_id,
+            "--status",
+            "completed",
+            "--summary",
+            "Feature complete",
+        ],
+    );
+
+    // 3. task finish --merge
+    let finish = cli_json(
+        &srv.socket,
+        &["task", "finish", &task_id, "--merge", "--delete-branch"],
+    );
+    assert_eq!(finish["task"]["disposition"]["outcome"], "merged");
+    assert!(!wt_path.exists());
+
+    // Start another task to test --discard
+    let start2 = cli_json(
+        &srv.socket,
+        &[
+            "task",
+            "start",
+            "--repo",
+            repo_dir.to_str().unwrap(),
+            "--objective",
+            "Test discard via CLI",
+            "--branch",
+            "cli-discard-feature",
+            "--json",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    let task_id2 = start2["task"]["id"].as_str().unwrap().to_string();
+    let wt_path2 = std::path::PathBuf::from(start2["task"]["worktree_path"].as_str().unwrap());
+
+    let discard = cli_json(
+        &srv.socket,
+        &["task", "finish", &task_id2, "--discard", "--delete-branch"],
+    );
+    assert_eq!(discard["task"]["disposition"]["outcome"], "discarded");
+    assert_eq!(discard["task"]["state"], "canceled");
+    assert!(!wt_path2.exists());
 
     srv.shutdown().await;
 }
