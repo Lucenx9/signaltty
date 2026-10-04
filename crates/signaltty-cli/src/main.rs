@@ -239,10 +239,12 @@ enum PaneOp {
     },
     Read {
         id: String,
-        #[arg(long, value_parser = ["screen", "tail"], default_value = "tail")]
+        #[arg(long, value_parser = ["screen", "tail", "rendered"], default_value = "tail")]
         mode: String,
         #[arg(long, default_value_t = 200)]
         lines: u64,
+        #[arg(long)]
+        after_seq: Option<u64>,
         #[arg(long)]
         raw: bool,
     },
@@ -1044,10 +1046,11 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                     id,
                     mode,
                     lines,
+                    after_seq,
                     raw,
                 } => {
                     let r = c
-                        .call("pane.read", json!({"pane_id": id, "mode": mode, "lines": lines, "strip_ansi": !raw}))
+                        .call("pane.read", json!({"pane_id": id, "mode": mode, "lines": lines, "after_seq": after_seq, "strip_ansi": !raw}))
                         .await?;
                     if json {
                         println!("{}", serde_json::to_string(&r).unwrap());
