@@ -891,3 +891,424 @@ async fn task_start_in_workspace_without_tabs_does_not_panic() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_task_report_lifecycle_and_result() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Report test"},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+
+    let task_id = res["task"]["id"].as_str().unwrap();
+
+    let rep = c
+        .call(
+            "task.report",
+            json!({
+                "task_id": task_id,
+                "status": "completed",
+                "summary": "Completed work successfully",
+                "artifacts": [{"name": "out", "path": "out.txt"}],
+                "evidence": {"note": "verified"}
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(rep["task"]["state"], "completed");
+    assert_eq!(
+        rep["task"]["result"]["summary"],
+        "Completed work successfully"
+    );
+
+    // Second report refused
+    let err = c
+        .call(
+            "task.report",
+            json!({
+                "task_id": task_id,
+                "status": "failed",
+                "summary": "Trying to report again",
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.starts_with(signaltty_proto::code::BAD_PARAMS));
+
+    // Unknown task refused
+    let err2 = c
+        .call(
+            "task.report",
+            json!({
+                "task_id": "task_nonexistent",
+                "status": "completed",
+                "summary": "none",
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err2.starts_with(signaltty_proto::code::NO_SUCH_TASK));
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_task_wait_settled_and_context() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    // Empty context wait matches immediately
+    let res = c
+        .call(
+            "task.wait",
+            json!({
+                "context_id": "ctx-empty-123",
+                "timeout_s": 5,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res["satisfied"], true);
+    assert_eq!(res["tasks"].as_array().unwrap().len(), 0);
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Wait test"},
+                "argv": ["sh"],
+                "context_id": "ctx-wait-test",
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+
+    // Report completed in background
+    let task_id_clone = task_id.to_string();
+    let mut c2 = srv.client().await;
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let _ = c2
+            .call(
+                "task.report",
+                json!({
+                    "task_id": task_id_clone,
+                    "status": "completed",
+                    "summary": "Done wait test",
+                }),
+            )
+            .await;
+    });
+
+    let wait_res = c
+        .call(
+            "task.wait",
+            json!({
+                "task_id": task_id,
+                "until": "settled",
+                "timeout_s": 5,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait_res["satisfied"], true);
+    assert_eq!(wait_res["tasks"][0]["state"], "completed");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_attention_pending_ranking() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let ws = c
+        .call("workspace.create", json!({"cwd": "/tmp", "name": "ws-att"}))
+        .await
+        .unwrap();
+    let ws_id = ws["workspace"]["id"].as_str().unwrap();
+
+    let tab1 = c
+        .call("tab.create", json!({"workspace_id": ws_id, "title": "t1"}))
+        .await
+        .unwrap();
+    let tab1_id = tab1["tab"]["id"].as_str().unwrap();
+
+    let p1 = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws_id, "tab_id": tab1_id, "argv": ["sleep", "30"]}),
+        )
+        .await
+        .unwrap();
+    let pid1 = p1["pane"]["id"].as_str().unwrap();
+
+    let tab2 = c
+        .call("tab.create", json!({"workspace_id": ws_id, "title": "t2"}))
+        .await
+        .unwrap();
+    let tab2_id = tab2["tab"]["id"].as_str().unwrap();
+
+    let p2 = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws_id, "tab_id": tab2_id, "argv": ["sleep", "30"]}),
+        )
+        .await
+        .unwrap();
+    let pid2 = p2["pane"]["id"].as_str().unwrap();
+
+    // p1 gets unread, p2 gets permission_required
+    c.call(
+        "hook-event",
+        json!({"agent": "claude", "event": "Stop", "pane_id": pid1}),
+    )
+    .await
+    .unwrap();
+
+    c.call(
+        "hook-event",
+        json!({"agent": "codex", "event": "PermissionRequest", "pane_id": pid2}),
+    )
+    .await
+    .unwrap();
+
+    let pending = c
+        .call("attention.pending", json!({"limit": 10}))
+        .await
+        .unwrap();
+    let panes = pending["panes"].as_array().unwrap();
+
+    // permission_required > unread
+    assert!(panes.len() >= 2);
+    assert_eq!(panes[0]["pane_id"], pid2);
+    assert_eq!(panes[0]["attention"], "permission_required");
+    assert_eq!(panes[1]["pane_id"], pid1);
+    assert_eq!(panes[1]["attention"], "unread");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_subscribe_task_ids_filter_and_replay() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let t1 = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "T1"},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let tid1 = t1["task"]["id"].as_str().unwrap();
+
+    let t2 = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "T2"},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let _tid2 = t2["task"]["id"].as_str().unwrap();
+
+    let mut sub_client = srv.client().await;
+    let sub = sub_client
+        .call(
+            "subscribe",
+            json!({
+                "events": ["task.*"],
+                "task_ids": [tid1],
+                "from_seq": 0,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sub["subscribed"], true);
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_turn_ended_without_report_and_follow_up_submit_and_report() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Turn ended test"},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+
+    let task_id = res["task"]["id"].as_str().unwrap();
+    let pane_id = res["pane"]["id"].as_str().unwrap();
+
+    // Wait until working
+    let _ = c
+        .call(
+            "task.wait",
+            json!({
+                "task_id": task_id,
+                "until": "working",
+                "timeout_s": 5,
+            }),
+        )
+        .await;
+
+    // Simulate agent ending turn (Stop) without reporting
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "claude",
+            "event": "Stop",
+            "pane_id": pane_id,
+            "message": "I finished the turn without report",
+        }),
+    )
+    .await
+    .unwrap();
+
+    // Task moves to input_required with reason turn_ended_without_report
+    let task_get = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(task_get["task"]["state"], "input_required");
+    assert_eq!(
+        task_get["task"]["status_reason"]["reason"],
+        "turn_ended_without_report"
+    );
+
+    // Follow-up submit resumes working
+    let sub = c
+        .call(
+            "pane.submit",
+            json!({
+                "pane_id": pane_id,
+                "text": "echo continuing",
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sub["accepted"], true);
+
+    let task_get2 = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(task_get2["task"]["state"], "working");
+
+    // Report completes the task
+    let rep = c
+        .call(
+            "task.report",
+            json!({
+                "pane_id": pane_id,
+                "status": "completed",
+                "summary": "Completed after follow up",
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rep["task"]["state"], "completed");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_task_native_permission_block_and_answer() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Permission test"},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+
+    let task_id = res["task"]["id"].as_str().unwrap();
+    let pane_id = res["pane"]["id"].as_str().unwrap();
+
+    // Raise permission request hook
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "codex",
+            "event": "PermissionRequest",
+            "pane_id": pane_id,
+            "decision": {
+                "id": "appr-perm-test",
+                "prompt": "Allow tool execution?",
+                "options": [
+                    {"label": "Allow", "verdict": "allow"},
+                    {"label": "Deny", "verdict": "deny"}
+                ]
+            }
+        }),
+    )
+    .await
+    .unwrap();
+
+    // Check attention.pending includes this pane
+    let pending = c
+        .call("attention.pending", json!({"limit": 10}))
+        .await
+        .unwrap();
+    let panes = pending["panes"].as_array().unwrap();
+    let target = panes.iter().find(|p| p["pane_id"] == pane_id).unwrap();
+    assert_eq!(target["attention"], "permission_required");
+    assert_eq!(target["task_id"], task_id);
+
+    // Answer decision
+    let ans = c
+        .call(
+            "decision.answer",
+            json!({
+                "pane_id": pane_id,
+                "decision_id": "appr-perm-test",
+                "choice": 0,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ans["answered"], true);
+
+    srv.shutdown().await;
+}
