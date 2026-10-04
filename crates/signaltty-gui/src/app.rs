@@ -109,6 +109,7 @@ pub struct App {
     focused_pane: RefCell<Option<String>>,
     zoom: RefCell<Option<(String, String)>>,
     palette_dialog: RefCell<Option<adw::Dialog>>,
+    board_dialog: RefCell<Option<adw::Dialog>>,
     /// Divider state machine (ratios, drags, echo suppression);
     /// widgets live separately in `paned_widgets`.
     dividers: crate::dividers::Dividers,
@@ -308,6 +309,7 @@ impl App {
             focused_pane: RefCell::new(None),
             zoom: RefCell::new(None),
             palette_dialog: RefCell::new(None),
+            board_dialog: RefCell::new(None),
             dividers: crate::dividers::Dividers::new(),
             paned_widgets: RefCell::new(HashMap::new()),
             new_ws_open: Cell::new(false),
@@ -404,6 +406,7 @@ impl App {
                 zoom_pane: method(App::action_zoom_pane),
                 worktrees: method(App::action_worktrees),
                 show_changes: method(App::action_show_changes),
+                show_board: method(App::action_show_board),
                 new_workspace: method(App::action_new_workspace),
                 close_workspace: method(App::action_close_active_workspace),
                 new_tab: method(App::action_new_tab),
@@ -1888,6 +1891,28 @@ impl App {
         if let Some(id) = self.active_ws_id() {
             crate::workspace_dialogs::changes(&self.window, self.actor.clone(), &id);
         }
+    }
+
+    fn action_show_board(&self) {
+        if self.board_dialog.borrow().is_some() {
+            return;
+        }
+        let tasks: Vec<signaltty_core::Task> = self.model.borrow().tasks.iter().cloned().collect();
+        let weak = self.weak();
+        let dialog = crate::board::present(&self.window, &tasks, move |chosen| {
+            let Some(app) = weak.upgrade() else { return };
+            app.board_dialog.borrow_mut().take();
+            if let Some(pane_id) = chosen {
+                // After GTK hands focus back to the old pane, or that
+                // focus-in counts as a newer navigation and wins.
+                glib::idle_add_local_once(move || app.focus_pane(&pane_id));
+            } else if let Some(id) = app.current_pane_id() {
+                if let Some(w) = app.widgets.borrow().get(&id) {
+                    w.focus();
+                }
+            }
+        });
+        *self.board_dialog.borrow_mut() = Some(dialog);
     }
 
     /// Open the New Workspace dialog (Ctrl+Shift+N, the sidebar "+"

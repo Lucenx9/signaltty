@@ -24,6 +24,7 @@ pub enum HandlerKind {
     ZoomPane,
     Worktrees,
     ShowChanges,
+    ShowBoard,
     NewWorkspace,
     CloseWorkspace,
     NewTab,
@@ -56,6 +57,13 @@ pub const ACTIONS: &[ActionDef] = &[
         label: Some("Show Changes"),
         section: 0,
         accel: None,
+    },
+    ActionDef {
+        name: "show-board",
+        handler: HandlerKind::ShowBoard,
+        label: Some("Show Task Board"),
+        section: 0,
+        accel: Some("<Control><Shift>b"),
     },
     ActionDef {
         name: "worktrees",
@@ -167,6 +175,7 @@ pub const ACTIONS: &[ActionDef] = &[
 /// App behavior behind the actions, one callback each.
 pub struct ActionHandlers {
     pub show_changes: Box<dyn Fn()>,
+    pub show_board: Box<dyn Fn()>,
     pub worktrees: Box<dyn Fn()>,
     pub zoom_pane: Box<dyn Fn()>,
     pub search_terminal: Box<dyn Fn()>,
@@ -187,6 +196,7 @@ impl ActionHandlers {
     fn get(&self, kind: HandlerKind) -> &dyn Fn() {
         match kind {
             HandlerKind::ShowChanges => &self.show_changes,
+            HandlerKind::ShowBoard => &self.show_board,
             HandlerKind::Worktrees => &self.worktrees,
             HandlerKind::ZoomPane => &self.zoom_pane,
             HandlerKind::SearchTerminal => &self.search_terminal,

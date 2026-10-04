@@ -4,6 +4,7 @@
 mod actions;
 mod actor;
 mod app;
+mod board;
 mod changes;
 mod dividers;
 mod metrics;
