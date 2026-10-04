@@ -433,6 +433,26 @@ pub struct AttentionPending {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TaskDiff {
+    pub task_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskFileDiff {
+    pub task_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskFinish {
+    pub task_id: String,
+    pub mode: String,
+    pub target_ref: Option<String>,
+    pub delete_branch: Option<bool>,
+    pub ignore_dirty: Option<bool>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -788,3 +788,86 @@ pub fn h_attention_pending(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         ConnEffect::default(),
     )
 }
+
+pub fn h_task_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::TaskDiff = match decode(params) {
+        Ok(p) => p,
+        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+    };
+    let (worktree_path, base_sha) = {
+        let s = ctx.store.read().unwrap();
+        let task = match s.tasks.get(&p.task_id) {
+            Some(t) => t,
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        };
+        let wt = task.worktree_path.to_string_lossy().to_string();
+        (wt, task.base_sha.clone())
+    };
+    match crate::git::task_git_diff(&worktree_path, &base_sha) {
+        Ok(diff) => (
+            Response::ok(
+                &req.id,
+                json!({
+                    "task_id": p.task_id,
+                    "base_sha": base_sha,
+                    "branch": diff.branch,
+                    "files": diff.files,
+                    "dirs": diff.dirs,
+                    "added": diff.added,
+                    "removed": diff.removed,
+                }),
+            ),
+            ConnEffect::default(),
+        ),
+        Err((c, m)) => (Response::err(&req.id, &c, m), ConnEffect::default()),
+    }
+}
+
+pub async fn h_task_file_diff(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::TaskFileDiff = match decode(params) {
+        Ok(p) => p,
+        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+    };
+    let (worktree_path, base_sha) = {
+        let s = ctx.store.read().unwrap();
+        let task = match s.tasks.get(&p.task_id) {
+            Some(t) => t,
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        };
+        let wt = task.worktree_path.to_string_lossy().to_string();
+        (wt, task.base_sha.clone())
+    };
+    match crate::file_diff::read_with_base(&worktree_path, &p.path, Some(&base_sha)).await {
+        Ok(diff) => (
+            Response::ok(
+                &req.id,
+                json!({
+                    "task_id": p.task_id,
+                    "path": diff.path,
+                    "untracked": diff.untracked,
+                    "content": diff.content,
+                }),
+            ),
+            ConnEffect::default(),
+        ),
+        Err((c, m)) => (Response::err(&req.id, &c, m), ConnEffect::default()),
+    }
+}

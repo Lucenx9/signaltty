@@ -21,8 +21,16 @@ const READ_TIMEOUT: Duration = Duration::from_secs(8);
 const STDERR_LIMIT: usize = 8 * 1024;
 
 pub async fn read(cwd: &str, path: &str) -> Result<FileDiff, ParamError> {
+    read_with_base(cwd, path, None).await
+}
+
+pub async fn read_with_base(
+    cwd: &str,
+    path: &str,
+    base_sha: Option<&str>,
+) -> Result<FileDiff, ParamError> {
     validate_path(path)?;
-    timeout(READ_TIMEOUT, read_inner(cwd, path))
+    timeout(READ_TIMEOUT, read_inner(cwd, path, base_sha))
         .await
         .map_err(|_| (code::TIMEOUT.into(), "File diff read timed out".into()))?
 }
@@ -48,7 +56,7 @@ fn unavailable(reason: impl Into<String>) -> DiffContent {
     }
 }
 
-async fn read_inner(cwd: &str, path: &str) -> Result<FileDiff, ParamError> {
+async fn read_inner(cwd: &str, path: &str, base_sha: Option<&str>) -> Result<FileDiff, ParamError> {
     let root = git(cwd, &["rev-parse", "--show-toplevel"], false).await?;
     if !root.success {
         return Err(bad_params("Workspace is not a Git checkout"));
@@ -58,12 +66,26 @@ async fn read_inner(cwd: &str, path: &str) -> Result<FileDiff, ParamError> {
         .strip_suffix('\n')
         .ok_or_else(|| bad_params("Invalid Git checkout root"))?
         .to_owned();
-    let head = git(&root, &["rev-parse", "--verify", "HEAD"], false).await?;
-    let tree = if head.success {
-        let oid = std::str::from_utf8(&head.bytes)
-            .map_err(|_| bad_params("Invalid HEAD"))?
-            .trim();
-        git(&root, &["ls-tree", "-z", oid, "--", path], true)
+    let (base_exists, base_oid) = if let Some(sha) = base_sha {
+        let verify = git(&root, &["rev-parse", "--verify", sha], false).await?;
+        if !verify.success {
+            return Err((code::IO_ERROR.into(), format!("missing base commit: {sha}")));
+        }
+        (true, sha.trim().to_string())
+    } else {
+        let head = git(&root, &["rev-parse", "--verify", "HEAD"], false).await?;
+        if head.success {
+            let oid = std::str::from_utf8(&head.bytes)
+                .map_err(|_| bad_params("Invalid HEAD"))?
+                .trim()
+                .to_string();
+            (true, oid)
+        } else {
+            (false, String::new())
+        }
+    };
+    let tree = if base_exists {
+        git(&root, &["ls-tree", "-z", &base_oid, "--", path], true)
             .await?
             .bytes
     } else {
@@ -109,11 +131,8 @@ async fn read_inner(cwd: &str, path: &str) -> Result<FileDiff, ParamError> {
         ));
     }
     let content = if tracked {
-        let base = if head.success {
-            std::str::from_utf8(&head.bytes)
-                .map_err(|_| bad_params("Invalid HEAD"))?
-                .trim()
-                .to_owned()
+        let base = if base_exists {
+            base_oid
         } else {
             let empty = git(&root, &["hash-object", "-t", "tree", "--stdin"], true).await?;
             String::from_utf8(empty.bytes)

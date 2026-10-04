@@ -152,6 +152,153 @@ pub fn git_diff(cwd: &str) -> Option<WorktreeDiff> {
     })
 }
 
+/// Diff task worktree vs recorded `base_sha`.
+/// Tracked changes via `git diff --numstat base_sha` + untracked files via `ls-files`
+/// with line count as additions.
+/// Does NOT mutate git index (no `git add -N`).
+pub fn task_git_diff(
+    worktree_path: &str,
+    base_sha: &str,
+) -> Result<WorktreeDiff, (String, String)> {
+    let root = git(worktree_path, &["rev-parse", "--show-toplevel"]).ok_or_else(|| {
+        (
+            signaltty_proto::code::IO_ERROR.into(),
+            format!("not a git repo: {worktree_path}"),
+        )
+    })?;
+    let cwd = root.as_str();
+    let branch = git(cwd, &["branch", "--show-current"]).filter(|b| !b.is_empty());
+    let verify = git(cwd, &["rev-parse", "--verify", base_sha]).ok_or_else(|| {
+        (
+            signaltty_proto::code::IO_ERROR.into(),
+            format!("missing base commit: {base_sha}"),
+        )
+    })?;
+    let base = verify.trim();
+
+    let numstat = git_bytes(
+        cwd,
+        &[
+            "diff",
+            "--numstat",
+            "-z",
+            "--no-renames",
+            "--no-relative",
+            base,
+        ],
+    )
+    .ok_or_else(|| {
+        (
+            signaltty_proto::code::IO_ERROR.into(),
+            "git diff failed".into(),
+        )
+    })?;
+
+    let mut files = Vec::new();
+    for record in numstat.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let line = match std::str::from_utf8(record) {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let mut parts = line.splitn(3, '\t');
+        let (added_s, removed_s, path) = match (parts.next(), parts.next(), parts.next()) {
+            (Some(a), Some(r), Some(p)) => (a, r, p),
+            _ => continue,
+        };
+        let binary = added_s == "-";
+        files.push(DiffFile {
+            path: path.to_string(),
+            added: added_s.parse().unwrap_or(0),
+            removed: removed_s.parse().unwrap_or(0),
+            untracked: false,
+            binary,
+        });
+    }
+
+    let status = git_bytes(
+        cwd,
+        &[
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--full-name",
+            "-z",
+        ],
+    )
+    .unwrap_or_default();
+
+    for path_bytes in status.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let path_str = match std::str::from_utf8(path_bytes) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let full_path = std::path::Path::new(cwd).join(path_str);
+        let (added, binary) = match std::fs::read(&full_path) {
+            Ok(bytes) => {
+                if bytes.contains(&0) {
+                    (0, true)
+                } else if bytes.is_empty() {
+                    (0, false)
+                } else {
+                    let mut lines = bytes.split(|b| *b == b'\n').count() as u64;
+                    if bytes.ends_with(b"\n") {
+                        lines = lines.saturating_sub(1);
+                    }
+                    (lines, false)
+                }
+            }
+            Err(_) => (0, false),
+        };
+        files.push(DiffFile {
+            path: path_str.to_string(),
+            added,
+            removed: 0,
+            untracked: true,
+            binary,
+        });
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut dir_sums: std::collections::BTreeMap<String, (u64, u64)> =
+        std::collections::BTreeMap::new();
+    let mut added = 0u64;
+    let mut removed = 0u64;
+    for f in &files {
+        added += f.added;
+        removed += f.removed;
+        let dir = std::path::Path::new(&f.path)
+            .parent()
+            .map(|p| {
+                let s = p.to_string_lossy().to_string();
+                if s.is_empty() {
+                    ".".to_string()
+                } else {
+                    s
+                }
+            })
+            .unwrap_or_else(|| ".".to_string());
+        let entry = dir_sums.entry(dir).or_insert((0, 0));
+        entry.0 += f.added;
+        entry.1 += f.removed;
+    }
+    let dirs = dir_sums
+        .into_iter()
+        .map(|(dir, (added, removed))| DiffDir {
+            dir,
+            added,
+            removed,
+        })
+        .collect();
+
+    Ok(WorktreeDiff {
+        branch,
+        files,
+        dirs,
+        added,
+        removed,
+    })
+}
+
 pub fn git_info(cwd: &str) -> GitInfo {
     let root = git(cwd, &["rev-parse", "--show-toplevel"]);
     if root.is_none() {
