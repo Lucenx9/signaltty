@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Value};
 use signaltty_core::model::{
     Contract, Disposition, DispositionOutcome, Relationship, Task, TaskResult, TaskResultStatus,
 };
@@ -1867,7 +1867,7 @@ async fn task_start_rejects_unsendable_contract_before_worktree() {
 }
 
 #[tokio::test]
-async fn task_start_background_submit_fails_activity_gate_on_stall() {
+async fn task_start_background_submit_stall_parks_then_late_start_resumes() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;
     let mut c = srv.client().await;
@@ -1896,6 +1896,96 @@ async fn task_start_background_submit_fails_activity_gate_on_stall() {
     let wait = c
         .call(
             "task.wait",
+            json!({"task_id": task_id, "until": "input_required", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+    let got = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(got["task"]["state"], "input_required");
+    assert_eq!(got["task"]["status_reason"]["reason"], "submit_unconfirmed");
+    assert_eq!(got["task"]["status_reason"]["stage"], "activity_gate");
+
+    // The worker takes the prompt late (e.g. a manual Enter): the task
+    // resumes and its work stays reportable and finishable.
+    driver.prompt_submit(&mut c).await.unwrap();
+    let wait = c
+        .call(
+            "task.wait",
+            json!({"task_id": task_id, "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn canceled_task_pane_leaves_no_attention_item() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "cancel me"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap().to_string();
+
+    c.call("task.cancel", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    // Give the PTY reader's late on_exit time to land.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let pending = c.call("attention.pending", json!({})).await.unwrap();
+    let listed = pending["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["pane_id"] == pane_id.as_str());
+    assert!(!listed, "closed worker still listed: {pending}");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn ready_timeout_evidence_shows_the_blocking_screen() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "never gets ready"},
+                "agent": "codex",
+                "argv": ["sh", "-c", "echo 'Do you trust this folder?'; sleep 60"],
+                "ready_timeout_s": 1,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+
+    let wait = c
+        .call(
+            "task.wait",
             json!({"task_id": task_id, "until": "failed", "timeout_s": 5}),
         )
         .await
@@ -1905,8 +1995,202 @@ async fn task_start_background_submit_fails_activity_gate_on_stall() {
         .call("task.get", json!({"task_id": task_id}))
         .await
         .unwrap();
-    assert_eq!(got["task"]["state"], "failed");
-    assert_eq!(got["task"]["status_reason"]["stage"], "activity_gate");
+    let reason = &got["task"]["status_reason"];
+    assert_eq!(reason["stage"], "ready_timeout");
+    assert!(
+        reason["screen_tail"]
+            .as_str()
+            .unwrap()
+            .contains("Do you trust this folder?"),
+        "{reason}"
+    );
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn task_start_relative_path_is_bad_params() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let err = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "relative path"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "path": "relative/worktree",
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("BAD_PARAMS"), "{err}");
+    let list = c.call("task.list", json!({})).await.unwrap();
+    assert_eq!(list["tasks"].as_array().unwrap().len(), 0);
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn background_submit_outcome_reaches_the_snapshot() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "never gets ready"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                // Past the 2 s flush tick, so the save of `pending` lands first.
+                "ready_timeout_s": 3,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    c.call(
+        "task.wait",
+        json!({"task_id": task_id, "until": "failed", "timeout_s": 8}),
+    )
+    .await
+    .unwrap();
+
+    // No request follows: only the background step can flag the save. A
+    // crash now must not recover the task as pending.
+    let snap_path = srv.state_dir.join("snapshot.json");
+    let mut state = String::new();
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let Ok(bytes) = std::fs::read(&snap_path) else {
+            continue;
+        };
+        let snap: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let tasks = &snap["tasks"];
+        let task = tasks
+            .as_array()
+            .and_then(|a| a.iter().find(|t| t["id"] == task_id.as_str()))
+            .or_else(|| tasks.get(&task_id));
+        state = task.map(|t| t["state"].to_string()).unwrap_or_default();
+        if state == "\"failed\"" {
+            break;
+        }
+    }
+    assert_eq!(state, "\"failed\"");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn discard_reaps_the_worker_process_group() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let pid_file = srv.state_dir.join("child.pid");
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "leave a child behind"},
+                "agent": "codex",
+                "argv": ["sh", "-c", format!(
+                    // Ignores SIGHUP like a `nohup` build: only a group kill reaps it.
+                    "trap '' HUP; sleep 300 & echo $! > {}; wait",
+                    pid_file.display()
+                )],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+
+    let mut child = None;
+    for _ in 0..50 {
+        if let Some(pid) = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|s| s.trim().parse::<i32>().ok())
+        {
+            child = Some(pid);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let child = child.expect("worker wrote its child pid");
+
+    c.call(
+        "task.finish",
+        json!({"task_id": task_id, "mode": "discard"}),
+    )
+    .await
+    .unwrap();
+    // Without procfs the check below would pass vacuously.
+    assert!(
+        std::path::Path::new("/proc/self/stat").exists(),
+        "procfs required"
+    );
+    let alive = std::path::Path::new(&format!("/proc/{child}")).exists()
+        && !std::fs::read_to_string(format!("/proc/{child}/stat"))
+            .unwrap_or_default()
+            .contains(") Z ");
+    assert!(!alive, "worker child {child} survived discard");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn parked_submit_whose_turn_ends_reports_turn_end() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "stall then end the turn"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "stall_timeout_s": 1,
+                "submit_delay_ms": 50,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap().to_string();
+    let wt = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt).await.unwrap();
+    c.call(
+        "task.wait",
+        json!({"task_id": task_id, "until": "input_required", "timeout_s": 5}),
+    )
+    .await
+    .unwrap();
+
+    driver.stop(&mut c).await.unwrap();
+    let mut reason = Value::Null;
+    for _ in 0..50 {
+        let got = c
+            .call("task.get", json!({"task_id": task_id}))
+            .await
+            .unwrap();
+        reason = got["task"]["status_reason"]["reason"].clone();
+        if reason == "turn_ended_without_report" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(reason, "turn_ended_without_report");
 
     srv.shutdown().await;
 }

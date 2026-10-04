@@ -265,6 +265,14 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         );
     }
     let worktree_path = match p.path {
+        // Relative paths would resolve against the server's cwd for locks,
+        // pane-cwd guards and cleanup, but against the repo for git.
+        Some(path) if !std::path::Path::new(&path).is_absolute() => {
+            return (
+                Response::err(&req.id, code::BAD_PARAMS, "worktree path must be absolute"),
+                ConnEffect::default(),
+            );
+        }
         Some(path) => PathBuf::from(path),
         None => crate::git::default_worktree_path(&p.repo, &branch),
     };
@@ -573,108 +581,130 @@ pub(crate) fn spawn_background_submit(
     let ready_timeout = Duration::from_secs(ready_timeout_s);
     let stall_timeout = Duration::from_secs(stall_timeout_s);
     let mut rx = ctx.bcast.subscribe();
+    let persist = ctx.ptys.clone();
 
+    // Every exit below moves the task (working, input_required or failed)
+    // with no request handler around to persist it: flag the save after it,
+    // or a restart recovers the task as still pending and fails it.
     tokio::spawn(async move {
-        let ready_deadline = tokio::time::Instant::now() + ready_timeout;
-        let mut tick = tokio::time::interval(Duration::from_millis(50));
+        async move {
+            let ready_deadline = tokio::time::Instant::now() + ready_timeout;
+            let mut tick = tokio::time::interval(Duration::from_millis(50));
 
-        loop {
-            enum Check {
-                Done,
-                PaneMissing,
-                PaneExited,
-                Ready,
-                Wait,
-            }
-            let check = {
-                let s = bg_submit_ctx.store.read().unwrap();
-                let Some(task) = s.tasks.get(&bg_task_id) else {
-                    return;
-                };
-                if task.state != TaskState::Pending {
-                    Check::Done
-                } else {
-                    match s.panes.get(&bg_pane_id) {
-                        None => Check::PaneMissing,
-                        Some(pane) if !matches!(pane.live, LiveState::Live) => Check::PaneExited,
-                        Some(pane)
-                            if matches!(pane.lifecycle, Lifecycle::Idle | Lifecycle::Done) =>
-                        {
-                            Check::Ready
+            loop {
+                enum Check {
+                    Done,
+                    PaneMissing,
+                    PaneExited,
+                    Ready,
+                    Wait,
+                }
+                let check = {
+                    let s = bg_submit_ctx.store.read().unwrap();
+                    let Some(task) = s.tasks.get(&bg_task_id) else {
+                        return;
+                    };
+                    if task.state != TaskState::Pending {
+                        Check::Done
+                    } else {
+                        match s.panes.get(&bg_pane_id) {
+                            None => Check::PaneMissing,
+                            Some(pane) if !matches!(pane.live, LiveState::Live) => {
+                                Check::PaneExited
+                            }
+                            Some(pane)
+                                if matches!(pane.lifecycle, Lifecycle::Idle | Lifecycle::Done) =>
+                            {
+                                Check::Ready
+                            }
+                            Some(_) => Check::Wait,
                         }
-                        Some(_) => Check::Wait,
                     }
-                }
-            };
+                };
 
-            match check {
-                Check::Done => return,
-                Check::PaneMissing => {
-                    let mut s = bg_submit_ctx.store.write().unwrap();
-                    s.task_fail(
-                        &bg_task_id,
-                        Some(json!({"stage": "ready_timeout", "error": "pane missing"})),
-                    );
-                    return;
-                }
-                Check::PaneExited => {
-                    let mut s = bg_submit_ctx.store.write().unwrap();
-                    s.task_fail(
-                        &bg_task_id,
-                        Some(json!({"stage": "ready_timeout", "error": "pane exited"})),
-                    );
-                    return;
-                }
-                Check::Ready => break,
-                Check::Wait => {}
-            }
-
-            tokio::select! {
-                biased;
-                _ = tokio::time::sleep_until(ready_deadline) => {
-                    let mut s = bg_submit_ctx.store.write().unwrap();
-                    s.task_fail(&bg_task_id, Some(json!({"stage": "ready_timeout"})));
-                    return;
-                }
-                _ = tick.tick() => {}
-                event = rx.recv() => {
-                    if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                match check {
+                    Check::Done => return,
+                    Check::PaneMissing => {
+                        let mut s = bg_submit_ctx.store.write().unwrap();
+                        s.task_fail(
+                            &bg_task_id,
+                            Some(json!({"stage": "ready_timeout", "error": "pane missing"})),
+                        );
                         return;
                     }
+                    Check::PaneExited => {
+                        let mut s = bg_submit_ctx.store.write().unwrap();
+                        s.task_fail(
+                            &bg_task_id,
+                            Some(json!({"stage": "ready_timeout", "error": "pane exited"})),
+                        );
+                        return;
+                    }
+                    Check::Ready => break,
+                    Check::Wait => {}
+                }
+
+                tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(ready_deadline) => {
+                        // The screen says why the worker never got ready (e.g. a
+                        // folder-trust or login prompt the hooks cannot report).
+                        let screen_tail = bg_submit_ctx
+                            .ptys
+                            .terms()
+                            .lock()
+                            .unwrap()
+                            .tail(&bg_pane_id, 12, true)
+                            .unwrap_or_default()
+                            .join("\n");
+                        let mut s = bg_submit_ctx.store.write().unwrap();
+                        s.task_fail(
+                            &bg_task_id,
+                            Some(json!({"stage": "ready_timeout", "screen_tail": screen_tail})),
+                        );
+                        return;
+                    }
+                    _ = tick.tick() => {}
+                    event = rx.recv() => {
+                        if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                            return;
+                        }
+                    }
+                }
+            }
+
+            let submit_res = crate::submit::submit_prompt(
+                &bg_submit_ctx,
+                &bg_pane_id,
+                &prompt,
+                submit_delay,
+                stall_timeout,
+                true,
+                true,
+                submit_max_bytes,
+            )
+            .await;
+
+            match submit_res {
+                Ok(_) => {
+                    let mut s = bg_submit_ctx.store.write().unwrap();
+                    s.task_background_ready(&bg_task_id);
+                }
+                Err(e) => {
+                    let mut s = bg_submit_ctx.store.write().unwrap();
+                    if e.code == code::TIMEOUT {
+                        s.task_submit_unconfirmed(&bg_task_id, &e.message);
+                    } else {
+                        s.task_fail(
+                            &bg_task_id,
+                            Some(json!({"stage": "submit_refused", "error": e.message})),
+                        );
+                    }
                 }
             }
         }
-
-        let submit_res = crate::submit::submit_prompt(
-            &bg_submit_ctx,
-            &bg_pane_id,
-            &prompt,
-            submit_delay,
-            stall_timeout,
-            true,
-            true,
-            submit_max_bytes,
-        )
         .await;
-
-        match submit_res {
-            Ok(_) => {
-                let mut s = bg_submit_ctx.store.write().unwrap();
-                s.task_background_ready(&bg_task_id);
-            }
-            Err(e) => {
-                let mut s = bg_submit_ctx.store.write().unwrap();
-                let stage = if e.code == code::TIMEOUT {
-                    "activity_gate"
-                } else {
-                    "submit_refused"
-                };
-                s.task_fail(
-                    &bg_task_id,
-                    Some(json!({"stage": stage, "error": e.message})),
-                );
-            }
-        }
+        persist.mark_persist();
     });
 }
 
@@ -747,7 +777,7 @@ pub fn h_task_cancel(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Con
             let pane_id = task.pane_id.clone();
             if let Some(ref pid) = pane_id {
                 ctx.ptys.destroy(pid, Some("TERM"));
-                s.set_exited(pid, Some(0));
+                close_worker(&mut s, pid);
             }
             ctx.mark_persist();
             let task = s.tasks.get(&p.task_id).unwrap();
@@ -1151,7 +1181,37 @@ async fn reap_worker(ctx: &Ctx, pane_id: &str) {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
-    ctx.store.write().unwrap().set_exited(pane_id, Some(0));
+    close_worker(&mut ctx.store.write().unwrap(), pane_id);
+}
+
+/// The orchestrator closed the worker on purpose: record the exit without
+/// leaving an attention item nobody needs to act on.
+fn close_worker(s: &mut Store, pane_id: &str) {
+    s.set_exited(pane_id, Some(0));
+    s.clear_attention(pane_id, "task_closed");
+}
+
+/// Delete the task branch after its worktree is gone. A failed worktree
+/// removal keeps the branch checked out, so deleting is skipped and the
+/// first error stays the one reported. Returns whether the branch is gone.
+fn delete_task_branch(src_str: &str, branch: &str, cleanup_error: &mut Option<String>) -> bool {
+    if cleanup_error.is_some() {
+        return false;
+    }
+    match crate::git::git_output(src_str, &["branch", "-D", "--", branch]) {
+        Ok(out) if out.status.success() => true,
+        Ok(out) => {
+            *cleanup_error = Some(format!(
+                "branch deletion failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+            false
+        }
+        Err(e) => {
+            *cleanup_error = Some(format!("branch deletion error: {e}"));
+            false
+        }
+    }
 }
 
 /// Source worktree must hold no uncommitted work. A failed check is
@@ -1333,30 +1393,17 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
             }
         }
 
-        // Close worker pane if live
+        // Kill and reap the whole worker group: a TERM to the leader alone
+        // leaves its children writing in the worktree we remove next.
         if let Some(ref pid) = pane_id {
-            ctx.ptys.destroy(pid, Some("TERM"));
-            let mut s = ctx.store.write().unwrap();
-            s.set_exited(pid, Some(0));
+            reap_worker(ctx, pid).await;
         }
 
         // Remove worktree (herdr-guarded: see remove_task_worktree).
         let mut cleanup_error = remove_task_worktree(&src_str, &worktree_path);
 
-        // Delete branch if requested and not pre-existing
-        if should_delete_branch {
-            let b_out = crate::git::git_output(&src_str, &["branch", "-D", "--", &branch]);
-            if let Ok(ref out) = b_out {
-                if !out.status.success() {
-                    cleanup_error = Some(format!(
-                        "branch deletion failed: {}",
-                        String::from_utf8_lossy(&out.stderr).trim()
-                    ));
-                }
-            } else if let Err(ref e) = b_out {
-                cleanup_error = Some(format!("branch deletion error: {e}"));
-            }
-        }
+        let branch_deleted =
+            should_delete_branch && delete_task_branch(&src_str, &branch, &mut cleanup_error);
 
         let finish_error = cleanup_error
             .as_ref()
@@ -1367,7 +1414,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
                 outcome: DispositionOutcome::Discarded,
                 target_ref: None,
                 merged_sha: None,
-                branch_deleted: Some(should_delete_branch),
+                branch_deleted: Some(branch_deleted),
                 at: Some(Utc::now()),
             };
             if let Err((c, m)) = s.task_finish_record(&p.task_id, disposition, finish_error) {
@@ -1527,10 +1574,17 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
                 &src_str,
                 &["status", "--porcelain=v1", "--untracked-files=no"],
             );
+            // A failed restore must not read as a plain timeout (contract:
+            // IO_ERROR whenever the target may be left mid-merge).
+            let restored = abort_ok && matches!(target_clean, Ok(true));
             return (
                 Response::err_with_details(
                     &req.id,
-                    code::TIMEOUT,
+                    if restored {
+                        code::TIMEOUT
+                    } else {
+                        code::IO_ERROR
+                    },
                     format!(
                         "git merge timed out after {} ms",
                         ctx.config.merge_timeout_ms
@@ -1568,9 +1622,16 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         // Abort merge. A failed abort (or a target that is still dirty
         // afterwards) must not be reported as a clean conflict: the target
         // may be mid-merge, so this is IO_ERROR with the dirt flagged.
-        let abort_ok = crate::git::git_output(&src_str, &["merge", "--abort"])
-            .map(|out| out.status.success())
-            .unwrap_or(false);
+        // A merge refused before it started (unrelated histories, a lock)
+        // has nothing to abort; that is not a failed abort.
+        let merging =
+            crate::git::git_output(&src_str, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+                .map(|out| out.status.success())
+                .unwrap_or(true);
+        let abort_ok = !merging
+            || crate::git::git_output(&src_str, &["merge", "--abort"])
+                .map(|out| out.status.success())
+                .unwrap_or(false);
         let target_clean = crate::git::porcelain_clean(
             &src_str,
             &["status", "--porcelain=v1", "--untracked-files=no"],
@@ -1594,6 +1655,25 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
                     "merge conflict abort failed or left the target dirty; target may be mid-merge",
                     details,
                 ),
+                ConnEffect::default(),
+            );
+        }
+
+        // No conflicted paths: git refused for another reason (a hook,
+        // unrelated histories). Say why instead of claiming a conflict.
+        if conflicted_files.is_empty() {
+            let message = format!(
+                "git merge failed: {}",
+                String::from_utf8_lossy(&merge_out.stderr).trim()
+            );
+            let details = json!({ "abort_ok": abort_ok, "target_dirty": false, "error": message });
+            {
+                let mut s = ctx.store.write().unwrap();
+                let _ = s.task_set_finish_error(&p.task_id, Some(details.clone()));
+            }
+            ctx.mark_persist();
+            return (
+                Response::err_with_details(&req.id, code::IO_ERROR, message, details),
                 ConnEffect::default(),
             );
         }
@@ -1651,19 +1731,8 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
 
     // Delete branch if requested and not pre-existing
     let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch && unchanged;
-    if should_delete_branch {
-        let b_out = crate::git::git_output(&src_str, &["branch", "-D", "--", &branch]);
-        if let Ok(ref out) = b_out {
-            if !out.status.success() {
-                cleanup_error = Some(format!(
-                    "branch deletion failed: {}",
-                    String::from_utf8_lossy(&out.stderr).trim()
-                ));
-            }
-        } else if let Err(ref e) = b_out {
-            cleanup_error = Some(format!("branch deletion error: {e}"));
-        }
-    }
+    let branch_deleted =
+        should_delete_branch && delete_task_branch(&src_str, &branch, &mut cleanup_error);
 
     let finish_error = cleanup_error
         .as_ref()
@@ -1674,7 +1743,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
             outcome: DispositionOutcome::Merged,
             target_ref: Some(target.clone()),
             merged_sha: Some(head_sha.clone()),
-            branch_deleted: Some(should_delete_branch),
+            branch_deleted: Some(branch_deleted),
             at: Some(Utc::now()),
         };
         if let Err((c, m)) = s.task_finish_record(&p.task_id, disposition, finish_error) {

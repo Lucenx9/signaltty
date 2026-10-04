@@ -110,7 +110,7 @@ What the code does where it diverges from the proposal above — docs
   creates no task. After the checkout exists, workspace/tab/parent/spawn
   failures and the background ready-wait + prompt write persist `failed`
   tasks with `{stage: workspace|tab|parent|spawn|ready_timeout|
-  submit_refused|activity_gate, …}`. The accepted-research deltas all
+  submit_refused, …}`. The accepted-research deltas all
   landed: hook-receiver drops (`harness_mismatch`, `unrecognized_hook`),
   the silent-worker watchdog (`worker_silent_timeout_s`, default 600 s, `0`
   disables), `last_assistant_message` flowing into pane `last_message` and
@@ -118,7 +118,9 @@ What the code does where it diverges from the proposal above — docs
 - Background submit writes the prompt (`submit_delay_ms`, default 300, the
   same paste/Enter delay as `pane.submit`) and runs the `pane.submit`
   activity gate. A newer `working` or `blocked` transition moves the task to
-  `working`; a stall fails it with `{stage: activity_gate}`.
+  `working`; a stall retries Enter once, then parks it at `input_required`
+  with `{reason: submit_unconfirmed, stage: activity_gate}` (not `failed`:
+  a late start must keep its work finishable).
 - `pane.spawn` refuses an unknown `parent_pane_id` with `NO_SUCH_PANE` and
   creates no pane.
 - `Task.finish_error` stores conflict files (no disposition, so finish can

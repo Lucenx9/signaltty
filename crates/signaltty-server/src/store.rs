@@ -71,6 +71,10 @@ pub struct Store {
     pub task_reservations: usize,
 }
 
+/// `status_reason.reason` of a task whose prompt was written but never
+/// confirmed by agent activity.
+pub const SUBMIT_UNCONFIRMED: &str = "submit_unconfirmed";
+
 impl Store {
     pub fn new() -> Store {
         Store {
@@ -159,6 +163,11 @@ impl Store {
         let Some(pane) = self.panes.get_mut(pane_id) else {
             return;
         };
+        // Idempotent: the PTY reader's late on_exit after a server-side close
+        // must not re-raise attention the closer already cleared.
+        if !matches!(pane.live, signaltty_core::model::LiveState::Live) {
+            return;
+        }
         pane.live = signaltty_core::model::LiveState::Exited { code };
         pane.restore_state = signaltty_core::model::RestoreState::Exited;
         pane.last_activity_at = Utc::now();
@@ -171,6 +180,13 @@ impl Store {
             progress.transitions.insert("exited", event.seq);
         }
         self.set_lifecycle(pane_id, Lifecycle::Exited);
+        // An exited pane can no longer take input or grant permission.
+        if matches!(
+            self.panes.get(pane_id).map(|p| p.attention),
+            Some(Attention::InputRequired | Attention::PermissionRequired)
+        ) {
+            self.clear_attention(pane_id, "pane_exited");
+        }
         self.raise_attention(pane_id, Attention::Unread);
         self.clear_decision(pane_id, "pane_exited");
 
@@ -424,6 +440,24 @@ impl Store {
         if let Some(progress) = self.progress.get_mut(pane_id) {
             progress.lifecycle_seq = ev.seq;
             progress.transitions.insert(next.as_str(), ev.seq);
+        }
+        // A worker that starts after its submit went unconfirmed (late Enter,
+        // slow hooks) took the prompt after all: back to working. A turn that
+        // already ended refreshes the evidence to turn_ended_without_report.
+        if matches!(next, Lifecycle::Working | Lifecycle::Done) {
+            let unconfirmed = self
+                .tasks
+                .values()
+                .find(|t| {
+                    t.pane_id.as_deref() == Some(pane_id)
+                        && t.state == TaskState::InputRequired
+                        && t.status_reason.as_ref().and_then(|r| r.get("reason"))
+                            == Some(&json!(SUBMIT_UNCONFIRMED))
+                })
+                .map(|t| t.id.clone());
+            if let Some(tid) = unconfirmed {
+                self.task_resume_working(&tid);
+            }
         }
         Some(ev)
     }
@@ -716,6 +750,39 @@ impl Store {
         };
         let ev = self.emit_task_updated(&task_clone, Some(prev_state));
         Ok(ev)
+    }
+
+    /// The background submit wrote the prompt but saw no activity: park in
+    /// `input_required` instead of `failed`, so a nudge (`pane.submit`) or
+    /// the worker starting late resumes it and its work stays finishable.
+    pub fn task_submit_unconfirmed(&mut self, task_id: &str, error: &str) -> Option<StoredEvent> {
+        let (task_clone, prev_state) = {
+            let task = self.tasks.get_mut(task_id)?;
+            if task.state != TaskState::Pending {
+                return None;
+            }
+            let prev_state = task.state;
+            let now = Utc::now();
+            task.transition_to(TaskState::Working, now).ok()?;
+            // Activity that landed right after the gate's deadline confirms it.
+            let started = task
+                .pane_id
+                .as_deref()
+                .and_then(|pid| self.panes.get(pid))
+                .is_some_and(|p| matches!(p.lifecycle, Lifecycle::Working | Lifecycle::Blocked));
+            if started {
+                (task.clone(), prev_state)
+            } else {
+                task.transition_to(TaskState::InputRequired, now).ok()?;
+                task.status_reason = Some(json!({
+                    "reason": SUBMIT_UNCONFIRMED,
+                    "stage": "activity_gate",
+                    "error": error,
+                }));
+                (task.clone(), prev_state)
+            }
+        };
+        Some(self.emit_task_updated(&task_clone, Some(prev_state)))
     }
 
     pub fn task_fail(&mut self, task_id: &str, evidence: Option<Value>) -> Option<StoredEvent> {
@@ -1054,6 +1121,20 @@ mod tests {
         assert_eq!(e.name, "attention.cleared");
         assert!(store.clear_attention(&id, "test").is_none());
         assert!(store.clear_attention("pane_nope", "test").is_none());
+    }
+
+    #[test]
+    fn exit_demotes_input_attention_and_is_idempotent() {
+        let mut store = Store::new();
+        let p = pane_with(Attention::InputRequired, 0);
+        let id = p.id.clone();
+        store.panes.insert(id.clone(), p);
+        store.set_exited(&id, Some(0));
+        assert_eq!(store.panes[&id].attention, Attention::Unread);
+        // A late PTY on_exit after a server-side close re-raises nothing.
+        store.clear_attention(&id, "task_closed");
+        store.set_exited(&id, Some(0));
+        assert_eq!(store.panes[&id].attention, Attention::None);
     }
 
     #[test]

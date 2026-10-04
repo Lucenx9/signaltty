@@ -92,7 +92,7 @@ clients can `subscribe {from_seq}` to replay.
 | `task.report` | `{task_id?, pane_id?, status: completed\|failed\|rejected, summary, artifacts?, evidence?}` (task resolved via explicit `task_id`, else the task owning `pane_id`; one of the two is required) | `{task}` (stores the result, emits `task.result` + `task.updated`; report on a terminal task → `BAD_PARAMS`) |
 | `task.diff` | `{task_id}` | `{task_id, base_sha, branch, files[...], dirs[...], added, removed}` (worktree-vs-recorded-base, tracked + untracked; no index mutation; untracked reads are capped, `O_NOFOLLOW`, and off the runtime thread — symlinks, fifos, and files over 512 KiB are binary with zero counts) |
 | `task.file_diff` | `{task_id, path}` | `{task_id, path, untracked, content}` (same `content` shapes as `workspace.file_diff`) |
-| `task.finish` | `{task_id, mode: merge\|discard, target_ref?, delete_branch?, ignore_dirty?}` | `{task, merge?: {target, sha}, cleanup_error?}` (merge needs a `completed` task and a clean target; a failed `git status` is `IO_ERROR`, never "clean"; conflicts abort leaving the target clean → `MERGE_CONFLICT`, or `IO_ERROR` with `details.target_dirty` when abort fails; the merge runs in its own process group under a deadline (default 120 s, `SIGNALTTY_MERGE_TIMEOUT_MS`) and expiry kills it, restores the target and returns `TIMEOUT`) |
+| `task.finish` | `{task_id, mode: merge\|discard, target_ref?, delete_branch?, ignore_dirty?}` | `{task, merge?: {target, sha}, cleanup_error?}` (merge needs a `completed` task and a clean target; a failed `git status` is `IO_ERROR`, never "clean"; conflicts abort leaving the target clean → `MERGE_CONFLICT`, or `IO_ERROR` with `details.target_dirty` when abort fails; the merge runs in its own process group under a deadline (default 120 s, `SIGNALTTY_MERGE_TIMEOUT_MS`) and expiry kills it, restores the target and returns `TIMEOUT`, or `IO_ERROR` when it cannot; a merge git refuses without conflicts (hook, unrelated histories) is `IO_ERROR` carrying git's message; both modes kill and reap the worker's process group first; an explicit `path` on `task.start` must be absolute) |
 | `attention.pending` | `{limit?}` (default 50, max 500) | `{panes: [{pane_id, workspace_id, tab_id, label?, task_id?, lifecycle, attention, last_message?, attention_since?}]}` ranked by severity then recency; panes with `attention: none` excluded |
 | `plugin.list` | — | `{dir, plugins[], failures[]}` (hooks with runs/errors/last_error; see 13) |
 | `plugin.reload` | — | same as `plugin.list` after re-scan (stats reset) |
@@ -106,13 +106,17 @@ base → worktree → spawn synchronously: over-cap starts are refused with
 `RATE_LIMITED` before creating anything, and base/worktree/spawn failures
 are synchronous errors (`BAD_PARAMS` / `IO_ERROR`) that create no task.
 Only the background ready-wait + prompt write produces `failed` tasks with
-`{stage: ready_timeout|submit_refused|activity_gate, …}` evidence. The background step
+`{stage: ready_timeout|submit_refused, …}` evidence (`ready_timeout` adds
+`screen_tail`, the pane's last screen lines). The background step
 waits for the worker pane to reach `idle`/`done` (default
 `ready_timeout_s: 30`), writes the composed prompt with `submit_delay_ms`
 (default 300, the same paste/Enter delay as `pane.submit`), and runs the
 same activity gate: a newer `working` or `blocked` transition within
-`stall_timeout_s` (default 5) moves the task to `working`; a stall fails it
-with `{stage: activity_gate}`. A repeated `client_request_id` returns the
+`stall_timeout_s` (default 5) moves the task to `working`; a stall (after one Enter retry halfway through the gate) parks it
+at `input_required` with `{reason: submit_unconfirmed, stage: activity_gate}`,
+and the worker turning `working` later resumes it. Closing a worker from
+`task.finish`/`task.cancel` clears its attention; any pane exit drops
+`input_required`/`permission_required` to `unread`. A repeated `client_request_id` returns the
 existing task and pane instead of creating another; without it retries
 create new tasks. The merge target defaults to the recorded
 `target_branch`; when the start ran on a detached HEAD an explicit
