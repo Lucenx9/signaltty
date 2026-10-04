@@ -989,11 +989,28 @@ fn h_pane_read(ctx: &Ctx, params: &Value) -> Handler {
         params::ReadMode::Tail => {
             let n = p.lines.unwrap_or(200).min(5000) as usize;
             let lines = terms.tail(&id, n, strip).unwrap_or_default();
-            let total = terms.scrollback_len(&id);
+            let total = terms.ring_len(&id);
             Ok((
                 json!({"text": lines.join("\n"), "truncated": total > lines.len()}),
                 ConnEffect::default(),
             ))
+        }
+        params::ReadMode::Rendered => {
+            let n = p.lines.unwrap_or(200).min(5000) as usize;
+            let after = p.after_seq.unwrap_or(0);
+            match terms.rendered(&id, after, n) {
+                None => Err((code::NO_SUCH_PANE.to_string(), id)),
+                Some(r) => Ok((
+                    json!({
+                        "text": r.text,
+                        "seq": r.seq,
+                        "next_seq": r.next_seq,
+                        "dropped": r.dropped,
+                        "truncated": r.truncated,
+                    }),
+                    ConnEffect::default(),
+                )),
+            }
         }
     }
 }

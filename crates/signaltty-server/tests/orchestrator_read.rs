@@ -50,6 +50,27 @@ async fn rendered(c: &mut TestClient, pane: &str, after: u64, lines: u64) -> ser
     .unwrap()
 }
 
+fn base64_encode(s: &str) -> String {
+    // Minimal base64 to avoid adding deps to the test target.
+    const ALPH: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = s.as_bytes();
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let mut n = 0u32;
+        for &b in chunk {
+            n = (n << 8) | b as u32;
+        }
+        n <<= 8 * (3 - chunk.len());
+        for i in 0..chunk.len() + 1 {
+            out.push(ALPH[((n >> (18 - 6 * i)) & 63) as usize] as char);
+        }
+        for _ in chunk.len() + 1..4 {
+            out.push('=');
+        }
+    }
+    out
+}
+
 #[tokio::test]
 async fn rendered_reads_plain_output_incrementally() {
     let s = TestServer::start().await;
@@ -73,7 +94,7 @@ async fn rendered_reads_plain_output_incrementally() {
     // New output after the cursor is returned exactly once.
     c.call(
         "pane.input",
-        json!({"pane_id": pane, "data_b64": "echo gamma\n"}),
+        json!({"pane_id": pane, "data_b64": base64_encode("echo gamma\n")}),
     )
     .await
     .unwrap();
@@ -200,7 +221,7 @@ async fn rendered_unknown_pane_is_no_such_pane() {
 
 #[tokio::test]
 async fn rendered_old_cursor_dropped_after_restart() {
-    let s = TestServer::start().await;
+    let mut s = TestServer::start().await;
     let mut c = s.client().await;
     let (_ws, pane) = new_shell(&mut c, vec!["sh", "-c", "echo persist-me; sleep 30"]).await;
     wait_for_text(&mut c, &pane, "persist-me").await;
