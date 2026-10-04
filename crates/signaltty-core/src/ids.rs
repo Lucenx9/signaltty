@@ -19,6 +19,12 @@ pub fn new_pane_id() -> String {
 pub fn new_notif_id() -> String {
     new_id("notif")
 }
+pub fn new_task_id() -> String {
+    new_id("task")
+}
+pub fn new_context_id() -> String {
+    new_id("tctx")
+}
 
 pub fn has_prefix(id: &str, prefix: &str) -> bool {
     id.starts_with(&format!("{prefix}_"))
@@ -37,5 +43,7 @@ mod tests {
         assert!(has_prefix(&new_ws_id(), "ws"));
         assert!(has_prefix(&new_tab_id(), "tab"));
         assert!(has_prefix(&new_notif_id(), "notif"));
+        assert!(has_prefix(&new_task_id(), "task"));
+        assert!(has_prefix(&new_context_id(), "tctx"));
     }
 }

@@ -10,10 +10,14 @@ pub mod state;
 pub mod theme;
 
 pub use error::CoreError;
-pub use ids::{new_notif_id, new_pane_id, new_tab_id, new_ws_id};
-pub use model::{
-    AgentInfo, AgentKind, Decision, DecisionOption, GitInfo, Layout, LiveState, Notification,
-    NotificationSeverity, Pane, PtySize, RestoreState, SplitDir, Tab, Workspace,
+pub use ids::{
+    has_prefix, new_context_id, new_notif_id, new_pane_id, new_tab_id, new_task_id, new_ws_id,
 };
-pub use state::{Attention, Lifecycle};
+pub use model::{
+    AgentInfo, AgentKind, Artifact, Contract, Decision, DecisionOption, Disposition,
+    DispositionOutcome, GitInfo, Layout, LiveState, Notification, NotificationSeverity, Pane,
+    PtySize, Relationship, RestoreState, SplitDir, Tab, Task, TaskResult, TaskResultStatus,
+    Workspace,
+};
+pub use state::{Attention, Lifecycle, TaskState};
 pub use theme::{Appearance, GuiPreference, Theme};

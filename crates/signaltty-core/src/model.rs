@@ -1,10 +1,12 @@
 //! Server → Workspace → Tab → Pane model. See docs/02.
 
+use std::path::PathBuf;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
-use crate::state::{Attention, Lifecycle};
+use crate::state::{Attention, Lifecycle, TaskState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PtySize {
@@ -504,6 +506,17 @@ pub struct Pane {
     pub last_activity_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_at: Option<DateTime<Utc>>,
+    /// Lineage & orchestration tracking (directive 018).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relationship: Option<Relationship>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
 }
 
 impl Pane {
@@ -547,6 +560,11 @@ impl Pane {
             created_at: now,
             last_activity_at: now,
             last_seen_at: None,
+            parent_pane_id: None,
+            root_pane_id: None,
+            label: None,
+            relationship: None,
+            task_id: None,
         }
     }
 
@@ -567,7 +585,10 @@ impl Pane {
             return;
         }
         if self.lifecycle == Lifecycle::Working {
-            self.last_run_secs = self.lifecycle_since.map(|t| (now - t).num_seconds().max(0));
+            if let Some(since) = self.lifecycle_since {
+                let secs = (now - since).num_seconds().max(0);
+                self.last_run_secs = Some(secs);
+            }
         }
         self.last_lifecycle = self.lifecycle;
         self.lifecycle = next;
@@ -689,6 +710,252 @@ pub struct Notification {
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_at: Option<DateTime<Utc>>,
+}
+
+/// Relationship between parent and child tasks/panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Relationship {
+    Fork,
+    #[default]
+    Subagent,
+}
+
+/// Task objective and requirements contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contract {
+    pub objective: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraints: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance_criteria: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<String>,
+}
+
+impl Contract {
+    pub const MIN_OBJECTIVE_BYTES: usize = 1;
+    pub const MAX_OBJECTIVE_BYTES: usize = 32 * 1024; // 32 KiB
+
+    pub fn new(objective: impl Into<String>) -> Result<Self, CoreError> {
+        let contract = Self {
+            objective: objective.into(),
+            constraints: None,
+            acceptance_criteria: None,
+            output_format: None,
+        };
+        contract.validate()?;
+        Ok(contract)
+    }
+
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.objective.len() < Self::MIN_OBJECTIVE_BYTES {
+            return Err(CoreError::InvalidContract(
+                "objective must not be empty".to_string(),
+            ));
+        }
+        if self.objective.len() > Self::MAX_OBJECTIVE_BYTES {
+            return Err(CoreError::InvalidContract(format!(
+                "objective length {} exceeds max 32 KiB",
+                self.objective.len()
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Artifact produced by a task worker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Artifact {
+    pub name: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// Reported outcome status for a task result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskResultStatus {
+    Completed,
+    Failed,
+    Rejected,
+}
+
+impl TaskResultStatus {
+    pub fn to_state(self) -> TaskState {
+        match self {
+            TaskResultStatus::Completed => TaskState::Completed,
+            TaskResultStatus::Failed => TaskState::Failed,
+            TaskResultStatus::Rejected => TaskState::Rejected,
+        }
+    }
+}
+
+/// Structured result reported by a task worker.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskResult {
+    pub status: TaskResultStatus,
+    pub summary: String,
+    #[serde(default)]
+    pub artifacts: Vec<Artifact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<serde_json::Value>,
+    pub reported_at: DateTime<Utc>,
+}
+
+impl TaskResult {
+    pub const MIN_SUMMARY_BYTES: usize = 1;
+    pub const MAX_SUMMARY_BYTES: usize = 8 * 1024; // 8 KiB
+    pub const MAX_ARTIFACTS: usize = 32;
+
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.summary.len() < Self::MIN_SUMMARY_BYTES {
+            return Err(CoreError::InvalidTaskResult(
+                "summary must not be empty".to_string(),
+            ));
+        }
+        if self.summary.len() > Self::MAX_SUMMARY_BYTES {
+            return Err(CoreError::InvalidTaskResult(format!(
+                "summary length {} exceeds max 8 KiB",
+                self.summary.len()
+            )));
+        }
+        if self.artifacts.len() > Self::MAX_ARTIFACTS {
+            return Err(CoreError::InvalidTaskResult(format!(
+                "artifacts count {} exceeds max 32",
+                self.artifacts.len()
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Final outcome of a completed/failed task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DispositionOutcome {
+    #[default]
+    None,
+    Merged,
+    Discarded,
+}
+
+/// Recorded finish disposition of a task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Disposition {
+    pub outcome: DispositionOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_deleted: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<DateTime<Utc>>,
+}
+
+impl Default for Disposition {
+    fn default() -> Self {
+        Self {
+            outcome: DispositionOutcome::None,
+            target_ref: None,
+            merged_sha: None,
+            branch_deleted: None,
+            at: None,
+        }
+    }
+}
+
+/// An orchestrated sub-task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: String,
+    pub context_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_pane_id: Option<String>,
+    #[serde(default)]
+    pub relationship: Relationship,
+    pub label: String,
+    pub contract: Contract,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    pub source_repo: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_branch: Option<String>,
+    pub worktree_path: PathBuf,
+    pub branch: String,
+    #[serde(default)]
+    pub preexisting_branch: bool,
+    pub base_ref: String,
+    pub base_sha: String,
+    pub state: TaskState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<TaskResult>,
+    #[serde(default)]
+    pub disposition: Disposition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_error: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_cmd: Option<Vec<String>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Task {
+    pub fn transition_to(&mut self, next: TaskState, now: DateTime<Utc>) -> Result<(), CoreError> {
+        if !self.state.can_transition_to(next) {
+            return Err(CoreError::InvalidTaskTransition(self.state, next));
+        }
+        self.state = next;
+        self.updated_at = now;
+        Ok(())
+    }
+
+    pub fn apply_report(
+        &mut self,
+        result: TaskResult,
+        now: DateTime<Utc>,
+    ) -> Result<(), CoreError> {
+        result.validate()?;
+        let target_state = result.status.to_state();
+        if self.state.is_terminal() {
+            return Err(CoreError::InvalidTaskTransition(self.state, target_state));
+        }
+        if !self.state.can_transition_to(target_state) {
+            return Err(CoreError::InvalidTaskTransition(self.state, target_state));
+        }
+        self.state = target_state;
+        self.result = Some(result);
+        self.updated_at = now;
+        Ok(())
+    }
+
+    pub fn apply_turn_ended_without_report(
+        &mut self,
+        evidence: Option<serde_json::Value>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        if self.state.is_terminal() {
+            // Report wins over turn end race
+            return false;
+        }
+        if self.state == TaskState::Working {
+            self.state = TaskState::InputRequired;
+            self.finish_error = evidence;
+            self.updated_at = now;
+            return true;
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -989,7 +1256,7 @@ mod tests {
         }))
         .unwrap();
         assert!(legacy.answerable);
-        // Old pane snapshots load with no pending decision.
+        // Old pane snapshots load with no pending decision and default lineage fields.
         let p = Pane::new(
             "w".into(),
             "t".into(),
@@ -1013,5 +1280,151 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(back.pending_decision, None);
+        assert_eq!(back.parent_pane_id, None);
+        assert_eq!(back.root_pane_id, None);
+        assert_eq!(back.label, None);
+        assert_eq!(back.relationship, None);
+        assert_eq!(back.task_id, None);
+    }
+
+    #[test]
+    fn contract_validation_bounds() {
+        assert!(Contract::new("").is_err());
+        assert!(Contract::new("x").is_ok());
+
+        let max_str = "a".repeat(Contract::MAX_OBJECTIVE_BYTES);
+        assert!(Contract::new(max_str).is_ok());
+
+        let over_str = "a".repeat(Contract::MAX_OBJECTIVE_BYTES + 1);
+        assert!(Contract::new(over_str).is_err());
+    }
+
+    #[test]
+    fn task_result_validation_bounds() {
+        let now = Utc::now();
+        let res_empty = TaskResult {
+            status: TaskResultStatus::Completed,
+            summary: "".to_string(),
+            artifacts: vec![],
+            evidence: None,
+            reported_at: now,
+        };
+        assert!(res_empty.validate().is_err());
+
+        let res_max_summary = TaskResult {
+            status: TaskResultStatus::Completed,
+            summary: "s".repeat(TaskResult::MAX_SUMMARY_BYTES),
+            artifacts: vec![],
+            evidence: None,
+            reported_at: now,
+        };
+        assert!(res_max_summary.validate().is_ok());
+
+        let res_over_summary = TaskResult {
+            status: TaskResultStatus::Completed,
+            summary: "s".repeat(TaskResult::MAX_SUMMARY_BYTES + 1),
+            artifacts: vec![],
+            evidence: None,
+            reported_at: now,
+        };
+        assert!(res_over_summary.validate().is_err());
+
+        let artifacts_ok: Vec<Artifact> = (0..32)
+            .map(|i| Artifact {
+                name: format!("art_{i}"),
+                path: format!("path/{i}"),
+                version: None,
+            })
+            .collect();
+        let res_max_art = TaskResult {
+            status: TaskResultStatus::Completed,
+            summary: "ok".to_string(),
+            artifacts: artifacts_ok,
+            evidence: None,
+            reported_at: now,
+        };
+        assert!(res_max_art.validate().is_ok());
+
+        let artifacts_over: Vec<Artifact> = (0..33)
+            .map(|i| Artifact {
+                name: format!("art_{i}"),
+                path: format!("path/{i}"),
+                version: None,
+            })
+            .collect();
+        let res_over_art = TaskResult {
+            status: TaskResultStatus::Completed,
+            summary: "ok".to_string(),
+            artifacts: artifacts_over,
+            evidence: None,
+            reported_at: now,
+        };
+        assert!(res_over_art.validate().is_err());
+    }
+
+    #[test]
+    fn task_lifecycle_and_report_wins() {
+        let now = Utc::now();
+        let contract = Contract::new("Do work").unwrap();
+        let mut task = Task {
+            id: crate::ids::new_task_id(),
+            context_id: crate::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some("pane_1".to_string()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "test-task".to_string(),
+            contract,
+            agent: Some("codex".to_string()),
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: Some("main".to_string()),
+            worktree_path: PathBuf::from("/tmp/worktree"),
+            branch: "task-branch".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "abcd1234abcd".to_string(),
+            state: TaskState::Pending,
+            result: None,
+            disposition: Disposition::default(),
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        // Pending -> Working
+        assert!(task.transition_to(TaskState::Working, now).is_ok());
+        assert_eq!(task.state, TaskState::Working);
+
+        // Working -> turn ended without report -> InputRequired
+        let reason = serde_json::json!({"reason": "turn_ended_without_report"});
+        assert!(task.apply_turn_ended_without_report(Some(reason.clone()), now));
+        assert_eq!(task.state, TaskState::InputRequired);
+        assert_eq!(task.finish_error, Some(reason));
+
+        // Follow-up: InputRequired -> Working
+        assert!(task.transition_to(TaskState::Working, now).is_ok());
+        assert_eq!(task.state, TaskState::Working);
+
+        // Worker reports completed
+        let result = TaskResult {
+            status: TaskResultStatus::Completed,
+            summary: "All done successfully".to_string(),
+            artifacts: vec![],
+            evidence: None,
+            reported_at: now,
+        };
+        assert!(task.apply_report(result.clone(), now).is_ok());
+        assert_eq!(task.state, TaskState::Completed);
+        assert_eq!(task.result, Some(result));
+
+        // Turn end arrived after report: report wins, turn end is ignored
+        assert!(!task.apply_turn_ended_without_report(None, now));
+        assert_eq!(task.state, TaskState::Completed);
+
+        // Terminal state is immutable
+        assert!(task.transition_to(TaskState::Working, now).is_err());
     }
 }
