@@ -1,7 +1,7 @@
 # Feature specification: Pull-request cycle for orchestrated tasks
 
 **Feature Branch**: `orch/pr-cycle`
-**Status**: Draft
+**Status**: Implemented
 **Spec**: 020 (follow-up to [018](../018-orchestrator/spec.md) and [019](../019-task-board/spec.md))
 **ADR**: [0021](../../docs/adr/0021-task-pull-requests.md)
 

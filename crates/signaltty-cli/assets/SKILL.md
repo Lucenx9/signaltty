@@ -90,6 +90,23 @@ signaltty --json task finish "$A" --merge                  # deletes the task br
 # Finish outcome: .task.disposition.outcome (merged|discarded); .task.state keeps completed/failed.
 ```
 
+### Pull requests
+
+When a task produces work that should go through GitHub review rather than being merged directly:
+
+```sh
+# Open a pull request for a completed task (pushes branch to origin, creates PR via gh):
+signaltty --json task pr "$A" [--title "Title"] [--body "Description"] [--draft]
+
+# Refresh PR state, CI checks, and review decision:
+signaltty --json task pr-refresh "$A"       # single task
+signaltty --json task pr-refresh             # all open task PRs
+
+# While a PR is open, task finish --merge is refused:
+# Once the PR is merged on GitHub, discard cleans up the worktree:
+signaltty --json task finish "$A" --discard
+```
+
 Rules: cap is 4 parallel tasks (over-cap → `RATE_LIMITED`, nothing
 created). Never auto-merge: read `task diff` first. Workers report via
 `signaltty report --status completed|failed|rejected --summary …` (it reads
