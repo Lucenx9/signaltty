@@ -53,6 +53,15 @@ tab), one primary menu, every command a `win.*` action with an
 accelerator. Colour comes only from libadwaita variables, so light,
 dark, the system accent and high contrast follow the desktop;
 terminals take the desktop monospace font and a matching palette.
+Dark mode redefines those variables (under a `.dark` window class
+mirrored from `AdwStyleManager`) into a wider lightness ladder —
+sidebar, near-black canvas, pane cards — edged by hairlines, per
+docs/14 §7; light mode keeps stock Adwaita values.
+Preferences (Ctrl+,) picks an appearance (System / Light / Dark) and one
+of five themes (Signal, Grove, Ocean, Ember, Iris); a `theme-<id>` window
+class redefines the same variables per theme and variant, Signal keeping
+the desktop accent (ADR-0019, `specs/017-themes`). The choice persists in
+`$XDG_CONFIG_HOME/signaltty/gui.json`.
 
 One status vocabulary, shared by every surface
 (`crates/signaltty-gui/src/status.rs`, colours in `data/style.css`):
@@ -67,7 +76,11 @@ One status vocabulary, shared by every surface
 | attention `permission`/`error` | "Approval"/"Error" (orange / red) | pill | icon + bar glow | ring + inner glow |
 
 A sidebar row is three quiet lines, modelled on t3code's thread rows:
-name with the status slot on the right, the latest message (or the
+the workspace mark (monogram on a stable per-workspace tint, kept off
+the accent and status hues; the content header repeats it in a
+left-aligned `mark name / branch · path` breadcrumb) and name with the
+status slot on the right — "Working 3m", the age dropped under a
+minute — the latest message (or the
 verb-tense run state), then branch or folder with the agents on the
 right. The slot says one thing — attention outranks lifecycle — and
 shows the relative time when nothing needs saying. Colour is spent only

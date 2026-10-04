@@ -491,6 +491,9 @@ pub struct Pane {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_secs: Option<i64>,
     pub attention: Attention,
+    /// When `attention` was last raised; drives "Approval 10m".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_since: Option<DateTime<Utc>>,
     /// Latest explicit notification / hook summary. Never a raw scrape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_message: Option<String>,
@@ -538,6 +541,7 @@ impl Pane {
             lifecycle_since: Some(now),
             last_run_secs: None,
             attention: Attention::None,
+            attention_since: None,
             last_message: None,
             pending_decision: None,
             created_at: now,
@@ -549,6 +553,7 @@ impl Pane {
     /// Attention clears only on explicit per-pane interaction.
     pub fn mark_seen(&mut self, now: DateTime<Utc>) {
         self.attention = Attention::None;
+        self.attention_since = None;
         self.last_seen_at = Some(now);
     }
 

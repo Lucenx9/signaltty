@@ -366,8 +366,10 @@ impl Store {
         if raised == prev {
             return None;
         }
+        let now = Utc::now();
         pane.attention = raised;
-        pane.last_activity_at = Utc::now();
+        pane.attention_since = Some(now);
+        pane.last_activity_at = now;
         let name = if prev == Attention::None {
             signaltty_proto::event::ATTENTION_CREATED
         } else {

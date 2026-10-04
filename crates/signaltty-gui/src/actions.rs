@@ -31,6 +31,7 @@ pub enum HandlerKind {
     SplitDown,
     ClosePane,
     NextAttention,
+    Preferences,
     About,
     ToggleSidebar,
 }
@@ -141,6 +142,13 @@ pub const ACTIONS: &[ActionDef] = &[
         accel: Some("<Control><Shift>j"),
     },
     ActionDef {
+        name: "preferences",
+        handler: HandlerKind::Preferences,
+        label: Some("Preferences"),
+        section: 3,
+        accel: Some("<Control>comma"),
+    },
+    ActionDef {
         name: "about",
         handler: HandlerKind::About,
         label: Some("About signaltty"),
@@ -171,6 +179,7 @@ pub struct ActionHandlers {
     pub split_down: Box<dyn Fn()>,
     pub close_pane: Box<dyn Fn()>,
     pub next_attention: Box<dyn Fn()>,
+    pub preferences: Box<dyn Fn()>,
     pub about: Box<dyn Fn()>,
 }
 
@@ -190,6 +199,7 @@ impl ActionHandlers {
             HandlerKind::SplitDown => &self.split_down,
             HandlerKind::ClosePane => &self.close_pane,
             HandlerKind::NextAttention => &self.next_attention,
+            HandlerKind::Preferences => &self.preferences,
             HandlerKind::About => &self.about,
             HandlerKind::ToggleSidebar => unreachable!("property action has no callback"),
         }

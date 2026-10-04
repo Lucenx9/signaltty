@@ -463,7 +463,7 @@ fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     drain_refresh(&app);
     assert_eq!(calls.lock().unwrap().len(), 3);
     assert_eq!(app.active_ws_id().as_deref(), Some("a"));
-    assert_eq!(app.title.title(), "a");
+    assert_eq!(app.title.text(), "a");
     assert!(!has_label(app.sidebar.widget.upcast_ref(), "b"));
     assert_sidebar(&app, &["a", "c"], "a");
     calls.lock().unwrap().clear();
@@ -852,6 +852,47 @@ fn pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios() {
     style.set_color_scheme(original_scheme);
     settings.set_gtk_enable_animations(original_motion);
     app.window.destroy();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn theme_and_appearance_swapping_updates_window_classes() {
+    // The setters persist gui.json; keep the user's own file out of it.
+    let config = std::env::temp_dir().join(format!("signaltty-theme-test-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.window.present();
+
+    // Default startup has theme-signal
+    assert!(app.window.has_css_class("theme-signal"));
+
+    // Switch to Ocean + Dark
+    app.set_theme(signaltty_core::theme::Theme::Ocean);
+    app.set_appearance(signaltty_core::theme::Appearance::Dark);
+    while glib::MainContext::default().iteration(false) {}
+
+    assert!(app.window.has_css_class("theme-ocean"));
+    assert!(!app.window.has_css_class("theme-signal"));
+    assert!(app.window.has_css_class("dark"));
+
+    // Switch back to Signal + Light
+    app.set_theme(signaltty_core::theme::Theme::Signal);
+    app.set_appearance(signaltty_core::theme::Appearance::Light);
+    while glib::MainContext::default().iteration(false) {}
+
+    assert!(app.window.has_css_class("theme-signal"));
+    assert!(!app.window.has_css_class("theme-ocean"));
+    assert!(!app.window.has_css_class("dark"));
+
+    app.window.destroy();
+    std::env::remove_var("XDG_CONFIG_HOME");
+    let _ = std::fs::remove_dir_all(&config);
 }
 
 fn find_widget<T: glib::object::IsA<gtk4::Widget> + glib::types::StaticType>(

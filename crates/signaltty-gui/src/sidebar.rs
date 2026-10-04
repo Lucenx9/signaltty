@@ -3,10 +3,11 @@
 //! updated in place — refreshes never rebuild them, so selection,
 //! scroll position and status transitions survive every server event.
 //!
-//! Row anatomy (t3code-style, fixed three lines, no leading column):
+//! Row anatomy (t3code-style, fixed three lines, no leading column —
+//! the mark sits inline before the name, like t3code's project badge):
 //!
 //! ```text
-//!  api-server                 ◌ Working     name · status slot (time when calm)
+//!  [AS] api-server            ◌ Working     mark · name · status slot
 //!  Bash(cargo test -p api)                  headline
 //!  feat/auth                     Claude     branch/dir · agents
 //! ```
@@ -40,6 +41,8 @@ pub struct WsSummary {
     /// Timing of the pane that sets `lifecycle` (see `headline`).
     pub lifecycle_since: Option<DateTime<Utc>>,
     pub last_run_secs: Option<i64>,
+    /// When the oldest pane at `attention` was raised to it.
+    pub attention_since: Option<DateTime<Utc>>,
     /// Branch, or the directory when not a git repo.
     pub place: String,
     /// Agent display names, comma-joined; empty for plain shells.
@@ -79,6 +82,11 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
         attention,
         message,
         lifecycle_since: lead.and_then(|p| p.lifecycle_since),
+        attention_since: panes
+            .iter()
+            .filter(|p| p.attention == attention)
+            .filter_map(|p| p.attention_since)
+            .min(),
         last_run_secs: lead.and_then(|p| p.last_run_secs),
         place: ws.git.branch.clone().unwrap_or_else(|| tilde(&ws.cwd)),
         agents: agents.join(", "),
@@ -147,6 +155,49 @@ pub fn section_header(above: Option<bool>, needs: bool) -> Option<SectionHeader>
     }
 }
 
+/// Tints a workspace mark can take; `mark_tint` picks one by id.
+const MARK_TINTS: usize = 4;
+
+/// Two-letter monogram: initials of the first two words ("api-server"
+/// → "AS"), else the first two letters ("simone" → "SI").
+pub fn monogram(name: &str) -> String {
+    let words: Vec<&str> = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let letters: String = match words.as_slice() {
+        [] => "?".into(),
+        [one] => one.chars().take(2).collect(),
+        [a, b, ..] => a.chars().take(1).chain(b.chars().take(1)).collect(),
+    };
+    letters.to_uppercase()
+}
+
+/// Stable tint index keyed by workspace id, so renames keep the colour.
+pub fn mark_tint(id: &str) -> usize {
+    id.bytes()
+        .fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize))
+        % MARK_TINTS
+}
+
+/// The workspace's mark: monogram on a stable tint. Shared by the
+/// sidebar row and the content header so the two read as one place.
+pub fn mark() -> gtk4::Label {
+    let l = gtk4::Label::new(None);
+    l.add_css_class("ws-mark");
+    l.set_valign(gtk4::Align::Center);
+    l.set_accessible_role(gtk4::AccessibleRole::Presentation);
+    l
+}
+
+pub fn set_mark(l: &gtk4::Label, id: &str, name: &str) {
+    l.set_text(&monogram(name));
+    for i in 0..MARK_TINTS {
+        l.remove_css_class(&format!("tint-{i}"));
+    }
+    l.add_css_class(&format!("tint-{}", mark_tint(id)));
+}
+
 /// Display name for real agents; shells and unknown commands have none.
 pub fn agent_name(kind: AgentKind) -> Option<&'static str> {
     match kind {
@@ -161,6 +212,7 @@ pub fn agent_name(kind: AgentKind) -> Option<&'static str> {
 struct Row {
     id: String,
     row: gtk4::ListBoxRow,
+    mark: gtk4::Label,
     name: gtk4::Label,
     status: StatusSlot,
     message: gtk4::Label,
@@ -190,6 +242,7 @@ impl Row {
         place.set_hexpand(true);
         let agents = label(&["workspace-meta"]);
         agents.set_halign(gtk4::Align::End);
+        let mark = mark();
         let status = StatusSlot::new();
         let close = gtk4::Button::from_icon_name("window-close-symbolic");
         close.add_css_class("flat");
@@ -208,7 +261,10 @@ impl Row {
         grid.set_column_spacing(8);
         grid.set_row_spacing(4);
         grid.add_css_class("workspace-row");
-        grid.attach(&name, 0, 0, 1, 1);
+        let title = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        title.append(&mark);
+        title.append(&name);
+        grid.attach(&title, 0, 0, 1, 1);
         grid.attach(&status.widget, 1, 0, 1, 1);
         grid.attach(&close, 2, 0, 1, 1);
         grid.attach(&message, 0, 1, 3, 1);
@@ -223,6 +279,7 @@ impl Row {
         Row {
             id: id.to_string(),
             row,
+            mark,
             name,
             status,
             message,
@@ -246,6 +303,7 @@ impl Row {
             None => self.name.set_text(&s.name),
         }
         self.name.set_tooltip_text(Some(&self.name.text()));
+        set_mark(&self.mark, &self.id, &s.name);
         self.place.set_text(&s.place);
         self.place.set_tooltip_text(Some(&s.place));
         self.agents.set_text(&s.agents);
@@ -282,7 +340,14 @@ impl Row {
             self.message.set_tooltip_text(Some(&headline));
         }
         let time = s.last_activity.map(time_ago).unwrap_or_default();
-        self.status.set(s.lifecycle, s.attention, &time);
+        // Attention dates from when it was raised; lifecycle from its change.
+        let began = if s.attention == Attention::None {
+            s.lifecycle_since
+        } else {
+            s.attention_since
+        };
+        let age = began.map(time_ago).unwrap_or_default();
+        self.status.set(s.lifecycle, s.attention, &time, &age);
     }
 }
 
@@ -450,6 +515,7 @@ mod tests {
             attention,
             message: None,
             lifecycle_since: None,
+            attention_since: None,
             last_run_secs: None,
             place: String::new(),
             agents: String::new(),
@@ -560,6 +626,25 @@ mod tests {
     }
 
     #[test]
+    fn monogram_takes_word_initials_or_two_letters() {
+        assert_eq!(monogram("api-server"), "AS");
+        assert_eq!(monogram("signaltty gui app"), "SG");
+        assert_eq!(monogram("simone"), "SI");
+        assert_eq!(monogram("x"), "X");
+        assert_eq!(monogram("--"), "?");
+        assert_eq!(monogram("èco"), "ÈC");
+    }
+
+    #[test]
+    fn mark_tint_is_stable_and_in_range() {
+        assert_eq!(mark_tint("ws_a"), mark_tint("ws_a"));
+        let tints: std::collections::HashSet<_> =
+            (0..32).map(|i| mark_tint(&format!("ws_{i}"))).collect();
+        assert!(tints.iter().all(|t| *t < MARK_TINTS));
+        assert_eq!(tints.len(), MARK_TINTS, "ids spread over every tint");
+    }
+
+    #[test]
     fn headline_prefers_message_then_run_state_then_lifecycle() {
         let now = Utc::now();
         let mut s = summary("ws", Lifecycle::Done, Attention::None, Some(0));
@@ -614,6 +699,19 @@ mod tests {
         assert_eq!(s.lifecycle, Lifecycle::Working);
         assert_eq!(s.lifecycle_since, ago(12));
         assert_eq!(s.headline(t0), "Working for 12m…");
+    }
+
+    #[test]
+    fn attention_age_comes_from_the_gate_not_later_activity() {
+        let t0 = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let mut gate = pane(Lifecycle::Blocked, None);
+        gate.attention = Attention::PermissionRequired;
+        gate.attention_since = Some(t0 - chrono::Duration::minutes(10));
+        let mut chatty = pane(Lifecycle::Working, None);
+        chatty.last_activity_at = t0;
+        let s = summarize(&workspace(), &[gate, chatty]);
+        assert_eq!(s.attention, Attention::PermissionRequired);
+        assert_eq!(s.attention_since, Some(t0 - chrono::Duration::minutes(10)));
     }
 
     #[test]

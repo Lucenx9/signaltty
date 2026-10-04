@@ -7,6 +7,7 @@ pub mod ids;
 pub mod model;
 pub mod paths;
 pub mod state;
+pub mod theme;
 
 pub use error::CoreError;
 pub use ids::{new_notif_id, new_pane_id, new_tab_id, new_ws_id};
@@ -15,3 +16,4 @@ pub use model::{
     NotificationSeverity, Pane, PtySize, RestoreState, SplitDir, Tab, Workspace,
 };
 pub use state::{Attention, Lifecycle};
+pub use theme::{Appearance, GuiPreference, Theme};

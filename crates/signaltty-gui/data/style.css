@@ -2,7 +2,10 @@
  * the resource base path.
  *
  * Colour comes from libadwaita variables, so light/dark, the system
- * accent and high contrast follow the desktop. One status vocabulary
+ * accent and high contrast follow the desktop. Named themes
+ * (.theme-<id>, plus .dark for the dark variant) redefine those
+ * variables per window; Signal sets nothing and keeps the desktop
+ * accent. One status vocabulary
  * is used everywhere (sidebar, tabs, pane headers, header button):
  *
  *   unread      accent        a dot; "something new"
@@ -18,6 +21,18 @@
  * and frequently revealed controls change instantly. The root's
  * reduced-motion class also removes static press transforms.
  */
+
+/* ---- app tokens ------------------------------------------------------
+ * Defaults equal today's colours, so Signal renders exactly as before:
+ * light pane #ffffff, dark pane #111114 (see .dark below); permission
+ * text light --orange-5 / dark --orange-2, ring --orange-3. Coloured
+ * themes override these variables; swatches further below use literal
+ * hexes instead so they never inherit the window theme. */
+:root {
+  --pane-bg-color: #ffffff;
+  --permission-color: #c64600;
+  --permission-bg-color: #ff7800;
+}
 
 /* ---- status dot ---------------------------------------------------- */
 
@@ -47,8 +62,8 @@
   box-shadow: 0 0 0 2px alpha(var(--warning-bg-color), 0.25);
 }
 .status-dot.attention-permission {
-  background-color: var(--orange-3);
-  box-shadow: 0 0 0 2px alpha(var(--orange-3), 0.25);
+  background-color: var(--permission-bg-color);
+  box-shadow: 0 0 0 2px alpha(var(--permission-bg-color), 0.25);
 }
 .status-dot.attention-error {
   background-color: var(--error-bg-color);
@@ -79,9 +94,9 @@
   box-shadow: inset 0 0 0 1px alpha(var(--warning-bg-color), 0.25);
 }
 .status-pill.attention-permission {
-  color: mix(var(--orange-3), var(--window-fg-color), 0.4);
-  background-color: alpha(var(--orange-3), 0.16);
-  box-shadow: inset 0 0 0 1px alpha(var(--orange-3), 0.25);
+  color: var(--permission-color);
+  background-color: alpha(var(--permission-bg-color), 0.16);
+  box-shadow: inset 0 0 0 1px alpha(var(--permission-bg-color), 0.25);
 }
 .status-pill.attention-error {
   color: var(--error-color);
@@ -95,7 +110,74 @@
  * secondary text, the place is quieter. Colour is spent only on the
  * status slot. */
 .workspace-row {
-  padding: 6px 6px 10px 8px;
+  padding: 8px 6px 10px 8px;
+}
+
+/* Rows sit flush on the sidebar; the selected one lifts into a card
+ * (t3code-style) instead of a tinted stripe, so depth carries focus. */
+.navigation-sidebar > row {
+  margin: 1px 8px;
+  border-radius: 10px;
+}
+.navigation-sidebar > row:hover {
+  background-color: alpha(currentColor, 0.04);
+}
+
+/* Workspace mark: the one place colour means "which project", not
+ * status — so its hues stay clear of green/amber/orange/red.
+ * Blue is left out: it is the accent, and "Working" speaks in it. */
+.ws-mark {
+  min-width: 20px;
+  min-height: 20px;
+  border-radius: 5px;
+  font-size: 0.66em;
+  font-weight: 700;
+}
+.ws-mark.tint-0 { color: var(--purple-5); background-color: alpha(var(--purple-3), 0.22); }
+.ws-mark.tint-1 { color: var(--brown-5); background-color: alpha(var(--brown-3), 0.25); }
+.ws-mark.tint-2 { color: mix(var(--purple-5), var(--brown-5), 0.5); background-color: alpha(mix(var(--purple-3), var(--brown-3), 0.5), 0.25); }
+.ws-mark.tint-3 { color: alpha(currentColor, 0.8); background-color: alpha(currentColor, 0.12); }
+.dark .ws-mark.tint-0 { color: #eda9ee; background-color: alpha(#623264, 0.45); }
+.dark .ws-mark.tint-1 { color: #fdb270; background-color: alpha(#6a3a02, 0.45); }
+.dark .ws-mark.tint-2 { color: #fea4d0; background-color: alpha(#6d2e50, 0.45); }
+.dark .ws-mark.tint-3 { color: var(--light-2); background-color: alpha(var(--light-3), 0.22); }
+
+/* Header breadcrumb: the name carries weight, context recedes. */
+.crumb {
+  margin-left: 6px;
+}
+.crumb-title {
+  font-weight: 600;
+}
+.crumb-sep {
+  color: alpha(currentColor, 0.35);
+}
+.crumb-context {
+  color: alpha(currentColor, 0.5);
+}
+
+.wordmark {
+  margin-left: 6px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Lower, flatter bars: icon buttons carry no slab until hovered. */
+toolbarview > .top-bar headerbar {
+  min-height: 40px;
+}
+toolbarview > .top-bar headerbar button.image-button,
+toolbarview > .top-bar headerbar menubutton > button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  background: none;
+}
+toolbarview > .top-bar headerbar button.image-button:hover,
+toolbarview > .top-bar headerbar menubutton > button:hover,
+toolbarview > .top-bar headerbar button.image-button:checked {
+  background-color: alpha(currentColor, 0.07);
 }
 
 .workspace-row .workspace-name {
@@ -113,13 +195,10 @@
   color: alpha(currentColor, 0.65);
 }
 
-.navigation-sidebar > row:selected {
-  background-color: alpha(currentColor, 0.09);
-  box-shadow: none;
-}
-
+.navigation-sidebar > row:selected,
 .navigation-sidebar > row:selected:hover {
-  background-color: alpha(currentColor, 0.12);
+  background-color: alpha(currentColor, 0.08);
+  box-shadow: inset 0 0 0 1px alpha(currentColor, 0.1);
 }
 
 /* Status stays visible beside the independent close target. */
@@ -128,6 +207,7 @@
   color: alpha(currentColor, 0.65);
 }
 .row-status.speaking {
+  font-size: 0.9em;
   font-weight: 600;
   padding: 1px 8px 1px 6px;
   border-radius: 999px;
@@ -150,7 +230,7 @@
 .row-status.lifecycle-blocked,
 .row-status.attention-input,
 .row-status.attention-warning { color: var(--warning-color); }
-.row-status.attention-permission { color: mix(var(--orange-3), var(--window-fg-color), 0.4); }
+.row-status.attention-permission { color: var(--permission-color); }
 .row-status.lifecycle-failed,
 .row-status.attention-error { color: var(--error-color); }
 
@@ -208,8 +288,8 @@
   background-color: alpha(var(--warning-bg-color), 0.16);
 }
 .attention-button.attention-permission {
-  color: mix(var(--orange-3), var(--window-fg-color), 0.4);
-  background-color: alpha(var(--orange-3), 0.16);
+  color: var(--permission-color);
+  background-color: alpha(var(--permission-bg-color), 0.16);
 }
 .attention-button.attention-error {
   color: var(--error-color);
@@ -222,7 +302,7 @@
 /* ---- tab page + panes ------------------------------------------------ */
 
 .tab-page {
-  padding: 8px;
+  padding: 4px 10px 10px;
 }
 
 /* Gaps between panes, not bars: the handle is transparent and wide
@@ -237,7 +317,7 @@
 }
 
 .pane {
-  background-color: var(--view-bg-color);
+  background-color: var(--pane-bg-color);
   color: var(--view-fg-color);
   border-radius: 10px;
   /* Rings are inset shadows: they never change layout, so an attention
@@ -250,16 +330,16 @@
     0 2px 6px -1px var(--card-shade-color);
 }
 
+/* The header is the card's first line, not a second toolbar. */
 .pane-header {
-  min-height: 38px;
+  min-height: 34px;
   padding: 0 8px 0 12px;
-  background-color: alpha(var(--view-fg-color), 0.025);
-  box-shadow: inset 0 -1px var(--border-color);
 }
 
 .pane-title {
-  font-weight: 600;
-  font-size: 0.9em;
+  font-weight: 500;
+  font-size: 0.85em;
+  color: alpha(currentColor, 0.72);
 }
 
 .pane-subtitle {
@@ -298,6 +378,7 @@
  * (the terminal leaves its default background clear). */
 .pane vte-terminal {
   padding: 6px 12px 10px 12px;
+  background-color: transparent;
 }
 
 /* With several panes in a tab, the focused one is marked without
@@ -339,8 +420,8 @@
 }
 .tab-page .pane.attention-permission {
   box-shadow:
-    inset 0 0 0 2px var(--orange-3),
-    inset 0 0 16px alpha(var(--orange-3), 0.22),
+    inset 0 0 0 2px var(--permission-bg-color),
+    inset 0 0 16px alpha(var(--permission-bg-color), 0.22),
     0 1px 2px var(--card-shade-color),
     0 2px 6px -1px var(--card-shade-color);
 }
@@ -374,7 +455,7 @@
   background-color: mix(var(--card-bg-color), var(--warning-bg-color), 0.1);
 }
 .tab-page .pane.attention-permission .decision-bar {
-  background-color: mix(var(--card-bg-color), var(--orange-3), 0.1);
+  background-color: mix(var(--card-bg-color), var(--permission-bg-color), 0.1);
 }
 .tab-page .pane.attention-error .decision-bar {
   background-color: mix(var(--card-bg-color), var(--error-bg-color), 0.1);
@@ -386,7 +467,7 @@
   background-color: alpha(var(--warning-bg-color), 0.06);
 }
 .tab-page .pane.attention-permission .pane-header {
-  background-color: alpha(var(--orange-3), 0.06);
+  background-color: alpha(var(--permission-bg-color), 0.06);
 }
 .tab-page .pane.attention-error .pane-header {
   background-color: alpha(var(--error-bg-color), 0.06);
@@ -480,6 +561,364 @@ button.pill:focus-visible {
   transform: none;
 }
 
+/* High-contrast rules live at the end of this file, after the theme blocks. */
+
+/* ---- dark ------------------------------------------------------------ */
+
+/* App mirrors AdwStyleManager:dark as a root class: the CSS media
+ * query does not follow libadwaita's scheme on every desktop. */
+
+/* Elevation by lightness, not shadow (docs/14 §7): the sidebar is the
+ * deepest plane, the content canvas one step up, pane cards another,
+ * each edged by a hairline. Redefining libadwaita's own variables keeps
+ * popovers, dialogs and buttons on the same scale. Cards stay a
+ * translucent film, as in libadwaita, so boxed lists still lift. */
+.dark {
+  --sidebar-bg-color: #0c0c0e;
+  --sidebar-backdrop-color: #0c0c0e;
+  --sidebar-border-color: alpha(white, 0.07);
+  --window-bg-color: #08080a;
+  --headerbar-bg-color: #08080a;
+  --headerbar-backdrop-color: #08080a;
+  --headerbar-shade-color: transparent;
+  --view-bg-color: #141418;
+  --pane-bg-color: #111114;
+  --permission-color: #ffa348;
+  --card-bg-color: alpha(white, 0.06);
+  --popover-bg-color: #202024;
+  --dialog-bg-color: #18181c;
+  --border-color: alpha(white, 0.09);
+}
+.dark .sidebar-pane headerbar {
+  background-color: var(--sidebar-bg-color);
+}
+
+.dark .status-pill.attention-permission,
+.dark .row-status.attention-permission,
+.dark .attention-button.attention-permission {
+  color: var(--permission-color);
+}
+
+.dark .pane {
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+
+/* Diff tags take their foreground from rooted probes so GTK resolves the
+ * desktop's contrast-adjusted semantic colors after theme changes. */
+.file-diff-added-color { color: var(--success-color); }
+.file-diff-removed-color { color: var(--error-color); }
+
+/* ---- themes ------------------------------------------------------------
+ * The window root carries exactly one theme-<id> class (plus .dark for
+ * the dark variant). Light selectors (.theme-<id>) redefine the
+ * libadwaita variables; dark selectors (.theme-<id>.dark) override the
+ * .dark block above. .theme-signal sets nothing: Signal light is stock
+ * Adwaita and Signal dark is the .dark block above, so the desktop
+ * accent is kept. Every hex is from specs/017-themes/research.md §2.
+ *
+ * Standalone colours (--accent-color, and Ember's --warning-color /
+ * --error-color) are computed on :root from the stock bg, so each
+ * theme sets its text hex explicitly. GTK-safe alpha() spellings stand
+ * in for rgb(0 0 6 / …): #000006 at the same alpha is the same colour.
+ */
+
+/* Grove: emerald-teal, hue 198. */
+.theme-grove {
+  --window-bg-color: #ebf9f9;
+  --window-fg-color: alpha(#000006, 0.8);
+  --view-bg-color: #f3ffff;
+  --view-fg-color: alpha(#000006, 0.8);
+  --headerbar-bg-color: #ebf9f9;
+  --headerbar-fg-color: alpha(#000006, 0.8);
+  --headerbar-backdrop-color: #ebf9f9;
+  --headerbar-shade-color: transparent;
+  --sidebar-bg-color: #dceaeb;
+  --sidebar-fg-color: alpha(#000006, 0.8);
+  --sidebar-backdrop-color: #e4f2f3;
+  --sidebar-border-color: alpha(#000006, 0.10);
+  --card-bg-color: #f3ffff;
+  --popover-bg-color: #fcffff;
+  --popover-fg-color: alpha(#000006, 0.8);
+  --dialog-bg-color: #f7ffff;
+  --dialog-fg-color: alpha(#000006, 0.8);
+  --border-color: alpha(#000006, 0.14);
+  --accent-bg-color: #097e82;
+  --accent-fg-color: #ffffff;
+  --accent-color: #076e71;
+  --pane-bg-color: #effdfd;
+}
+.theme-grove.dark {
+  --window-bg-color: #020a0b;
+  --window-fg-color: #ffffff;
+  --view-bg-color: #0a1717;
+  --view-fg-color: #ffffff;
+  --headerbar-bg-color: #020a0b;
+  --headerbar-fg-color: #ffffff;
+  --headerbar-backdrop-color: #020a0b;
+  --headerbar-shade-color: transparent;
+  --sidebar-bg-color: #040f0f;
+  --sidebar-fg-color: #ffffff;
+  --sidebar-backdrop-color: #040f0f;
+  --sidebar-border-color: alpha(white, 0.07);
+  --card-bg-color: alpha(white, 0.06);
+  --popover-bg-color: #162324;
+  --popover-fg-color: #ffffff;
+  --dialog-bg-color: #0e1b1b;
+  --dialog-fg-color: #ffffff;
+  --border-color: alpha(white, 0.09);
+  --accent-bg-color: #097e82;
+  --accent-fg-color: #ffffff;
+  --accent-color: #14bbc0;
+  --pane-bg-color: #071414;
+}
+
+/* Ocean: cerulean, hue 228. */
+.theme-ocean {
+  --window-bg-color: #ecf8fe;
+  --window-fg-color: alpha(#000006, 0.8);
+  --view-bg-color: #f8fdff;
+  --view-fg-color: alpha(#000006, 0.8);
+  --headerbar-bg-color: #ecf8fe;
+  --headerbar-fg-color: alpha(#000006, 0.8);
+  --headerbar-backdrop-color: #ecf8fe;
+  --headerbar-shade-color: transparent;
+  --sidebar-bg-color: #dde9ef;
+  --sidebar-fg-color: alpha(#000006, 0.8);
+  --sidebar-backdrop-color: #e5f1f7;
+  --sidebar-border-color: alpha(#000006, 0.10);
+  --card-bg-color: #f8fdff;
+  --popover-bg-color: #feffff;
+  --popover-fg-color: alpha(#000006, 0.8);
+  --dialog-bg-color: #fbfeff;
+  --dialog-fg-color: alpha(#000006, 0.8);
+  --border-color: alpha(#000006, 0.14);
+  --accent-bg-color: #097a9e;
+  --accent-fg-color: #ffffff;
+  --accent-color: #066b8c;
+  --pane-bg-color: #f3fbff;
+}
+.theme-ocean.dark {
+  --window-bg-color: #020a0e;
+  --window-fg-color: #ffffff;
+  --view-bg-color: #0c161b;
+  --view-fg-color: #ffffff;
+  --headerbar-bg-color: #020a0e;
+  --headerbar-fg-color: #ffffff;
+  --headerbar-backdrop-color: #020a0e;
+  --headerbar-shade-color: transparent;
+  --sidebar-bg-color: #050e12;
+  --sidebar-fg-color: #ffffff;
+  --sidebar-backdrop-color: #050e12;
+  --sidebar-border-color: alpha(white, 0.07);
+  --card-bg-color: alpha(white, 0.06);
+  --popover-bg-color: #172227;
+  --popover-fg-color: #ffffff;
+  --dialog-bg-color: #101a1f;
+  --dialog-fg-color: #ffffff;
+  --border-color: alpha(white, 0.09);
+  --accent-bg-color: #097a9e;
+  --accent-fg-color: #ffffff;
+  --accent-color: #3fb3df;
+  --pane-bg-color: #091318;
+}
+
+/* Ember: burnt coral, hue 46. The only theme that retints status:
+ * approval orange and input amber would share the accent's warm band,
+ * so error moves to 16, permission to 74 and warning to 110
+ * (research.md §3). Warning/error fills are dark, so their fg is white. */
+.theme-ember {
+  --window-bg-color: #fff3ee;
+  --window-fg-color: alpha(#000006, 0.8);
+  --view-bg-color: #fffbf9;
+  --view-fg-color: alpha(#000006, 0.8);
+  --headerbar-bg-color: #fff3ee;
+  --headerbar-fg-color: alpha(#000006, 0.8);
+  --headerbar-backdrop-color: #fff3ee;
+  --headerbar-shade-color: transparent;
+  --sidebar-bg-color: #f0e4df;
+  --sidebar-fg-color: alpha(#000006, 0.8);
+  --sidebar-backdrop-color: #f8ece7;
+  --sidebar-border-color: alpha(#000006, 0.10);
+  --card-bg-color: #fffbf9;
+  --popover-bg-color: #fffefe;
+  --popover-fg-color: alpha(#000006, 0.8);
+  --dialog-bg-color: #fffcfb;
+  --dialog-fg-color: alpha(#000006, 0.8);
+  --border-color: alpha(#000006, 0.14);
+  --accent-bg-color: #bc5107;
+  --accent-fg-color: #ffffff;
+  --accent-color: #a44505;
+  --pane-bg-color: #fff8f5;
+  --error-bg-color: #d52f4f;
+  --error-fg-color: #ffffff;
+  --error-color: #b13548;
+  --warning-bg-color: #76760b;
+  --warning-fg-color: #ffffff;
+  --warning-color: #666605;
+  --permission-color: #875905;
+  --permission-bg-color: #9b670b;
+}
+.theme-ember.dark {
+  --window-bg-color: #0e0604;
+  --window-fg-color: #ffffff;
+  --view-bg-color: #1b120e;
+  --view-fg-color: #ffffff;
+  --headerbar-bg-color: #0e0604;
+  --headerbar-fg-color: #ffffff;
+  --headerbar-backdrop-color: #0e0604;
+  --headerbar-shade-color: transparent;
+  --sidebar-bg-color: #130a06;
+  --sidebar-fg-color: #ffffff;
+  --sidebar-backdrop-color: #130a06;
+  --sidebar-border-color: alpha(white, 0.07);
+  --card-bg-color: alpha(white, 0.06);
+  --popover-bg-color: #281e19;
+  --popover-fg-color: #ffffff;
+  --dialog-bg-color: #201612;
+  --dialog-fg-color: #ffffff;
+  --border-color: alpha(white, 0.09);
+  --accent-bg-color: #bc5107;
+  --accent-fg-color: #ffffff;
+  --accent-color: #e28b62;
+  --pane-bg-color: #180f0b;
+  --error-bg-color: #d52f4f;
+  --error-fg-color: #ffffff;
+  --error-color: #e6848b;
+  --warning-bg-color: #76760b;
+  --warning-fg-color: #ffffff;
+  --warning-color: #a9ab4a;
+  --permission-color: #d19845;
+  --permission-bg-color: #9b670b;
+}
+
+/* Iris: violet, hue 302. */
+.theme-iris {
+  --window-bg-color: #f7f4ff;
+  --window-fg-color: alpha(#000006, 0.8);
+  --view-bg-color: #fdfbff;
+  --view-fg-color: alpha(#000006, 0.8);
+  --headerbar-bg-color: #f7f4ff;
+  --headerbar-fg-color: alpha(#000006, 0.8);
+  --headerbar-backdrop-color: #f7f4ff;
+  --headerbar-shade-color: transparent;
+  --sidebar-bg-color: #e9e5f0;
+  --sidebar-fg-color: alpha(#000006, 0.8);
+  --sidebar-backdrop-color: #f1edf8;
+  --sidebar-border-color: alpha(#000006, 0.10);
+  --card-bg-color: #fdfbff;
+  --popover-bg-color: #fefeff;
+  --popover-fg-color: alpha(#000006, 0.8);
+  --dialog-bg-color: #fdfdff;
+  --dialog-fg-color: alpha(#000006, 0.8);
+  --border-color: alpha(#000006, 0.14);
+  --accent-bg-color: #895ac3;
+  --accent-fg-color: #ffffff;
+  --accent-color: #7a4bb3;
+  --pane-bg-color: #fbf8ff;
+}
+.theme-iris.dark {
+  --window-bg-color: #09070e;
+  --window-fg-color: #ffffff;
+  --view-bg-color: #16131b;
+  --view-fg-color: #ffffff;
+  --headerbar-bg-color: #09070e;
+  --headerbar-fg-color: #ffffff;
+  --headerbar-backdrop-color: #09070e;
+  --headerbar-shade-color: transparent;
+  --sidebar-bg-color: #0e0a13;
+  --sidebar-fg-color: #ffffff;
+  --sidebar-backdrop-color: #0e0a13;
+  --sidebar-border-color: alpha(white, 0.07);
+  --card-bg-color: alpha(white, 0.06);
+  --popover-bg-color: #221f28;
+  --popover-fg-color: #ffffff;
+  --dialog-bg-color: #1a171f;
+  --dialog-fg-color: #ffffff;
+  --border-color: alpha(white, 0.09);
+  --accent-bg-color: #895ac3;
+  --accent-fg-color: #ffffff;
+  --accent-color: #b392e3;
+  --pane-bg-color: #131018;
+}
+
+/* ---- workspace marks per theme -----------------------------------------
+ * Collision rule (research.md §4): Ember's umber tint-1 sits on the
+ * accent/permission band, so it becomes teal and its rose mix becomes
+ * the steel spare. Iris's violet tint-0 sits on the accent, so it
+ * becomes teal and its mix becomes steel. */
+.theme-ember .ws-mark.tint-1 { color: #005355; background-color: alpha(#1d7779, 0.22); }
+.theme-ember.dark .ws-mark.tint-1 { color: #4cdce0; background-color: alpha(#035255, 0.45); }
+.theme-ember .ws-mark.tint-2 { color: #004f8b; background-color: alpha(#4c759f, 0.22); }
+.theme-ember.dark .ws-mark.tint-2 { color: #96c9fe; background-color: alpha(#124a7b, 0.45); }
+.theme-iris .ws-mark.tint-0 { color: #005355; background-color: alpha(#1d7779, 0.22); }
+.theme-iris.dark .ws-mark.tint-0 { color: #4cdce0; background-color: alpha(#035255, 0.45); }
+.theme-iris .ws-mark.tint-2 { color: #004f8b; background-color: alpha(#4c759f, 0.22); }
+.theme-iris.dark .ws-mark.tint-2 { color: #96c9fe; background-color: alpha(#124a7b, 0.45); }
+
+/* ---- preferences cards + swatches ---------------------------------------
+ * Each swatch carries its own theme-<id> class inside a window that
+ * has another, so every swatch rule uses literal hexes (never the
+ * variables): pane colour with a diagonal accent split. Signal has no
+ * own accent; its swatch previews against the stock default blue.
+ */
+.theme-swatch {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+.theme-swatch.theme-signal.light { background: linear-gradient(135deg, #ffffff 62%, #3584e4 62%); }
+.theme-swatch.theme-signal.dark { background: linear-gradient(135deg, #111114 62%, #3584e4 62%); }
+.theme-swatch.theme-grove.light { background: linear-gradient(135deg, #effdfd 62%, #097e82 62%); }
+.theme-swatch.theme-grove.dark { background: linear-gradient(135deg, #071414 62%, #097e82 62%); }
+.theme-swatch.theme-ocean.light { background: linear-gradient(135deg, #f3fbff 62%, #097a9e 62%); }
+.theme-swatch.theme-ocean.dark { background: linear-gradient(135deg, #091318 62%, #097a9e 62%); }
+.theme-swatch.theme-ember.light { background: linear-gradient(135deg, #fff8f5 62%, #bc5107 62%); }
+.theme-swatch.theme-ember.dark { background: linear-gradient(135deg, #180f0b 62%, #bc5107 62%); }
+.theme-swatch.theme-iris.light { background: linear-gradient(135deg, #fbf8ff 62%, #895ac3 62%); }
+.theme-swatch.theme-iris.dark { background: linear-gradient(135deg, #131018 62%, #895ac3 62%); }
+
+.theme-card,
+.appearance-card {
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+}
+.theme-card.selected,
+.appearance-card.selected {
+  border-color: var(--accent-bg-color);
+  box-shadow: 0 0 0 2px var(--accent-bg-color);
+}
+
+/* ---- high contrast (last: equal specificity loses to source order) ------
+ * Theme rules set concrete alphas for --border-color and
+ * --headerbar-shade-color, which would otherwise beat a one-class
+ * .high-contrast rule, so every theme id is listed: light pairs are
+ * (0,2,0) against (0,1,0), dark triples are (0,3,0) against (0,2,0).
+ * The accent is never flattened back to desktop blue, and secondary
+ * text is restored by inheritance, not by a weaker fg token. */
+.high-contrast,
+.theme-signal.high-contrast,
+.theme-grove.high-contrast,
+.theme-ocean.high-contrast,
+.theme-ember.high-contrast,
+.theme-iris.high-contrast {
+  --border-color: alpha(currentColor, 0.55);
+  --border-opacity: 50%;
+  --sidebar-border-color: alpha(currentColor, 0.55);
+  --headerbar-shade-color: alpha(currentColor, 0.55);
+}
+.dark.high-contrast,
+.theme-signal.dark.high-contrast,
+.theme-grove.dark.high-contrast,
+.theme-ocean.dark.high-contrast,
+.theme-ember.dark.high-contrast,
+.theme-iris.dark.high-contrast {
+  --border-color: alpha(currentColor, 0.55);
+  --border-opacity: 50%;
+  --sidebar-border-color: alpha(currentColor, 0.55);
+  --headerbar-shade-color: alpha(currentColor, 0.55);
+}
 .high-contrast .workspace-message,
 .high-contrast .workspace-meta,
 .high-contrast .sidebar-section,
@@ -502,6 +941,7 @@ button.pill:focus-visible {
 .high-contrast .decision-options button {
   box-shadow: inset 0 0 0 1px currentColor;
 }
+.high-contrast .ws-mark { box-shadow: inset 0 0 0 1px currentColor; }
 
 /* Diff tags take their foreground from rooted probes so GTK resolves the
  * desktop's contrast-adjusted semantic colors after theme changes. */

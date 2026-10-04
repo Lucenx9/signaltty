@@ -20,7 +20,7 @@ use gtk4::prelude::*;
 use serde_json::json;
 use vte4::prelude::*;
 
-use signaltty_core::{Decision, Lifecycle, LiveState, Pane};
+use signaltty_core::{Decision, Lifecycle, LiveState, Pane, Theme};
 
 use crate::actor::IpcHandle;
 use crate::sidebar::agent_name;
@@ -293,7 +293,7 @@ impl PaneWidget {
             live: Cell::new(true),
             last_size: Cell::new((80, 24)),
         });
-        w.apply_style();
+        w.apply_style(Theme::Signal);
         w.term.search_set_wrap_around(true);
         let weak = Rc::downgrade(&w);
         w.search.entry.connect_changed(move |_| {
@@ -451,7 +451,7 @@ impl PaneWidget {
     }
 
     /// Font + palette from the desktop; re-run when either changes.
-    pub fn apply_style(&self) {
+    pub fn apply_style(&self, theme: Theme) {
         let sm = libadwaita::StyleManager::default();
         let name = sm.monospace_font_name();
         let font = gtk4::pango::FontDescription::from_string(if name.is_empty() {
@@ -460,13 +460,17 @@ impl PaneWidget {
             name.as_str()
         });
         self.term.set_font(Some(&font));
-        let scheme = if sm.is_dark() { &DARK } else { &LIGHT };
+        let fg_hex = if sm.is_dark() {
+            DARK_FOREGROUND
+        } else {
+            LIGHT_FOREGROUND
+        };
         let rgba = |hex: &str| gtk4::gdk::RGBA::parse(hex).expect("palette colour");
         let palette: Vec<gtk4::gdk::RGBA> = PALETTE.iter().map(|c| rgba(c)).collect();
         let palette: Vec<&gtk4::gdk::RGBA> = palette.iter().collect();
         self.term.set_colors(
-            Some(&rgba(scheme.foreground)),
-            Some(&rgba(scheme.background)),
+            Some(&rgba(fg_hex)),
+            Some(&rgba(theme.pane_bg(sm.is_dark()))),
             &palette,
         );
     }
@@ -617,22 +621,8 @@ impl PaneWidget {
     }
 }
 
-struct Scheme {
-    foreground: &'static str,
-    /// Matches libadwaita's view background; used for reverse video
-    /// (the card itself paints the default background).
-    background: &'static str,
-}
-
-const LIGHT: Scheme = Scheme {
-    foreground: "#241f31",
-    background: "#ffffff",
-};
-
-const DARK: Scheme = Scheme {
-    foreground: "#deddda",
-    background: "#1d1d20",
-};
+const LIGHT_FOREGROUND: &str = "#241f31";
+const DARK_FOREGROUND: &str = "#deddda";
 
 /// GNOME palette (as in Console/Ptyxis): legible on both schemes.
 const PALETTE: [&str; 16] = [

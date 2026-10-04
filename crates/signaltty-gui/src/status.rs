@@ -117,6 +117,17 @@ pub fn row_status(lifecycle: Lifecycle, attention: Attention) -> RowStatus {
     }
 }
 
+/// Slot text, t3code-style: "Working 3m", "Approval 2m". Under a
+/// minute the word stands alone — the 30s tick would leave live
+/// seconds stale.
+pub fn slot_text(label: Option<&str>, time: &str, age: &str) -> String {
+    match label {
+        Some(word) if !age.is_empty() && age != "now" => format!("{word} {age}"),
+        Some(word) => word.to_string(),
+        None => time.to_string(),
+    }
+}
+
 /// Verb-tense run state (docs/14 §6): "Working for 2m…" while the
 /// agent runs, "Worked for 2m" once the turn is done — same slot, no
 /// mode switch. `None` when the pane is in neither state or the
@@ -289,8 +300,9 @@ impl StatusSlot {
         }
     }
 
-    /// `time` fills the slot when the status has no word of its own.
-    pub fn set(&self, lifecycle: Lifecycle, attention: Attention, time: &str) {
+    /// `time` fills the slot when the status has no word of its own;
+    /// `age` (how long the status has held) follows a word that speaks.
+    pub fn set(&self, lifecycle: Lifecycle, attention: Attention, time: &str, age: &str) {
         let s = row_status(lifecycle, attention);
         set_class(&self.widget, &ROW_STATUS_CLASSES, s.class);
         if s.label.is_some() {
@@ -301,9 +313,9 @@ impl StatusSlot {
         self.mark.set_visible(s.class.is_some());
         self.mark
             .set_visible_child_name(if s.spinner { "spinner" } else { "dot" });
-        let text = s.label.unwrap_or(time);
+        let text = slot_text(s.label, time, age);
         if self.label.text() != text {
-            self.label.set_text(text);
+            self.label.set_text(&text);
         }
         let tooltip = match attention {
             Attention::None => lifecycle_label(lifecycle),
@@ -443,6 +455,14 @@ mod tests {
             }
         );
         assert_eq!(s(Lifecycle::Idle, Attention::None).class, None);
+    }
+
+    #[test]
+    fn slot_text_ages_spoken_words_only() {
+        assert_eq!(slot_text(Some("Working"), "now", "3m"), "Working 3m");
+        assert_eq!(slot_text(Some("Working"), "now", "now"), "Working");
+        assert_eq!(slot_text(Some("Approval"), "5m", ""), "Approval");
+        assert_eq!(slot_text(None, "5m", "2m"), "5m");
     }
 
     #[test]
