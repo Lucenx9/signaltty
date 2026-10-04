@@ -269,6 +269,19 @@ enum TaskOp {
         #[arg(long)]
         ignore_dirty: bool,
     },
+    /// Open a GitHub pull request for a completed task.
+    Pr {
+        id: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        body: Option<String>,
+        #[arg(long)]
+        draft: bool,
+    },
+    /// Refresh pull request status (state, checks, review) from GitHub.
+    #[command(name = "pr-refresh")]
+    PrRefresh { id: Option<String> },
     /// Cancel an orchestrated task.
     Cancel { id: String },
 }
@@ -1696,6 +1709,62 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
             emit(json, &r, summary);
             Ok(())
         }
+        TaskOp::Pr {
+            id,
+            title,
+            body,
+            draft,
+        } => {
+            let mut p = json!({
+                "task_id": id,
+            });
+            if let Some(t) = title {
+                p["title"] = json!(t);
+            }
+            if let Some(b) = body {
+                p["body"] = json!(b);
+            }
+            if draft {
+                p["draft"] = json!(true);
+            }
+            let r = c.call("task.pr_open", p).await?;
+            let tid = r["task"]["id"].as_str().unwrap_or("?").to_string();
+            let pr = &r["task"]["pr"];
+            let url = pr["url"].as_str().unwrap_or("?");
+            let num = pr["number"].as_u64().unwrap_or(0);
+            emit(
+                json,
+                &r,
+                format!("opened pull request #{num} for task {tid}: {url}"),
+            );
+            Ok(())
+        }
+        TaskOp::PrRefresh { id } => {
+            let mut p = json!({});
+            if let Some(tid) = id {
+                p["task_id"] = json!(tid);
+            }
+            let r = c.call("task.pr_refresh", p).await?;
+            let tasks = r["tasks"].as_array();
+            let count = tasks.map_or(0, |t| t.len());
+            let mut summary = format!("refreshed {count} pull request(s)");
+            if let Some(tasks) = tasks {
+                for t in tasks {
+                    let tid = t["id"].as_str().unwrap_or("?");
+                    if let Some(pr) = t.get("pr") {
+                        let num = pr["number"].as_u64().unwrap_or(0);
+                        let state = pr["state"].as_str().unwrap_or("?");
+                        let checks = pr["checks"].as_str().unwrap_or("none");
+                        let review = pr["review"].as_str().unwrap_or("none");
+                        summary.push_str(&format!(
+                            "\n  task {tid}: #{num} [{state}] (checks: {checks}, review: {review})"
+                        ));
+                    }
+                }
+            }
+            emit(json, &r, summary);
+            Ok(())
+        }
         TaskOp::Cancel { id } => {
             let r = c.call("task.cancel", json!({"task_id": id})).await?;
             let tid = r["task"]["id"].as_str().unwrap_or("?").to_string();
@@ -1725,5 +1794,48 @@ mod tests {
     fn object_baseline_passes_through() {
         let baseline = parse_wait_baseline("{\"pane_id\":\"p\"}").unwrap();
         assert_eq!(baseline["pane_id"], "p");
+    }
+
+    #[test]
+    fn test_task_pr_cli_parsing() {
+        let args =
+            Args::try_parse_from(["signaltty", "task", "pr", "task-123", "--draft"]).unwrap();
+        match args.cmd {
+            Command::Task {
+                op:
+                    TaskOp::Pr {
+                        id,
+                        draft,
+                        title,
+                        body,
+                    },
+            } => {
+                assert_eq!(id, "task-123");
+                assert!(draft);
+                assert!(title.is_none());
+                assert!(body.is_none());
+            }
+            _ => panic!("wrong command parsed"),
+        }
+
+        let args2 = Args::try_parse_from(["signaltty", "task", "pr-refresh", "task-123"]).unwrap();
+        match args2.cmd {
+            Command::Task {
+                op: TaskOp::PrRefresh { id },
+            } => {
+                assert_eq!(id, Some("task-123".to_string()));
+            }
+            _ => panic!("wrong command parsed"),
+        }
+
+        let args3 = Args::try_parse_from(["signaltty", "task", "pr-refresh"]).unwrap();
+        match args3.cmd {
+            Command::Task {
+                op: TaskOp::PrRefresh { id },
+            } => {
+                assert_eq!(id, None);
+            }
+            _ => panic!("wrong command parsed"),
+        }
     }
 }
