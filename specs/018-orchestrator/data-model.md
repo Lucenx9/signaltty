@@ -68,6 +68,15 @@ are new tasks in the same context.
 
 No tool/file budgets in v1 (deferred with cost budgets — no enforcement point).
 
+### Worker prompt composition
+
+The submitted worker prompt is composed via `signaltty_core::model::compose_worker_prompt` (or `Task::compose_worker_prompt`):
+- Preamble: `"You are a worker for task <id> in an isolated worktree on branch <branch> from base <sha>; stay inside this worktree; commit your work; when done or blocked run signaltty report --status completed|failed|rejected --summary … with evidence — it reads $SIGNALTTY_TASK.\n\n"`
+- Objective: `"## Objective\n<contract.objective>\n"`
+- Constraints (if present): `"\n## Constraints\n<contract.constraints>\n"`
+- Acceptance Criteria (if present): `"\n## Acceptance Criteria\n- <item>\n"`
+- Expected Output Format (if present): `"\n## Expected Output Format\n<contract.output_format>\n"`
+
 ### Result (structured handoff)
 
 Set once by `task.report`; second report on a terminal task is refused

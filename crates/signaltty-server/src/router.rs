@@ -2154,7 +2154,7 @@ async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Co
     let bg_submit_ctx = SubmitCtx::from(ctx);
     let bg_task_id = task_id.clone();
     let bg_pane_id = pane_id.clone();
-    let objective = task.contract.objective.clone();
+    let prompt = task.compose_worker_prompt();
     let ready_timeout = Duration::from_secs(p.ready_timeout_s.unwrap_or(30));
     let stall_timeout = Duration::from_secs(p.stall_timeout_s.unwrap_or(5));
 
@@ -2233,7 +2233,7 @@ async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Co
         let submit_res = crate::submit::submit_prompt(
             &bg_submit_ctx,
             &bg_pane_id,
-            &objective,
+            &prompt,
             Duration::from_millis(100),
             stall_timeout,
             true,

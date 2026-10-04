@@ -128,7 +128,7 @@ research-external §workmux). Steps, in order:
    Steps 2–4 failures return the failed task with `{stage, …}` evidence (a
    created worktree is kept on disk).
 5. Background: wait for `idle` within `ready_timeout_s`, then submit the
-   objective verbatim via the `pane.submit` path (same gate + activity check).
+   composed worker prompt (preamble + objective + constraints + acceptance criteria + expected output format via `compose_worker_prompt`) via the `pane.submit` path (same gate + activity check).
    Success → task `working`; ready-timeout or submit failure → task `failed`
    with `{stage: ready_timeout|submit_refused|activity_gate, …}` evidence; pane
    kept. Observe via `task.wait --until working` or `task.*` events.

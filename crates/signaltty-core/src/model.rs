@@ -912,7 +912,56 @@ pub struct Task {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Compose the submitted prompt from the task contract and metadata.
+///
+/// Pure function combining a fixed worker preamble, objective, optional constraints,
+/// bulleted acceptance criteria, and expected output format.
+pub fn compose_worker_prompt(
+    task_id: &str,
+    branch: &str,
+    base_sha: &str,
+    contract: &Contract,
+) -> String {
+    let mut out = format!(
+        "You are a worker for task {task_id} in an isolated worktree on branch {branch} from base {base_sha}; stay inside this worktree; commit your work; when done or blocked run signaltty report --status completed|failed|rejected --summary … with evidence — it reads $SIGNALTTY_TASK.\n\n## Objective\n{}\n",
+        contract.objective.trim()
+    );
+
+    if let Some(constraints) = &contract.constraints {
+        let trimmed = constraints.trim();
+        if !trimmed.is_empty() {
+            out.push_str("\n## Constraints\n");
+            out.push_str(trimmed);
+            out.push('\n');
+        }
+    }
+
+    if let Some(criteria) = &contract.acceptance_criteria {
+        if !criteria.is_empty() {
+            out.push_str("\n## Acceptance Criteria\n");
+            for item in criteria {
+                out.push_str(&format!("- {}\n", item.trim()));
+            }
+        }
+    }
+
+    if let Some(output_format) = &contract.output_format {
+        let trimmed = output_format.trim();
+        if !trimmed.is_empty() {
+            out.push_str("\n## Expected Output Format\n");
+            out.push_str(trimmed);
+            out.push('\n');
+        }
+    }
+
+    out
+}
+
 impl Task {
+    pub fn compose_worker_prompt(&self) -> String {
+        compose_worker_prompt(&self.id, &self.branch, &self.base_sha, &self.contract)
+    }
+
     pub fn transition_to(&mut self, next: TaskState, now: DateTime<Utc>) -> Result<(), CoreError> {
         if !self.state.can_transition_to(next) {
             return Err(CoreError::InvalidTaskTransition(self.state, next));
@@ -1429,5 +1478,36 @@ mod tests {
 
         // Terminal state is immutable
         assert!(task.transition_to(TaskState::Working, now).is_err());
+    }
+
+    #[test]
+    fn worker_prompt_composition_from_full_contract() {
+        let contract = Contract {
+            objective: "Implement feature X".to_string(),
+            constraints: Some("Do not touch vendor folder".to_string()),
+            acceptance_criteria: Some(vec![
+                "All tests pass".to_string(),
+                "Clippy clean".to_string(),
+            ]),
+            output_format: Some("JSON format output".to_string()),
+        };
+
+        let prompt = compose_worker_prompt("task_123", "feature-x", "abc456", &contract);
+
+        assert!(prompt.contains("You are a worker for task task_123 in an isolated worktree on branch feature-x from base abc456;"));
+        assert!(prompt.contains("stay inside this worktree; commit your work; when done or blocked run signaltty report --status completed|failed|rejected --summary … with evidence — it reads $SIGNALTTY_TASK"));
+        assert!(prompt.contains("## Objective\nImplement feature X\n"));
+        assert!(prompt.contains("## Constraints\nDo not touch vendor folder\n"));
+        assert!(prompt.contains("## Acceptance Criteria\n- All tests pass\n- Clippy clean\n"));
+        assert!(prompt.contains("## Expected Output Format\nJSON format output\n"));
+
+        // Minimal contract without optional fields
+        let minimal = Contract::new("Just the objective").unwrap();
+        let min_prompt = compose_worker_prompt("task_999", "main", "base000", &minimal);
+        assert!(min_prompt.contains("You are a worker for task task_999 in an isolated worktree on branch main from base base000"));
+        assert!(min_prompt.contains("## Objective\nJust the objective\n"));
+        assert!(!min_prompt.contains("## Constraints"));
+        assert!(!min_prompt.contains("## Acceptance Criteria"));
+        assert!(!min_prompt.contains("## Expected Output Format"));
     }
 }
