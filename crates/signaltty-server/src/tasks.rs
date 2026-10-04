@@ -489,6 +489,16 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
 
 type ResolvedAgent = (Vec<String>, AgentKind, Option<String>);
 
+/// Task identity for hook matching: a specific harness, or none for plain
+/// terminals.
+fn canonical_agent_name(kind: AgentKind) -> Option<String> {
+    if matches!(kind, AgentKind::Generic | AgentKind::None) {
+        None
+    } else {
+        Some(kind.as_str().to_string())
+    }
+}
+
 fn resolve_agent_and_argv(
     ctx: &Ctx,
     p: &params::TaskStart,
@@ -526,8 +536,10 @@ fn resolve_agent_and_argv(
                     "'argv' must not be empty".to_string(),
                 ));
             }
+            // Store the canonical kind (or nothing), never the raw name: the
+            // hook handler compares it with the incoming adapter's kind.
             let kind = AgentKind::parse(agent_name).unwrap_or_else(|| ctx.detect_kind(argv));
-            Ok((argv.clone(), kind, Some(agent_name.to_string())))
+            Ok((argv.clone(), kind, canonical_agent_name(kind)))
         }
         (None, Some(argv)) => {
             if argv.is_empty() {
@@ -537,12 +549,7 @@ fn resolve_agent_and_argv(
                 ));
             }
             let kind = ctx.detect_kind(argv);
-            let agent_name = if matches!(kind, AgentKind::Generic | AgentKind::None) {
-                None
-            } else {
-                Some(kind.as_str().to_string())
-            };
-            Ok((argv.clone(), kind, agent_name))
+            Ok((argv.clone(), kind, canonical_agent_name(kind)))
         }
     }
 }

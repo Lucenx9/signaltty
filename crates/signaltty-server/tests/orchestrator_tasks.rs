@@ -2164,3 +2164,39 @@ async fn task_start_fetch_first_is_bounded_and_best_effort() {
     assert_eq!(start["task"]["state"], "pending");
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn explicit_argv_task_with_an_unknown_agent_name_does_not_drop_hooks() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "mystery agent"},
+                "agent": "mystery",
+                "argv": ["sleep", "30"],
+            }),
+        )
+        .await
+        .unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap();
+    // The stored identity is a canonical kind or nothing, never the raw name.
+    assert!(
+        start["task"]["agent"].is_null(),
+        "{}",
+        start["task"]["agent"]
+    );
+    let r = c
+        .call(
+            "hook-event",
+            json!({"agent": "claude", "event": "SessionStart", "pane_id": pane_id}),
+        )
+        .await
+        .unwrap();
+    assert_ne!(r["reason"], "harness_mismatch", "{r}");
+    assert_ne!(r["dropped"], true, "{r}");
+    srv.shutdown().await;
+}
