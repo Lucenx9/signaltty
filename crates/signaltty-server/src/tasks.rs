@@ -513,6 +513,7 @@ fn resolve_agent_and_argv(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_background_submit(
     ctx: &Ctx,
     bg_task_id: String,
@@ -1599,6 +1600,7 @@ fn cwd_inside_worktree(cwd: &str, worktree: &std::path::Path) -> bool {
 
 /// Second finish when a disposition is already stored but the recorded
 /// checkout is still on disk: retry removal only, do not merge again.
+#[allow(clippy::too_many_arguments)]
 fn retry_recorded_cleanup(
     ctx: &Ctx,
     req_id: &str,

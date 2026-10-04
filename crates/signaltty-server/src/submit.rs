@@ -118,6 +118,7 @@ impl From<SubmitError> for (String, String) {
 /// 7. Write `\r`.
 /// 8. Activity gate (if `check_activity`): wait up to `stall_timeout` for a newer `working` or `blocked` transition.
 /// 9. If worker pane belongs to an `input_required` task, resume it to `working`.
+#[allow(clippy::too_many_arguments)]
 pub async fn submit_prompt(
     ctx: &SubmitCtx,
     pane_id: &str,
