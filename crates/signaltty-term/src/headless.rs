@@ -259,7 +259,174 @@ mod tests {
         for i in 0..(DEFAULT_SCROLLBACK_LINES + 100) {
             b.feed_output("p", format!("line {i}\n").as_bytes());
         }
-        assert_eq!(b.scrollback_len("p"), DEFAULT_SCROLLBACK_LINES);
+        assert_eq!(b.ring_len("p"), DEFAULT_SCROLLBACK_LINES);
+    }
+
+    // ---- US3 rendered ring (T008): TUI repaint fixtures ----
+
+    fn rendered_text(b: &HeadlessBackend, id: &str) -> String {
+        b.rendered(id, 0, 5000).unwrap().text
+    }
+
+    #[test]
+    fn rendered_cr_overwrite_resolves_to_final_text() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"Status: Starting\rStatus: Ready   \n");
+        assert_eq!(rendered_text(&b, "p"), "Status: Ready");
+        assert_eq!(
+            b.tail("p", 10, true).unwrap(),
+            vec!["Status: Ready".to_string()]
+        );
+    }
+
+    #[test]
+    fn rendered_cursor_up_redraw_has_no_duplicates() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"=== hdr ===\nline A\n\x1b[1A\x1b[2Kline B\n");
+        let text = rendered_text(&b, "p");
+        assert_eq!(text, "=== hdr ===\nline B");
+        // tail is rebased on the same ring: identical text.
+        let tail = b.tail("p", 200, true).unwrap().join("\n");
+        assert_eq!(tail, text);
+    }
+
+    #[test]
+    fn rendered_erase_line_then_rewrite() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"hello\x1b[2K\x1b[Gbye\n");
+        assert_eq!(rendered_text(&b, "p"), "bye");
+    }
+
+    #[test]
+    fn rendered_spinner_rewritten_50_times_stays_one_line() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        for i in 0..50 {
+            b.feed_output("p", format!("spin {i}\r").as_bytes());
+        }
+        let r = b.rendered("p", 0, 5000).unwrap();
+        assert_eq!(r.text, "spin 49");
+        assert!(!r.dropped);
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn rendered_second_read_is_delta_only() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"alpha\n");
+        let r1 = b.rendered("p", 0, 200).unwrap();
+        assert!(r1.text.contains("alpha"));
+        b.feed_output("p", b"beta\n");
+        let r2 = b.rendered("p", r1.next_seq, 200).unwrap();
+        assert_eq!(r2.text, "beta");
+        assert!(!r2.dropped);
+        // Unchanged pane: empty text, unchanged head.
+        let r3 = b.rendered("p", r2.next_seq, 200).unwrap();
+        assert_eq!(r3.text, "");
+        assert_eq!(r3.next_seq, r2.next_seq);
+        assert_eq!(r3.seq, r2.next_seq);
+    }
+
+    #[test]
+    fn rendered_bulk_scroll_burst_keeps_order() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        let mut bulk = String::new();
+        for i in 0..10 {
+            bulk.push_str(&format!("l{i}\n"));
+        }
+        b.feed_output("p", bulk.as_bytes());
+        let text = rendered_text(&b, "p");
+        let expect: Vec<String> = (0..10).map(|i| format!("l{i}")).collect();
+        assert_eq!(text, expect.join("\n"));
+    }
+
+    #[test]
+    fn rendered_eviction_reports_dropped() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        for chunk in 0..52 {
+            let mut bulk = String::new();
+            for i in 0..100 {
+                bulk.push_str(&format!("line {}\n", chunk * 100 + i));
+            }
+            b.feed_output("p", bulk.as_bytes());
+        }
+        assert_eq!(b.ring_len("p"), DEFAULT_SCROLLBACK_LINES);
+        let dropped = b.rendered("p", 1, 5000).unwrap();
+        assert!(dropped.dropped);
+        let full = b.rendered("p", 0, 5000).unwrap();
+        assert!(!full.dropped);
+        assert!(!full.truncated);
+        assert!(full.text.starts_with("line 200\n"));
+        assert!(full.text.ends_with("line 5199"));
+    }
+
+    #[test]
+    fn rendered_truncated_returns_newest_lines() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        for i in 0..10 {
+            b.feed_output("p", format!("l{i}\n").as_bytes());
+        }
+        let r = b.rendered("p", 0, 3).unwrap();
+        assert!(r.truncated);
+        assert_eq!(r.text, "l7\nl8\nl9");
+    }
+
+    #[test]
+    fn rendered_alt_screen_returns_grid_without_history_pollution() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"main line\n");
+        let before = rendered_text(&b, "p");
+        assert_eq!(before, "main line");
+        // Enter alt screen: main content hidden, alt grid shown.
+        b.feed_output("p", b"\x1b[?1049h");
+        b.feed_output("p", b"alt content\n");
+        let r1 = b.rendered("p", 0, 5000).unwrap();
+        assert!(r1.text.contains("alt content"));
+        assert!(!r1.text.contains("main line"));
+        // Repaint: polling with the cursor yields only the changed row.
+        b.feed_output("p", b"\x1b[Halt content v2");
+        let r2 = b.rendered("p", r1.next_seq, 5000).unwrap();
+        assert!(r2.text.contains("v2"));
+        assert!(!r2.dropped);
+        // Exit: main grid restored, alt lines never entered history.
+        b.feed_output("p", b"\x1b[?1049l");
+        let after = rendered_text(&b, "p");
+        assert_eq!(after, before);
+        assert!(!after.contains("alt content"));
+    }
+
+    #[test]
+    fn rendered_clear_does_not_flood_history() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"keep\n");
+        let len_before = b.ring_len("p");
+        b.feed_output("p", b"\x1b[2J\x1b[H");
+        assert_eq!(b.ring_len("p"), len_before);
+    }
+
+    #[test]
+    fn restore_marks_pre_restart_cursors_dropped() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"before\n");
+        let old_next = b.rendered("p", 0, 200).unwrap().next_seq;
+        assert!(old_next > 0);
+        // Simulate restart recovery: content restored, sequence reset.
+        b.restore_surface("p", 80, 24, vec!["before".to_string()]);
+        let r = b.rendered("p", old_next, 200).unwrap();
+        assert!(r.dropped);
+        let fresh = b.rendered("p", 0, 200).unwrap();
+        assert!(!fresh.dropped);
+        assert_eq!(fresh.text, "before");
     }
 
     #[test]
