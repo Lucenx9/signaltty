@@ -106,13 +106,17 @@ base → worktree → spawn synchronously: over-cap starts are refused with
 `RATE_LIMITED` before creating anything, and base/worktree/spawn failures
 are synchronous errors (`BAD_PARAMS` / `IO_ERROR`) that create no task.
 Only the background ready-wait + prompt write produces `failed` tasks with
-`{stage: ready_timeout|submit_refused|activity_gate, …}` evidence. The background step
+`{stage: ready_timeout|submit_refused, …}` evidence (`ready_timeout` adds
+`screen_tail`, the pane's last screen lines). The background step
 waits for the worker pane to reach `idle`/`done` (default
 `ready_timeout_s: 30`), writes the composed prompt with `submit_delay_ms`
 (default 300, the same paste/Enter delay as `pane.submit`), and runs the
 same activity gate: a newer `working` or `blocked` transition within
-`stall_timeout_s` (default 5) moves the task to `working`; a stall fails it
-with `{stage: activity_gate}`. A repeated `client_request_id` returns the
+`stall_timeout_s` (default 5) moves the task to `working`; a stall (after one Enter retry halfway through the gate) parks it
+at `input_required` with `{reason: submit_unconfirmed, stage: activity_gate}`,
+and the worker turning `working` later resumes it. Closing a worker from
+`task.finish`/`task.cancel` clears its attention; any pane exit drops
+`input_required`/`permission_required` to `unread`. A repeated `client_request_id` returns the
 existing task and pane instead of creating another; without it retries
 create new tasks. The merge target defaults to the recorded
 `target_branch`; when the start ran on a detached HEAD an explicit

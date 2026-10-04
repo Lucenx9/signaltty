@@ -1867,7 +1867,7 @@ async fn task_start_rejects_unsendable_contract_before_worktree() {
 }
 
 #[tokio::test]
-async fn task_start_background_submit_fails_activity_gate_on_stall() {
+async fn task_start_background_submit_stall_parks_then_late_start_resumes() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;
     let mut c = srv.client().await;
@@ -1896,6 +1896,96 @@ async fn task_start_background_submit_fails_activity_gate_on_stall() {
     let wait = c
         .call(
             "task.wait",
+            json!({"task_id": task_id, "until": "input_required", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+    let got = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(got["task"]["state"], "input_required");
+    assert_eq!(got["task"]["status_reason"]["reason"], "submit_unconfirmed");
+    assert_eq!(got["task"]["status_reason"]["stage"], "activity_gate");
+
+    // The worker takes the prompt late (e.g. a manual Enter): the task
+    // resumes and its work stays reportable and finishable.
+    driver.prompt_submit(&mut c).await.unwrap();
+    let wait = c
+        .call(
+            "task.wait",
+            json!({"task_id": task_id, "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn canceled_task_pane_leaves_no_attention_item() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "cancel me"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap().to_string();
+
+    c.call("task.cancel", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    // Give the PTY reader's late on_exit time to land.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let pending = c.call("attention.pending", json!({})).await.unwrap();
+    let listed = pending["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["pane_id"] == pane_id.as_str());
+    assert!(!listed, "closed worker still listed: {pending}");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn ready_timeout_evidence_shows_the_blocking_screen() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "never gets ready"},
+                "agent": "codex",
+                "argv": ["sh", "-c", "echo 'Do you trust this folder?'; sleep 60"],
+                "ready_timeout_s": 1,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+
+    let wait = c
+        .call(
+            "task.wait",
             json!({"task_id": task_id, "until": "failed", "timeout_s": 5}),
         )
         .await
@@ -1905,8 +1995,15 @@ async fn task_start_background_submit_fails_activity_gate_on_stall() {
         .call("task.get", json!({"task_id": task_id}))
         .await
         .unwrap();
-    assert_eq!(got["task"]["state"], "failed");
-    assert_eq!(got["task"]["status_reason"]["stage"], "activity_gate");
+    let reason = &got["task"]["status_reason"];
+    assert_eq!(reason["stage"], "ready_timeout");
+    assert!(
+        reason["screen_tail"]
+            .as_str()
+            .unwrap()
+            .contains("Do you trust this folder?"),
+        "{reason}"
+    );
 
     srv.shutdown().await;
 }

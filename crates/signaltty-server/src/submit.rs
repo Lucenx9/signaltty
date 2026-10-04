@@ -257,6 +257,10 @@ pub async fn submit_prompt(
     let deadline = tokio::time::Instant::now() + stall_timeout; // checked above
     let mut rx = ctx.bcast.subscribe();
     let mut tick = tokio::time::interval(Duration::from_millis(50));
+    // One Enter retry halfway through: a TUI still settling its input box
+    // can drop the first `\r` and leave the prompt typed but unsent.
+    let enter_retry = tokio::time::Instant::now() + stall_timeout / 2;
+    let mut enter_retried = false;
 
     loop {
         {
@@ -314,6 +318,10 @@ pub async fn submit_prompt(
                     "activity gate timed out waiting for working or blocked after submit",
                     serde_json::json!({"stage": "activity_gate"}),
                 ));
+            }
+            _ = tokio::time::sleep_until(enter_retry), if !enter_retried => {
+                enter_retried = true;
+                let _ = ctx.ptys.input(pane_id, b"\r");
             }
             _ = tick.tick() => {}
             event = rx.recv() => {

@@ -388,6 +388,68 @@ async fn submit_activity_gate_timeout() {
 }
 
 #[tokio::test]
+async fn submit_retries_enter_once_when_the_first_is_dropped() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let ws = c
+        .call(
+            "workspace.create",
+            json!({"cwd": repo.path().to_string_lossy(), "name": "ws"}),
+        )
+        .await
+        .unwrap();
+    let ws_id = ws["workspace"]["id"].as_str().unwrap();
+
+    // Raw tty + `cat -v` prints every CR the pane receives as `^M`.
+    let p = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws_id, "argv": ["sh", "-c", "stty raw -echo; exec cat -v"]}),
+        )
+        .await
+        .unwrap();
+    let pane_id = p["pane"]["id"].as_str().unwrap().to_string();
+
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, repo.path()).await.unwrap();
+
+    let resp = c
+        .call_raw_resp(
+            "pane.submit",
+            json!({
+                "pane_id": pane_id,
+                "text": "hello stall",
+                "submit_delay_ms": 10,
+                "stall_timeout_s": 1,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.error.unwrap().code, code::TIMEOUT);
+
+    let mut text = String::new();
+    for _ in 0..50 {
+        let r = c
+            .call(
+                "pane.read",
+                json!({"pane_id": pane_id, "mode": "tail", "lines": 20}),
+            )
+            .await
+            .unwrap();
+        text = r["text"].as_str().unwrap_or("").to_string();
+        if text.matches("^M").count() >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(text.matches("^M").count(), 2, "pane saw: {text:?}");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn submit_fast_completion_match() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;

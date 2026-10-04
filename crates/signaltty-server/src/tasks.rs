@@ -632,8 +632,21 @@ pub(crate) fn spawn_background_submit(
             tokio::select! {
                 biased;
                 _ = tokio::time::sleep_until(ready_deadline) => {
+                    // The screen says why the worker never got ready (e.g. a
+                    // folder-trust or login prompt the hooks cannot report).
+                    let screen_tail = bg_submit_ctx
+                        .ptys
+                        .terms()
+                        .lock()
+                        .unwrap()
+                        .tail(&bg_pane_id, 12, true)
+                        .unwrap_or_default()
+                        .join("\n");
                     let mut s = bg_submit_ctx.store.write().unwrap();
-                    s.task_fail(&bg_task_id, Some(json!({"stage": "ready_timeout"})));
+                    s.task_fail(
+                        &bg_task_id,
+                        Some(json!({"stage": "ready_timeout", "screen_tail": screen_tail})),
+                    );
                     return;
                 }
                 _ = tick.tick() => {}
@@ -664,15 +677,14 @@ pub(crate) fn spawn_background_submit(
             }
             Err(e) => {
                 let mut s = bg_submit_ctx.store.write().unwrap();
-                let stage = if e.code == code::TIMEOUT {
-                    "activity_gate"
+                if e.code == code::TIMEOUT {
+                    s.task_submit_unconfirmed(&bg_task_id, &e.message);
                 } else {
-                    "submit_refused"
-                };
-                s.task_fail(
-                    &bg_task_id,
-                    Some(json!({"stage": stage, "error": e.message})),
-                );
+                    s.task_fail(
+                        &bg_task_id,
+                        Some(json!({"stage": "submit_refused", "error": e.message})),
+                    );
+                }
             }
         }
     });
@@ -747,7 +759,7 @@ pub fn h_task_cancel(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Con
             let pane_id = task.pane_id.clone();
             if let Some(ref pid) = pane_id {
                 ctx.ptys.destroy(pid, Some("TERM"));
-                s.set_exited(pid, Some(0));
+                close_worker(&mut s, pid);
             }
             ctx.mark_persist();
             let task = s.tasks.get(&p.task_id).unwrap();
@@ -1151,7 +1163,14 @@ async fn reap_worker(ctx: &Ctx, pane_id: &str) {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
-    ctx.store.write().unwrap().set_exited(pane_id, Some(0));
+    close_worker(&mut ctx.store.write().unwrap(), pane_id);
+}
+
+/// The orchestrator closed the worker on purpose: record the exit without
+/// leaving an attention item nobody needs to act on.
+fn close_worker(s: &mut Store, pane_id: &str) {
+    s.set_exited(pane_id, Some(0));
+    s.clear_attention(pane_id, "task_closed");
 }
 
 /// Source worktree must hold no uncommitted work. A failed check is
@@ -1336,8 +1355,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         // Close worker pane if live
         if let Some(ref pid) = pane_id {
             ctx.ptys.destroy(pid, Some("TERM"));
-            let mut s = ctx.store.write().unwrap();
-            s.set_exited(pid, Some(0));
+            close_worker(&mut ctx.store.write().unwrap(), pid);
         }
 
         // Remove worktree (herdr-guarded: see remove_task_worktree).

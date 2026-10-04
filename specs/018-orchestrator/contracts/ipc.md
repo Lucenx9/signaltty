@@ -75,7 +75,9 @@ New `mode: "rendered"`: `{pane_id, mode: "rendered", after_seq?, lines?}` →
 - Activity gate: a `working` or `blocked` transition newer than the pre-submit
   baseline within the stall budget (existing `WaitBaseline` machinery,
   research-codebase §3; fast completions before gate attach still match).
-  Expiry → `TIMEOUT` with `details.stage: "activity_gate"`.
+  Enter is written once more at half the stall budget (a TUI still settling
+  its input box can drop the first). Expiry → `TIMEOUT` with
+  `details.stage: "activity_gate"`.
 - Does not track turns beyond the gate (herdr CLI spec); use `wait` for the
   settled state. An accepted submit on a worker pane whose task is
   `input_required` moves the task back to `working` (follow-up path, FR-023).
@@ -158,9 +160,12 @@ research-external §workmux). Steps, in order:
    composed worker prompt (preamble + objective + constraints + acceptance criteria + expected output format via `compose_worker_prompt`) via the `pane.submit` path (same gate + activity check).
    `submit_delay_ms` (default 300, the same default as `pane.submit`) is the
    pause between the bracketed paste and Enter.
-   Success → task `working`; ready-timeout or submit failure → task `failed`
-   with `{stage: ready_timeout|submit_refused|activity_gate, …}` evidence; pane
-   kept. Observe via `task.wait --until working` or `task.*` events.
+   Success → task `working`; ready-timeout or submit refusal → task `failed`
+   with `{stage: ready_timeout|submit_refused, …}` evidence (`ready_timeout`
+   adds `screen_tail`); pane kept. An activity-gate stall (Enter is retried
+   once at half the stall timeout) parks the task at `input_required` with
+   `{reason: submit_unconfirmed, stage: activity_gate}`; the worker turning
+   `working` later resumes it. Observe via `task.wait --until working` or `task.*` events.
 
 ### `task.get` / `task.list`
 
