@@ -186,12 +186,12 @@ separation.
 **Independent Test**: restart mid-run → completed intact, running-with-dead-pane
 failed with evidence, checkouts preserved; pane exit fails task exactly once.
 
-- [ ] T025 [US6] Failing tests: restart with mixed tasks (completed intact +
+- [x] T025 [US6] Failing tests: restart with mixed tasks (completed intact +
   results + diffs work; running → failed with evidence + checkout preserved;
   `pending` → failed with `{stage: "restart"}`);
   pane kill → failed exactly once (no double emit on close-after-exit) in
   `crates/signaltty-server/tests/orchestrator_e2e.rs`.
-- [ ] T026 [US6] Pane-exit hook → task fail in
+- [x] T026 [US6] Pane-exit hook → task fail in
   `crates/signaltty-server/src/store.rs`; restart recovery in
   `crates/signaltty-server/src/persist.rs` (`apply`); read cursors reset as
   dropped after restart in `crates/signaltty-term/src/headless.rs`.
