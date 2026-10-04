@@ -894,6 +894,7 @@ async fn workspace_diff_reports_numstat_and_rejects_non_repo() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
     let run = |args: &[&str]| {
         let out = std::process::Command::new("git")
             .arg("-C")
@@ -937,8 +938,9 @@ async fn workspace_diff_reports_numstat_and_rejects_non_repo() {
     let new = files.iter().find(|f| f["path"] == "new.txt").unwrap();
     assert_eq!(new["untracked"], true);
     assert_eq!(d["added"], 1);
-    // Non-repo workspace is a loud error, never an empty lie (a sibling
-    // dir, so no parent `.git` is ever discovered).
+    // Non-repo workspace is a loud error, never an empty lie. A sibling
+    // dir, with the temp root as git ceiling so a TMPDIR inside a checkout
+    // is never discovered as a parent repo.
     let bare = dir.with_extension("bare");
     std::fs::create_dir_all(&bare).unwrap();
     let w2 = c
