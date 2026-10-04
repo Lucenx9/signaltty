@@ -271,7 +271,11 @@ impl TaskIndex {
             .get(&task.id)
             .and_then(|prev| prev.pane_id.clone())
         {
-            if task.pane_id.as_deref() != Some(old.as_str()) {
+            // Only drop the pane entry while it still belongs to this task: a
+            // later task may own the pane now.
+            if task.pane_id.as_deref() != Some(old.as_str())
+                && self.by_pane.get(&old).is_some_and(|t| t.id == task.id)
+            {
                 self.by_pane.remove(&old);
                 self.order.retain(|id| id != &old);
             }
@@ -597,6 +601,28 @@ mod tests {
         cleared.pane_id = None;
         assert!(index.apply_event(event::TASK_UPDATED, &serde_json::json!({ "task": cleared })));
         assert!(index.get("pane_other").is_none());
+    }
+
+    #[test]
+    fn a_stale_task_clearing_a_shared_pane_keeps_the_current_owners_chip() {
+        let mut index = TaskIndex::default();
+        let a = task(TaskState::Working);
+        let mut b = task(TaskState::Working);
+        b.id = "task_other999".into();
+        for t in [&a, &b] {
+            assert!(index.apply_event(event::TASK_UPDATED, &serde_json::json!({ "task": t })));
+        }
+        assert_eq!(index.get("pane_worker").unwrap().id, "task_other999");
+
+        // A late update for A (no pane) must not drop B's chip.
+        let mut a_cleared = a.clone();
+        a_cleared.pane_id = None;
+        assert!(index.apply_event(
+            event::TASK_UPDATED,
+            &serde_json::json!({ "task": a_cleared })
+        ));
+        assert_eq!(index.get("pane_worker").unwrap().id, "task_other999");
+        assert!(index.iter().any(|t| t.id == "task_other999"));
     }
 
     #[test]
