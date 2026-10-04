@@ -1019,7 +1019,11 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         }
 
         // Remove worktree
-        let _ = crate::git::git_output(&src_str, &["worktree", "remove", "--force", &wt_str]);
+        let _ = crate::git::git_output(&src_str, &["worktree", "unlock", &wt_str]);
+        let _ = crate::git::git_output(
+            &src_str,
+            &["worktree", "remove", "--force", "--force", &wt_str],
+        );
         if worktree_path.exists() {
             let _ = std::fs::remove_dir_all(&worktree_path);
         }
@@ -1183,7 +1187,19 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
 
     // Clean up worktree
     let mut cleanup_error = None;
-    let rm_out = crate::git::git_output(&src_str, &["worktree", "remove", "--force", &wt_str]);
+    let _ = crate::git::git_output(&src_str, &["worktree", "unlock", &wt_str]);
+    let rm_out = crate::git::git_output(
+        &src_str,
+        &["worktree", "remove", "--force", "--force", &wt_str],
+    );
+    if let Ok(ref out) = rm_out {
+        if !out.status.success() {
+            cleanup_error = Some(format!(
+                "worktree remove failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+    }
     let fs_rm = if worktree_path.exists() {
         std::fs::remove_dir_all(&worktree_path)
     } else {
@@ -1202,7 +1218,17 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
     // Delete branch if requested and not pre-existing
     let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch;
     if should_delete_branch {
-        let _ = crate::git::git_output(&src_str, &["branch", "-D", &branch]);
+        let b_out = crate::git::git_output(&src_str, &["branch", "-D", &branch]);
+        if let Ok(ref out) = b_out {
+            if !out.status.success() {
+                cleanup_error = Some(format!(
+                    "branch deletion failed: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ));
+            }
+        } else if let Err(ref e) = b_out {
+            cleanup_error = Some(format!("branch deletion error: {e}"));
+        }
     }
 
     // Update task
