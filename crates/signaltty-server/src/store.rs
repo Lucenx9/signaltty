@@ -140,6 +140,18 @@ impl Store {
             signaltty_proto::event::PANE_CLOSED,
             json!({"pane_id":pane_id}),
         );
+        // Closing the worker pane fails its non-terminal task exactly once:
+        // `task_fail` is a no-op on terminal tasks, so whichever of
+        // `on_exit`/`remove_pane` runs first wins and the second is silent.
+        // (Discard/cancel transition first, so their closes are no-ops here.)
+        let task_id = self
+            .tasks
+            .values()
+            .find(|t| t.pane_id.as_deref() == Some(pane_id) && !t.state.is_terminal())
+            .map(|t| t.id.clone());
+        if let Some(tid) = task_id {
+            self.task_fail(&tid, Some(json!({"reason": "pane_closed"})));
+        }
         Some(pane)
     }
 
@@ -1042,6 +1054,68 @@ mod tests {
         assert_eq!(
             store.tasks[&task_id].status_reason,
             Some(serde_json::json!({"reason": "pane_exited", "exit_code": 1}))
+        );
+        // Exit repeated (close-after-exit): no second transition, reason stable.
+        store.set_exited(&pane_id, Some(1));
+        assert_eq!(store.tasks[&task_id].state, TaskState::Failed);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(serde_json::json!({"reason": "pane_exited", "exit_code": 1}))
+        );
+    }
+
+    #[test]
+    fn pane_close_fails_non_terminal_task_exactly_once() {
+        use signaltty_core::model::{Contract, Relationship};
+        use std::path::PathBuf;
+
+        let mut store = Store::new();
+        let pane = pane_with(Attention::None, 0);
+        let pane_id = pane.id.clone();
+        store.panes.insert(pane_id.clone(), pane);
+
+        let task_id = signaltty_core::ids::new_task_id();
+        let task = Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: Some(pane_id.clone()),
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: Relationship::Subagent,
+            label: "close-test".to_string(),
+            contract: Contract::new("Objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: None,
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-b".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "sha".to_string(),
+            state: TaskState::Working,
+            result: None,
+            disposition: Disposition::default(),
+            status_reason: None,
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.task_create(task);
+
+        // Operator close fails the task once; exit racing after close is silent.
+        store.remove_pane(&pane_id);
+        assert_eq!(store.tasks[&task_id].state, TaskState::Failed);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(serde_json::json!({"reason": "pane_closed"}))
+        );
+        store.set_exited(&pane_id, Some(1));
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(serde_json::json!({"reason": "pane_closed"}))
         );
     }
 }
