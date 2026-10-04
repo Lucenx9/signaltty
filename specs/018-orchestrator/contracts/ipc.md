@@ -120,8 +120,8 @@ research-external §workmux). Steps, in order:
    Resolve `base_ref` (default `HEAD`; `fetch_first` runs `git fetch origin`
    first, Conductor-style) → record `base_sha` AND `target_branch` = the source
    repo's currently checked-out branch (detached HEAD → `target_branch` unset).
-   Empty repo / unresolvable ref → failed task with evidence (nothing on disk
-   yet). Empty objective → synchronous `BAD_PARAMS` (nothing created).
+   Empty repo / unresolvable ref → synchronous `BAD_PARAMS` (nothing on disk
+   yet; pre-worktree validation creates no task). Empty objective → synchronous `BAD_PARAMS` (nothing created).
 3. Under the per-path lock (vibe-kanban path mutex,
    `crates/worktree-manager/src/worktree_manager.rs`):
    `git worktree add -b <branch> <path> <base_sha>` (default branch
@@ -133,8 +133,10 @@ research-external §workmux). Steps, in order:
    `preexisting_branch: true` (claude-squad `isExistingBranch`).
 4. `pane.spawn` in the worktree (`argv` or interactive default for `agent`,
    with existing ADR-0013 integration prep), carrying parent/label/task env.
-   Steps 2–4 failures return the failed task with `{stage, …}` evidence (a
-   created worktree is kept on disk).
+   Steps 2–4 failures persist a `failed` task with `{stage:
+   workspace|tab|parent|spawn, error, …}` evidence and return the error with
+   `details: {task_id, stage}` (a created worktree is kept on disk, unlocked
+   so `task.finish --discard` or plain `git worktree remove` deletes it).
 5. Background: wait for `idle` within `ready_timeout_s`, then submit the
    composed worker prompt (preamble + objective + constraints + acceptance criteria + expected output format via `compose_worker_prompt`) via the `pane.submit` path (same gate + activity check).
    Success → task `working`; ready-timeout or submit failure → task `failed`

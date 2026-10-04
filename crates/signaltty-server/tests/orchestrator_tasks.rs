@@ -1631,3 +1631,50 @@ async fn test_silent_worker_watchdog_transitions_to_input_required() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn task_start_post_worktree_failure_leaves_failed_task_and_removable_checkout() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    // Unknown parent pane: the worktree is created before spawn is attempted,
+    // so the failure must leave a failed task behind, not a bare error.
+    let resp = c
+        .call_raw_resp(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "will fail at spawn"},
+                "label": "worker-fail",
+                "parent_pane_id": "pane_nope",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(!resp.ok);
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, signaltty_proto::code::NO_SUCH_PANE);
+    let task_id = err.details["task_id"].as_str().unwrap().to_string();
+    assert_eq!(err.details["stage"], "parent");
+
+    let get = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(get["task"]["state"], "failed");
+    assert_eq!(get["task"]["status_reason"]["stage"], "parent");
+    let wt = PathBuf::from(get["task"]["worktree_path"].as_str().unwrap());
+    assert!(wt.exists(), "failed task keeps its checkout on disk");
+
+    // The checkout must be removable without a manual `git worktree unlock`.
+    let out = repo.git(&["worktree", "remove", "--force", wt.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "locked checkout refuses removal: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    srv.shutdown().await;
+}

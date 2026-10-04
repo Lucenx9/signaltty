@@ -18,6 +18,44 @@ use crate::router::{ConnEffect, Ctx};
 use crate::store::Store;
 use crate::submit::SubmitCtx;
 
+/// Persist a `failed` task for a `task.start` failure after the worktree was
+/// created, unlock the checkout so it stays removable, and return the error
+/// with `details: {task_id, stage}`. Pre-worktree validation never reaches here.
+fn fail_task_start(
+    ctx: &Ctx,
+    reservation: crate::store::TaskReservation,
+    task: Task,
+    stage: &str,
+    error_code: &str,
+    message: String,
+    req_id: &str,
+) -> (Response, ConnEffect) {
+    let task_id = task.id.clone();
+    let wt_str = task.worktree_path.to_string_lossy().to_string();
+    let repo_str = task.source_repo.to_string_lossy().to_string();
+    reservation.commit(task);
+    {
+        let mut s = ctx.store.write().unwrap();
+        s.task_fail(
+            &task_id,
+            Some(json!({"stage": stage, "error": message.clone()})),
+        );
+    }
+    // Leave the checkout unlocked so `task.finish --discard` (which unlocks
+    // again, harmlessly) or a plain `git worktree remove` can delete it.
+    let _ = crate::git::git_output(&repo_str, &["worktree", "unlock", &wt_str]);
+    ctx.mark_persist();
+    (
+        Response::err_with_details(
+            req_id,
+            error_code,
+            message,
+            json!({"task_id": task_id, "stage": stage}),
+        ),
+        ConnEffect::default(),
+    )
+}
+
 pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
     let p: params::TaskStart = match decode(params) {
         Ok(p) => p,
@@ -123,6 +161,74 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         return (Response::err(&req.id, &c, m), ConnEffect::default());
     }
 
+    // The checkout now exists: every later failure must persist a failed
+    // task with evidence (never a bare error with a leaked locked worktree).
+    // Pre-worktree validation above stays synchronous BAD_PARAMS.
+    let now = Utc::now();
+    let label = p
+        .label
+        .clone()
+        .unwrap_or_else(|| format!("worker-{short_id}"));
+    let relationship = p.relationship.unwrap_or(Relationship::Subagent);
+    let mut task = Task {
+        id: task_id.clone(),
+        context_id: context_id.clone(),
+        parent_task_id: None,
+        pane_id: None,
+        parent_pane_id: p.parent_pane_id.clone(),
+        root_pane_id: None,
+        relationship,
+        label,
+        contract: p.contract.clone(),
+        agent: agent_name.clone(),
+        source_repo: PathBuf::from(&p.repo),
+        target_branch: target_branch.clone(),
+        worktree_path: worktree_path.clone(),
+        branch: branch.clone(),
+        preexisting_branch,
+        base_ref: base_ref.clone(),
+        base_sha: base_sha.clone(),
+        state: TaskState::Pending,
+        result: None,
+        disposition: Disposition::default(),
+        status_reason: None,
+        finish_error: None,
+        worker_pid: None,
+        worker_cmd: Some(argv.clone()),
+        created_at: now,
+        updated_at: now,
+    };
+
+    // Unknown parent pane fails here (stage parent) instead of storing a
+    // dangling lineage: pane.spawn refuses it the same way (NO_SUCH_PANE).
+    if let Some(parent_id) = task.parent_pane_id.clone() {
+        let (root, known) = {
+            let s = ctx.store.read().unwrap();
+            match s.panes.get(&parent_id) {
+                Some(parent) => (
+                    parent
+                        .root_pane_id
+                        .clone()
+                        .or_else(|| Some(parent.id.clone())),
+                    true,
+                ),
+                None => (None, false),
+            }
+        };
+        if !known {
+            return fail_task_start(
+                ctx,
+                reservation,
+                task,
+                "parent",
+                code::NO_SUCH_PANE,
+                format!("no such parent pane '{parent_id}'"),
+                &req.id,
+            );
+        }
+        task.root_pane_id = root;
+    }
+
     // 4. Pane setup & spawn using existing helpers (no ws.tabs[0] panic; path-reference guard alive)
     let wt_path_str = worktree_path.to_string_lossy().to_string();
 
@@ -149,7 +255,15 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
             ) {
                 Ok(res) => res,
                 Err((ref c, ref m)) => {
-                    return (Response::err(&req.id, c, m), ConnEffect::default())
+                    return fail_task_start(
+                        ctx,
+                        reservation,
+                        task,
+                        "workspace",
+                        c,
+                        m.clone(),
+                        &req.id,
+                    );
                 }
             };
             val["workspace"]["id"].as_str().unwrap().to_string()
@@ -162,10 +276,15 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         let ws = match s.workspaces.get(&ws_id) {
             Some(w) => w,
             None => {
-                return (
-                    Response::err(&req.id, code::NO_SUCH_WORKSPACE, ws_id),
-                    ConnEffect::default(),
-                )
+                return fail_task_start(
+                    ctx,
+                    reservation,
+                    task,
+                    "workspace",
+                    code::NO_SUCH_WORKSPACE,
+                    ws_id.clone(),
+                    &req.id,
+                );
             }
         };
         ws.active_tab_id.as_ref().and_then(|tid| {
@@ -187,36 +306,18 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
             ) {
                 Ok(res) => res,
                 Err((ref c, ref m)) => {
-                    return (Response::err(&req.id, c, m), ConnEffect::default())
+                    return fail_task_start(ctx, reservation, task, "tab", c, m.clone(), &req.id);
                 }
             };
             val["tab"]["id"].as_str().unwrap().to_string()
         }
     };
 
-    let (parent_pane_id, root_pane_id) = {
-        let s = ctx.store.read().unwrap();
-        match &p.parent_pane_id {
-            Some(parent_id) => {
-                let root = s.panes.get(parent_id).and_then(|parent| {
-                    parent
-                        .root_pane_id
-                        .clone()
-                        .or_else(|| Some(parent.id.clone()))
-                });
-                (Some(parent_id.clone()), root)
-            }
-            None => (None, None),
-        }
-    };
-
     let mut env = HashMap::new();
-    if let Some(parent) = &parent_pane_id {
+    if let Some(parent) = &task.parent_pane_id {
         env.insert("SIGNALTTY_PARENT_PANE".to_string(), parent.clone());
     }
     env.insert("SIGNALTTY_TASK".to_string(), task_id.clone());
-
-    let relationship = p.relationship.unwrap_or(Relationship::Subagent);
 
     // Reuse h_pane_spawn: manages worktree path-reference guard, PTY spawn, tab layout, and store publishing
     let (pane_val, _) = match crate::router::h_pane_spawn(
@@ -228,51 +329,21 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
             "argv": argv,
             "env": env,
             "agent_hint": agent_name,
-            "parent_pane_id": parent_pane_id,
-            "label": p.label,
+            "parent_pane_id": task.parent_pane_id,
+            "label": task.label,
             "relationship": relationship,
             "task_id": task_id,
         }),
     ) {
         Ok(res) => res,
-        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+        Err((ref c, ref m)) => {
+            return fail_task_start(ctx, reservation, task, "spawn", c, m.clone(), &req.id);
+        }
     };
 
     let pane_id = pane_val["pane"]["id"].as_str().unwrap().to_string();
-    let now = Utc::now();
-    let repo_buf = PathBuf::from(&p.repo);
-    let label = p
-        .label
-        .unwrap_or_else(|| format!("worker-{}", &task_id[task_id.len().saturating_sub(8)..]));
-
-    let task = Task {
-        id: task_id.clone(),
-        context_id,
-        parent_task_id: None,
-        pane_id: Some(pane_id.clone()),
-        parent_pane_id,
-        root_pane_id,
-        relationship,
-        label,
-        contract: p.contract,
-        agent: agent_name,
-        source_repo: repo_buf,
-        target_branch,
-        worktree_path,
-        branch,
-        preexisting_branch,
-        base_ref,
-        base_sha,
-        state: TaskState::Pending,
-        result: None,
-        disposition: Disposition::default(),
-        status_reason: None,
-        finish_error: None,
-        worker_pid: None,
-        worker_cmd: Some(argv),
-        created_at: now,
-        updated_at: now,
-    };
+    task.pane_id = Some(pane_id.clone());
+    task.updated_at = Utc::now();
 
     reservation.commit(task.clone());
     ctx.mark_persist();
