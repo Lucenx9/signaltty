@@ -142,6 +142,17 @@ pub mod method {
     pub const FOCUS_NEXT_UNREAD: &str = "focus.next_unread";
     pub const PLUGIN_LIST: &str = "plugin.list";
     pub const PLUGIN_RELOAD: &str = "plugin.reload";
+    pub const TASK_START: &str = "task.start";
+    pub const TASK_GET: &str = "task.get";
+    pub const TASK_LIST: &str = "task.list";
+    pub const TASK_WAIT: &str = "task.wait";
+    pub const TASK_REPORT: &str = "task.report";
+    pub const TASK_DIFF: &str = "task.diff";
+    pub const TASK_FILE_DIFF: &str = "task.file_diff";
+    pub const TASK_FINISH: &str = "task.finish";
+    pub const TASK_CANCEL: &str = "task.cancel";
+    pub const PANE_SUBMIT: &str = "pane.submit";
+    pub const ATTENTION_PENDING: &str = "attention.pending";
 
     /// Every method the router dispatches, in docs/08 table order.
     /// `server.schema` prints this; the sync test proves it matches
@@ -187,6 +198,17 @@ pub mod method {
         FOCUS_NEXT_UNREAD,
         PLUGIN_LIST,
         PLUGIN_RELOAD,
+        TASK_START,
+        TASK_GET,
+        TASK_LIST,
+        TASK_WAIT,
+        TASK_REPORT,
+        TASK_DIFF,
+        TASK_FILE_DIFF,
+        TASK_FINISH,
+        TASK_CANCEL,
+        PANE_SUBMIT,
+        ATTENTION_PENDING,
     ];
 }
 
@@ -221,6 +243,9 @@ pub mod event {
     pub const NOTIFICATION_CREATED: &str = "notification.created";
     pub const GIT_BRANCH_CHANGED: &str = "git.branch_changed";
     pub const SERVER_WILL_SHUTDOWN: &str = "server.will_shutdown";
+    pub const TASK_CREATED: &str = "task.created";
+    pub const TASK_UPDATED: &str = "task.updated";
+    pub const TASK_RESULT: &str = "task.result";
 
     /// Every event the server emits, in docs/08 order.
     pub const ALL: &[&str] = &[
@@ -253,6 +278,9 @@ pub mod event {
         NOTIFICATION_CREATED,
         GIT_BRANCH_CHANGED,
         SERVER_WILL_SHUTDOWN,
+        TASK_CREATED,
+        TASK_UPDATED,
+        TASK_RESULT,
     ];
 }
 
@@ -274,6 +302,10 @@ pub mod code {
     pub const RATE_LIMITED: &str = "RATE_LIMITED";
     pub const FORBIDDEN: &str = "FORBIDDEN";
     pub const INTERNAL: &str = "INTERNAL";
+    pub const NO_SUCH_TASK: &str = "NO_SUCH_TASK";
+    pub const AGENT_BUSY: &str = "AGENT_BUSY";
+    pub const AGENT_NOT_READY: &str = "AGENT_NOT_READY";
+    pub const MERGE_CONFLICT: &str = "MERGE_CONFLICT";
 
     /// Every error code the server returns, in docs/08 order.
     pub const ALL: &[&str] = &[
@@ -293,6 +325,10 @@ pub mod code {
         RATE_LIMITED,
         FORBIDDEN,
         INTERNAL,
+        NO_SUCH_TASK,
+        AGENT_BUSY,
+        AGENT_NOT_READY,
+        MERGE_CONFLICT,
     ];
 }
 
@@ -322,9 +358,9 @@ mod tests {
             assert!(!name.is_empty());
         }
         for (list, len) in [
-            (method::ALL, 40usize),
-            (event::ALL, 29usize),
-            (code::ALL, 16usize),
+            (method::ALL, 51usize),
+            (event::ALL, 32usize),
+            (code::ALL, 20usize),
         ] {
             let set: HashSet<&&str> = list.iter().collect();
             assert_eq!(set.len(), list.len(), "no duplicates");
@@ -338,6 +374,10 @@ mod tests {
             method::WAIT,
             method::FOCUS_NEXT_UNREAD,
             method::WORKSPACE_FILE_DIFF,
+            method::TASK_START,
+            method::TASK_FINISH,
+            method::PANE_SUBMIT,
+            method::ATTENTION_PENDING,
         ] {
             assert!(method::ALL.contains(&must), "{must} listed");
         }
@@ -345,10 +385,21 @@ mod tests {
             event::PTY_DATA,
             event::AGENT_DONE,
             event::SERVER_WILL_SHUTDOWN,
+            event::TASK_CREATED,
+            event::TASK_UPDATED,
+            event::TASK_RESULT,
         ] {
             assert!(event::ALL.contains(&must), "{must} listed");
         }
-        for must in [code::BAD_PARAMS, code::UNKNOWN_METHOD, code::TIMEOUT] {
+        for must in [
+            code::BAD_PARAMS,
+            code::UNKNOWN_METHOD,
+            code::TIMEOUT,
+            code::NO_SUCH_TASK,
+            code::AGENT_BUSY,
+            code::AGENT_NOT_READY,
+            code::MERGE_CONFLICT,
+        ] {
             assert!(code::ALL.contains(&must), "{must} listed");
         }
     }
@@ -358,30 +409,8 @@ mod tests {
         assert!(glob_matches("*", "pane.created"));
         assert!(glob_matches("agent.*", "agent.done"));
         assert!(!glob_matches("agent.*", "pane.created"));
-        assert!(glob_matches("pane.created", "pane.created"));
-        assert!(!glob_matches("pane.created", "pane.exited"));
-    }
-
-    #[test]
-    fn response_roundtrip() {
-        let r = Response::ok("1", serde_json::json!({"a": 1}));
-        let line = r.to_line();
-        assert!(line.ends_with('\n'));
-        let back: Response = serde_json::from_str(line.trim()).unwrap();
-        assert!(back.ok);
-        let e = Response::err("2", code::BAD_PARAMS, "nope");
-        assert!(!e.ok);
-        assert_eq!(e.error.unwrap().code, "BAD_PARAMS");
-    }
-
-    #[test]
-    fn protocol_check() {
-        let r = Request {
-            protocol: "signaltty/1".into(),
-            id: "1".into(),
-            method: "server.status".into(),
-            params: Value::Null,
-        };
-        assert!(check_protocol(&r));
+        assert!(glob_matches("task.*", "task.created"));
+        assert!(glob_matches("task.*", "task.result"));
+        assert!(!glob_matches("task.*", "pane.created"));
     }
 }

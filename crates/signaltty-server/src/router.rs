@@ -190,6 +190,20 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::FOCUS_NEXT_UNREAD => h_next_unread(ctx),
         method::PLUGIN_LIST => h_plugin_list(ctx),
         method::PLUGIN_RELOAD => h_plugin_reload(ctx),
+        method::TASK_START
+        | method::TASK_GET
+        | method::TASK_LIST
+        | method::TASK_WAIT
+        | method::TASK_REPORT
+        | method::TASK_DIFF
+        | method::TASK_FILE_DIFF
+        | method::TASK_FINISH
+        | method::TASK_CANCEL
+        | method::PANE_SUBMIT
+        | method::ATTENTION_PENDING => Err((
+            code::BAD_PARAMS.to_string(),
+            format!("method '{}' not implemented in this phase", req.method),
+        )),
         _ => Err((
             code::UNKNOWN_METHOD.to_string(),
             format!("unknown method '{}'", req.method),
