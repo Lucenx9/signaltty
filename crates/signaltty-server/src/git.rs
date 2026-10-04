@@ -412,16 +412,9 @@ pub fn is_worktree_registered(repo: &str, path: &str) -> bool {
         .any(|w| w == path || canon.as_deref().is_some_and(|c| w == c))
 }
 
-/// Resolve base_ref into a 40-character commit SHA.
-/// If fetch_first is true, runs `git fetch origin` first (best effort).
-pub fn resolve_base_ref(repo: &str, base_ref: &str, fetch_first: bool) -> Result<String, String> {
-    if fetch_first {
-        let _ = Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(["fetch", "origin"])
-            .output();
-    }
+/// Resolve base_ref into a 40-character commit SHA. A best-effort
+/// `git fetch origin` is the caller's job (bounded, async) — see `task.start`.
+pub fn resolve_base_ref(repo: &str, base_ref: &str) -> Result<String, String> {
     let ref_spec = format!("{base_ref}^{{commit}}");
     let out = Command::new("git")
         .arg("-C")
@@ -916,11 +909,11 @@ mod tests {
         let dir_str = dir.to_str().unwrap();
 
         // resolve_base_ref
-        let head_sha = resolve_base_ref(dir_str, "HEAD", false).unwrap();
+        let head_sha = resolve_base_ref(dir_str, "HEAD").unwrap();
         assert_eq!(head_sha.len(), 40);
 
         // bad base_ref
-        assert!(resolve_base_ref(dir_str, "no-such-ref-12345", false).is_err());
+        assert!(resolve_base_ref(dir_str, "no-such-ref-12345").is_err());
 
         // branch_exists
         let current_branch = detect_target_branch(dir_str).unwrap();

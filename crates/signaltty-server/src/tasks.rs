@@ -206,8 +206,17 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
             ConnEffect::default(),
         );
     }
-    let fetch_first = p.fetch_first.unwrap_or(false);
-    let base_sha = match crate::git::resolve_base_ref(&p.repo, &base_ref, fetch_first) {
+    if p.fetch_first.unwrap_or(false) {
+        // Best effort, but bounded: a stalled remote must not hold the
+        // handler. No prompts (the helper sets GIT_TERMINAL_PROMPT=0).
+        let _ = crate::worktrees::git_status_with_timeout(
+            &p.repo,
+            &["fetch", "origin"],
+            Duration::from_millis(ctx.config.fetch_timeout_ms),
+        )
+        .await;
+    }
+    let base_sha = match crate::git::resolve_base_ref(&p.repo, &base_ref) {
         Ok(sha) => sha,
         Err(err) => {
             return (

@@ -431,6 +431,7 @@ mod tests {
             max_parallel_tasks: crate::config::DEFAULT_MAX_PARALLEL_TASKS,
             worker_silent_timeout_s: crate::config::DEFAULT_WORKER_SILENT_TIMEOUT_S,
             merge_timeout_ms: crate::config::DEFAULT_MERGE_TIMEOUT_MS,
+            fetch_timeout_ms: crate::config::DEFAULT_FETCH_TIMEOUT_MS,
         };
         let mut store = Store::new();
         let pane = signaltty_core::model::Pane::new(

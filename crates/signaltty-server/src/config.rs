@@ -5,6 +5,7 @@ use signaltty_core::paths;
 pub const DEFAULT_MAX_PARALLEL_TASKS: usize = 4;
 pub const DEFAULT_WORKER_SILENT_TIMEOUT_S: u64 = 600;
 pub const DEFAULT_MERGE_TIMEOUT_MS: u64 = 120_000;
+pub const DEFAULT_FETCH_TIMEOUT_MS: u64 = 60_000;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -18,6 +19,8 @@ pub struct Config {
     pub worker_silent_timeout_s: u64,
     /// Deadline for the `task.finish` merge (hooks and signing included).
     pub merge_timeout_ms: u64,
+    /// Deadline for `task.start fetch_first`'s `git fetch origin`.
+    pub fetch_timeout_ms: u64,
 }
 
 impl Config {
@@ -52,6 +55,10 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(DEFAULT_MERGE_TIMEOUT_MS),
+            fetch_timeout_ms: std::env::var("SIGNALTTY_FETCH_TIMEOUT_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_FETCH_TIMEOUT_MS),
         })
     }
 }

@@ -2133,3 +2133,34 @@ async fn oversized_client_timeouts_are_bad_params_not_panics() {
     );
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn task_start_fetch_first_is_bounded_and_best_effort() {
+    let repo = TempGitRepo::new();
+    let remote = TempGitRepo::new();
+    // A remote whose upload-pack never answers.
+    repo.git(&["remote", "add", "origin", &remote.path().to_string_lossy()]);
+    repo.git(&["config", "remote.origin.uploadpack", "sh -c 'sleep 20'"]);
+    let srv = TestServer::start_with_env(&[("SIGNALTTY_FETCH_TIMEOUT_MS", "500")]).await;
+    let mut c = srv.client().await;
+    let started = std::time::Instant::now();
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "fetch"},
+                "fetch_first": true,
+                "argv": ["sleep", "30"],
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "a stalled fetch must be cut off: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(start["task"]["state"], "pending");
+    srv.shutdown().await;
+}
