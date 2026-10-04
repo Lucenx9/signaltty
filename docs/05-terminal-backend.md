@@ -96,9 +96,11 @@ ring with the tail overlap excused (a print that scrolls in the same step
 lands new rows there), bounded by the batch's own scroll potential
 (newlines + scroll controls + printable rows + slack) so repetitive
 content cannot match a wild shift; among matches the largest shift with
-non-blank evidence wins, else the smallest. Changed rows keep their
-position but take a fresh sequence, so a repaint never grows the ring and
-a polling cursor observes each repaint exactly once. Trailing blank grid
+non-blank evidence wins, else the smallest shift the cursor could have
+reached by line motion (a blanking overwrite is not a scroll). Changed
+rows keep their position but take a fresh sequence, so a repaint never
+grows the ring and a polling cursor observes each repaint exactly once.
+Trailing blank grid
 rows are padding, not content (matches `contents()` trimming).
 
 Alt-screen decision: while a TUI owns the alternate grid there is no
@@ -127,10 +129,13 @@ grid exactly as before, so every legacy reconcile observes the same grid
 state at the same byte offset as the pre-fast-path code.
 
 The fast row simulation mirrors vt100 for ASCII (width-1 cells, wrap at
-`col == cols`, CR resets col, LF/VT/FF scroll at the bottom margin) and
-commits only after the simulated end cursor matches the parser's real
-cursor; any mismatch falls back to grid truth, and debug builds assert
-full grid sync after every feed. Groundness, partial UTF-8 (exact
+`col == cols`, CR resets col, LF/VT/FF scroll at the bottom margin).
+Every byte is parsed once. Rows the run would edit are checked before
+`process`; a non-ASCII row sends the span down the legacy path with the
+parser still untouched. After that single parse, the run commits only
+when the simulated end cursor matches the parser. A mismatch reconciles
+the ring from that grid and does not feed the bytes again. Debug builds
+assert full grid sync after every feed. Groundness, partial UTF-8 (exact
 positional validity per utf8parse, not a counter) and the two sticky
 vt100 modes that affect plain layout (scroll region `CSI r`, origin mode
 `CSI ? 6 h` — vt100 ignores LNM/IRM/wrap-suppression/charsets, so those
