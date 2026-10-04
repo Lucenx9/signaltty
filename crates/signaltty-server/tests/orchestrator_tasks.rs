@@ -841,3 +841,53 @@ async fn task_start_counts_input_required_towards_cap() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn task_start_in_workspace_without_tabs_does_not_panic() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let wt = repo.path().parent().unwrap().join("st-wt-empty-tabs");
+
+    // 1. Create directory, register workspace, then delete directory
+    std::fs::create_dir_all(&wt).unwrap();
+    let ws = c
+        .call(
+            "workspace.create",
+            json!({"cwd": wt.to_string_lossy(), "name": "ws-empty"}),
+        )
+        .await
+        .unwrap();
+    let ws_id = ws["workspace"]["id"].as_str().unwrap();
+
+    let ws_get = c
+        .call("workspace.get", json!({"workspace_id": ws_id}))
+        .await
+        .unwrap();
+    assert!(ws_get["workspace"]["tabs"].as_array().unwrap().is_empty());
+    assert!(ws_get["workspace"]["active_tab_id"].is_null());
+
+    std::fs::remove_dir_all(&wt).unwrap();
+
+    // 2. task.start targeting wt
+    let res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "path": wt.to_string_lossy(),
+                "contract": {"objective": "Empty tabs test"},
+                "argv": ["sh"],
+            }),
+        )
+        .await;
+
+    assert!(
+        res.is_ok(),
+        "task.start must succeed without panicking: {:?}",
+        res
+    );
+
+    srv.shutdown().await;
+}
