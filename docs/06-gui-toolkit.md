@@ -57,6 +57,11 @@ Dark mode redefines those variables (under a `.dark` window class
 mirrored from `AdwStyleManager`) into a wider lightness ladder —
 sidebar, near-black canvas, pane cards — edged by hairlines, per
 docs/14 §7; light mode keeps stock Adwaita values.
+Preferences (Ctrl+,) picks an appearance (System / Light / Dark) and one
+of five themes (Signal, Grove, Ocean, Ember, Iris); a `theme-<id>` window
+class redefines the same variables per theme and variant, Signal keeping
+the desktop accent (ADR-0017, `specs/015-themes`). The choice persists in
+`$XDG_CONFIG_HOME/signaltty/gui.json`.
 
 One status vocabulary, shared by every surface
 (`crates/signaltty-gui/src/status.rs`, colours in `data/style.css`):

@@ -105,6 +105,7 @@ pub struct App {
     /// action (or its accelerator) while it is open are ignored.
     new_ws_open: Cell<bool>,
     close_ws_dialog: RefCell<Option<adw::AlertDialog>>,
+    pub preference: RefCell<signaltty_core::theme::GuiPreference>,
     me: RefCell<Weak<App>>,
 }
 
@@ -281,12 +282,13 @@ impl App {
             paned_widgets: RefCell::new(HashMap::new()),
             new_ws_open: Cell::new(false),
             close_ws_dialog: RefCell::new(None),
+            preference: RefCell::new(crate::preferences::load_preference()),
             me: RefCell::new(Weak::new()),
         });
         app.me.replace(Rc::downgrade(&app));
         app.install_actions(application);
         app.connect_signals();
-        app.sync_desktop_preferences();
+        app.apply_preference(app.preference());
         app
     }
 
@@ -354,6 +356,7 @@ impl App {
                 split_down: split(SplitDir::Down),
                 close_pane: method(App::action_close_pane),
                 next_attention: method(App::focus_next_unread),
+                preferences: method(App::action_preferences),
                 about: method(App::show_about),
             },
         );
@@ -476,8 +479,9 @@ impl App {
     }
 
     fn restyle_terminals(&self) {
+        let theme = self.preference.borrow().theme;
         for w in self.widgets.borrow().values() {
-            w.apply_style();
+            w.apply_style(theme);
         }
     }
 
@@ -648,8 +652,54 @@ impl App {
         next
     }
 
-    fn weak(&self) -> Weak<App> {
+    pub(crate) fn weak(&self) -> Weak<App> {
         self.me.borrow().clone()
+    }
+
+    fn action_preferences(&self) {
+        let dialog = crate::preferences::build_dialog(self);
+        dialog.present(Some(&self.window));
+    }
+
+    pub(crate) fn preference(&self) -> signaltty_core::theme::GuiPreference {
+        *self.preference.borrow()
+    }
+
+    pub(crate) fn set_appearance(&self, appearance: signaltty_core::theme::Appearance) {
+        let mut pref = *self.preference.borrow();
+        if pref.appearance != appearance {
+            pref.appearance = appearance;
+            self.apply_preference(pref);
+            crate::preferences::save_preference(&pref);
+        }
+    }
+
+    pub(crate) fn set_theme(&self, theme: signaltty_core::theme::Theme) {
+        let mut pref = *self.preference.borrow();
+        if pref.theme != theme {
+            pref.theme = theme;
+            self.apply_preference(pref);
+            crate::preferences::save_preference(&pref);
+        }
+    }
+
+    pub(crate) fn apply_preference(&self, pref: signaltty_core::theme::GuiPreference) {
+        *self.preference.borrow_mut() = pref;
+
+        let scheme = match pref.appearance {
+            signaltty_core::theme::Appearance::System => adw::ColorScheme::Default,
+            signaltty_core::theme::Appearance::Light => adw::ColorScheme::ForceLight,
+            signaltty_core::theme::Appearance::Dark => adw::ColorScheme::ForceDark,
+        };
+        adw::StyleManager::default().set_color_scheme(scheme);
+
+        for t in signaltty_core::theme::Theme::ALL {
+            self.window.remove_css_class(t.css_class());
+        }
+        self.window.add_css_class(pref.theme.css_class());
+
+        self.sync_desktop_preferences();
+        self.restyle_terminals();
     }
 
     pub fn present(&self) {
@@ -1191,6 +1241,7 @@ impl App {
         if let Some(p) = self.model.borrow().panes.get(pane_id) {
             widget.update_meta(p);
         }
+        widget.apply_style(self.preference.borrow().theme);
         widget.set_focused(self.focused_pane.borrow().as_deref() == Some(pane_id));
         self.widgets
             .borrow_mut()

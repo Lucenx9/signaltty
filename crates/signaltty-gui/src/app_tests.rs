@@ -854,6 +854,44 @@ fn pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios() {
     app.window.destroy();
 }
 
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn theme_and_appearance_swapping_updates_window_classes() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.window.present();
+
+    // Default startup has theme-signal
+    assert!(app.window.has_css_class("theme-signal"));
+
+    // Switch to Ocean + Dark
+    app.set_theme(signaltty_core::theme::Theme::Ocean);
+    app.set_appearance(signaltty_core::theme::Appearance::Dark);
+    while glib::MainContext::default().iteration(false) {}
+
+    assert!(app.window.has_css_class("theme-ocean"));
+    assert!(!app.window.has_css_class("theme-signal"));
+    assert!(app.window.has_css_class("dark"));
+
+    // Switch back to Signal + Light
+    app.set_theme(signaltty_core::theme::Theme::Signal);
+    app.set_appearance(signaltty_core::theme::Appearance::Light);
+    while glib::MainContext::default().iteration(false) {}
+
+    assert!(app.window.has_css_class("theme-signal"));
+    assert!(!app.window.has_css_class("theme-ocean"));
+    assert!(!app.window.has_css_class("dark"));
+
+    // Restore to default and clean up
+    app.set_appearance(signaltty_core::theme::Appearance::System);
+    app.window.destroy();
+}
+
 fn find_widget<T: glib::object::IsA<gtk4::Widget> + glib::types::StaticType>(
     root: &gtk4::Widget,
 ) -> Option<T> {

@@ -10,6 +10,7 @@ mod metrics;
 mod new_workspace;
 mod notif;
 mod palette;
+mod preferences;
 mod refresh;
 mod sidebar;
 mod status;
