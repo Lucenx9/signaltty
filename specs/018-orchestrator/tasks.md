@@ -60,7 +60,7 @@ task handlers, or vice versa — agree at phase start).
 **Independent Test**: submit accept/refuse/stall on synthetic-hook panes;
 rendered/incremental reads on TUI fixtures.
 
-- [ ] T007 [US2] Failing tests: submit accept on idle/done, `AGENT_BUSY` on
+- [x] T007 [US2] Failing tests: submit accept on idle/done, `AGENT_BUSY` on
   working/blocked with zero bytes written (read-before/after), `AGENT_NOT_READY`
   on unknown, on never-started panes, and on a worker pane whose task is still
   `pending` (background first-submit in flight), `PANE_EXITED` on exited,
@@ -70,7 +70,7 @@ rendered/incremental reads on TUI fixtures.
   fixtures, incremental delta-only second read, dropped-range signal after
   eviction/restart in `crates/signaltty-term/tests/` (new) +
   `crates/signaltty-server/tests/orchestrator_read.rs`.
-- [ ] T009 [US2] `pane.submit` handler + typed params in
+- [x] T009 [US2] `pane.submit` handler + typed params in
   `crates/signaltty-server/src/router.rs` /
   `crates/signaltty-server/src/params.rs` (gate → baseline → bracketed paste →
   delay → `\r` → activity gate via existing `WaitBaseline`; accepted submit on
@@ -82,7 +82,7 @@ rendered/incremental reads on TUI fixtures.
   add `mode: "rendered"` (`after_seq`/`lines` → `text`/`seq`/`next_seq`/
   `dropped`/`truncated`) in `crates/signaltty-server/src/router.rs` +
   `crates/signaltty-server/src/params.rs`.
-- [ ] T011 [P] [US2] `signaltty pane submit` CLI in `crates/signaltty-cli/src/main.rs`.
+- [x] T011 [P] [US2] `signaltty pane submit` CLI in `crates/signaltty-cli/src/main.rs`.
 - [ ] T012 [P] [US3] `pane read --mode rendered --after-seq` CLI in
   `crates/signaltty-cli/src/main.rs`.
 
@@ -94,7 +94,7 @@ rendered/incremental reads on TUI fixtures.
 moves to `working`); assert worktree/branch/base/target_branch/pane/
 lineage/env; over-cap refused with nothing created.
 
-- [ ] T013 [US1] Failing tests: async happy-path start (returns `pending`, then
+- [x] T013 [US1] Failing tests: async happy-path start (returns `pending`, then
   `task.wait --until working` succeeds after background ready + submit),
   `RATE_LIMITED` over cap (nothing created), empty objective refused, bad base
   ref refused, existing branch adopted as pre-existing, concurrent same-path
@@ -102,13 +102,13 @@ lineage/env; over-cap refused with nothing created.
   (explicit `path` wins), `target_branch` recorded (detached HEAD → unset),
   `task.get`/`task.list` round-trip in
   `crates/signaltty-server/tests/orchestrator_tasks.rs`.
-- [ ] T014 [US1] `data_dir()` (`XDG_DATA_HOME`, `~/.local/share` fallback — same
+- [x] T014 [US1] `data_dir()` (`XDG_DATA_HOME`, `~/.local/share` fallback — same
   pattern as `state_dir`/`config_dir`) in `crates/signaltty-core/src/paths.rs`;
   base resolution + `target_branch` recording + locked worktree create + branch
   adoption in `crates/signaltty-server/src/git.rs` and
   `crates/signaltty-server/src/worktrees.rs` (per-path lock, defaults for
   branch/path, `fetch_first`).
-- [ ] T015 [US1] `task.start` handler + typed params in
+- [x] T015 [US1] `task.start` handler + typed params in
   `crates/signaltty-server/src/router.rs` /
   `crates/signaltty-server/src/params.rs` (cap → base → worktree → spawn with
   lineage/task env in `crates/signaltty-server/src/pty.rs` synchronously,
@@ -118,9 +118,9 @@ lineage/env; over-cap refused with nothing created.
   The `Stop`-with-no-report → `input_required` transition lives in the hook
   handler (lane A, Store transition method); the `Stop`-vs-report race resolves
   by checking report arrival first (report wins).
-- [ ] T016 [P] [US1] `pane.spawn --parent-pane/--label/--relationship` + `task
+- [x] T016 [P] [US1] `pane.spawn --parent-pane/--label/--relationship` + `task
   start` CLI in `crates/signaltty-cli/src/main.rs`.
-- [ ] T017 [P] [US1] `task.get` / `task.list` handlers + CLI in
+- [x] T017 [P] [US1] `task.get` / `task.list` handlers + CLI in
   `crates/signaltty-server/src/router.rs` and `crates/signaltty-cli/src/main.rs`
   (failing round-trip tests already in T013).
 
