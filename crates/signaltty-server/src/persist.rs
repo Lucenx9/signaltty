@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use signaltty_term::HeadlessBackend;
 
 use signaltty_core::model::{LiveState, Notification, Pane, RestoreState, Tab, Task, Workspace};
+use signaltty_core::state::TaskState;
 use signaltty_term::TerminalBackend;
 
 use crate::config::Config;
@@ -189,7 +190,12 @@ pub fn apply(store: &SharedStore, terms: &Mutex<HeadlessBackend>, mut loaded: Lo
     for n in loaded.snapshot.notifications {
         s.push_notification(n);
     }
-    for task in loaded.snapshot.tasks {
+    for mut task in loaded.snapshot.tasks {
+        if task.state == TaskState::Pending {
+            task.state = TaskState::Failed;
+            task.status_reason = Some(serde_json::json!({"stage": "restart"}));
+            task.updated_at = Utc::now();
+        }
         s.tasks.insert(task.id.clone(), task);
     }
 }
