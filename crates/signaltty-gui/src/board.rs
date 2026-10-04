@@ -44,13 +44,20 @@ impl BoardColumn {
 /// - InReview: Completed (with outcome == None)
 /// - Done: disposition outcome Merged or Discarded, plus Canceled
 pub fn board_column(task: &Task) -> BoardColumn {
-    if let Some(ref pr) = task.pr {
+    if matches!(
+        task.disposition.outcome,
+        DispositionOutcome::Merged | DispositionOutcome::Discarded
+    ) || task.state == TaskState::Canceled
+    {
+        BoardColumn::Done
+    } else if let Some(ref pr) = task.pr {
         match pr.state {
             PrState::Merged | PrState::Closed => BoardColumn::Done,
             PrState::Open => {
                 if pr.checks == PrChecks::Failing || pr.review == PrReview::ChangesRequested {
                     BoardColumn::NeedsYou
-                } else if matches!(pr.checks, PrChecks::Passing | PrChecks::None)
+                } else if pr.checked_at.is_some()
+                    && matches!(pr.checks, PrChecks::Passing | PrChecks::None)
                     && matches!(pr.review, PrReview::Approved | PrReview::None)
                 {
                     BoardColumn::ReadyToMerge
@@ -59,12 +66,6 @@ pub fn board_column(task: &Task) -> BoardColumn {
                 }
             }
         }
-    } else if matches!(
-        task.disposition.outcome,
-        DispositionOutcome::Merged | DispositionOutcome::Discarded
-    ) || task.state == TaskState::Canceled
-    {
-        BoardColumn::Done
     } else if task.state == TaskState::Completed
         && task.disposition.outcome == DispositionOutcome::None
     {
@@ -722,34 +723,41 @@ mod tests {
         );
         assert_eq!(board_column(&t_changes), BoardColumn::NeedsYou);
 
-        // 3. Open with checks passing/none and review approved/none -> ReadyToMerge
-        let t_ready1 = make_pr_task(
+        // 3. Open with checks passing/none and review approved/none -> ReadyToMerge (once refreshed)
+        let mut t_ready1 = make_pr_task(
             TaskState::Completed,
             PrState::Open,
             PrChecks::Passing,
             PrReview::Approved,
         );
+        t_ready1.pr.as_mut().unwrap().checked_at = Some(base_time);
         assert_eq!(board_column(&t_ready1), BoardColumn::ReadyToMerge);
-        let t_ready2 = make_pr_task(
+
+        let mut t_ready2 = make_pr_task(
             TaskState::Completed,
             PrState::Open,
             PrChecks::None,
             PrReview::None,
         );
+        t_ready2.pr.as_mut().unwrap().checked_at = Some(base_time);
         assert_eq!(board_column(&t_ready2), BoardColumn::ReadyToMerge);
-        let t_ready3 = make_pr_task(
+
+        let mut t_ready3 = make_pr_task(
             TaskState::Completed,
             PrState::Open,
             PrChecks::Passing,
             PrReview::None,
         );
+        t_ready3.pr.as_mut().unwrap().checked_at = Some(base_time);
         assert_eq!(board_column(&t_ready3), BoardColumn::ReadyToMerge);
-        let t_ready4 = make_pr_task(
+
+        let mut t_ready4 = make_pr_task(
             TaskState::Completed,
             PrState::Open,
             PrChecks::None,
             PrReview::Approved,
         );
+        t_ready4.pr.as_mut().unwrap().checked_at = Some(base_time);
         assert_eq!(board_column(&t_ready4), BoardColumn::ReadyToMerge);
 
         // 4. Open with pending checks or review required -> InReview
@@ -767,6 +775,34 @@ mod tests {
             PrReview::ReviewRequired,
         );
         assert_eq!(board_column(&t_rev_req), BoardColumn::InReview);
+
+        // 5. Open PR never refreshed (checked_at == None) -> InReview
+        let t_unrefreshed = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::None,
+            PrReview::None,
+        );
+        assert_eq!(board_column(&t_unrefreshed), BoardColumn::InReview);
+
+        // 6. Terminal disposition Discarded wins over open PR -> Done
+        let mut t_discarded_pr = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::Passing,
+            PrReview::Approved,
+        );
+        t_discarded_pr.disposition.outcome = DispositionOutcome::Discarded;
+        assert_eq!(board_column(&t_discarded_pr), BoardColumn::Done);
+
+        // 7. Canceled state wins over open PR -> Done
+        let t_canceled_pr = make_pr_task(
+            TaskState::Canceled,
+            PrState::Open,
+            PrChecks::Passing,
+            PrReview::Approved,
+        );
+        assert_eq!(board_column(&t_canceled_pr), BoardColumn::Done);
     }
 
     #[test]

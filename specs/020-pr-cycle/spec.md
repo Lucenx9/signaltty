@@ -67,11 +67,15 @@ Checks roll up from `statusCheckRollup`: any check concluded
 
 ## Board columns (supersedes 019 rules where a PR exists)
 
+A disposition `merged`/`discarded` or state `canceled` always wins over PR rules and maps to `Done`. For active tasks with a PR:
+
 | Task | Column |
 |---|---|
+| Disposition `merged` / `discarded` or state `canceled` (wins over PR) | Done |
 | `pr.state` merged or closed | Done |
+| `pr.state` open, never refreshed (`checked_at == None`) | In review |
 | `pr.state` open, checks `failing` or review `changes_requested` | Needs you |
-| `pr.state` open, checks `passing`/`none`, review `approved`/`none` | Ready to merge |
+| `pr.state` open, refreshed (`checked_at != None`), checks `passing`/`none`, review `approved`/`none` | Ready to merge |
 | `pr.state` open, anything else | In review |
 | no `pr` | 019 rules unchanged |
 
