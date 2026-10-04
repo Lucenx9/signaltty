@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use chrono::Utc;
 use serde_json::{json, Value};
-use signaltty_core::model::{AgentKind, Disposition, LiveState, Relationship, Task, TaskResult};
+use signaltty_core::model::{
+    AgentKind, Disposition, DispositionOutcome, LiveState, Relationship, Task, TaskResult,
+};
 use signaltty_core::state::{Attention, Lifecycle, TaskState};
 use signaltty_core::{new_context_id, new_task_id};
 use signaltty_proto::{code, Request, Response};
@@ -1000,7 +1002,28 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         );
     }
 
-    // Step 1: Read task under lock and validate preliminary rules
+    // Per-path lock across the git section. The disposition re-check below
+    // runs while it is held, so two finishes cannot both merge or delete.
+    let worktree_for_lock = {
+        let s = ctx.store.read().unwrap();
+        match s.tasks.get(&p.task_id) {
+            Some(t) => t.worktree_path.clone(),
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        }
+    };
+    let path_lock = ctx.worktrees.path_lock(&worktree_for_lock);
+    let _finish_lock = path_lock.lock().await;
+
+    // Step 1: Re-read under the path lock and validate preliminary rules.
     let (task_snapshot, pane_id, worktree_path, source_repo, branch, preexisting_branch) = {
         let s = ctx.store.read().unwrap();
         let task = match s.tasks.get(&p.task_id) {
@@ -1017,17 +1040,37 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
             }
         };
 
-        if task.disposition.outcome != signaltty_core::model::DispositionOutcome::None {
-            return (
-                Response::err(
-                    &req.id,
-                    code::BAD_PARAMS,
-                    format!(
-                        "task '{}' already has a disposition ({:?})",
-                        p.task_id, task.disposition.outcome
+        if task.disposition.outcome != DispositionOutcome::None {
+            if !task.worktree_path.exists() {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::BAD_PARAMS,
+                        format!(
+                            "task '{}' already has a disposition ({:?})",
+                            p.task_id, task.disposition.outcome
+                        ),
                     ),
-                ),
-                ConnEffect::default(),
+                    ConnEffect::default(),
+                );
+            }
+            let source_repo = task.source_repo.clone();
+            let worktree_path = task.worktree_path.clone();
+            let outcome = task.disposition.outcome;
+            let target_ref = task.disposition.target_ref.clone();
+            let merged_sha = task.disposition.merged_sha.clone();
+            let pane_id = task.pane_id.clone();
+            drop(s);
+            return retry_recorded_cleanup(
+                ctx,
+                &req.id,
+                &p.task_id,
+                &source_repo,
+                &worktree_path,
+                pane_id.as_deref(),
+                outcome,
+                target_ref,
+                merged_sha,
             );
         }
 
@@ -1080,39 +1123,20 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
     if mode == "discard" {
         let should_delete_branch = p.delete_branch.unwrap_or(false) && !preexisting_branch;
 
-        // Transition task to Canceled (if non-terminal) and record disposition first,
-        // so pane exit does not trigger auto-failure
-        let task_clone = {
+        // Cancel before closing the pane so pane-exit does not also fail the task.
+        {
             let mut s = ctx.store.write().unwrap();
-            let Some(task) = s.tasks.get_mut(&p.task_id) else {
-                return (
-                    Response::err(
-                        &req.id,
-                        code::NO_SUCH_TASK,
-                        format!("no such task '{}'", p.task_id),
-                    ),
-                    ConnEffect::default(),
-                );
-            };
-            let now = Utc::now();
-            if !task.state.is_terminal() {
-                let _ = task.transition_to(TaskState::Canceled, now);
+            let non_terminal = s
+                .tasks
+                .get(&p.task_id)
+                .map(|t| !t.state.is_terminal())
+                .unwrap_or(false);
+            if non_terminal {
+                if let Err((c, m)) = s.task_cancel(&p.task_id) {
+                    return (Response::err(&req.id, &c, m), ConnEffect::default());
+                }
             }
-            task.disposition = Disposition {
-                outcome: signaltty_core::model::DispositionOutcome::Discarded,
-                target_ref: None,
-                merged_sha: None,
-                branch_deleted: Some(should_delete_branch),
-                at: Some(now),
-            };
-            task.updated_at = now;
-            let task_clone = task.clone();
-            let _ = s.emit(
-                signaltty_proto::event::TASK_UPDATED,
-                json!({ "task": task_clone }),
-            );
-            task_clone
-        };
+        }
 
         // Close worker pane if live
         if let Some(ref pid) = pane_id {
@@ -1122,18 +1146,47 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         }
 
         // Remove worktree (herdr-guarded: see remove_task_worktree).
-        let _cleanup_error = remove_task_worktree(&src_str, &worktree_path);
+        let mut cleanup_error = remove_task_worktree(&src_str, &worktree_path);
 
         // Delete branch if requested and not pre-existing
         if should_delete_branch {
-            let _ = crate::git::git_output(&src_str, &["branch", "-D", "--", &branch]);
+            let b_out = crate::git::git_output(&src_str, &["branch", "-D", "--", &branch]);
+            if let Ok(ref out) = b_out {
+                if !out.status.success() {
+                    cleanup_error = Some(format!(
+                        "branch deletion failed: {}",
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    ));
+                }
+            } else if let Err(ref e) = b_out {
+                cleanup_error = Some(format!("branch deletion error: {e}"));
+            }
         }
 
+        let finish_error = cleanup_error
+            .as_ref()
+            .map(|e| json!({ "cleanup_error": e }));
+        let task_clone = {
+            let mut s = ctx.store.write().unwrap();
+            let disposition = Disposition {
+                outcome: DispositionOutcome::Discarded,
+                target_ref: None,
+                merged_sha: None,
+                branch_deleted: Some(should_delete_branch),
+                at: Some(Utc::now()),
+            };
+            if let Err((c, m)) = s.task_finish_record(&p.task_id, disposition, finish_error) {
+                return (Response::err(&req.id, &c, m), ConnEffect::default());
+            }
+            s.tasks.get(&p.task_id).unwrap().clone()
+        };
+
         ctx.mark_persist();
-        return (
-            Response::ok(&req.id, json!({ "task": task_clone })),
-            ConnEffect::default(),
-        );
+        let mut res = json!({ "task": task_clone });
+        if let Some(err) = cleanup_error {
+            res["cleanup_error"] = json!(err);
+        }
+        return (Response::ok(&req.id, res), ConnEffect::default());
     }
 
     // mode == "merge"
@@ -1296,27 +1349,39 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         );
         if !abort_ok || !matches!(target_clean, Ok(true)) {
             let target_dirty = !matches!(target_clean, Ok(true));
+            let details = json!({
+                "conflicted": conflicted_files,
+                "target_dirty": target_dirty,
+                "abort_ok": abort_ok,
+            });
+            {
+                let mut s = ctx.store.write().unwrap();
+                let _ = s.task_set_finish_error(&p.task_id, Some(details.clone()));
+            }
+            ctx.mark_persist();
             return (
                 Response::err_with_details(
                     &req.id,
                     code::IO_ERROR,
                     "merge conflict abort failed or left the target dirty; target may be mid-merge",
-                    json!({
-                        "conflicted": conflicted_files,
-                        "target_dirty": target_dirty,
-                        "abort_ok": abort_ok,
-                    }),
+                    details,
                 ),
                 ConnEffect::default(),
             );
         }
 
+        let details = json!({ "conflicted": conflicted_files });
+        {
+            let mut s = ctx.store.write().unwrap();
+            let _ = s.task_set_finish_error(&p.task_id, Some(details.clone()));
+        }
+        ctx.mark_persist();
         return (
             Response::err_with_details(
                 &req.id,
                 code::MERGE_CONFLICT,
                 "merge conflict encountered during task.finish",
-                json!({ "conflicted": conflicted_files }),
+                details,
             ),
             ConnEffect::default(),
         );
@@ -1371,46 +1436,116 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         }
     }
 
-    // Update task
-    let mut s = ctx.store.write().unwrap();
-    if let Some(task) = s.tasks.get_mut(&p.task_id) {
-        let now = Utc::now();
-        task.disposition = Disposition {
-            outcome: signaltty_core::model::DispositionOutcome::Merged,
+    let finish_error = cleanup_error
+        .as_ref()
+        .map(|e| json!({ "cleanup_error": e }));
+    let task_clone = {
+        let mut s = ctx.store.write().unwrap();
+        let disposition = Disposition {
+            outcome: DispositionOutcome::Merged,
             target_ref: Some(target.clone()),
             merged_sha: Some(head_sha.clone()),
             branch_deleted: Some(should_delete_branch),
-            at: Some(now),
+            at: Some(Utc::now()),
         };
-        task.updated_at = now;
-        let task_clone = task.clone();
-        let _ = s.emit(
-            signaltty_proto::event::TASK_UPDATED,
-            json!({ "task": task_clone }),
-        );
-        drop(s);
-        ctx.mark_persist();
-
-        let mut res = json!({
-            "task": task_clone,
-            "merge": {
-                "target": target,
-                "sha": head_sha,
-            }
-        });
-        if let Some(err) = cleanup_error {
-            res["cleanup_error"] = json!(err);
+        if let Err((c, m)) = s.task_finish_record(&p.task_id, disposition, finish_error) {
+            return (Response::err(&req.id, &c, m), ConnEffect::default());
         }
+        match s.tasks.get(&p.task_id) {
+            Some(task) => task.clone(),
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        }
+    };
+    ctx.mark_persist();
 
-        (Response::ok(&req.id, res), ConnEffect::default())
-    } else {
-        (
-            Response::err(
-                &req.id,
-                code::NO_SUCH_TASK,
-                format!("no such task '{}'", p.task_id),
-            ),
-            ConnEffect::default(),
-        )
+    let mut res = json!({
+        "task": task_clone,
+        "merge": {
+            "target": target,
+            "sha": head_sha,
+        }
+    });
+    if let Some(err) = cleanup_error {
+        res["cleanup_error"] = json!(err);
     }
+
+    (Response::ok(&req.id, res), ConnEffect::default())
+}
+
+/// Second finish when a disposition is already stored but the recorded
+/// checkout is still on disk: retry removal only, do not merge again.
+fn retry_recorded_cleanup(
+    ctx: &Ctx,
+    req_id: &str,
+    task_id: &str,
+    source_repo: &std::path::Path,
+    worktree_path: &std::path::Path,
+    worker_pane_id: Option<&str>,
+    outcome: DispositionOutcome,
+    target_ref: Option<String>,
+    merged_sha: Option<String>,
+) -> (Response, ConnEffect) {
+    let wt_str = worktree_path.to_string_lossy().to_string();
+    {
+        let s = ctx.store.read().unwrap();
+        for (pid, pane) in &s.panes {
+            if Some(pid.as_str()) != worker_pane_id
+                && matches!(pane.live, LiveState::Live)
+                && pane.cwd.starts_with(&wt_str)
+            {
+                return (
+                    Response::err(
+                        req_id,
+                        code::PANES_ALIVE,
+                        format!("foreign live pane '{pid}' is inside task worktree '{wt_str}'"),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        }
+    }
+
+    let src_str = source_repo.to_string_lossy().to_string();
+    let cleanup_error = remove_task_worktree(&src_str, worktree_path);
+    let finish_error = cleanup_error
+        .as_ref()
+        .map(|e| json!({ "cleanup_error": e }));
+    let task_clone = {
+        let mut s = ctx.store.write().unwrap();
+        if let Err((c, m)) = s.task_set_finish_error(task_id, finish_error) {
+            return (Response::err(req_id, &c, m), ConnEffect::default());
+        }
+        match s.tasks.get(task_id) {
+            Some(task) => task.clone(),
+            None => {
+                return (
+                    Response::err(
+                        req_id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{task_id}'"),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        }
+    };
+    ctx.mark_persist();
+
+    let mut res = json!({ "task": task_clone });
+    if outcome == DispositionOutcome::Merged {
+        res["merge"] = json!({ "target": target_ref, "sha": merged_sha });
+    }
+    if let Some(err) = cleanup_error {
+        res["cleanup_error"] = json!(err);
+    }
+    (Response::ok(req_id, res), ConnEffect::default())
 }

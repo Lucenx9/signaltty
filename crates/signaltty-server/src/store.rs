@@ -722,6 +722,7 @@ impl Store {
         &mut self,
         task_id: &str,
         disposition: Disposition,
+        finish_error: Option<Value>,
     ) -> Result<StoredEvent, (String, String)> {
         let task_clone = {
             let task = self.tasks.get_mut(task_id).ok_or_else(|| {
@@ -737,11 +738,34 @@ impl Store {
                 ));
             }
             task.disposition = disposition;
+            task.finish_error = finish_error;
             task.updated_at = Utc::now();
             task.clone()
         };
         let ev = self.emit_task_updated(&task_clone, None);
         Ok(ev)
+    }
+
+    /// Replace finish evidence and emit `task.updated` with `task_id`.
+    /// `None` clears a previous cleanup or conflict note. Does not change
+    /// disposition, so a recorded finish can retry cleanup.
+    pub fn task_set_finish_error(
+        &mut self,
+        task_id: &str,
+        finish_error: Option<Value>,
+    ) -> Result<StoredEvent, (String, String)> {
+        let task_clone = {
+            let task = self.tasks.get_mut(task_id).ok_or_else(|| {
+                (
+                    code::NO_SUCH_TASK.to_string(),
+                    format!("no such task '{task_id}'"),
+                )
+            })?;
+            task.finish_error = finish_error;
+            task.updated_at = Utc::now();
+            task.clone()
+        };
+        Ok(self.emit_task_updated(&task_clone, None))
     }
 
     pub fn task_input_required_on_turn_end(
@@ -1086,15 +1110,29 @@ mod tests {
             branch_deleted: Some(true),
             at: Some(Utc::now()),
         };
-        let ev = store.task_finish_record(&task_id, disp.clone()).unwrap();
+        let ev = store
+            .task_finish_record(
+                &task_id,
+                disp.clone(),
+                Some(json!({ "cleanup_error": "left in place" })),
+            )
+            .unwrap();
         assert_eq!(ev.name, "task.updated");
+        assert_eq!(ev.payload["task_id"], task_id);
         assert_eq!(
             store.tasks[&task_id].disposition.outcome,
             DispositionOutcome::Merged
         );
+        assert_eq!(
+            store.tasks[&task_id].finish_error.as_ref().unwrap()["cleanup_error"],
+            "left in place"
+        );
 
         // Second finish record refused
-        assert!(store.task_finish_record(&task_id, disp).is_err());
+        assert!(store.task_finish_record(&task_id, disp, None).is_err());
+        // Cleanup evidence can still be replaced so a later finish can retry.
+        store.task_set_finish_error(&task_id, None).unwrap();
+        assert!(store.tasks[&task_id].finish_error.is_none());
     }
 
     #[test]

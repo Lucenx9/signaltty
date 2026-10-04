@@ -32,7 +32,7 @@ Top-level entity in `signaltty-core/src/model.rs`, stored in
 | `result` | optional Result | Structured handoff, set once by report |
 | `disposition` | Disposition | Review outcome metadata (NOT lifecycle — terminal states stay immutable) |
 | `status_reason` | optional | A2A-style failure / interrupt evidence ({stage\|reason,...}, input_required evidence) |
-| `finish_error` | optional | Failed-finish evidence (conflict files, dirt, cleanup error) |
+| `finish_error` | optional | Failed-finish evidence. Conflict files (`conflicted[]`, plus `target_dirty` / `abort_ok` when abort does not leave the target clean) are stored without a disposition so finish can be retried. A cleanup failure is `{cleanup_error}` on a recorded disposition; the next finish retries removal while `worktree_path` still exists and clears this field when removal succeeds. |
 | `worker_pid`, `worker_cmd` | optional | Crash-vs-recycle evidence (workmux `AgentState.pane_pid/command/boot_id`, `src/state/types.rs`) |
 | `created_at`, `updated_at` | timestamps | |
 

@@ -165,7 +165,7 @@ tasks). IDs are opaque `task_…` / `tctx_…` strings.
 | `result?` | structured handoff, set once by report (`status` completed\|failed\|rejected, `summary` 1 … 8 KiB, `artifacts` ≤ 32 `{name, path, version?}`, `evidence?`, `reported_at`) |
 | `disposition` | `{outcome: none\|merged\|discarded, target_ref?, merged_sha?, branch_deleted?, at?}` — review outcome, not lifecycle |
 | `status_reason?` | A2A-style evidence: `{stage, …}` for background/startup failures, `{reason: turn_ended_without_report, last_message?}`, `{reason: worker_silent, timeout_s}`, `{reason: decision_required, decision_id}` |
-| `finish_error?` | reserved field, currently never set — merge conflicts return `MERGE_CONFLICT` without mutating the task, and cleanup problems come back inline as `cleanup_error` |
+| `finish_error?` | conflict files, or `{cleanup_error}` when removal fails after a disposition is recorded. A later finish retries cleanup while the worktree path remains |
 | `worker_pid?`, `worker_cmd?` | crash-vs-recycle evidence |
 | `created_at`, `updated_at` | timestamps |
 

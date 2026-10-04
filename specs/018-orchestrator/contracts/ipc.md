@@ -241,7 +241,14 @@ Merge (`src/workflow/merge.rs` rules, VERIFIED workmux):
   also apply: refuse cleanup while a foreign live pane's cwd is inside
   (`PANES_ALIVE`) or porcelain shows branch mismatch / moved HEAD vs the merge
   result.
-- Records `disposition: merged`. Second finish → `BAD_PARAMS`.
+- Records `disposition: merged` only through the store transition
+  (`task_finish_record`), which re-checks `outcome == none` under the
+  per-path lock and emits `task.updated` with a top-level `task_id`.
+  Cleanup failure and conflict files are stored on `finish_error` (cleanup
+  still returns success with `cleanup_error`; conflicts stay `MERGE_CONFLICT`
+  and do not set a disposition). Second finish → `BAD_PARAMS` once the
+  recorded worktree path is gone. If that path is still present, the second
+  finish retries cleanup only and does not merge again.
 
 Discard:
 
@@ -252,7 +259,9 @@ Discard:
   scoped to the task path, never a default elsewhere).
 - Branch kept unless `delete_branch: true` (still never when pre-existing).
 - Records `disposition: discarded` (+ `canceled` transition when from
-  non-terminal).
+  non-terminal) through the same store transitions, with `task_id` on the
+  event. A failed removal is `finish_error.cleanup_error` and can be
+  retried by a later finish while the path remains.
 
 ### `task.cancel`
 

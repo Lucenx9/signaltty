@@ -117,9 +117,10 @@ What the code does where it diverges from the proposal above — docs
   `pane.submit` activity gate.
 - `pane.spawn` stores an unknown `parent_pane_id` as-is (root unset) rather
   than refusing `NO_SUCH_PANE`.
-- `Task.finish_error` is a reserved field, never set: conflicts return
-  `MERGE_CONFLICT` without mutating the task, and cleanup problems come back
-  inline as `cleanup_error`.
+- `Task.finish_error` stores conflict files (no disposition, so finish can
+  be retried) and `{cleanup_error}` when removal fails after a disposition
+  is recorded. The RPC still returns `cleanup_error` inline. A second finish
+  retries removal while the recorded path exists.
 - Board / PR-CI cycle (Agent Orchestrator's Kanban of derived PR states,
   CI/review auto-paste, GitHub squash finish) is explicitly deferred to a
   follow-up feature (019): this PR merges locally into the recorded target

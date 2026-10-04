@@ -127,6 +127,12 @@ strings never match (the wait runs to timeout). Unlike pane `wait`, the
 task waiter is a polling loop, not a single-flight connection: it does not
 cancel on client disconnect.
 
+`task.finish` records disposition through a store transition that emits
+`task.updated` with a top-level `task_id`. Conflict file names and a cleanup
+failure are stored on `task.finish_error`. A second finish is `BAD_PARAMS`
+once the recorded worktree is gone; while that path still exists the second
+finish retries removal and does not merge again.
+
 `subscribe` accepts an optional `task_ids[]` server-side filter alongside
 `events`/`from_seq`: only events whose payload carries a matching `task_id`
 are delivered (other events still pass the glob match).

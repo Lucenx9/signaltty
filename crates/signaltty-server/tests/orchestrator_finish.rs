@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde_json::json;
 use signaltty_proto::code;
@@ -313,6 +314,23 @@ async fn test_task_finish_merge_conflict_aborts_target_clean_and_names_files() {
     assert!(
         wt_path.exists(),
         "source worktree must be preserved on conflict"
+    );
+
+    // Conflict files are stored on the task so a later status read shows them.
+    // Disposition stays unset so finish can be retried after the conflict is resolved.
+    let get = c
+        .call("task.get", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(get["task"]["disposition"]["outcome"], "none");
+    let conflicted = get["task"]["finish_error"]["conflicted"]
+        .as_array()
+        .expect("finish_error.conflicted must be stored");
+    assert!(
+        conflicted
+            .iter()
+            .any(|f| f.as_str() == Some("conflict.txt")),
+        "finish_error must name conflict.txt, got {conflicted:?}"
     );
 
     srv.shutdown().await;
@@ -703,6 +721,122 @@ async fn test_task_finish_failed_dirt_check_is_io_error_and_merges_nothing() {
         !repo.git(&["branch", "--list", &branch]).stdout.is_empty(),
         "task branch must survive the refused finish"
     );
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_finish_subscriber_sees_task_id() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let repo = TempGitRepo::new();
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Event task id"},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+
+    let mut sub = srv.client().await;
+    sub.call(
+        "subscribe",
+        json!({"events": ["task.updated"], "task_ids": [&task_id]}),
+    )
+    .await
+    .unwrap();
+
+    c.call(
+        "task.finish",
+        json!({"task_id": &task_id, "mode": "discard"}),
+    )
+    .await
+    .unwrap();
+
+    // A task_ids filter keeps an event only when payload.task_id is set.
+    // The finish record is that event; earlier updates (cancel) may precede it.
+    let mut payload = None;
+    for _ in 0..4 {
+        let events = sub.read_events(1, Duration::from_secs(2)).await;
+        if events[0]["payload"]["task"]["disposition"]["outcome"] == "discarded" {
+            payload = Some(events[0]["payload"].clone());
+            break;
+        }
+    }
+    let payload = payload.expect("subscriber dropped the finish event");
+    assert_eq!(
+        payload["task_id"].as_str(),
+        Some(task_id.as_str()),
+        "task.updated must carry a top-level task_id, got {payload}"
+    );
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_second_finish_retries_cleanup_while_worktree_remains() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let repo = TempGitRepo::new();
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Cleanup retry"},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap().to_string();
+    let wt_path = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+
+    std::fs::write(wt_path.join("feature.txt"), "x\n").unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["-C", &wt_path.to_string_lossy(), "add", "feature.txt"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .args(["-C", &wt_path.to_string_lossy(), "commit", "-m", "feature"])
+        .status()
+        .unwrap()
+        .success());
+    c.call(
+        "task.report",
+        json!({"task_id": &task_id, "status": "completed", "summary": "done"}),
+    )
+    .await
+    .unwrap();
+    let first = c
+        .call("task.finish", json!({"task_id": &task_id, "mode": "merge"}))
+        .await
+        .unwrap();
+    assert_eq!(first["task"]["disposition"]["outcome"], "merged");
+    assert!(!wt_path.exists(), "first finish removes the worktree");
+
+    // A recorded disposition with the checkout path still on disk must retry
+    // cleanup instead of refusing the second finish.
+    std::fs::create_dir_all(&wt_path).unwrap();
+    std::fs::write(wt_path.join("leftover.txt"), "still here\n").unwrap();
+    let second = c
+        .call("task.finish", json!({"task_id": &task_id, "mode": "merge"}))
+        .await
+        .unwrap();
+    assert_eq!(second["task"]["disposition"]["outcome"], "merged");
+    assert!(
+        !wt_path.exists(),
+        "second finish must remove the leftover worktree"
+    );
+    assert!(second.get("cleanup_error").is_none());
 
     srv.shutdown().await;
 }
