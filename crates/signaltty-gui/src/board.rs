@@ -265,12 +265,12 @@ pub fn present(
             let list = gtk4::ListBox::new();
             list.set_selection_mode(gtk4::SelectionMode::None);
             list.add_css_class("board-column-list");
+            let mut pane_ids = Vec::new();
 
             for card in col_view.cards {
                 let row = gtk4::ListBoxRow::new();
                 row.add_css_class("board-card");
-                let has_pane = card.pane_id.is_some();
-                row.set_activatable(has_pane);
+                row.set_activatable(card.pane_id.is_some());
                 row.set_selectable(false);
 
                 let card_box = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
@@ -305,33 +305,22 @@ pub fn present(
                 let tooltip = format!("{}: {}\n{}", card.label, card.state_word, subtitle);
                 row.set_tooltip_text(Some(&tooltip));
 
-                if let Some(pane_id) = card.pane_id {
-                    let dlg = dialog.downgrade();
-                    let on_focus = on_focus_pane.clone();
-                    let pid = pane_id.clone();
-
-                    let gesture = gtk4::GestureClick::new();
-                    let dlg_click = dlg.clone();
-                    let on_focus_click = on_focus.clone();
-                    let pid_click = pid.clone();
-                    gesture.connect_released(move |_, _, _, _| {
-                        if let Some(d) = dlg_click.upgrade() {
-                            d.close();
-                        }
-                        on_focus_click(&pid_click);
-                    });
-                    row.add_controller(gesture);
-
-                    row.connect_activate(move |_| {
-                        if let Some(d) = dlg.upgrade() {
-                            d.close();
-                        }
-                        on_focus(&pid);
-                    });
-                }
-
+                pane_ids.push(card.pane_id);
                 list.append(&row);
             }
+
+            // Mouse and keyboard both land in `row-activated`.
+            let dlg = dialog.downgrade();
+            let on_focus = on_focus_pane.clone();
+            list.connect_row_activated(move |_, row| {
+                let Some(Some(pane_id)) = pane_ids.get(row.index() as usize) else {
+                    return;
+                };
+                if let Some(d) = dlg.upgrade() {
+                    d.close();
+                }
+                on_focus(pane_id);
+            });
 
             scroll.set_child(Some(&list));
             col_box.append(&scroll);
