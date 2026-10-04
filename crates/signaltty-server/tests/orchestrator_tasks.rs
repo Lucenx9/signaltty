@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Value};
 use signaltty_core::model::{
     Contract, Disposition, DispositionOutcome, Relationship, Task, TaskResult, TaskResultStatus,
 };
@@ -2136,6 +2136,56 @@ async fn discard_reaps_the_worker_process_group() {
             .unwrap_or_default()
             .contains(") Z ");
     assert!(!alive, "worker child {child} survived discard");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn parked_submit_whose_turn_ends_reports_turn_end() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "stall then end the turn"},
+                "agent": "codex",
+                "argv": ["sleep", "60"],
+                "stall_timeout_s": 1,
+                "submit_delay_ms": 50,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap().to_string();
+    let wt = PathBuf::from(start["task"]["worktree_path"].as_str().unwrap());
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt).await.unwrap();
+    c.call(
+        "task.wait",
+        json!({"task_id": task_id, "until": "input_required", "timeout_s": 5}),
+    )
+    .await
+    .unwrap();
+
+    driver.stop(&mut c).await.unwrap();
+    let mut reason = Value::Null;
+    for _ in 0..50 {
+        let got = c
+            .call("task.get", json!({"task_id": task_id}))
+            .await
+            .unwrap();
+        reason = got["task"]["status_reason"]["reason"].clone();
+        if reason == "turn_ended_without_report" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(reason, "turn_ended_without_report");
 
     srv.shutdown().await;
 }

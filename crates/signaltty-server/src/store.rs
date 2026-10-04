@@ -442,8 +442,9 @@ impl Store {
             progress.transitions.insert(next.as_str(), ev.seq);
         }
         // A worker that starts after its submit went unconfirmed (late Enter,
-        // slow hooks) took the prompt after all: back to working.
-        if next == Lifecycle::Working {
+        // slow hooks) took the prompt after all: back to working. A turn that
+        // already ended refreshes the evidence to turn_ended_without_report.
+        if matches!(next, Lifecycle::Working | Lifecycle::Done) {
             let unconfirmed = self
                 .tasks
                 .values()

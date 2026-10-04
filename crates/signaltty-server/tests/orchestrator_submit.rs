@@ -388,7 +388,7 @@ async fn submit_activity_gate_timeout() {
 }
 
 #[tokio::test]
-async fn submit_retries_enter_once_when_the_first_is_dropped() {
+async fn submit_retries_enter_once_when_no_activity_follows() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;
     let mut c = srv.client().await;

@@ -1662,16 +1662,18 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         // No conflicted paths: git refused for another reason (a hook,
         // unrelated histories). Say why instead of claiming a conflict.
         if conflicted_files.is_empty() {
+            let message = format!(
+                "git merge failed: {}",
+                String::from_utf8_lossy(&merge_out.stderr).trim()
+            );
+            let details = json!({ "abort_ok": abort_ok, "target_dirty": false, "error": message });
+            {
+                let mut s = ctx.store.write().unwrap();
+                let _ = s.task_set_finish_error(&p.task_id, Some(details.clone()));
+            }
+            ctx.mark_persist();
             return (
-                Response::err_with_details(
-                    &req.id,
-                    code::IO_ERROR,
-                    format!(
-                        "git merge failed: {}",
-                        String::from_utf8_lossy(&merge_out.stderr).trim()
-                    ),
-                    json!({ "abort_ok": abort_ok, "target_dirty": false }),
-                ),
+                Response::err_with_details(&req.id, code::IO_ERROR, message, details),
                 ConnEffect::default(),
             );
         }

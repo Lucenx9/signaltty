@@ -327,7 +327,16 @@ pub async fn submit_prompt(
             }
             _ = tokio::time::sleep_until(enter_retry), if !enter_retried => {
                 enter_retried = true;
-                let _ = ctx.ptys.input(pane_id, b"\r");
+                // Only into an untouched input box: never while a decision
+                // or permission prompt could take the Enter as a yes.
+                let untouched = ctx.store.read().unwrap().panes.get(pane_id).is_some_and(|p| {
+                    matches!(p.lifecycle, Lifecycle::Idle | Lifecycle::Done)
+                        && p.pending_decision.is_none()
+                        && p.attention != Attention::PermissionRequired
+                });
+                if untouched {
+                    let _ = ctx.ptys.input(pane_id, b"\r");
+                }
             }
             _ = tick.tick() => {}
             event = rx.recv() => {
