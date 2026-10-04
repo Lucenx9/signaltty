@@ -59,7 +59,29 @@ async fn spawn_echo_and_read() {
     let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
     assert_eq!(p["pane"]["live"]["state"], "exited");
     assert_eq!(p["pane"]["live"]["code"], 0);
-    assert_eq!(p["pane"]["lifecycle"], "exited");
+    // Generic one-shot exit 0 maps to done so wait --until done can observe it.
+    assert_eq!(p["pane"]["lifecycle"], "done");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn wait_until_done_observes_fast_one_shot_exit() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sh", "-c", "exit 0"]).await;
+    let w = c
+        .call(
+            "wait",
+            json!({"pane_id": pane, "until": "done", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(w["satisfied"], true);
+    assert_eq!(w["outcome"], "done");
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(p["pane"]["live"]["state"], "exited");
+    assert_eq!(p["pane"]["live"]["code"], 0);
+    assert_eq!(p["pane"]["lifecycle"], "done");
     srv.shutdown().await;
 }
 
