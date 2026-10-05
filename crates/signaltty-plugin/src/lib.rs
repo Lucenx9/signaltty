@@ -328,22 +328,22 @@ impl PluginRegistry {
     /// Fire matching hooks for an event. Never blocks the caller long:
     /// each hook runs in its own task under a concurrency cap.
     pub async fn dispatch(&self, name: &str, envelope: &serde_json::Value, socket: &Path) {
-        let targets: Vec<(usize, usize, LoadedPlugin, Hook)> = {
+        let targets: Vec<(LoadedPlugin, Hook)> = {
             let s = self.inner.state.lock().unwrap();
             let mut out = Vec::new();
-            for (pi, p) in s.plugins.iter().enumerate() {
-                for (hi, h) in p.manifest.hook.iter().enumerate() {
+            for p in s.plugins.iter() {
+                for h in p.manifest.hook.iter() {
                     if h.events
                         .iter()
                         .any(|g| signaltty_proto::glob_matches(g, name))
                     {
-                        out.push((pi, hi, p.clone(), h.clone()));
+                        out.push((p.clone(), h.clone()));
                     }
                 }
             }
             out
         };
-        for (pi, hi, plugin, hook) in targets {
+        for (plugin, hook) in targets {
             let this = self.clone();
             let envelope = envelope.clone();
             let socket = socket.to_path_buf();
@@ -353,13 +353,29 @@ impl PluginRegistry {
                 let err = run_hook(&plugin, &hook, &name, &envelope, &socket)
                     .await
                     .err();
+                // Look up by plugin name + hook identity. Reload replaces the
+                // plugins vec (and resets stats); positional indices would
+                // attribute this run to a different package after reorder.
                 let mut s = this.inner.state.lock().unwrap();
-                if let Some(st) = s.plugins.get_mut(pi).and_then(|p| p.stats.get_mut(hi)) {
-                    st.runs += 1;
-                    st.last_run = Some(Utc::now());
-                    if let Some(e) = err {
-                        st.errors += 1;
-                        st.last_error = Some(e);
+                let plugin_name = plugin.manifest.plugin.name.as_str();
+                if let Some(p) = s
+                    .plugins
+                    .iter_mut()
+                    .find(|p| p.manifest.plugin.name == plugin_name)
+                {
+                    if let Some(st) = p
+                        .manifest
+                        .hook
+                        .iter()
+                        .position(|h| h.events == hook.events && h.command == hook.command)
+                        .and_then(|hi| p.stats.get_mut(hi))
+                    {
+                        st.runs += 1;
+                        st.last_run = Some(Utc::now());
+                        if let Some(e) = err {
+                            st.errors += 1;
+                            st.last_error = Some(e);
+                        }
                     }
                 }
             });
@@ -626,5 +642,75 @@ run = ["./fanout.sh"]
         .await
         .unwrap_err();
         assert!(err.contains("boom"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn reload_does_not_attribute_in_flight_stats_by_index() {
+        let base = std::env::temp_dir().join(format!(
+            "plug-reload-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let alpha = base.join("alpha");
+        let bravo = base.join("bravo");
+        std::fs::create_dir_all(&alpha).unwrap();
+        std::fs::create_dir_all(&bravo).unwrap();
+        std::fs::write(
+            alpha.join(MANIFEST_FILE),
+            r#"[plugin]
+name = "alpha"
+version = "0.1.0"
+[[hook]]
+events = ["agent.done"]
+command = ["sh", "-c", "sleep 0.4; exit 0"]
+timeout_secs = 5
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            bravo.join(MANIFEST_FILE),
+            r#"[plugin]
+name = "bravo"
+version = "0.1.0"
+[[hook]]
+events = ["other.event"]
+command = ["true"]
+timeout_secs = 5
+"#,
+        )
+        .unwrap();
+
+        let registry = PluginRegistry::load(base.clone());
+        let status = registry.status();
+        assert_eq!(status["plugins"][0]["name"], "alpha");
+        assert_eq!(status["plugins"][1]["name"], "bravo");
+
+        registry
+            .dispatch(
+                "agent.done",
+                &serde_json::json!({"protocol": "signaltty/1"}),
+                Path::new("/nonexistent.sock"),
+            )
+            .await;
+
+        // Remove alpha so reload puts bravo at index 0. An index-based
+        // stats write from the in-flight alpha hook would land on bravo.
+        std::fs::remove_dir_all(&alpha).unwrap();
+        registry.reload();
+        let after = registry.status();
+        assert_eq!(after["plugins"].as_array().unwrap().len(), 1);
+        assert_eq!(after["plugins"][0]["name"], "bravo");
+        assert_eq!(after["plugins"][0]["hooks"][0]["runs"], 0);
+
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        let final_status = registry.status();
+        assert_eq!(
+            final_status["plugins"][0]["hooks"][0]["runs"], 0,
+            "in-flight alpha hook must not credit bravo after reload"
+        );
+        assert_eq!(final_status["plugins"][0]["name"], "bravo");
+        std::fs::remove_dir_all(&base).ok();
     }
 }
