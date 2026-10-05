@@ -3,18 +3,25 @@
 //! updated in place — refreshes never rebuild them, so selection,
 //! scroll position and status transitions survive every server event.
 //!
-//! Row anatomy (t3code-style, fixed three lines, no leading column —
-//! the mark sits inline before the name, like t3code's project badge):
+//! Root row anatomy (t3code-style, three lines, mark sits inline before name):
 //!
 //! ```text
-//!  [AS] api-server            ◌ Working     mark · name · status slot
+//!  [AS] api-server            ◴ Working     mark · name · status slot
 //!  [Task Working] Bash…                     task chips, then headline
-//!  feat/auth                     Claude     branch/dir · agents
+//!  ▾ 2 tasks  feat/auth       Claude        disclosure · branch/dir · agents
+//! ```
+//!
+//! Child row anatomy (two compact lines, ~20px indent, mark & 3rd line hidden):
+//!
+//! ```text
+//!       api-server-worker     ◴ Working     name · status slot
+//!       [Task Working] Tests…               task chips, then headline
 //! ```
 //!
 //! Close has a separate trailing target, revealed on hover or keyboard
-//! focus without hiding urgency. When rows
-//! need you, they sit under a "Needs you" label with a hairline below.
+//! focus without hiding urgency. Right-clicking or pressing Menu / Shift+F10
+//! displays a context menu. When rows (or any child in a group) need you,
+//! they sit under a "Needs you" label with a hairline below.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,12 +35,19 @@ use crate::status::{self, StatusSlot};
 use crate::task_chip::{TaskChipView, TaskChipWidget};
 use crate::util::{tilde, time_ago};
 
+#[derive(Clone)]
 pub struct WsSummary {
     pub id: String,
     pub name: String,
     /// Shown as `name · handle` only when sibling workspaces share the
     /// name (handles are unique by construction); `None` keeps rows quiet.
     pub disambiguator: Option<String>,
+    /// Parent workspace id when this workspace is a task workspace nested
+    /// under another workspace.
+    pub parent: Option<String>,
+    /// Set during sorting: true if this workspace or any member of its
+    /// group needs human attention.
+    pub group_needs_you: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub lifecycle: Lifecycle,
     pub attention: Attention,
@@ -78,6 +92,8 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
         id: ws.id.clone(),
         name: ws.name.clone(),
         disambiguator: None,
+        parent: None,
+        group_needs_you: needs_you(attention),
         created_at: ws.created_at,
         lifecycle,
         attention,
@@ -113,23 +129,142 @@ impl WsSummary {
     }
 }
 
-/// Priority order for the sidebar (docs/14 §1): attention severity,
-/// then lifecycle rank (blocked → done → working → idle), then workspace
-/// age (newer first), then name. Deliberately NOT last-activity: activity
-/// timestamps change on every agent event, so a recency tiebreak reorders
-/// rows under the pointer constantly — clicks land on the wrong row and
-/// the top row never looks settled (spec 001 amendment, 2026-09-29).
-/// Fresh output still floats via `unread` severity; recency remains
-/// visible as the relative time in the status slot.
+/// Priority order for the sidebar (docs/14 §1): groups of root workspaces
+/// and their child task workspaces. Groups sort by worst attention severity,
+/// then best lifecycle rank (blocked → failed → done → working → idle),
+/// then root workspace age (newer first), then root name.
+/// Deliberately NOT last-activity: activity timestamps change on every agent event,
+/// so a recency tiebreak reorders rows under the pointer constantly — clicks
+/// land on the wrong row and the top row never looks settled (spec 001 amendment, 2026-09-29).
+/// Fresh output still floats via `unread` severity; recency remains visible
+/// as the relative time in the status slot.
+///
+/// Hierarchy rules:
+/// - Tasks with parent panes define child workspaces.
+/// - Parent chains flatten to ONE level (root workspace).
+/// - Cycles terminate and orphan children become roots.
+/// - If any member of a group needs you, the whole group carries `group_needs_you`.
+/// - Children follow their root immediately, sorted among themselves by the same key.
 pub fn sort_summaries(items: &mut [WsSummary]) {
-    items.sort_by(|a, b| {
+    if items.is_empty() {
+        return;
+    }
+
+    // 1. Flatten parent chains to ONE level (root), terminating cycles and
+    // demoting orphans whose parent is not present in `items` to roots.
+    let known_ids: std::collections::HashSet<String> = items.iter().map(|s| s.id.clone()).collect();
+    let parent_map: std::collections::HashMap<String, String> = items
+        .iter()
+        .filter_map(|s| s.parent.as_ref().map(|p| (s.id.clone(), p.clone())))
+        .collect();
+
+    for item in items.iter_mut() {
+        if let Some(initial_parent) = &item.parent {
+            let mut curr = initial_parent.clone();
+            let mut visited = std::collections::HashSet::new();
+            visited.insert(item.id.clone());
+            let mut root = None;
+
+            while visited.insert(curr.clone()) {
+                if !known_ids.contains(&curr) {
+                    break;
+                }
+                if let Some(next_parent) = parent_map.get(&curr) {
+                    curr = next_parent.clone();
+                } else {
+                    root = Some(curr);
+                    break;
+                }
+            }
+            item.parent = root;
+        }
+    }
+
+    // 2. Separate roots and index children by root ID.
+    let mut roots: Vec<WsSummary> = Vec::new();
+    let mut children_by_root: std::collections::HashMap<String, Vec<WsSummary>> =
+        std::collections::HashMap::new();
+
+    for item in items.iter() {
+        if let Some(root_id) = &item.parent {
+            children_by_root
+                .entry(root_id.clone())
+                .or_default()
+                .push(item.clone());
+        } else {
+            roots.push(item.clone());
+        }
+    }
+
+    // Sorting comparator for individual items (children or standalone roots).
+    let item_cmp = |a: &WsSummary, b: &WsSummary| {
         b.attention
             .severity()
             .cmp(&a.attention.severity())
             .then(b.lifecycle.sidebar_rank().cmp(&a.lifecycle.sidebar_rank()))
             .then(b.created_at.cmp(&a.created_at))
             .then(a.name.cmp(&b.name))
+    };
+
+    for children in children_by_root.values_mut() {
+        children.sort_by(item_cmp);
+    }
+
+    // 3. Assemble and rank groups.
+    struct Group {
+        root: WsSummary,
+        children: Vec<WsSummary>,
+        worst_attention_severity: u8,
+        best_lifecycle_rank: u8,
+        group_needs_you: bool,
+    }
+
+    let mut groups: Vec<Group> = roots
+        .into_iter()
+        .map(|root| {
+            let children = children_by_root.remove(&root.id).unwrap_or_default();
+            let mut worst_severity = root.attention.severity();
+            let mut best_rank = root.lifecycle.sidebar_rank();
+            let mut any_needs_you = needs_you(root.attention);
+
+            for c in &children {
+                worst_severity = worst_severity.max(c.attention.severity());
+                best_rank = best_rank.max(c.lifecycle.sidebar_rank());
+                if needs_you(c.attention) {
+                    any_needs_you = true;
+                }
+            }
+
+            Group {
+                root,
+                children,
+                worst_attention_severity: worst_severity,
+                best_lifecycle_rank: best_rank,
+                group_needs_you: any_needs_you,
+            }
+        })
+        .collect();
+
+    groups.sort_by(|a, b| {
+        b.worst_attention_severity
+            .cmp(&a.worst_attention_severity)
+            .then(b.best_lifecycle_rank.cmp(&a.best_lifecycle_rank))
+            .then(b.root.created_at.cmp(&a.root.created_at))
+            .then(a.root.name.cmp(&b.root.name))
     });
+
+    // 4. Flatten back into the slice with group_needs_you updated on each item.
+    let mut result = Vec::with_capacity(items.len());
+    for mut group in groups {
+        group.root.group_needs_you = group.group_needs_you;
+        result.push(group.root);
+        for mut child in group.children {
+            child.group_needs_you = group.group_needs_you;
+            result.push(child);
+        }
+    }
+
+    items.clone_from_slice(&result);
 }
 
 /// Rows the human must act on (warning and up). Sorting puts them
@@ -212,6 +347,7 @@ pub fn agent_name(kind: AgentKind) -> Option<&'static str> {
 
 struct Row {
     id: String,
+    parent: Option<String>,
     row: gtk4::ListBoxRow,
     mark: gtk4::Label,
     name: gtk4::Label,
@@ -219,16 +355,35 @@ struct Row {
     message: gtk4::Label,
     place: gtk4::Label,
     agents: gtk4::Label,
+    metadata: gtk4::Box,
+    disclosure: gtk4::Button,
     close: gtk4::Button,
+    popover: gtk4::PopoverMenu,
     tasks: gtk4::Box,
     chips: Vec<TaskChipWidget>,
     chip_summary: String,
     /// Kept so the 30s tick can re-render time-derived text.
     summary: Option<WsSummary>,
+    child_count: usize,
+    child_needs_count: usize,
+    is_collapsed: bool,
+}
+
+impl Drop for Row {
+    fn drop(&mut self) {
+        if self.popover.parent().is_some() {
+            self.popover.unparent();
+        }
+    }
 }
 
 impl Row {
-    fn new(id: &str, on_close: &CloseCallback) -> Row {
+    fn new(
+        id: &str,
+        list: &gtk4::ListBox,
+        on_close: &CloseCallback,
+        on_toggle: &ToggleCallback,
+    ) -> Row {
         let label = |classes: &[&str]| {
             let l = gtk4::Label::new(None);
             l.set_xalign(0.0);
@@ -266,6 +421,20 @@ impl Row {
                 cb(close_id.clone());
             }
         });
+
+        let disclosure = gtk4::Button::new();
+        disclosure.add_css_class("flat");
+        disclosure.add_css_class("workspace-disclosure");
+        disclosure.set_valign(gtk4::Align::Center);
+        disclosure.set_visible(false);
+        let toggle_id = id.to_string();
+        let on_toggle = Rc::clone(on_toggle);
+        disclosure.connect_clicked(move |_| {
+            if let Some(cb) = on_toggle.borrow().as_ref() {
+                cb(toggle_id.clone());
+            }
+        });
+
         let grid = gtk4::Grid::new();
         grid.set_column_spacing(8);
         grid.set_row_spacing(4);
@@ -281,6 +450,7 @@ impl Row {
         activity.append(&message);
         grid.attach(&activity, 0, 1, 3, 1);
         let metadata = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        metadata.append(&disclosure);
         metadata.append(&place);
         metadata.append(&agents);
         grid.attach(&metadata, 0, 2, 3, 1);
@@ -288,8 +458,55 @@ impl Row {
         let row = gtk4::ListBoxRow::new();
         row.set_widget_name(id);
         row.set_child(Some(&grid));
+
+        let popover = gtk4::PopoverMenu::from_model(Some(&crate::actions::sidebar_menu()));
+        popover.set_parent(&row);
+        // Anchored at the pointer, like any context menu: no arrow.
+        popover.set_has_arrow(false);
+
+        // Secondary click (button 3) context menu
+        let click_gesture = gtk4::GestureClick::new();
+        click_gesture.set_button(3);
+        let list_weak = list.downgrade();
+        let popover_click = popover.clone();
+        let row_click = row.clone();
+        click_gesture.connect_pressed(move |g, _n_press, x, y| {
+            g.set_state(gtk4::EventSequenceState::Claimed);
+            // Selecting activates the workspace (`on_select`), so every
+            // `win.*` item acts on this row.
+            if let Some(list) = list_weak.upgrade() {
+                list.select_row(Some(&row_click));
+            }
+            let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+            popover_click.set_pointing_to(Some(&rect));
+            popover_click.popup();
+        });
+        row.add_controller(click_gesture);
+
+        // Keyboard context menu: Menu key or Shift+F10
+        let key_controller = gtk4::EventControllerKey::new();
+        let list_weak = list.downgrade();
+        let popover_key = popover.clone();
+        let row_key = row.clone();
+        key_controller.connect_key_pressed(move |_, keyval, _keycode, state| {
+            let is_menu = keyval == gtk4::gdk::Key::Menu;
+            let is_shift_f10 = keyval == gtk4::gdk::Key::F10
+                && state.contains(gtk4::gdk::ModifierType::SHIFT_MASK);
+            if is_menu || is_shift_f10 {
+                if let Some(list) = list_weak.upgrade() {
+                    list.select_row(Some(&row_key));
+                }
+                popover_key.set_pointing_to(None);
+                popover_key.popup();
+                return gtk4::glib::Propagation::Stop;
+            }
+            gtk4::glib::Propagation::Proceed
+        });
+        row.add_controller(key_controller);
+
         Row {
             id: id.to_string(),
+            parent: None,
             row,
             mark,
             name,
@@ -297,11 +514,17 @@ impl Row {
             message,
             place,
             agents,
+            metadata,
+            disclosure,
             close,
+            popover,
             tasks,
             chips: Vec::new(),
             chip_summary: String::new(),
             summary: None,
+            child_count: 0,
+            child_needs_count: 0,
+            is_collapsed: false,
         }
     }
 
@@ -326,7 +549,8 @@ impl Row {
     }
 
     fn update(&mut self, s: WsSummary) {
-        if needs_you(s.attention) {
+        self.parent = s.parent.clone();
+        if s.group_needs_you {
             self.row.add_css_class(NEEDS_YOU);
         } else {
             self.row.remove_css_class(NEEDS_YOU);
@@ -352,6 +576,77 @@ impl Row {
             ))]);
         self.summary = Some(s);
         self.refresh_time();
+    }
+
+    fn set_child_mode(&mut self, is_child: bool) {
+        if is_child {
+            self.row.add_css_class("workspace-child");
+            self.mark.set_visible(false);
+            self.metadata.set_visible(false);
+            if let Some(s) = &self.summary {
+                let meta_tip = match (s.place.is_empty(), s.agents.is_empty()) {
+                    (false, false) => format!("{} · {}", s.place, s.agents),
+                    (false, true) => s.place.clone(),
+                    (true, false) => s.agents.clone(),
+                    (true, true) => String::new(),
+                };
+                self.row.set_tooltip_text(if meta_tip.is_empty() {
+                    None
+                } else {
+                    Some(&meta_tip)
+                });
+            }
+        } else {
+            self.row.remove_css_class("workspace-child");
+            self.mark.set_visible(true);
+            self.metadata.set_visible(true);
+            self.row.set_tooltip_text(None);
+        }
+    }
+
+    fn update_disclosure(&mut self, count: usize, needs_count: usize, is_collapsed: bool) {
+        self.child_count = count;
+        self.child_needs_count = needs_count;
+        self.is_collapsed = is_collapsed;
+        self.render_disclosure();
+    }
+
+    fn set_collapsed(&mut self, is_collapsed: bool) {
+        self.is_collapsed = is_collapsed;
+        self.render_disclosure();
+    }
+
+    fn render_disclosure(&self) {
+        if self.child_count == 0 {
+            self.disclosure.set_visible(false);
+            return;
+        }
+        self.disclosure.set_visible(true);
+        let arrow = if self.is_collapsed { "▸" } else { "▾" };
+        let task_str = if self.child_count == 1 {
+            "1 task"
+        } else {
+            &format!("{} tasks", self.child_count)
+        };
+        let label = if self.child_needs_count > 0 {
+            let needs_str = if self.child_needs_count == 1 {
+                "1 needs you"
+            } else {
+                &format!("{} need you", self.child_needs_count)
+            };
+            format!("{arrow} {task_str} · {needs_str}")
+        } else {
+            format!("{arrow} {task_str}")
+        };
+        self.disclosure.set_label(&label);
+        let action_str = if self.is_collapsed {
+            "Expand"
+        } else {
+            "Collapse"
+        };
+        let acc_label = format!("{action_str} {task_str}");
+        self.disclosure
+            .update_property(&[gtk4::accessible::Property::Label(&acc_label)]);
     }
 
     fn refresh_time(&self) {
@@ -422,13 +717,16 @@ fn apply_section_header(row: &gtk4::ListBoxRow, above: Option<&gtk4::ListBoxRow>
 
 type SelectCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
 type CloseCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
+type ToggleCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
 
 pub struct Sidebar {
     pub widget: gtk4::ScrolledWindow,
     list: gtk4::ListBox,
-    rows: RefCell<Vec<Row>>,
+    rows: Rc<RefCell<Vec<Row>>>,
+    collapsed_roots: Rc<RefCell<std::collections::HashSet<String>>>,
     on_select: SelectCallback,
     on_close: CloseCallback,
+    on_toggle: ToggleCallback,
 }
 
 impl Sidebar {
@@ -439,6 +737,10 @@ impl Sidebar {
         list.set_header_func(apply_section_header);
         let on_select: SelectCallback = Rc::new(RefCell::new(None));
         let on_close: CloseCallback = Rc::new(RefCell::new(None));
+        let on_toggle: ToggleCallback = Rc::new(RefCell::new(None));
+        let rows: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
+        let collapsed_roots: Rc<RefCell<std::collections::HashSet<String>>> =
+            Rc::new(RefCell::new(std::collections::HashSet::new()));
         {
             let on_select = Rc::clone(&on_select);
             list.connect_row_selected(move |_, row| {
@@ -447,6 +749,34 @@ impl Sidebar {
                 }
             });
         }
+        {
+            let rows = Rc::clone(&rows);
+            let collapsed_roots = Rc::clone(&collapsed_roots);
+            let list_weak = list.downgrade();
+            *on_toggle.borrow_mut() = Some(Box::new(move |root_id: String| {
+                let is_collapsed = {
+                    let mut collapsed = collapsed_roots.borrow_mut();
+                    if collapsed.contains(&root_id) {
+                        collapsed.remove(&root_id);
+                        false
+                    } else {
+                        collapsed.insert(root_id.clone());
+                        true
+                    }
+                };
+                for r in rows.borrow_mut().iter_mut() {
+                    if r.parent.as_deref() == Some(&root_id) {
+                        r.row.set_visible(!is_collapsed);
+                    }
+                    if r.id == root_id {
+                        r.set_collapsed(is_collapsed);
+                    }
+                }
+                if let Some(list) = list_weak.upgrade() {
+                    list.invalidate_headers();
+                }
+            }));
+        }
         let widget = gtk4::ScrolledWindow::new();
         widget.set_child(Some(&list));
         widget.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
@@ -454,9 +784,11 @@ impl Sidebar {
         Sidebar {
             widget,
             list,
-            rows: RefCell::new(Vec::new()),
+            rows,
+            collapsed_roots,
             on_select,
             on_close,
+            on_toggle,
         }
     }
 
@@ -486,25 +818,60 @@ impl Sidebar {
             }
             keep
         });
-        for (i, item) in items.into_iter().enumerate() {
+        for (i, item) in items.iter().enumerate() {
             match rows.iter().position(|r| r.id == item.id) {
-                Some(pos) if pos == i => rows[i].update(item),
+                Some(pos) if pos == i => rows[i].update(item.clone()),
                 Some(pos) => {
                     let mut row = rows.remove(pos);
                     self.list.remove(&row.row);
                     self.list.insert(&row.row, i as i32);
-                    row.update(item);
+                    row.update(item.clone());
                     rows.insert(i, row);
                 }
                 None => {
-                    let mut row = Row::new(&item.id, &self.on_close);
-                    row.update(item);
+                    let mut row = Row::new(&item.id, &self.list, &self.on_close, &self.on_toggle);
+                    row.update(item.clone());
                     self.list.insert(&row.row, i as i32);
                     rows.insert(i, row);
                 }
             }
         }
+
+        let mut child_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut child_needs_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for item in &items {
+            if let Some(parent_id) = &item.parent {
+                *child_counts.entry(parent_id.clone()).or_default() += 1;
+                if needs_you(item.attention) {
+                    *child_needs_counts.entry(parent_id.clone()).or_default() += 1;
+                }
+            }
+        }
+
+        self.collapsed_roots
+            .borrow_mut()
+            .retain(|id| child_counts.contains_key(id));
+
+        let collapsed = self.collapsed_roots.borrow();
+        for row in rows.iter_mut() {
+            let is_child = row.parent.is_some();
+            row.set_child_mode(is_child);
+            if let Some(parent_id) = &row.parent {
+                let is_hidden = collapsed.contains(parent_id);
+                row.row.set_visible(!is_hidden);
+            } else {
+                row.row.set_visible(true);
+                let count = child_counts.get(&row.id).copied().unwrap_or(0);
+                let needs = child_needs_counts.get(&row.id).copied().unwrap_or(0);
+                let is_collapsed = collapsed.contains(&row.id);
+                row.update_disclosure(count, needs, is_collapsed);
+            }
+        }
+        drop(collapsed);
         drop(rows);
+
         if let Some(id) = selected {
             if self.rows.borrow().iter().any(|r| r.id == id) {
                 self.select(&id);
@@ -534,9 +901,24 @@ impl Sidebar {
     }
 
     pub fn select(&self, ws_id: &str) {
-        if let Some(r) = self.rows.borrow().iter().find(|r| r.id == ws_id) {
-            if !r.row.is_selected() {
-                self.list.select_row(Some(&r.row));
+        let mut rows = self.rows.borrow_mut();
+        if let Some(pos) = rows.iter().position(|r| r.id == ws_id) {
+            if let Some(parent_id) = rows[pos].parent.clone() {
+                if self.collapsed_roots.borrow().contains(&parent_id) {
+                    self.collapsed_roots.borrow_mut().remove(&parent_id);
+                    for r in rows.iter_mut() {
+                        if r.parent.as_deref() == Some(&parent_id) {
+                            r.row.set_visible(true);
+                        }
+                        if r.id == parent_id {
+                            r.set_collapsed(false);
+                        }
+                    }
+                    self.list.invalidate_headers();
+                }
+            }
+            if !rows[pos].row.is_selected() {
+                self.list.select_row(Some(&rows[pos].row));
             }
         }
     }
@@ -558,6 +940,8 @@ mod tests {
             id: name.to_string(),
             name: name.to_string(),
             disambiguator: None,
+            parent: None,
+            group_needs_you: false,
             created_at: Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
             lifecycle,
             attention,
@@ -671,6 +1055,88 @@ mod tests {
             ["b", "a"],
             "activity churn must not reorder"
         );
+    }
+
+    #[test]
+    fn children_follow_their_root() {
+        let mut r1 = summary("root1", Lifecycle::Idle, Attention::None, Some(0));
+        r1.created_at = Utc.with_ymd_and_hms(2026, 9, 28, 10, 0, 0).unwrap();
+        let mut c1_1 = summary("child1-1", Lifecycle::Working, Attention::None, Some(0));
+        c1_1.parent = Some("root1".into());
+        let mut c1_2 = summary("child1-2", Lifecycle::Done, Attention::None, Some(0));
+        c1_2.parent = Some("root1".into());
+
+        let mut r2 = summary("root2", Lifecycle::Idle, Attention::None, Some(0));
+        r2.created_at = Utc.with_ymd_and_hms(2026, 9, 28, 11, 0, 0).unwrap();
+
+        // Without grouping, r2 would sort before r1 (newer created_at).
+        // With grouping, root1's best lifecycle rank is Done (rank 3), beating root2's Idle (rank 1).
+        let mut items = vec![r2, r1, c1_2, c1_1];
+        sort_summaries(&mut items);
+        assert_eq!(names(&items), ["root1", "child1-2", "child1-1", "root2"]);
+    }
+
+    #[test]
+    fn root_order_uses_group_severity_floating_calm_root() {
+        let calm_root = summary("calm-root", Lifecycle::Idle, Attention::None, Some(0));
+        let mut needy_child = summary(
+            "needy-child",
+            Lifecycle::Working,
+            Attention::PermissionRequired,
+            Some(0),
+        );
+        needy_child.parent = Some("calm-root".into());
+
+        let other_root = summary("other-root", Lifecycle::Blocked, Attention::None, Some(0));
+
+        let mut items = vec![other_root, calm_root, needy_child];
+        sort_summaries(&mut items);
+        assert_eq!(names(&items), ["calm-root", "needy-child", "other-root"]);
+        assert!(items[0].group_needs_you);
+        assert!(items[1].group_needs_you);
+        assert!(!items[2].group_needs_you);
+    }
+
+    #[test]
+    fn orphan_child_becomes_root() {
+        let mut orphan = summary("orphan", Lifecycle::Idle, Attention::None, Some(0));
+        orphan.parent = Some("missing-parent".into());
+        let normal = summary("normal", Lifecycle::Idle, Attention::None, Some(0));
+
+        let mut items = vec![orphan, normal];
+        sort_summaries(&mut items);
+        assert_eq!(items[0].parent, None);
+        assert_eq!(items[1].parent, None);
+    }
+
+    #[test]
+    fn nested_parent_chain_flattens_to_root() {
+        let root = summary("root", Lifecycle::Idle, Attention::None, Some(0));
+        let mut child = summary("child", Lifecycle::Idle, Attention::None, Some(0));
+        child.parent = Some("root".into());
+        let mut grandchild = summary("grandchild", Lifecycle::Idle, Attention::None, Some(0));
+        grandchild.parent = Some("child".into());
+
+        let mut items = vec![grandchild, child, root];
+        sort_summaries(&mut items);
+        assert_eq!(items[0].name, "root");
+        assert_eq!(items[0].parent, None);
+        assert_eq!(items[1].parent, Some("root".into()));
+        assert_eq!(items[2].parent, Some("root".into()));
+    }
+
+    #[test]
+    fn cycle_terminates() {
+        let mut a = summary("a", Lifecycle::Idle, Attention::None, Some(0));
+        a.parent = Some("b".into());
+        let mut b = summary("b", Lifecycle::Idle, Attention::None, Some(0));
+        b.parent = Some("a".into());
+
+        let mut items = vec![a, b];
+        sort_summaries(&mut items);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].parent, None);
+        assert_eq!(items[1].parent, None);
     }
 
     #[test]

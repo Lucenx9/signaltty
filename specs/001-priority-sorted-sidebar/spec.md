@@ -117,6 +117,37 @@ workspace never looked settled. Root causes:
    remove+insert moves and the refresh path only re-selects when the
    active workspace is in the changed set.
 
+## Amendment 2026-10-05: nested task workspaces + context menu
+
+Orchestrator tasks create independent task workspaces named after the
+task label. In a flat list, task workspaces mix with user workspaces
+chaotically.
+
+1. **Hierarchy & Flattening**: Tasks in `model.tasks` with both a
+   `pane_id` and `parent_pane_id` define a child-to-parent workspace
+   relationship. Nested parent chains flatten to ONE level (root workspace).
+   Orphan children whose parent is absent from the sidebar, or cyclic
+   relationships, gracefully fall back to ordinary root workspaces.
+2. **Group-Aware Priority Ordering**: Groups (root + its child task
+   workspaces) sort by the group's worst attention severity and best
+   lifecycle rank, with root `created_at` and `name` as tiebreaks. Each
+   root is immediately followed by its children, sorted among themselves
+   by the standard sort key.
+3. **"Needs you" Section Cohesion**: If any member of a group needs
+   human attention, the root and all its children enter the "Needs you"
+   section together, preventing disjointed groups.
+4. **Row Presentation & Collapsing**:
+   - Child rows render in a compact 2-line layout (`workspace-child`)
+     indented by ~20px with the mark and 3rd metadata line hidden (place and
+     agents move to tooltip).
+   - Root rows with children display a disclosure toggle ("▾ N tasks · M needs you"
+     / "▸ N tasks") in their metadata line that expands or collapses child
+     rows in-memory. Selection of a hidden child auto-expands the group.
+5. **Context Menu**: Right-clicking (button 3) or pressing Menu / Shift+F10
+   selects the workspace and presents a popover context menu with
+   workspace actions (Rename Workspace, Show Changes, Worktrees, New Tab,
+   and Close Workspace).
+
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes

@@ -245,6 +245,30 @@ pub fn primary_menu() -> gio::Menu {
     menu
 }
 
+/// Context menu for sidebar rows: actions acting on the selected workspace.
+pub fn sidebar_menu() -> gio::Menu {
+    let menu = gio::Menu::new();
+    let primary = gio::Menu::new();
+    for name in ["rename-workspace", "show-changes", "worktrees", "new-tab"] {
+        let def = ACTIONS
+            .iter()
+            .find(|d| d.name == name)
+            .expect("known sidebar action");
+        primary.append(def.label, Some(&format!("win.{}", def.name)));
+    }
+    menu.append_section(None, &primary);
+
+    let close_section = gio::Menu::new();
+    let close_def = ACTIONS
+        .iter()
+        .find(|d| d.name == "close-workspace")
+        .expect("known sidebar action");
+    close_section.append(close_def.label, Some(&format!("win.{}", close_def.name)));
+    menu.append_section(None, &close_section);
+
+    menu
+}
+
 /// Install every gio action and accelerator from the table.
 pub fn install(
     window: &adw::ApplicationWindow,
@@ -362,5 +386,50 @@ mod tests {
                 assert_eq!(got_action.as_deref(), Some(action.as_str()));
             }
         }
+    }
+
+    #[test]
+    fn sidebar_menu_matches_spec() {
+        let menu = sidebar_menu();
+        let model = menu.upcast_ref::<gio::MenuModel>();
+        assert_eq!(model.n_items(), 2, "two sections");
+
+        let sec0 = model.item_link(0, gio::MENU_LINK_SECTION).unwrap();
+        assert_eq!(sec0.n_items(), 4);
+        let expected_sec0 = [
+            ("Rename Workspace", "win.rename-workspace"),
+            ("Show Changes", "win.show-changes"),
+            ("Worktrees", "win.worktrees"),
+            ("New Tab", "win.new-tab"),
+        ];
+        for (i, (exp_label, exp_action)) in expected_sec0.iter().enumerate() {
+            let mut label = None;
+            let mut action = None;
+            let attrs = sec0.iterate_item_attributes(i as i32);
+            while let Some((name, val)) = attrs.next() {
+                if name == "label" {
+                    label = val.get::<String>();
+                } else if name == "action" {
+                    action = val.get::<String>();
+                }
+            }
+            assert_eq!(label.as_deref(), Some(*exp_label));
+            assert_eq!(action.as_deref(), Some(*exp_action));
+        }
+
+        let sec1 = model.item_link(1, gio::MENU_LINK_SECTION).unwrap();
+        assert_eq!(sec1.n_items(), 1);
+        let mut label = None;
+        let mut action = None;
+        let attrs = sec1.iterate_item_attributes(0);
+        while let Some((name, val)) = attrs.next() {
+            if name == "label" {
+                label = val.get::<String>();
+            } else if name == "action" {
+                action = val.get::<String>();
+            }
+        }
+        assert_eq!(label.as_deref(), Some("Close Workspace"));
+        assert_eq!(action.as_deref(), Some("win.close-workspace"));
     }
 }

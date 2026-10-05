@@ -156,6 +156,28 @@
   background-color: alpha(currentColor, 0.04);
 }
 
+/* Child task workspace: indented ~20px, compact 2-line layout */
+.navigation-sidebar > row.workspace-child {
+  margin-left: 28px;
+}
+.workspace-child .workspace-row {
+  padding: 6px 6px 6px 8px;
+}
+
+/* Disclosure button for root rows with child workspaces */
+.workspace-disclosure {
+  padding: 0 4px;
+  min-height: 20px;
+  font-size: 0.82em;
+  font-weight: 500;
+  color: alpha(currentColor, 0.7);
+  border-radius: 4px;
+}
+.workspace-disclosure:hover {
+  background-color: alpha(currentColor, 0.08);
+  color: currentColor;
+}
+
 /* Workspace mark: the one place colour means "which project", not
  * status — so its hues stay clear of green/amber/orange/red.
  * Blue is left out: it is the accent, and "Working" speaks in it. */
