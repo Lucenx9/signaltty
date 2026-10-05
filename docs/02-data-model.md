@@ -164,7 +164,7 @@ tasks). IDs are opaque `task_…` / `tctx_…` strings.
 | `state` | lifecycle below |
 | `result?` | structured handoff, set once by report (`status` completed\|failed\|rejected, `summary` 1 … 8 KiB, `artifacts` ≤ 32 `{name, path, version?}`, `evidence?`, `reported_at`) |
 | `disposition` | `{outcome: none\|merged\|discarded, target_ref?, merged_sha?, branch_deleted?, at?}` — review outcome, not lifecycle |
-| `pr?` | `{number, url, state: open|merged|closed, checks: none|pending|passing|failing, review: none|review_required|approved|changes_requested, checked_at?}` — GitHub pull request associated with the task |
+| `pr?` | `{number, url, state: open\|merged\|closed, checks: none\|pending\|passing\|failing, review: none\|review_required\|approved\|changes_requested, checked_at?}` — GitHub pull request associated with the task |
 | `status_reason?` | A2A-style evidence: `{stage, …}` for background/startup failures, `{reason: turn_ended_without_report, last_message?}`, `{reason: worker_silent, timeout_s}`, `{reason: decision_required, decision_id}` |
 | `finish_error?` | conflict files, or `{cleanup_error}` when removal fails after a disposition is recorded. A later finish retries cleanup while the worktree path remains |
 | `worker_pid?`, `worker_cmd?` | crash-vs-recycle evidence |
