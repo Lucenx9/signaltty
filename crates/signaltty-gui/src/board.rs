@@ -264,7 +264,7 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
 pub fn present(
     window: &libadwaita::ApplicationWindow,
     tasks: &[Task],
-    on_closed: impl FnOnce(Option<String>) + 'static,
+    on_closed: impl FnOnce(&libadwaita::Dialog, Option<String>) + 'static,
 ) -> libadwaita::Dialog {
     let dialog = libadwaita::Dialog::new();
     dialog.set_title("Task Board");
@@ -381,9 +381,9 @@ pub fn present(
 
     dialog.set_child(Some(&body));
     let on_closed = RefCell::new(Some(on_closed));
-    dialog.connect_closed(move |_| {
+    dialog.connect_closed(move |dialog| {
         if let Some(cb) = on_closed.borrow_mut().take() {
-            cb(chosen.take());
+            cb(dialog, chosen.take());
         }
     });
 

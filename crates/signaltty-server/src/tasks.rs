@@ -2263,15 +2263,7 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
 
     let refreshed_tasks = {
         let mut s = ctx.store.write().unwrap();
-        let mut tasks = Vec::new();
-        for (tid, pr) in refreshed_pairs {
-            if s.task_set_pr(&tid, pr).is_ok() {
-                if let Some(t) = s.tasks.get(&tid) {
-                    tasks.push(t.clone());
-                }
-            }
-        }
-        tasks
+        write_refreshed_prs(&mut s, refreshed_pairs)
     };
     ctx.mark_persist();
 
@@ -2279,6 +2271,23 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
         Response::ok(&req.id, json!({ "tasks": refreshed_tasks })),
         ConnEffect::default(),
     )
+}
+
+/// Apply only results for the PR that is still attached to the task.
+fn write_refreshed_prs(store: &mut Store, refreshed: Vec<(String, TaskPr)>) -> Vec<Task> {
+    let mut tasks = Vec::new();
+    for (tid, pr) in refreshed {
+        let current_pr = store.tasks.get(&tid).and_then(|task| task.pr.as_ref());
+        if current_pr.is_none_or(|current| current.url != pr.url) {
+            continue;
+        }
+        if store.task_set_pr(&tid, pr).is_ok() {
+            if let Some(task) = store.tasks.get(&tid) {
+                tasks.push(task.clone());
+            }
+        }
+    }
+    tasks
 }
 
 /// Second finish when a disposition is already stored but the recorded
@@ -2354,6 +2363,55 @@ fn retry_recorded_cleanup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pr_refresh_writeback_preserves_replaced_pr_and_disposition() {
+        let now = Utc::now();
+        let original: Task = serde_json::from_value(json!({
+            "id": "task_refresh", "context_id": "ctx_refresh",
+            "label": "Refresh", "contract": {"objective": "Refresh PR"},
+            "source_repo": "/tmp/repo", "worktree_path": "/tmp/task",
+            "branch": "task", "base_ref": "main", "base_sha": "abc",
+            "state": "completed", "disposition": {"outcome": "none"},
+            "created_at": now, "updated_at": now,
+            "pr": {"number": 1, "url": "https://github.com/o/r/pull/1",
+                "state": "open", "checks": "none", "review": "none"}
+        }))
+        .unwrap();
+        let mut refreshed = original.pr.clone().unwrap();
+        refreshed.checks = PrChecks::Passing;
+        refreshed.checked_at = Some(now);
+
+        for replacement in [
+            None,
+            Some("https://github.com/o/r/pull/2"),
+            Some(&refreshed.url),
+        ] {
+            let mut current = original.clone();
+            current.pr = replacement.map(|url| TaskPr {
+                url: url.into(),
+                ..original.pr.clone().unwrap()
+            });
+            current.disposition.outcome = DispositionOutcome::Discarded;
+            let mut store = Store::new();
+            store.task_create(current.clone());
+            let result =
+                write_refreshed_prs(&mut store, vec![(current.id.clone(), refreshed.clone())]);
+            let stored = &store.tasks[&current.id];
+            assert_eq!(stored.disposition.outcome, DispositionOutcome::Discarded);
+            if replacement == Some(refreshed.url.as_str()) {
+                assert_eq!(result.len(), 1);
+                assert_eq!(stored.pr.as_ref().unwrap().checks, PrChecks::Passing);
+            } else {
+                assert!(result.is_empty());
+                assert_eq!(
+                    serde_json::to_value(stored).unwrap(),
+                    serde_json::to_value(current).unwrap()
+                );
+            }
+        }
+        assert!(write_refreshed_prs(&mut Store::new(), vec![(original.id, refreshed)]).is_empty());
+    }
 
     #[test]
     fn missing_workspace_is_reported_without_a_guard_in_the_lookup() {
