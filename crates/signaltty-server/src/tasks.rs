@@ -1357,7 +1357,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
                             &req.id,
                             code::BAD_PARAMS,
                             format!(
-                                "cannot merge task '{}' with an open pull request ({})",
+                                "cannot merge task '{}' while its pull request is open ({}); if it was closed on GitHub, run task pr-refresh first",
                                 p.task_id, pr.url
                             ),
                         ),
