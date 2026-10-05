@@ -91,23 +91,32 @@ fn fail_committed_task_start(
 /// recorded task path — never while git still claims it (a live checkout
 /// or a failed remove must not be `remove_dir_all`'d). Returns a cleanup
 /// error string when the checkout survives; once it is gone, workspaces
-/// rooted at it are closed (their cwd no longer exists).
+/// rooted at it are closed unless they contain live panes working elsewhere.
 fn remove_task_worktree(
     ctx: &Ctx,
     src_repo: &str,
     worktree_path: &std::path::Path,
 ) -> Option<String> {
+    // Resolve pane cwd boundaries while the worktree still exists so the
+    // canonical path check can follow symlinks.
+    let wt_str = worktree_path.to_string_lossy();
+    let stale: Vec<String> = {
+        let s = ctx.store.read().unwrap();
+        s.workspaces
+            .values()
+            .filter(|w| w.cwd == wt_str)
+            .filter(|w| {
+                !s.panes.values().any(|pane| {
+                    pane.workspace_id == w.id
+                        && matches!(pane.live, LiveState::Live)
+                        && !cwd_inside_worktree(&pane.cwd, worktree_path)
+                })
+            })
+            .map(|w| w.id.clone())
+            .collect()
+    };
     let err = remove_worktree_checkout(src_repo, worktree_path);
     if err.is_none() {
-        let wt_str = worktree_path.to_string_lossy();
-        let stale: Vec<String> = {
-            let s = ctx.store.read().unwrap();
-            s.workspaces
-                .values()
-                .filter(|w| w.cwd == wt_str)
-                .map(|w| w.id.clone())
-                .collect()
-        };
         for id in stale {
             let _ = crate::router::h_workspace_close(ctx, &json!({ "workspace_id": id }));
         }
