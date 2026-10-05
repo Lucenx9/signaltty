@@ -4,8 +4,9 @@
 //!
 //! Capabilities in v1:
 //! - `[[hook]]`: run a command when a matching server event fires.
-//!   The event envelope is JSON on stdin; `SIGNALTTY_SOCKET` and
-//!   `SIGNALTTY_EVENT` are set; cwd is the plugin directory.
+//!   The event envelope is JSON on stdin; reserved `SIGNALTTY_*` env
+//!   bindings (socket, event, plugin dir/name) always win over `hook.env`;
+//!   cwd is the plugin directory.
 //! - `[[command]]`: named runnable entrypoints (`signaltty plugin run`).
 //!
 //! Plugins run with the user's permissions and must be trusted.
@@ -381,13 +382,16 @@ async fn run_hook(
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    // hook.env is additive. Apply it first, then force the reserved
+    // SIGNALTTY_* bindings so a mistaken or malicious manifest cannot
+    // redirect hooks at another socket or forge event identity.
+    for (k, v) in &hook.env {
+        cmd.env(k, v);
+    }
     cmd.env("SIGNALTTY_SOCKET", socket);
     cmd.env("SIGNALTTY_EVENT", event);
     cmd.env("SIGNALTTY_PLUGIN_DIR", &plugin.dir);
     cmd.env("SIGNALTTY_PLUGIN_NAME", &plugin.manifest.plugin.name);
-    for (k, v) in &hook.env {
-        cmd.env(k, v);
-    }
     let body = serde_json::to_vec(envelope).unwrap();
     let timeout = std::time::Duration::from_secs(hook.timeout_secs.min(MAX_HOOK_TIMEOUT_SECS));
     let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
@@ -626,5 +630,54 @@ run = ["./fanout.sh"]
         .await
         .unwrap_err();
         assert!(err.contains("boom"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn reserved_signaltty_env_wins_over_hook_env() {
+        let log = std::env::temp_dir().join(format!(
+            "signaltty-hook-env-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
+        ));
+        let script = format!(
+            concat!(
+                "printf '%s\\n' ",
+                "\"$SIGNALTTY_SOCKET\" \"$SIGNALTTY_EVENT\" ",
+                "\"$SIGNALTTY_PLUGIN_NAME\" \"$SIGNALTTY_PLUGIN_DIR\" ",
+                "\"$CUSTOM_OK\" > '{}'"
+            ),
+            log.display()
+        );
+        let (plugin, mut hook) = sh_plugin(&script, 5);
+        hook.env
+            .insert("SIGNALTTY_SOCKET".into(), "/forged.sock".into());
+        hook.env
+            .insert("SIGNALTTY_EVENT".into(), "forged.event".into());
+        hook.env
+            .insert("SIGNALTTY_PLUGIN_NAME".into(), "forged".into());
+        hook.env
+            .insert("SIGNALTTY_PLUGIN_DIR".into(), "/forged".into());
+        hook.env.insert("CUSTOM_OK".into(), "yes".into());
+        let socket = Path::new("/tmp/real-signaltty.sock");
+        run_hook(&plugin, &hook, "agent.done", &serde_json::json!({}), socket)
+            .await
+            .unwrap();
+        let body = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "/tmp/real-signaltty.sock",
+                "agent.done",
+                "pipes",
+                plugin.dir.to_str().unwrap(),
+                "yes",
+            ],
+            "{body}"
+        );
+        std::fs::remove_file(&log).ok();
     }
 }
