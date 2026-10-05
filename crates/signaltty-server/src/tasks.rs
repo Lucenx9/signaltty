@@ -47,10 +47,22 @@ fn fail_task_start(
     message: String,
     req_id: &str,
 ) -> (Response, ConnEffect) {
+    reservation.commit(task.clone());
+    fail_committed_task_start(ctx, &task, stage, error_code, message, req_id)
+}
+
+/// `fail_task_start` for a task already in the store.
+fn fail_committed_task_start(
+    ctx: &Ctx,
+    task: &Task,
+    stage: &str,
+    error_code: &str,
+    message: String,
+    req_id: &str,
+) -> (Response, ConnEffect) {
     let task_id = task.id.clone();
     let wt_str = task.worktree_path.to_string_lossy().to_string();
     let repo_str = task.source_repo.to_string_lossy().to_string();
-    reservation.commit(task);
     {
         let mut s = ctx.store.write().unwrap();
         s.task_fail(
@@ -155,6 +167,14 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
                 ConnEffect::default(),
             );
         }
+    }
+
+    // A relative repo would resolve against the server's cwd, not the caller's.
+    if !std::path::Path::new(&p.repo).is_absolute() {
+        return (
+            Response::err(&req.id, code::BAD_PARAMS, "repo path must be absolute"),
+            ConnEffect::default(),
+        );
     }
 
     // Deadlines are built from these later, in the background; an overflow
@@ -452,6 +472,9 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
     }
     env.insert("SIGNALTTY_TASK".to_string(), task_id.clone());
 
+    // The worker may report as soon as it runs: the task must exist first.
+    reservation.commit(task.clone());
+
     // Reuse h_pane_spawn: manages worktree path-reference guard, PTY spawn, tab layout, and store publishing
     let (pane_val, _) = match crate::router::h_pane_spawn(
         ctx,
@@ -470,15 +493,17 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
     ) {
         Ok(res) => res,
         Err((ref c, ref m)) => {
-            return fail_task_start(ctx, reservation, task, "spawn", c, m.clone(), &req.id);
+            return fail_committed_task_start(ctx, &task, "spawn", c, m.clone(), &req.id);
         }
     };
 
     let pane_id = pane_val["pane"]["id"].as_str().unwrap().to_string();
-    task.pane_id = Some(pane_id.clone());
-    task.updated_at = Utc::now();
-
-    reservation.commit(task.clone());
+    // An early report may already have moved the task on: return what's stored.
+    let task = ctx
+        .store
+        .write()
+        .unwrap()
+        .task_attach_pane(&task_id, &pane_id);
     ctx.mark_persist();
 
     // 5. Background ready check and prompt submit

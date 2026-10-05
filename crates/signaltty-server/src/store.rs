@@ -652,6 +652,16 @@ impl Store {
         self.emit(event::TASK_CREATED, payload)
     }
 
+    /// Record the worker pane of a task created before its pane spawned.
+    pub fn task_attach_pane(&mut self, task_id: &str, pane_id: &str) -> Option<Task> {
+        let task = self.tasks.get_mut(task_id)?;
+        task.pane_id = Some(pane_id.to_string());
+        task.updated_at = Utc::now();
+        let task = task.clone();
+        self.emit_task_updated(&task, None);
+        Some(task)
+    }
+
     fn emit_task_updated(&mut self, task: &Task, prev_state: Option<TaskState>) -> StoredEvent {
         let mut payload = json!({
             "task_id": task.id,
