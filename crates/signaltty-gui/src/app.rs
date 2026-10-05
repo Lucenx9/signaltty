@@ -2125,10 +2125,17 @@ impl App {
             .map(|pr| pr.url)
             .filter(|url| !url.is_empty());
         if let Some(url) = url {
+            let weak = self.weak();
             gtk4::UriLauncher::new(&url).launch(
                 Some(&self.window),
                 gtk4::gio::Cancellable::NONE,
-                |_| {},
+                move |result| {
+                    if let Err(error) = result {
+                        if let Some(app) = weak.upgrade() {
+                            app.toast(&format!("Couldn't open pull request — {error}"));
+                        }
+                    }
+                },
             );
         }
     }
