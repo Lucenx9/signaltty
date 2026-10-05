@@ -148,6 +148,33 @@ chaotically.
    workspace actions (Rename Workspace, Show Changes, Worktrees, New Tab,
    and Close Workspace).
 
+## Amendment 2026-10-05: finished tasks and task actions
+
+Tasks that finish their lifecycle (board column `Done`) recede visually to keep the sidebar focused on active work, and row context menus gain task-aware lifecycle actions.
+
+1. **Finished Child Presentation**:
+   - A child row whose task is finished (`board::board_column(task) == BoardColumn::Done`) receives CSS class `workspace-finished`, giving it reduced opacity (~0.55) that returns to full opacity on hover or selection.
+   - Finished children sort after all unfinished siblings within their group; existing sort keys break ties among unfinished and finished sets.
+   - Root disclosure labels count active and finished tasks separately (e.g. `▾ 3 tasks · 1 need you · 2 done`, or `▾ 2 done`).
+
+2. **Dynamic Context Menus**:
+   - The static menu model is replaced with dynamic popover construction per row at popup time via `Sidebar::set_menu_builder`.
+   - **Root / Plain rows**: Standard workspace items (Rename Workspace, Show Changes, Worktrees, New Tab, Close Workspace), plus when finished children exist, a section with "Clear N Finished Tasks".
+   - **Child (task) rows**: A dedicated task section preceding workspace items, omitting non-applicable entries:
+     - "Show Task Board" (`win.show-board`)
+     - "Open Pull Request" (`win.task-open-pr`) when `task.pr` has a URL
+     - "Create Pull Request" (`win.task-create-pr`) when completed, outcome is None, and no PR exists
+     - "Merge into <target>" (`win.task-merge`) when completed and outcome is None
+     - "Cancel Task" (`win.task-cancel`) when pending, working, or input required
+     - "Discard Task" (`win.task-discard`) when outcome is None and not canceled
+     followed by standard workspace actions (Rename, Show Changes, New Tab) and Close Workspace.
+
+3. **Destructive Confirmations & Error Handling**:
+   - Destructive operations (Merge, Discard, Cancel Task, Clear Finished Tasks) present modal `adw::AlertDialog` confirmations with Destructive response styling. Their text states what `task.finish` really does: both modes stop the worker and remove the task worktree (uncommitted changes are lost); merge deletes the task branch unless it pre-existed, discard keeps it. Cancel and Clear keep branches and worktrees.
+   - Errors display via standard in-app toasts.
+   - Successful actions refresh tasks and the sidebar immediately.
+   - "Clear Finished Tasks" closes each finished child workspace sequentially via `workspace.close` and executes a single final refresh.
+
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
