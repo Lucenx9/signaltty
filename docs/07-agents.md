@@ -44,7 +44,8 @@ trait AgentAdapter: Send + Sync {
 ```
 
 Adapters: `CodexAdapter`, `ClaudeCodeAdapter`, `OpenCodeAdapter`,
-`CursorAdapter`, `GenericTerminalAdapter` (process + title + BEL only).
+`CursorAdapter`, `PiAdapter`, `GenericTerminalAdapter` (process + title +
+BEL only).
 
 ## Per-agent integration (verified Sept 2026, local CLIs)
 
@@ -125,6 +126,18 @@ Adapters: `CodexAdapter`, `ClaudeCodeAdapter`, `OpenCodeAdapter`,
   events via process ancestry check).
 - Shim: `hooks.json` entry + reporter script. Screen/title fallback
   aligned with Codex (session-only pattern, no output regex).
+
+### Pi (`pi`)
+
+- Resume: `pi --session <path|id>` (partial UUID ok), `-c/--continue`,
+  `-r/--resume` picker; `--no-session` for ephemeral runs.
+- Detection: a Node script that sets `process.title`, so
+  `/proc/<pid>/cmdline` reads `pi` and shell-launched sessions are
+  promoted too.
+- Hooks: none yet. Status comes from title/BEL like a plain terminal
+  (exit → `exited`, as for other agents); with no reported session id,
+  resume is never offered.
+  Integration path: a pi extension calling `signaltty hook-event`.
 
 ## Session identity & resume (see also [09](09-persistence.md))
 

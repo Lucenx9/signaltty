@@ -4,7 +4,7 @@ use signaltty_core::model::AgentKind;
 
 use crate::adapters::{
     claude::ClaudeAdapter, codex::CodexAdapter, cursor::CursorAdapter, generic::GenericAdapter,
-    opencode::OpencodeAdapter,
+    opencode::OpencodeAdapter, pi::PiAdapter,
 };
 use crate::types::{AgentAdapter, ProcessInfo};
 
@@ -12,10 +12,11 @@ static CODEX: CodexAdapter = CodexAdapter;
 static CLAUDE: ClaudeAdapter = ClaudeAdapter;
 static OPENCODE: OpencodeAdapter = OpencodeAdapter;
 static CURSOR: CursorAdapter = CursorAdapter;
+static PI: PiAdapter = PiAdapter;
 static GENERIC: GenericAdapter = GenericAdapter;
 
-pub fn all_adapters() -> [&'static dyn AgentAdapter; 5] {
-    [&CODEX, &CLAUDE, &OPENCODE, &CURSOR, &GENERIC]
+pub fn all_adapters() -> [&'static dyn AgentAdapter; 6] {
+    [&CODEX, &CLAUDE, &OPENCODE, &CURSOR, &PI, &GENERIC]
 }
 
 pub fn adapter_for_kind(kind: AgentKind) -> &'static dyn AgentAdapter {
@@ -24,6 +25,7 @@ pub fn adapter_for_kind(kind: AgentKind) -> &'static dyn AgentAdapter {
         AgentKind::Claude => &CLAUDE,
         AgentKind::Opencode => &OPENCODE,
         AgentKind::Cursor => &CURSOR,
+        AgentKind::Pi => &PI,
         AgentKind::Generic | AgentKind::None => &GENERIC,
     }
 }
@@ -36,6 +38,7 @@ pub fn adapter_for_name(name: &str) -> Option<&'static dyn AgentAdapter> {
         "claude" => Some(&CLAUDE),
         "opencode" => Some(&OPENCODE),
         "cursor" => Some(&CURSOR),
+        "pi" => Some(&PI),
         "generic" | "none" => Some(&GENERIC),
         _ => None,
     }
@@ -75,6 +78,7 @@ mod tests {
         );
         assert_eq!(detect_kind(&argv(&["opencode"])), AgentKind::Opencode);
         assert_eq!(detect_kind(&argv(&["cursor-agent"])), AgentKind::Cursor);
+        assert_eq!(detect_kind(&argv(&["pi"])), AgentKind::Pi);
         assert_eq!(detect_kind(&argv(&["agent"])), AgentKind::Generic);
         assert_eq!(detect_kind(&argv(&["sh"])), AgentKind::Generic);
         assert_eq!(detect_kind(&argv(&[])), AgentKind::Generic);
@@ -82,7 +86,7 @@ mod tests {
 
     #[test]
     fn only_codex_advertises_a_channel() {
-        for name in ["codex", "claude", "opencode", "cursor", "generic"] {
+        for name in ["codex", "claude", "opencode", "cursor", "pi", "generic"] {
             let channel = adapter_for_name(name).unwrap().answer_channel();
             assert_eq!(channel.is_some(), name == "codex", "{name}");
         }
@@ -91,10 +95,15 @@ mod tests {
     #[test]
     fn names_resolve() {
         assert!(adapter_for_name("codex").is_some());
+        assert!(adapter_for_name("pi").is_some());
         assert!(adapter_for_name("nope").is_none());
         assert_eq!(
             adapter_for_kind(AgentKind::Claude).metadata().kind,
             AgentKind::Claude
+        );
+        assert_eq!(
+            adapter_for_kind(AgentKind::Pi).metadata().kind,
+            AgentKind::Pi
         );
     }
 }
