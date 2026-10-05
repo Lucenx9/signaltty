@@ -433,7 +433,9 @@ fn plugin_catch_up_after_lag(store: &Store, last_seq: u64) -> (u64, Vec<StoredEv
 
 async fn run_plugin_event_hooks(ctx: Arc<Ctx>) {
     let mut rx = ctx.bcast.subscribe();
-    let mut last_seq = 0u64;
+    // Anchor at the current store cursor so Lagged catch-up never replays
+    // history emitted before this subscriber existed (e.g. recover_tasks).
+    let mut last_seq = ctx.store.read().unwrap().seq;
     loop {
         match rx.recv().await {
             Ok(ev) => {
