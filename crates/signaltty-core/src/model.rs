@@ -867,6 +867,142 @@ impl Default for Disposition {
     }
 }
 
+/// Pull request state on the forge (e.g. GitHub).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrState {
+    #[default]
+    Open,
+    Merged,
+    Closed,
+}
+
+impl PrState {
+    pub fn parse_gh(s: &str) -> Option<Self> {
+        match s.trim().to_uppercase().as_str() {
+            "OPEN" => Some(Self::Open),
+            "MERGED" => Some(Self::Merged),
+            "CLOSED" => Some(Self::Closed),
+            _ => None,
+        }
+    }
+}
+
+/// Rollup status of CI checks on a pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrChecks {
+    #[default]
+    None,
+    Pending,
+    Passing,
+    Failing,
+}
+
+/// Review decision status on a pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrReview {
+    #[default]
+    None,
+    ReviewRequired,
+    Approved,
+    ChangesRequested,
+}
+
+/// Forge pull request associated with an orchestrated task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskPr {
+    pub number: u64,
+    pub url: String,
+    #[serde(default)]
+    pub state: PrState,
+    #[serde(default)]
+    pub checks: PrChecks,
+    #[serde(default)]
+    pub review: PrReview,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<DateTime<Utc>>,
+}
+
+/// Parse a GitHub GraphQL reviewDecision string into `PrReview`.
+pub fn parse_review_decision(s: &str) -> PrReview {
+    match s.trim().to_uppercase().as_str() {
+        "REVIEW_REQUIRED" => PrReview::ReviewRequired,
+        "APPROVED" => PrReview::Approved,
+        "CHANGES_REQUESTED" => PrReview::ChangesRequested,
+        _ => PrReview::None,
+    }
+}
+
+/// Roll up GitHub `statusCheckRollup` items into a single `PrChecks` status.
+///
+/// Priority 1: Failing (any failure, error, cancelled, timed_out, action_required, startup_failure)
+/// Priority 2: Pending (any status != COMPLETED or state in PENDING, EXPECTED)
+/// Priority 3: Passing (non-empty items and none of the above)
+/// Priority 4: None (empty items)
+pub fn rollup_status_checks(checks: &[serde_json::Value]) -> PrChecks {
+    if checks.is_empty() {
+        return PrChecks::None;
+    }
+
+    const FAILING_CONCLUSIONS: &[&str] = &[
+        "FAILURE",
+        "ERROR",
+        "CANCELLED",
+        "TIMED_OUT",
+        "ACTION_REQUIRED",
+        "STARTUP_FAILURE",
+    ];
+    const FAILING_STATES: &[&str] = &["FAILURE", "ERROR"];
+    const PENDING_STATES: &[&str] = &["PENDING", "EXPECTED"];
+
+    let mut has_pending = false;
+
+    for item in checks {
+        let conclusion = item
+            .get("conclusion")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_uppercase());
+        let status = item
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_uppercase());
+        let state = item
+            .get("state")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_uppercase());
+
+        if let Some(ref c) = conclusion {
+            if FAILING_CONCLUSIONS.contains(&c.as_str()) {
+                return PrChecks::Failing;
+            }
+        }
+        if let Some(ref st) = state {
+            if FAILING_STATES.contains(&st.as_str()) {
+                return PrChecks::Failing;
+            }
+        }
+
+        if let Some(ref st) = status {
+            if st != "COMPLETED" {
+                has_pending = true;
+            }
+        }
+        if let Some(ref st) = state {
+            if PENDING_STATES.contains(&st.as_str()) {
+                has_pending = true;
+            }
+        }
+    }
+
+    if has_pending {
+        PrChecks::Pending
+    } else {
+        PrChecks::Passing
+    }
+}
+
 /// An orchestrated sub-task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
@@ -900,6 +1036,8 @@ pub struct Task {
     pub result: Option<TaskResult>,
     #[serde(default)]
     pub disposition: Disposition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<TaskPr>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_reason: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1441,6 +1579,7 @@ mod tests {
             state: TaskState::Pending,
             result: None,
             disposition: Disposition::default(),
+            pr: None,
             status_reason: None,
             finish_error: None,
             worker_pid: None,
@@ -1513,5 +1652,129 @@ mod tests {
         assert!(!min_prompt.contains("## Constraints"));
         assert!(!min_prompt.contains("## Acceptance Criteria"));
         assert!(!min_prompt.contains("## Expected Output Format"));
+    }
+
+    #[test]
+    fn test_parse_review_decision() {
+        assert_eq!(
+            parse_review_decision("REVIEW_REQUIRED"),
+            PrReview::ReviewRequired
+        );
+        assert_eq!(
+            parse_review_decision("review_required"),
+            PrReview::ReviewRequired
+        );
+        assert_eq!(parse_review_decision("APPROVED"), PrReview::Approved);
+        assert_eq!(parse_review_decision("approved"), PrReview::Approved);
+        assert_eq!(
+            parse_review_decision("CHANGES_REQUESTED"),
+            PrReview::ChangesRequested
+        );
+        assert_eq!(
+            parse_review_decision("changes_requested"),
+            PrReview::ChangesRequested
+        );
+        assert_eq!(parse_review_decision(""), PrReview::None);
+        assert_eq!(parse_review_decision("unknown"), PrReview::None);
+    }
+
+    #[test]
+    fn test_pr_state_parse_gh() {
+        assert_eq!(PrState::parse_gh("OPEN"), Some(PrState::Open));
+        assert_eq!(PrState::parse_gh("open"), Some(PrState::Open));
+        assert_eq!(PrState::parse_gh("MERGED"), Some(PrState::Merged));
+        assert_eq!(PrState::parse_gh("merged"), Some(PrState::Merged));
+        assert_eq!(PrState::parse_gh("CLOSED"), Some(PrState::Closed));
+        assert_eq!(PrState::parse_gh("closed"), Some(PrState::Closed));
+        assert_eq!(PrState::parse_gh("draft"), None);
+    }
+
+    #[test]
+    fn test_rollup_status_checks() {
+        use serde_json::json;
+
+        // Empty checks -> None
+        assert_eq!(rollup_status_checks(&[]), PrChecks::None);
+
+        // All passing check runs
+        let passing = vec![
+            json!({"status": "COMPLETED", "conclusion": "SUCCESS"}),
+            json!({"status": "COMPLETED", "conclusion": "NEUTRAL"}),
+            json!({"state": "SUCCESS"}),
+        ];
+        assert_eq!(rollup_status_checks(&passing), PrChecks::Passing);
+
+        // Pending check run (status != COMPLETED)
+        let pending1 = vec![
+            json!({"status": "COMPLETED", "conclusion": "SUCCESS"}),
+            json!({"status": "IN_PROGRESS", "conclusion": null}),
+        ];
+        assert_eq!(rollup_status_checks(&pending1), PrChecks::Pending);
+
+        // Pending status context (state == PENDING)
+        let pending2 = vec![
+            json!({"status": "COMPLETED", "conclusion": "SUCCESS"}),
+            json!({"state": "PENDING"}),
+        ];
+        assert_eq!(rollup_status_checks(&pending2), PrChecks::Pending);
+
+        // Failing overrides pending (Priority 1 > Priority 2)
+        let failing1 = vec![
+            json!({"status": "IN_PROGRESS"}),
+            json!({"status": "COMPLETED", "conclusion": "FAILURE"}),
+        ];
+        assert_eq!(rollup_status_checks(&failing1), PrChecks::Failing);
+
+        let failing2 = vec![
+            json!({"state": "ERROR"}),
+            json!({"status": "COMPLETED", "conclusion": "SUCCESS"}),
+        ];
+        assert_eq!(rollup_status_checks(&failing2), PrChecks::Failing);
+
+        let failing_cancelled = vec![json!({"status": "COMPLETED", "conclusion": "TIMED_OUT"})];
+        assert_eq!(rollup_status_checks(&failing_cancelled), PrChecks::Failing);
+    }
+
+    #[test]
+    fn test_task_pr_serde_backward_compat() {
+        use serde_json::json;
+        // Task serialized without pr field deserializes with pr = None
+        let task_json = json!({
+            "id": "task_1",
+            "context_id": "ctx_1",
+            "label": "test",
+            "contract": {"objective": "do something"},
+            "source_repo": "/repo",
+            "worktree_path": "/wt",
+            "branch": "b",
+            "base_ref": "main",
+            "base_sha": "abc",
+            "state": "pending",
+            "created_at": "2026-10-04T12:00:00Z",
+            "updated_at": "2026-10-04T12:00:00Z"
+        });
+        let task: Task = serde_json::from_value(task_json).unwrap();
+        assert_eq!(task.pr, None);
+
+        // Task with pr
+        let pr = TaskPr {
+            number: 42,
+            url: "https://github.com/foo/bar/pull/42".to_string(),
+            state: PrState::Open,
+            checks: PrChecks::Passing,
+            review: PrReview::Approved,
+            checked_at: None,
+        };
+        let mut task_with_pr = task.clone();
+        task_with_pr.pr = Some(pr);
+        let val = serde_json::to_value(&task_with_pr).unwrap();
+        assert_eq!(val["pr"]["number"], 42);
+        assert_eq!(val["pr"]["state"], "open");
+        assert_eq!(val["pr"]["checks"], "passing");
+        assert_eq!(val["pr"]["review"], "approved");
+
+        // Round trip
+        let round_trip: Task = serde_json::from_value(val).unwrap();
+        assert_eq!(round_trip.pr, task_with_pr.pr);
     }
 }

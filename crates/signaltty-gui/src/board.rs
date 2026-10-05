@@ -12,7 +12,7 @@ use std::rc::Rc;
 use chrono::{DateTime, Utc};
 use gtk4::prelude::*;
 use libadwaita::prelude::*;
-use signaltty_core::{DispositionOutcome, Task, TaskState};
+use signaltty_core::{DispositionOutcome, PrChecks, PrReview, PrState, Task, TaskState};
 
 use crate::task_chip::{state_class, state_word};
 
@@ -22,6 +22,7 @@ pub enum BoardColumn {
     Working,
     NeedsYou,
     InReview,
+    ReadyToMerge,
     Done,
 }
 
@@ -31,6 +32,7 @@ impl BoardColumn {
             BoardColumn::Working => "Working",
             BoardColumn::NeedsYou => "Needs you",
             BoardColumn::InReview => "In review",
+            BoardColumn::ReadyToMerge => "Ready to merge",
             BoardColumn::Done => "Done",
         }
     }
@@ -48,6 +50,22 @@ pub fn board_column(task: &Task) -> BoardColumn {
     ) || task.state == TaskState::Canceled
     {
         BoardColumn::Done
+    } else if let Some(ref pr) = task.pr {
+        match pr.state {
+            PrState::Merged | PrState::Closed => BoardColumn::Done,
+            PrState::Open => {
+                if pr.checks == PrChecks::Failing || pr.review == PrReview::ChangesRequested {
+                    BoardColumn::NeedsYou
+                } else if pr.checked_at.is_some()
+                    && matches!(pr.checks, PrChecks::Passing | PrChecks::None)
+                    && matches!(pr.review, PrReview::Approved | PrReview::None)
+                {
+                    BoardColumn::ReadyToMerge
+                } else {
+                    BoardColumn::InReview
+                }
+            }
+        }
     } else if task.state == TaskState::Completed
         && task.disposition.outcome == DispositionOutcome::None
     {
@@ -108,12 +126,22 @@ pub struct TaskCardView {
     pub css_class: &'static str,
     pub relative_age: String,
     pub updated_at: DateTime<Utc>,
+    pub pr_number: Option<u64>,
+    pub pr_checks: Option<PrChecks>,
 }
 
 impl TaskCardView {
-    /// Second line formatted as `agent · branch · age` (filtering empty parts).
+    /// Second line formatted as `agent · branch · age` plus optional PR info (filtering empty parts).
     pub fn subtitle(&self) -> String {
-        let parts: Vec<&str> = [
+        let pr_num_str = self.pr_number.map(|n| format!("#{n}"));
+        let checks_str = match self.pr_checks {
+            Some(PrChecks::Failing) => Some("checks failing"),
+            Some(PrChecks::Passing) => Some("checks passing"),
+            Some(PrChecks::Pending) => Some("checks pending"),
+            Some(PrChecks::None) | None => None,
+        };
+
+        let mut parts: Vec<&str> = [
             self.agent.as_str(),
             self.branch.as_str(),
             self.relative_age.as_str(),
@@ -121,12 +149,24 @@ impl TaskCardView {
         .into_iter()
         .filter(|s| !s.is_empty())
         .collect();
+
+        if let Some(ref num) = pr_num_str {
+            parts.push(num.as_str());
+        }
+        if let Some(checks) = checks_str {
+            parts.push(checks);
+        }
+
         parts.join(" · ")
     }
 }
 
 /// Convert a domain `Task` to a pure presentation `TaskCardView`.
 pub fn task_to_card(task: &Task, now: DateTime<Utc>) -> TaskCardView {
+    let (pr_number, pr_checks) = match task.pr {
+        Some(ref pr) => (Some(pr.number), Some(pr.checks)),
+        None => (None, None),
+    };
     TaskCardView {
         id: task.id.clone(),
         pane_id: task.pane_id.clone(),
@@ -137,6 +177,8 @@ pub fn task_to_card(task: &Task, now: DateTime<Utc>) -> TaskCardView {
         css_class: state_class(task.state),
         relative_age: relative_age(task.updated_at, now),
         updated_at: task.updated_at,
+        pr_number,
+        pr_checks,
     }
 }
 
@@ -154,6 +196,7 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
     let mut working = Vec::new();
     let mut needs_you = Vec::new();
     let mut in_review = Vec::new();
+    let mut ready_to_merge = Vec::new();
     let mut done = Vec::new();
 
     for task in tasks {
@@ -163,6 +206,7 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
             BoardColumn::Working => working.push(card),
             BoardColumn::NeedsYou => needs_you.push(card),
             BoardColumn::InReview => in_review.push(card),
+            BoardColumn::ReadyToMerge => ready_to_merge.push(card),
             BoardColumn::Done => done.push(card),
         }
     }
@@ -174,6 +218,7 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
     sort_desc(&mut working);
     sort_desc(&mut needs_you);
     sort_desc(&mut in_review);
+    sort_desc(&mut ready_to_merge);
     sort_desc(&mut done);
 
     let done_total = done.len();
@@ -198,6 +243,11 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
             cards: in_review,
         },
         BoardColumnView {
+            column: BoardColumn::ReadyToMerge,
+            total_count: ready_to_merge.len(),
+            cards: ready_to_merge,
+        },
+        BoardColumnView {
             column: BoardColumn::Done,
             total_count: done_total,
             cards: done,
@@ -214,11 +264,11 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
 pub fn present(
     window: &libadwaita::ApplicationWindow,
     tasks: &[Task],
-    on_closed: impl FnOnce(Option<String>) + 'static,
+    on_closed: impl FnOnce(&libadwaita::Dialog, Option<String>) + 'static,
 ) -> libadwaita::Dialog {
     let dialog = libadwaita::Dialog::new();
     dialog.set_title("Task Board");
-    dialog.set_content_width(960);
+    dialog.set_content_width(1200);
     dialog.set_content_height(600);
 
     let body = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -331,9 +381,9 @@ pub fn present(
 
     dialog.set_child(Some(&body));
     let on_closed = RefCell::new(Some(on_closed));
-    dialog.connect_closed(move |_| {
+    dialog.connect_closed(move |dialog| {
         if let Some(cb) = on_closed.borrow_mut().take() {
-            cb(chosen.take());
+            cb(dialog, chosen.take());
         }
     });
 
@@ -345,7 +395,7 @@ pub fn present(
 mod tests {
     use super::*;
     use chrono::{Duration, TimeZone};
-    use signaltty_core::{Contract, Disposition, Relationship};
+    use signaltty_core::{Contract, Disposition, Relationship, TaskPr};
     use std::path::PathBuf;
 
     fn make_task(
@@ -387,6 +437,7 @@ mod tests {
                 branch_deleted: None,
                 at: None,
             },
+            pr: None,
             status_reason: None,
             finish_error: None,
             worker_pid: None,
@@ -570,7 +621,7 @@ mod tests {
         }
 
         let board = build_board(&tasks, now);
-        let done_col = &board[3];
+        let done_col = &board[4];
         assert_eq!(done_col.column, BoardColumn::Done);
         assert_eq!(done_col.total_count, 25);
         assert_eq!(done_col.cards.len(), 20);
@@ -618,6 +669,193 @@ mod tests {
         assert_eq!(BoardColumn::Working.title(), "Working");
         assert_eq!(BoardColumn::NeedsYou.title(), "Needs you");
         assert_eq!(BoardColumn::InReview.title(), "In review");
+        assert_eq!(BoardColumn::ReadyToMerge.title(), "Ready to merge");
         assert_eq!(BoardColumn::Done.title(), "Done");
+    }
+
+    #[test]
+    fn test_board_column_with_pr() {
+        let base_time = Utc.with_ymd_and_hms(2026, 10, 4, 12, 0, 0).unwrap();
+
+        let make_pr_task =
+            |state: TaskState, pr_state: PrState, checks: PrChecks, review: PrReview| {
+                let mut t = make_task("t", "PR Task", state, DispositionOutcome::None, base_time);
+                t.pr = Some(TaskPr {
+                    number: 42,
+                    url: "https://github.com/org/repo/pull/42".to_string(),
+                    state: pr_state,
+                    checks,
+                    review,
+                    checked_at: None,
+                });
+                t
+            };
+
+        // 1. Merged or Closed -> Done
+        let t_merged = make_pr_task(
+            TaskState::Completed,
+            PrState::Merged,
+            PrChecks::Passing,
+            PrReview::Approved,
+        );
+        assert_eq!(board_column(&t_merged), BoardColumn::Done);
+        let t_closed = make_pr_task(
+            TaskState::Completed,
+            PrState::Closed,
+            PrChecks::None,
+            PrReview::None,
+        );
+        assert_eq!(board_column(&t_closed), BoardColumn::Done);
+
+        // 2. Open with failing checks or changes requested -> NeedsYou
+        let t_failing = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::Failing,
+            PrReview::Approved,
+        );
+        assert_eq!(board_column(&t_failing), BoardColumn::NeedsYou);
+        let t_changes = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::Passing,
+            PrReview::ChangesRequested,
+        );
+        assert_eq!(board_column(&t_changes), BoardColumn::NeedsYou);
+
+        // 3. Open with checks passing/none and review approved/none -> ReadyToMerge (once refreshed)
+        let mut t_ready1 = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::Passing,
+            PrReview::Approved,
+        );
+        t_ready1.pr.as_mut().unwrap().checked_at = Some(base_time);
+        assert_eq!(board_column(&t_ready1), BoardColumn::ReadyToMerge);
+
+        let mut t_ready2 = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::None,
+            PrReview::None,
+        );
+        t_ready2.pr.as_mut().unwrap().checked_at = Some(base_time);
+        assert_eq!(board_column(&t_ready2), BoardColumn::ReadyToMerge);
+
+        let mut t_ready3 = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::Passing,
+            PrReview::None,
+        );
+        t_ready3.pr.as_mut().unwrap().checked_at = Some(base_time);
+        assert_eq!(board_column(&t_ready3), BoardColumn::ReadyToMerge);
+
+        let mut t_ready4 = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::None,
+            PrReview::Approved,
+        );
+        t_ready4.pr.as_mut().unwrap().checked_at = Some(base_time);
+        assert_eq!(board_column(&t_ready4), BoardColumn::ReadyToMerge);
+
+        // 4. Open with pending checks or review required -> InReview
+        let t_pending = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::Pending,
+            PrReview::None,
+        );
+        assert_eq!(board_column(&t_pending), BoardColumn::InReview);
+        let t_rev_req = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::Passing,
+            PrReview::ReviewRequired,
+        );
+        assert_eq!(board_column(&t_rev_req), BoardColumn::InReview);
+
+        // 5. Open PR never refreshed (checked_at == None) -> InReview
+        let t_unrefreshed = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::None,
+            PrReview::None,
+        );
+        assert_eq!(board_column(&t_unrefreshed), BoardColumn::InReview);
+
+        // 6. Terminal disposition Discarded wins over open PR -> Done
+        let mut t_discarded_pr = make_pr_task(
+            TaskState::Completed,
+            PrState::Open,
+            PrChecks::Passing,
+            PrReview::Approved,
+        );
+        t_discarded_pr.disposition.outcome = DispositionOutcome::Discarded;
+        assert_eq!(board_column(&t_discarded_pr), BoardColumn::Done);
+
+        // 7. Canceled state wins over open PR -> Done
+        let t_canceled_pr = make_pr_task(
+            TaskState::Canceled,
+            PrState::Open,
+            PrChecks::Passing,
+            PrReview::Approved,
+        );
+        assert_eq!(board_column(&t_canceled_pr), BoardColumn::Done);
+    }
+
+    #[test]
+    fn test_task_card_view_subtitle_with_pr() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 4, 12, 0, 0).unwrap();
+        let mut task = make_task(
+            "task-abc12345",
+            "PR Feature",
+            TaskState::Completed,
+            DispositionOutcome::None,
+            now - Duration::minutes(5),
+        );
+        task.agent = Some("codex".to_string());
+        task.branch = "feat/pr".to_string();
+
+        // No PR
+        let card = task_to_card(&task, now);
+        assert_eq!(card.subtitle(), "codex · feat/pr · 5m");
+
+        // PR with checks failing
+        task.pr = Some(TaskPr {
+            number: 101,
+            url: "url".to_string(),
+            state: PrState::Open,
+            checks: PrChecks::Failing,
+            review: PrReview::None,
+            checked_at: None,
+        });
+        let card = task_to_card(&task, now);
+        assert_eq!(
+            card.subtitle(),
+            "codex · feat/pr · 5m · #101 · checks failing"
+        );
+
+        // PR with checks passing
+        task.pr.as_mut().unwrap().checks = PrChecks::Passing;
+        let card = task_to_card(&task, now);
+        assert_eq!(
+            card.subtitle(),
+            "codex · feat/pr · 5m · #101 · checks passing"
+        );
+
+        // PR with checks pending
+        task.pr.as_mut().unwrap().checks = PrChecks::Pending;
+        let card = task_to_card(&task, now);
+        assert_eq!(
+            card.subtitle(),
+            "codex · feat/pr · 5m · #101 · checks pending"
+        );
+
+        // PR with checks none
+        task.pr.as_mut().unwrap().checks = PrChecks::None;
+        let card = task_to_card(&task, now);
+        assert_eq!(card.subtitle(), "codex · feat/pr · 5m · #101");
     }
 }

@@ -265,7 +265,7 @@ fn snapshot(root: &str, path: &str) -> Result<Option<Vec<u8>>, SnapshotError> {
     unreachable!("validated nonempty path")
 }
 
-struct ProcessGroup(Option<i32>);
+pub(crate) struct ProcessGroup(pub(crate) Option<i32>);
 
 impl Drop for ProcessGroup {
     fn drop(&mut self) {

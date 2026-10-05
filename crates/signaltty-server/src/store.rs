@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use signaltty_core::model::{
-    AgentKind, Disposition, DispositionOutcome, Notification, Pane, Tab, Task, TaskResult,
+    AgentKind, Disposition, DispositionOutcome, Notification, Pane, Tab, Task, TaskPr, TaskResult,
     Workspace,
 };
 use signaltty_core::state::{Attention, Lifecycle, TaskState};
@@ -846,6 +846,26 @@ impl Store {
         Ok(ev)
     }
 
+    pub fn task_set_pr(
+        &mut self,
+        task_id: &str,
+        pr: TaskPr,
+    ) -> Result<StoredEvent, (String, String)> {
+        let task_clone = {
+            let task = self.tasks.get_mut(task_id).ok_or_else(|| {
+                (
+                    code::NO_SUCH_TASK.to_string(),
+                    format!("no such task '{task_id}'"),
+                )
+            })?;
+            task.pr = Some(pr);
+            task.updated_at = Utc::now();
+            task.clone()
+        };
+        let ev = self.emit_task_updated(&task_clone, None);
+        Ok(ev)
+    }
+
     /// Replace finish evidence and emit `task.updated` with `task_id`.
     /// `None` clears a previous cleanup or conflict note. Does not change
     /// disposition, so a recorded finish can retry cleanup.
@@ -1226,6 +1246,7 @@ mod tests {
             state: TaskState::Pending,
             result: None,
             disposition: Disposition::default(),
+            pr: None,
             status_reason: None,
             finish_error: None,
             worker_pid: None,
@@ -1364,6 +1385,7 @@ mod tests {
             state: TaskState::InputRequired,
             result: None,
             disposition: Disposition::default(),
+            pr: None,
             status_reason: Some(serde_json::json!({"reason": "decision_required"})),
             finish_error: None,
             worker_pid: None,
@@ -1432,6 +1454,7 @@ mod tests {
             state,
             result: None,
             disposition: Disposition::default(),
+            pr: None,
             status_reason: None,
             finish_error: None,
             worker_pid: None,
@@ -1500,6 +1523,7 @@ mod tests {
             state: TaskState::Pending,
             result: None,
             disposition: Disposition::default(),
+            pr: None,
             status_reason: None,
             finish_error: None,
             worker_pid: None,
@@ -1544,6 +1568,7 @@ mod tests {
             state: TaskState::Working,
             result: None,
             disposition: Disposition::default(),
+            pr: None,
             status_reason: None,
             finish_error: None,
             worker_pid: None,
@@ -1602,6 +1627,7 @@ mod tests {
             state: TaskState::Working,
             result: None,
             disposition: Disposition::default(),
+            pr: None,
             status_reason: None,
             finish_error: None,
             worker_pid: None,
@@ -1624,5 +1650,64 @@ mod tests {
             store.tasks[&task_id].status_reason,
             Some(serde_json::json!({"reason": "pane_closed"}))
         );
+    }
+
+    #[test]
+    fn test_task_set_pr() {
+        use std::path::PathBuf;
+        let mut store = Store::new();
+        let task_id = signaltty_core::ids::new_task_id();
+        let pr = TaskPr {
+            number: 123,
+            url: "https://github.com/foo/bar/pull/123".to_string(),
+            state: signaltty_core::model::PrState::Open,
+            checks: signaltty_core::model::PrChecks::Pending,
+            review: signaltty_core::model::PrReview::ReviewRequired,
+            checked_at: None,
+        };
+
+        // Non-existent task
+        assert_eq!(
+            store.task_set_pr("non_existent", pr.clone()).unwrap_err().0,
+            code::NO_SUCH_TASK
+        );
+
+        let now = Utc::now();
+        let task = Task {
+            id: task_id.clone(),
+            context_id: signaltty_core::ids::new_context_id(),
+            parent_task_id: None,
+            pane_id: None,
+            parent_pane_id: None,
+            root_pane_id: None,
+            relationship: signaltty_core::model::Relationship::Subagent,
+            label: "test".to_string(),
+            contract: signaltty_core::model::Contract::new("objective").unwrap(),
+            agent: None,
+            source_repo: PathBuf::from("/tmp/repo"),
+            target_branch: Some("main".to_string()),
+            worktree_path: PathBuf::from("/tmp/wt"),
+            branch: "task-1".to_string(),
+            preexisting_branch: false,
+            base_ref: "main".to_string(),
+            base_sha: "1234abcd".to_string(),
+            state: TaskState::Completed,
+            result: None,
+            disposition: Disposition::default(),
+            pr: None,
+            status_reason: None,
+            finish_error: None,
+            worker_pid: None,
+            worker_cmd: None,
+            client_request_id: None,
+            created_at: now,
+            updated_at: now,
+        };
+        store.task_create(task);
+
+        let ev = store.task_set_pr(&task_id, pr.clone()).unwrap();
+        assert_eq!(ev.name, "task.updated");
+        assert_eq!(ev.payload["task"]["pr"]["number"], 123);
+        assert_eq!(store.tasks[&task_id].pr, Some(pr));
     }
 }

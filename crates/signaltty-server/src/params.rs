@@ -457,6 +457,19 @@ pub struct TaskFinish {
     pub ignore_dirty: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TaskPrOpen {
+    pub task_id: String,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub draft: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TaskPrRefresh {
+    pub task_id: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

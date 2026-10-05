@@ -542,6 +542,7 @@ mod tests {
                     state: signaltty_core::state::TaskState::Pending,
                     result: None,
                     disposition: signaltty_core::model::Disposition::default(),
+                    pr: None,
                     status_reason: None,
                     finish_error: None,
                     worker_pid: None,

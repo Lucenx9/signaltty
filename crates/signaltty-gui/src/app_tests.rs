@@ -2012,11 +2012,14 @@ fn task_board_shows_columns_and_navigates_to_pane() {
     );
     gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
     let (actor, mut requests) = IpcHandle::test_channel();
+    let listed_tasks = std::sync::Arc::new(std::sync::Mutex::new(json!({})));
+    let worker_tasks = listed_tasks.clone();
     // Card activation focuses through `pane.get`; answer it from workspace b.
     let worker = std::thread::spawn(move || {
         while let Some(request) = requests.blocking_recv() {
             if let ActorRequest::Call { method, reply, .. } = request {
                 let result = match method.as_str() {
+                    "task.list" => Ok(worker_tasks.lock().unwrap().clone()),
                     "pane.get" => Ok(json!({"pane": fixture("b")["panes"][0]})),
                     "test.stop" => {
                         let _ = reply.send(Ok(Value::Null));
@@ -2054,7 +2057,7 @@ fn task_board_shows_columns_and_navigates_to_pane() {
     let dialog = app.window.visible_dialog().unwrap();
     wait_ui(|| has_label(&dialog.child().unwrap(), "No tasks yet"));
     capture_workflow(&app.window, "board-empty");
-    dialog.close();
+    app.window.visible_dialog().unwrap().close();
     wait_ui(|| app.window.visible_dialog().is_none());
 
     // 2. Populate 4 tasks in the model
@@ -2141,6 +2144,32 @@ fn task_board_shows_columns_and_navigates_to_pane() {
         }
     }
 
+    // An event must rebuild an open board, without another PR request or
+    // allowing the replaced dialog's close callback to clear the new one.
+    app.action_show_board();
+    let mut changed = app.model.borrow().tasks.iter().next().unwrap().clone();
+    let original = changed.clone();
+    changed.label = "Updated while board is open".into();
+    app.on_event(UiEvent::ServerEvent {
+        name: signaltty_proto::event::TASK_UPDATED.into(),
+        payload: json!({"task": changed}),
+    });
+    wait_ui(|| {
+        app.window.visible_dialog().is_some_and(|dialog| {
+            has_label(&dialog.child().unwrap(), "Updated while board is open")
+        })
+    });
+    let dialog = app.window.visible_dialog().unwrap();
+    assert_eq!(app.board_dialog.borrow().as_ref(), Some(&dialog));
+    app.window.visible_dialog().unwrap().close();
+    wait_ui(|| app.window.visible_dialog().is_none());
+    app.refresh_open_board();
+    assert!(app.window.visible_dialog().is_none());
+    app.model.borrow_mut().tasks.apply_event(
+        signaltty_proto::event::TASK_UPDATED,
+        &json!({"task": original}),
+    );
+
     let style = adw::StyleManager::default();
     for (theme, scheme) in [
         ("dark", adw::ColorScheme::ForceDark),
@@ -2168,8 +2197,9 @@ fn task_board_shows_columns_and_navigates_to_pane() {
         ));
 
         capture_workflow(&app.window, &format!("board-{theme}"));
+        let dialog = app.window.visible_dialog().unwrap();
         if theme == "dark" {
-            dialog.close();
+            app.window.visible_dialog().unwrap().close();
             wait_ui(|| app.window.visible_dialog().is_none());
         } else {
             // The first card is the Working task in workspace b.
@@ -2180,6 +2210,33 @@ fn task_board_shows_columns_and_navigates_to_pane() {
             wait_ui(|| app.current_pane_id().as_deref() == Some("pane_b"));
         }
     }
+
+    // Refresh completion must reload tasks even without a task.updated event.
+    let mut refreshed = app.model.borrow().tasks.iter().next().unwrap().clone();
+    refreshed.label = "Reloaded after PR refresh".into();
+    *listed_tasks.lock().unwrap() = json!({"tasks": [refreshed]});
+    app.action_show_board();
+    wait_ui(|| {
+        app.window
+            .visible_dialog()
+            .is_some_and(|dialog| has_label(&dialog.child().unwrap(), "Reloaded after PR refresh"))
+    });
+    app.window.visible_dialog().unwrap().close();
+    wait_ui(|| app.window.visible_dialog().is_none());
+
+    // A completion arriving after dismissal must leave the board closed.
+    listed_tasks.lock().unwrap()["tasks"][0]["label"] = json!("Refreshed after dismissal");
+    app.action_show_board();
+    app.window.visible_dialog().unwrap().close();
+    wait_ui(|| {
+        app.model
+            .borrow()
+            .tasks
+            .iter()
+            .any(|task| task.label == "Refreshed after dismissal")
+    });
+    assert!(app.board_dialog.borrow().is_none());
+    assert!(app.window.visible_dialog().is_none());
 
     glib::MainContext::default()
         .block_on(app.actor.call("test.stop", json!({})))

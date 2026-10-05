@@ -209,6 +209,10 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
             return crate::tasks::h_task_file_diff(ctx, req, &req.params).await
         }
         method::TASK_FINISH => return crate::tasks::h_task_finish(ctx, req, &req.params).await,
+        method::TASK_PR_OPEN => return crate::tasks::h_task_pr_open(ctx, req, &req.params).await,
+        method::TASK_PR_REFRESH => {
+            return crate::tasks::h_task_pr_refresh(ctx, req, &req.params).await
+        }
         _ => Err((
             code::UNKNOWN_METHOD.to_string(),
             format!("unknown method '{}'", req.method),

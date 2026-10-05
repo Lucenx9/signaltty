@@ -169,6 +169,8 @@ pub mod method {
     pub const TASK_DIFF: &str = "task.diff";
     pub const TASK_FILE_DIFF: &str = "task.file_diff";
     pub const TASK_FINISH: &str = "task.finish";
+    pub const TASK_PR_OPEN: &str = "task.pr_open";
+    pub const TASK_PR_REFRESH: &str = "task.pr_refresh";
     pub const TASK_CANCEL: &str = "task.cancel";
     pub const PANE_SUBMIT: &str = "pane.submit";
     pub const ATTENTION_PENDING: &str = "attention.pending";
@@ -225,6 +227,8 @@ pub mod method {
         TASK_DIFF,
         TASK_FILE_DIFF,
         TASK_FINISH,
+        TASK_PR_OPEN,
+        TASK_PR_REFRESH,
         TASK_CANCEL,
         PANE_SUBMIT,
         ATTENTION_PENDING,

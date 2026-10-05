@@ -1523,6 +1523,7 @@ impl App {
                 );
                 if task_changed {
                     self.paint_task_chips();
+                    self.refresh_open_board();
                 }
                 self.schedule_refresh();
             }
@@ -1897,10 +1898,32 @@ impl App {
         if self.board_dialog.borrow().is_some() {
             return;
         }
+        self.present_board();
+        self.run(move |app| async move {
+            let _ = app.actor.call("task.pr_refresh", json!({})).await;
+            app.seed_tasks().await;
+            app.paint_task_chips();
+            app.refresh_open_board();
+        });
+    }
+
+    fn refresh_open_board(&self) {
+        let previous = self.board_dialog.borrow_mut().take();
+        if let Some(dialog) = previous {
+            dialog.force_close();
+            self.present_board();
+        }
+    }
+
+    fn present_board(&self) {
         let tasks: Vec<signaltty_core::Task> = self.model.borrow().tasks.iter().cloned().collect();
         let weak = self.weak();
-        let dialog = crate::board::present(&self.window, &tasks, move |chosen| {
+        let dialog = crate::board::present(&self.window, &tasks, move |closed, chosen| {
             let Some(app) = weak.upgrade() else { return };
+            // Closing a replaced dialog must not clear its successor or move focus.
+            if app.board_dialog.borrow().as_ref() != Some(closed) {
+                return;
+            }
             app.board_dialog.borrow_mut().take();
             if let Some(pane_id) = chosen {
                 // After GTK hands focus back to the old pane, or that

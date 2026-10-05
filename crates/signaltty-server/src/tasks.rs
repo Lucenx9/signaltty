@@ -1,14 +1,17 @@
 //! Task orchestration: task lifecycle, worktree checkout, agent worker pane spawn,
 //! and background prompt delivery.
 
+use crate::file_diff::ProcessGroup;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 
 use chrono::Utc;
 use serde_json::{json, Value};
 use signaltty_core::model::{
-    AgentKind, Disposition, DispositionOutcome, LiveState, Relationship, Task, TaskResult,
+    parse_review_decision, rollup_status_checks, AgentKind, Disposition, DispositionOutcome,
+    LiveState, PrChecks, PrReview, PrState, Relationship, Task, TaskPr, TaskResult,
 };
 use signaltty_core::state::{Attention, Lifecycle, TaskState};
 use signaltty_core::{new_context_id, new_task_id};
@@ -323,6 +326,7 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
         state: TaskState::Pending,
         result: None,
         disposition: Disposition::default(),
+        pr: None,
         status_reason: None,
         finish_error: None,
         worker_pid: None,
@@ -1345,6 +1349,24 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
             );
         }
 
+        if mode == "merge" {
+            if let Some(ref pr) = task.pr {
+                if pr.state == PrState::Open {
+                    return (
+                        Response::err(
+                            &req.id,
+                            code::BAD_PARAMS,
+                            format!(
+                                "cannot merge task '{}' while its pull request is open ({}); if it was closed on GitHub, run task pr-refresh first",
+                                p.task_id, pr.url
+                            ),
+                        ),
+                        ConnEffect::default(),
+                    );
+                }
+            }
+        }
+
         if mode == "merge" && task.state != TaskState::Completed {
             return (
                 Response::err_with_details(
@@ -1810,6 +1832,464 @@ fn cwd_inside_worktree(cwd: &str, worktree: &std::path::Path) -> bool {
         .is_ok_and(|cwd| cwd.starts_with(worktree))
 }
 
+async fn run_cli(
+    program: &str,
+    cwd: &str,
+    args: &[&str],
+) -> Result<std::process::Output, (String, String, Value)> {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.current_dir(cwd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
+        .process_group(0)
+        .kill_on_drop(true);
+
+    let child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err((
+                code::SPAWN_FAILED.to_string(),
+                format!("{program} binary not found"),
+                Value::Null,
+            ));
+        }
+        Err(e) => {
+            return Err((
+                code::IO_ERROR.to_string(),
+                format!("{program} spawn failed: {e}"),
+                Value::Null,
+            ));
+        }
+    };
+
+    let pid = child.id().map(|id| id as i32);
+    let mut group = ProcessGroup(pid);
+
+    let res = match tokio::time::timeout(Duration::from_secs(60), child.wait_with_output()).await {
+        Ok(Ok(output)) => {
+            group.0 = None;
+            output
+        }
+        Ok(Err(e)) => {
+            return Err((
+                code::IO_ERROR.to_string(),
+                format!("{program} failed: {e}"),
+                Value::Null,
+            ));
+        }
+        Err(_) => {
+            drop(group);
+            return Err((
+                code::TIMEOUT.to_string(),
+                format!("{program} timed out after 60s"),
+                Value::Null,
+            ));
+        }
+    };
+
+    if !res.status.success() {
+        let stderr = String::from_utf8_lossy(&res.stderr).trim().to_string();
+        return Err((
+            code::IO_ERROR.to_string(),
+            format!("{program} failed: {stderr}"),
+            json!({ "stderr": stderr }),
+        ));
+    }
+
+    Ok(res)
+}
+
+pub async fn h_task_pr_open(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::TaskPrOpen = match decode(params) {
+        Ok(p) => p,
+        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+    };
+
+    let worktree_for_lock = {
+        let s = ctx.store.read().unwrap();
+        match s.tasks.get(&p.task_id) {
+            Some(t) => t.worktree_path.clone(),
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        }
+    };
+    let path_lock = ctx.worktrees.path_lock(&worktree_for_lock);
+    let _lock = path_lock.lock().await;
+
+    let (task_id, wt, branch, target_branch, title, body, draft) = {
+        let s = ctx.store.read().unwrap();
+        let task = match s.tasks.get(&p.task_id) {
+            Some(t) => t,
+            None => {
+                return (
+                    Response::err(
+                        &req.id,
+                        code::NO_SUCH_TASK,
+                        format!("no such task '{}'", p.task_id),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        };
+
+        if task.state != TaskState::Completed {
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    format!(
+                        "task must be completed to open a pr, currently {}",
+                        task.state.as_str()
+                    ),
+                    json!({ "state": task.state.as_str() }),
+                ),
+                ConnEffect::default(),
+            );
+        }
+
+        if task.disposition.outcome != DispositionOutcome::None {
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    format!(
+                        "task '{}' already has a disposition ({:?})",
+                        p.task_id, task.disposition.outcome
+                    ),
+                    json!({ "state": task.state.as_str() }),
+                ),
+                ConnEffect::default(),
+            );
+        }
+
+        if task.pr.is_some() {
+            return (
+                Response::err_with_details(
+                    &req.id,
+                    code::BAD_PARAMS,
+                    format!("task '{}' already has a pull request", p.task_id),
+                    json!({ "state": task.state.as_str() }),
+                ),
+                ConnEffect::default(),
+            );
+        }
+
+        let target_branch = match task.target_branch {
+            Some(ref tb) => tb.clone(),
+            None => {
+                return (
+                    Response::err_with_details(
+                        &req.id,
+                        code::BAD_PARAMS,
+                        "task has no recorded target_branch",
+                        json!({ "state": task.state.as_str() }),
+                    ),
+                    ConnEffect::default(),
+                );
+            }
+        };
+
+        let title = p.title.clone().unwrap_or_else(|| {
+            if !task.label.trim().is_empty() {
+                task.label.clone()
+            } else {
+                task.contract.objective.clone()
+            }
+        });
+
+        let body = p.body.clone().unwrap_or_else(|| {
+            if let Some(ref res) = task.result {
+                format!(
+                    "{}\n\n{}",
+                    res.summary.trim(),
+                    task.contract.objective.trim()
+                )
+            } else {
+                task.contract.objective.clone()
+            }
+        });
+
+        (
+            task.id.clone(),
+            task.worktree_path.to_string_lossy().to_string(),
+            task.branch.clone(),
+            target_branch,
+            title,
+            body,
+            p.draft.unwrap_or(false),
+        )
+    };
+
+    if let Err((c, m, details)) = run_cli("git", &wt, &["push", "-u", "origin", &branch]).await {
+        return if details.is_null() {
+            (Response::err(&req.id, &c, m), ConnEffect::default())
+        } else {
+            (
+                Response::err_with_details(&req.id, &c, m, details),
+                ConnEffect::default(),
+            )
+        };
+    }
+
+    let mut gh_args = vec![
+        "pr",
+        "create",
+        "--head",
+        &branch,
+        "--base",
+        &target_branch,
+        "--title",
+        &title,
+        "--body",
+        &body,
+    ];
+    if draft {
+        gh_args.push("--draft");
+    }
+
+    let gh_out = match run_cli("gh", &wt, &gh_args).await {
+        Ok(out) => out,
+        Err((c, m, details)) => {
+            return if details.is_null() {
+                (Response::err(&req.id, &c, m), ConnEffect::default())
+            } else {
+                (
+                    Response::err_with_details(&req.id, &c, m, details),
+                    ConnEffect::default(),
+                )
+            };
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&gh_out.stdout);
+    let url = match stdout.lines().map(str::trim).rfind(|l| !l.is_empty()) {
+        Some(l) => l.to_string(),
+        None => {
+            return (
+                Response::err(&req.id, code::IO_ERROR, "gh pr create produced no output"),
+                ConnEffect::default(),
+            );
+        }
+    };
+
+    let number: u64 = match url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(n) => n,
+        None => {
+            return (
+                Response::err(
+                    &req.id,
+                    code::IO_ERROR,
+                    format!("could not parse pull request number from '{url}'"),
+                ),
+                ConnEffect::default(),
+            );
+        }
+    };
+
+    let pr = TaskPr {
+        number,
+        url,
+        state: PrState::Open,
+        checks: PrChecks::None,
+        review: PrReview::None,
+        checked_at: None,
+    };
+
+    let task = {
+        let mut s = ctx.store.write().unwrap();
+        match s.task_set_pr(&task_id, pr) {
+            Ok(_) => s.tasks.get(&task_id).cloned().unwrap(),
+            Err((c, m)) => return (Response::err(&req.id, &c, m), ConnEffect::default()),
+        }
+    };
+    ctx.mark_persist();
+    (
+        Response::ok(&req.id, json!({ "task": task })),
+        ConnEffect::default(),
+    )
+}
+
+pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
+    let p: params::TaskPrRefresh = match decode(params) {
+        Ok(p) => p,
+        Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
+    };
+
+    // 1. Gather target tasks: (task_id, source_repo, existing_pr)
+    let targets = {
+        let s = ctx.store.read().unwrap();
+        if let Some(ref tid) = p.task_id {
+            let task = match s.tasks.get(tid) {
+                Some(t) => t,
+                None => {
+                    return (
+                        Response::err(&req.id, code::NO_SUCH_TASK, format!("no such task '{tid}'")),
+                        ConnEffect::default(),
+                    );
+                }
+            };
+            let pr = match task.pr {
+                Some(ref pr) => pr.clone(),
+                None => {
+                    return (
+                        Response::err(
+                            &req.id,
+                            code::BAD_PARAMS,
+                            format!("task '{tid}' has no pull request"),
+                        ),
+                        ConnEffect::default(),
+                    );
+                }
+            };
+            vec![(
+                task.id.clone(),
+                task.source_repo.to_string_lossy().to_string(),
+                pr,
+            )]
+        } else {
+            s.tasks
+                .values()
+                .filter(|t| t.pr.as_ref().is_some_and(|pr| pr.state == PrState::Open))
+                .map(|t| {
+                    (
+                        t.id.clone(),
+                        t.source_repo.to_string_lossy().to_string(),
+                        t.pr.clone().unwrap(),
+                    )
+                })
+                .collect()
+        }
+    };
+
+    if targets.is_empty() {
+        return (
+            Response::ok(&req.id, json!({ "tasks": [] })),
+            ConnEffect::default(),
+        );
+    }
+
+    let is_single = p.task_id.is_some();
+    let mut refreshed_pairs = Vec::new();
+    for (tid, src_repo, mut pr) in targets {
+        let gh_out = match run_cli(
+            "gh",
+            &src_repo,
+            &[
+                "pr",
+                "view",
+                &pr.url,
+                "--json",
+                "state,reviewDecision,statusCheckRollup",
+            ],
+        )
+        .await
+        {
+            Ok(o) => o,
+            Err((c, m, details)) => {
+                if is_single {
+                    return if details.is_null() {
+                        (Response::err(&req.id, &c, m), ConnEffect::default())
+                    } else {
+                        (
+                            Response::err_with_details(&req.id, &c, m, details),
+                            ConnEffect::default(),
+                        )
+                    };
+                } else {
+                    continue;
+                }
+            }
+        };
+
+        let view_json: Value = match serde_json::from_slice(&gh_out.stdout) {
+            Ok(v) => v,
+            Err(e) => {
+                if is_single {
+                    return (
+                        Response::err(
+                            &req.id,
+                            code::IO_ERROR,
+                            format!("failed to parse gh pr view JSON output: {e}"),
+                        ),
+                        ConnEffect::default(),
+                    );
+                } else {
+                    continue;
+                }
+            }
+        };
+
+        if let Some(state_str) = view_json.get("state").and_then(|v| v.as_str()) {
+            if let Some(st) = PrState::parse_gh(state_str) {
+                pr.state = st;
+            }
+        }
+
+        if let Some(rd_str) = view_json.get("reviewDecision").and_then(|v| v.as_str()) {
+            pr.review = parse_review_decision(rd_str);
+        } else {
+            pr.review = PrReview::None;
+        }
+
+        if let Some(checks_arr) = view_json
+            .get("statusCheckRollup")
+            .and_then(|v| v.as_array())
+        {
+            pr.checks = rollup_status_checks(checks_arr);
+        } else {
+            pr.checks = PrChecks::None;
+        }
+
+        pr.checked_at = Some(Utc::now());
+        refreshed_pairs.push((tid, pr));
+    }
+
+    let refreshed_tasks = {
+        let mut s = ctx.store.write().unwrap();
+        write_refreshed_prs(&mut s, refreshed_pairs)
+    };
+    ctx.mark_persist();
+
+    (
+        Response::ok(&req.id, json!({ "tasks": refreshed_tasks })),
+        ConnEffect::default(),
+    )
+}
+
+/// Apply only results for the PR that is still attached to the task.
+fn write_refreshed_prs(store: &mut Store, refreshed: Vec<(String, TaskPr)>) -> Vec<Task> {
+    let mut tasks = Vec::new();
+    for (tid, pr) in refreshed {
+        let current_pr = store.tasks.get(&tid).and_then(|task| task.pr.as_ref());
+        if current_pr.is_none_or(|current| current.url != pr.url) {
+            continue;
+        }
+        if store.task_set_pr(&tid, pr).is_ok() {
+            if let Some(task) = store.tasks.get(&tid) {
+                tasks.push(task.clone());
+            }
+        }
+    }
+    tasks
+}
+
 /// Second finish when a disposition is already stored but the recorded
 /// checkout is still on disk: retry removal only, do not merge again.
 #[allow(clippy::too_many_arguments)]
@@ -1883,6 +2363,55 @@ fn retry_recorded_cleanup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pr_refresh_writeback_preserves_replaced_pr_and_disposition() {
+        let now = Utc::now();
+        let original: Task = serde_json::from_value(json!({
+            "id": "task_refresh", "context_id": "ctx_refresh",
+            "label": "Refresh", "contract": {"objective": "Refresh PR"},
+            "source_repo": "/tmp/repo", "worktree_path": "/tmp/task",
+            "branch": "task", "base_ref": "main", "base_sha": "abc",
+            "state": "completed", "disposition": {"outcome": "none"},
+            "created_at": now, "updated_at": now,
+            "pr": {"number": 1, "url": "https://github.com/o/r/pull/1",
+                "state": "open", "checks": "none", "review": "none"}
+        }))
+        .unwrap();
+        let mut refreshed = original.pr.clone().unwrap();
+        refreshed.checks = PrChecks::Passing;
+        refreshed.checked_at = Some(now);
+
+        for replacement in [
+            None,
+            Some("https://github.com/o/r/pull/2"),
+            Some(&refreshed.url),
+        ] {
+            let mut current = original.clone();
+            current.pr = replacement.map(|url| TaskPr {
+                url: url.into(),
+                ..original.pr.clone().unwrap()
+            });
+            current.disposition.outcome = DispositionOutcome::Discarded;
+            let mut store = Store::new();
+            store.task_create(current.clone());
+            let result =
+                write_refreshed_prs(&mut store, vec![(current.id.clone(), refreshed.clone())]);
+            let stored = &store.tasks[&current.id];
+            assert_eq!(stored.disposition.outcome, DispositionOutcome::Discarded);
+            if replacement == Some(refreshed.url.as_str()) {
+                assert_eq!(result.len(), 1);
+                assert_eq!(stored.pr.as_ref().unwrap().checks, PrChecks::Passing);
+            } else {
+                assert!(result.is_empty());
+                assert_eq!(
+                    serde_json::to_value(stored).unwrap(),
+                    serde_json::to_value(current).unwrap()
+                );
+            }
+        }
+        assert!(write_refreshed_prs(&mut Store::new(), vec![(original.id, refreshed)]).is_empty());
+    }
 
     #[test]
     fn missing_workspace_is_reported_without_a_guard_in_the_lookup() {
