@@ -611,12 +611,19 @@ async fn test_task_finish_discard_scoping_and_disposition() {
     // Repo itself remains intact
     assert!(repo.path().exists(), "main repo must not be touched");
 
-    // Worker pane closed
-    let pane_res = c
+    // The task workspace pointed at the removed worktree: it closes with
+    // its worker pane.
+    let ws_id = start_res["pane"]["workspace_id"].as_str().unwrap();
+    let err = c
+        .call("workspace.get", json!({ "workspace_id": ws_id }))
+        .await
+        .unwrap_err();
+    assert!(err.starts_with(code::NO_SUCH_WORKSPACE), "{err}");
+    let err = c
         .call("pane.get", json!({ "pane_id": pane_id }))
         .await
-        .unwrap();
-    assert_eq!(pane_res["pane"]["live"]["state"], "exited");
+        .unwrap_err();
+    assert!(err.starts_with(code::NO_SUCH_PANE), "{err}");
 
     srv.shutdown().await;
 }

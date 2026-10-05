@@ -90,8 +90,32 @@ fn fail_committed_task_start(
 /// git says it is not a registered worktree of this repo *and* it is the
 /// recorded task path — never while git still claims it (a live checkout
 /// or a failed remove must not be `remove_dir_all`'d). Returns a cleanup
-/// error string when the checkout survives.
-fn remove_task_worktree(src_repo: &str, worktree_path: &std::path::Path) -> Option<String> {
+/// error string when the checkout survives; once it is gone, workspaces
+/// rooted at it are closed (their cwd no longer exists).
+fn remove_task_worktree(
+    ctx: &Ctx,
+    src_repo: &str,
+    worktree_path: &std::path::Path,
+) -> Option<String> {
+    let err = remove_worktree_checkout(src_repo, worktree_path);
+    if err.is_none() {
+        let wt_str = worktree_path.to_string_lossy();
+        let stale: Vec<String> = {
+            let s = ctx.store.read().unwrap();
+            s.workspaces
+                .values()
+                .filter(|w| w.cwd == wt_str)
+                .map(|w| w.id.clone())
+                .collect()
+        };
+        for id in stale {
+            let _ = crate::router::h_workspace_close(ctx, &json!({ "workspace_id": id }));
+        }
+    }
+    err
+}
+
+fn remove_worktree_checkout(src_repo: &str, worktree_path: &std::path::Path) -> Option<String> {
     let wt_str = worktree_path.to_string_lossy().to_string();
     let _ = crate::git::git_output(src_repo, &["worktree", "unlock", &wt_str]);
     let rm_err = match crate::git::git_output(
@@ -1463,7 +1487,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
         }
 
         // Remove worktree (herdr-guarded: see remove_task_worktree).
-        let mut cleanup_error = remove_task_worktree(&src_str, &worktree_path);
+        let mut cleanup_error = remove_task_worktree(ctx, &src_str, &worktree_path);
 
         let branch_deleted =
             should_delete_branch && delete_task_branch(&src_str, &branch, &mut cleanup_error);
@@ -1787,7 +1811,7 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
     let unchanged = (p.ignore_dirty.unwrap_or(false) || source_clean(&wt_str).is_ok())
         && branch_tip_of(&src_str, &branch).as_deref() == Some(branch_tip.as_str());
     let mut cleanup_error = if unchanged {
-        remove_task_worktree(&src_str, &worktree_path)
+        remove_task_worktree(ctx, &src_str, &worktree_path)
     } else {
         Some("worktree changed after the merge (dirty or branch advanced); checkout kept".into())
     };
@@ -2350,7 +2374,7 @@ fn retry_recorded_cleanup(
     }
 
     let src_str = source_repo.to_string_lossy().to_string();
-    let cleanup_error = remove_task_worktree(&src_str, worktree_path);
+    let cleanup_error = remove_task_worktree(ctx, &src_str, worktree_path);
     let finish_error = cleanup_error
         .as_ref()
         .map(|e| json!({ "cleanup_error": e }));
