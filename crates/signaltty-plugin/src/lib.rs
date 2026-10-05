@@ -391,28 +391,6 @@ async fn run_hook(
     let body = serde_json::to_vec(envelope).unwrap();
     let timeout = std::time::Duration::from_secs(hook.timeout_secs.min(MAX_HOOK_TIMEOUT_SECS));
     let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        stdin
-            .write_all(&body)
-            .await
-            .map_err(|e| format!("stdin write failed: {e}"))?;
-    }
-    // Drain pipes concurrently so chatty hooks can't wedge the wait.
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let drain = tokio::spawn(async move {
-        use tokio::io::AsyncReadExt;
-        let mut o = Vec::new();
-        let mut e = Vec::new();
-        if let Some(mut s) = stdout {
-            s.read_to_end(&mut o).await.ok();
-        }
-        if let Some(mut s) = stderr {
-            s.read_to_end(&mut e).await.ok();
-        }
-        (o, e)
-    });
     let fail = |msg: String| {
         tracing::warn!(
             "plugin {:?} hook for {event} failed: {msg}",
@@ -420,26 +398,64 @@ async fn run_hook(
         );
         truncate(&msg, 500)
     };
-    match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(Ok(status)) => {
-            let (_, err_bytes) = drain.await.unwrap_or_default();
-            if status.success() {
-                tracing::debug!(
-                    "plugin {:?} hook ok for {event}",
-                    plugin.manifest.plugin.name
-                );
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&err_bytes);
-                Err(fail(format!("exit {status}: {}", stderr.trim())))
-            }
+    // Feed stdin, stdout and stderr concurrently with the wait, all under
+    // the hook timeout: a hook that ignores stdin, or fills one pipe while
+    // we read the other, must not wedge the runner (and its permit).
+    let stdin = child.stdin.take();
+    let writer = tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        if let Some(mut stdin) = stdin {
+            // The hook is free not to read its stdin (EPIPE is fine);
+            // its exit status is what decides success.
+            let _ = stdin.write_all(&body).await;
         }
-        Ok(Err(e)) => Err(fail(format!("wait failed: {e}"))),
+    });
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let mut drain = tokio::spawn(async move {
+        async fn read_all(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> Vec<u8> {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                p.read_to_end(&mut buf).await.ok();
+            }
+            buf
+        }
+        tokio::join!(read_all(stdout), read_all(stderr))
+    });
+    let deadline = tokio::time::Instant::now() + timeout;
+    let status = match tokio::time::timeout_at(deadline, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(e)) => {
+            writer.abort();
+            drain.abort();
+            return Err(fail(format!("wait failed: {e}")));
+        }
         Err(_) => {
             child.kill().await.ok();
             let _ = child.wait().await;
-            Err(fail(format!("timed out after {}s", timeout.as_secs())))
+            writer.abort();
+            drain.abort();
+            return Err(fail(format!("timed out after {}s", timeout.as_secs())));
         }
+    };
+    // A backgrounded grandchild can keep the pipes open; don't wait past
+    // the hook's own deadline for them.
+    let err_bytes = match tokio::time::timeout_at(deadline, &mut drain).await {
+        Ok(Ok((_, e))) => e,
+        _ => Vec::new(),
+    };
+    drain.abort();
+    writer.abort();
+    if status.success() {
+        tracing::debug!(
+            "plugin {:?} hook ok for {event}",
+            plugin.manifest.plugin.name
+        );
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&err_bytes);
+        Err(fail(format!("exit {status}: {}", stderr.trim())))
     }
 }
 
@@ -539,5 +555,76 @@ run = ["./fanout.sh"]
             resolve_argv(dir, &["true".to_string()]),
             vec!["true".to_string()]
         );
+    }
+
+    fn sh_plugin(script: &str, timeout_secs: u64) -> (LoadedPlugin, Hook) {
+        let hook = Hook {
+            events: vec!["*".into()],
+            command: vec!["sh".into(), "-c".into(), script.into()],
+            timeout_secs,
+            env: HashMap::new(),
+        };
+        let plugin = LoadedPlugin {
+            dir: std::env::temp_dir(),
+            manifest: Manifest {
+                plugin: PluginMeta {
+                    name: "pipes".into(),
+                    version: String::new(),
+                    description: None,
+                },
+                hook: vec![hook.clone()],
+                command: Vec::new(),
+            },
+            stats: vec![HookStats::default()],
+        };
+        (plugin, hook)
+    }
+
+    #[tokio::test]
+    async fn hook_may_ignore_large_stdin() {
+        // Bigger than a pipe buffer, never read: must not block or fail.
+        let (plugin, hook) = sh_plugin("sleep 0.2; exit 0", 5);
+        let env = serde_json::json!({ "blob": "x".repeat(512 * 1024) });
+        let r = run_hook(
+            &plugin,
+            &hook,
+            "agent.done",
+            &env,
+            Path::new("/nonexistent"),
+        )
+        .await;
+        assert_eq!(r, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn chatty_stderr_does_not_wedge_stdout_drain() {
+        // Fills stderr while stdout is still open; serial drains deadlock here.
+        let (plugin, hook) = sh_plugin("head -c 262144 /dev/zero >&2; echo ok", 3);
+        let env = serde_json::json!({});
+        let r = run_hook(
+            &plugin,
+            &hook,
+            "agent.done",
+            &env,
+            Path::new("/nonexistent"),
+        )
+        .await;
+        assert_eq!(r, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn failing_hook_reports_stderr() {
+        let (plugin, hook) = sh_plugin("cat >/dev/null; echo boom >&2; exit 3", 5);
+        let env = serde_json::json!({ "k": "v" });
+        let err = run_hook(
+            &plugin,
+            &hook,
+            "agent.done",
+            &env,
+            Path::new("/nonexistent"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("boom"), "{err}");
     }
 }
