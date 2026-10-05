@@ -31,7 +31,7 @@ use signaltty_core::{Attention, Layout, Lifecycle, Pane, SplitDir, Tab, Workspac
 
 use crate::actor::{IpcHandle, UiEvent, UiTx};
 use crate::notif::Notifier;
-use crate::refresh::{PendingRefresh, WorkspaceCache};
+use crate::refresh::{PendingRefresh, Snapshot, WorkspaceCache};
 use crate::sidebar::{self, Sidebar};
 use crate::status;
 use crate::task_chip::{self, TaskChipView, TaskIndex};
@@ -126,6 +126,42 @@ pub struct App {
 
 pub(crate) fn user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
+}
+
+/// Map from pane_id -> workspace_id built from snapshot cache.
+fn pane_to_workspace_map(snapshots: &HashMap<String, Snapshot>) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for snapshot in snapshots.values() {
+        for pane in &snapshot.panes {
+            map.insert(pane.id.clone(), snapshot.workspace.id.clone());
+        }
+    }
+    map
+}
+
+/// Map from child_ws_id -> parent_ws_id derived from tasks that link
+/// a child pane to a parent pane in different workspaces.
+fn task_workspace_parents(
+    tasks: &TaskIndex,
+    pane_to_ws: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut parents = HashMap::new();
+    for task in tasks.iter() {
+        let (Some(pane_id), Some(parent_pane_id)) =
+            (task.pane_id.as_deref(), task.parent_pane_id.as_deref())
+        else {
+            continue;
+        };
+        let (Some(child_ws), Some(parent_ws)) =
+            (pane_to_ws.get(pane_id), pane_to_ws.get(parent_pane_id))
+        else {
+            continue;
+        };
+        if child_ws != parent_ws {
+            parents.insert(child_ws.clone(), parent_ws.clone());
+        }
+    }
+    parents
 }
 
 impl App {
@@ -887,59 +923,19 @@ impl App {
         for error in errors {
             self.toast(&format!("Couldn't load workspaces — {error}"));
         }
-        let (items, needing, active) = {
+        if full {
+            self.seed_tasks().await;
+        }
+        let active = {
             let mut m = self.model.borrow_mut();
             let keep = m
                 .active_ws
                 .clone()
                 .filter(|id| m.cache.workspaces.iter().any(|ws| &ws.id == id));
             m.active_ws = keep.or_else(|| m.cache.workspaces.first().map(|ws| ws.id.clone()));
-            let mut items = Vec::new();
-            let mut needing = Vec::new();
-            for ws in &m.cache.workspaces {
-                if let Some(snapshot) = m.cache.snapshots.get(&ws.id) {
-                    items.push(sidebar::summarize(&snapshot.workspace, &snapshot.panes));
-                    needing.extend(
-                        snapshot
-                            .panes
-                            .iter()
-                            .filter(|p| p.attention.needs_human())
-                            .map(|p| p.attention),
-                    );
-                }
-            }
-            // Same-name workspaces are indistinguishable rows: show the
-            // unique handle on each of them, nowhere else.
-            let duplicated: std::collections::HashSet<String> = {
-                let mut counts: std::collections::HashMap<&str, usize> =
-                    std::collections::HashMap::new();
-                for item in &items {
-                    *counts.entry(item.name.as_str()).or_default() += 1;
-                }
-                counts
-                    .into_iter()
-                    .filter(|(_, n)| *n > 1)
-                    .map(|(name, _)| name.to_string())
-                    .collect()
-            };
-            if !duplicated.is_empty() {
-                for item in &mut items {
-                    if duplicated.contains(&item.name) {
-                        item.disambiguator = m
-                            .cache
-                            .snapshots
-                            .get(&item.id)
-                            .map(|s| s.workspace.handle.clone())
-                            .filter(|h| !h.is_empty());
-                    }
-                }
-            }
-            (items, needing, m.active_ws.clone())
+            m.active_ws.clone()
         };
-        let mut items = items;
-        sidebar::sort_summaries(&mut items);
-        self.sidebar.update(items);
-        self.update_attention_button(&needing);
+        self.refresh_sidebar();
         match active {
             Some(id) if full || changed.contains(&id) => self.show_workspace_internal(&id, false),
             Some(_) => {}
@@ -971,10 +967,63 @@ impl App {
             }
         }
         self.prune_widgets(&self.collect_live_panes());
-        if full {
-            self.seed_tasks().await;
-        }
         self.paint_task_chips();
+    }
+
+    fn build_sidebar_items(&self) -> (Vec<sidebar::WsSummary>, Vec<Attention>) {
+        let m = self.model.borrow();
+        let pane_to_ws = pane_to_workspace_map(&m.cache.snapshots);
+        let parents = task_workspace_parents(&m.tasks, &pane_to_ws);
+
+        let mut items = Vec::new();
+        let mut needing = Vec::new();
+        for ws in &m.cache.workspaces {
+            if let Some(snapshot) = m.cache.snapshots.get(&ws.id) {
+                let mut summary = sidebar::summarize(&snapshot.workspace, &snapshot.panes);
+                summary.parent = parents.get(&ws.id).cloned();
+                items.push(summary);
+                needing.extend(
+                    snapshot
+                        .panes
+                        .iter()
+                        .filter(|p| p.attention.needs_human())
+                        .map(|p| p.attention),
+                );
+            }
+        }
+        // Same-name workspaces are indistinguishable rows: show the
+        // unique handle on each of them, nowhere else.
+        let duplicated: HashSet<String> = {
+            let mut counts: HashMap<&str, usize> = HashMap::new();
+            for item in &items {
+                *counts.entry(item.name.as_str()).or_default() += 1;
+            }
+            counts
+                .into_iter()
+                .filter(|(_, n)| *n > 1)
+                .map(|(name, _)| name.to_string())
+                .collect()
+        };
+        if !duplicated.is_empty() {
+            for item in &mut items {
+                if duplicated.contains(&item.name) {
+                    item.disambiguator = m
+                        .cache
+                        .snapshots
+                        .get(&item.id)
+                        .map(|s| s.workspace.handle.clone())
+                        .filter(|h| !h.is_empty());
+                }
+            }
+        }
+        (items, needing)
+    }
+
+    fn refresh_sidebar(&self) {
+        let (mut items, needing) = self.build_sidebar_items();
+        sidebar::sort_summaries(&mut items);
+        self.sidebar.update(items);
+        self.update_attention_button(&needing);
     }
 
     /// `task.list` on connect and reconnect. A list that races a newer
@@ -998,9 +1047,9 @@ impl App {
     fn paint_task_chips(&self) {
         let (by_pane, by_workspace) = {
             let model = self.model.borrow();
+            let workspace_of = pane_to_workspace_map(&model.cache.snapshots);
             let mut parent_labels: HashMap<String, String> = HashMap::new();
             let mut pane_titles: HashMap<String, String> = HashMap::new();
-            let mut workspace_of: HashMap<String, String> = HashMap::new();
             let mut workspace_names: HashMap<String, String> = HashMap::new();
             for snapshot in model.cache.snapshots.values() {
                 workspace_names.insert(
@@ -1016,7 +1065,6 @@ impl App {
                         .unwrap_or(pane.title.as_str());
                     parent_labels.insert(pane.id.clone(), parent.to_string());
                     pane_titles.insert(pane.id.clone(), pane.title.trim().to_string());
-                    workspace_of.insert(pane.id.clone(), snapshot.workspace.id.clone());
                 }
             }
             let mut by_pane: HashMap<String, TaskChipView> = HashMap::new();
@@ -1522,6 +1570,7 @@ impl App {
                     &payload,
                 );
                 if task_changed {
+                    self.refresh_sidebar();
                     self.paint_task_chips();
                     self.refresh_open_board();
                 }
@@ -1902,6 +1951,7 @@ impl App {
         self.run(move |app| async move {
             let _ = app.actor.call("task.pr_refresh", json!({})).await;
             app.seed_tasks().await;
+            app.refresh_sidebar();
             app.paint_task_chips();
             app.refresh_open_board();
         });

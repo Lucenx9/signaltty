@@ -2480,3 +2480,175 @@ fn assert_chip_cluster(window: &gtk4::Widget) {
     let side_tip = side.tooltip_text().unwrap_or_default().to_string();
     assert!(side_tip.contains("fix-parser"), "{side_tip}");
 }
+
+fn find_matching_widget<T: glib::object::IsA<gtk4::Widget> + glib::types::StaticType>(
+    root: &gtk4::Widget,
+    predicate: &impl Fn(&T) -> bool,
+) -> Option<T> {
+    if let Ok(widget) = root.clone().downcast::<T>() {
+        if predicate(&widget) {
+            return Some(widget);
+        }
+    }
+    let mut child = root.first_child();
+    while let Some(w) = child {
+        if let Some(found) = find_matching_widget(&w, predicate) {
+            return Some(found);
+        }
+        child = w.next_sibling();
+    }
+    None
+}
+
+fn find_sidebar_row(app: &App, id: &str) -> Option<gtk4::ListBoxRow> {
+    find_matching_widget::<gtk4::ListBoxRow>(app.sidebar.widget.upcast_ref(), &|row| {
+        row.widget_name() == id
+    })
+}
+
+fn find_disclosure_button(row: &gtk4::ListBoxRow) -> Option<gtk4::Button> {
+    find_matching_widget::<gtk4::Button>(row.upcast_ref(), &|b| {
+        b.has_css_class("workspace-disclosure")
+    })
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session (or xvfb-run)"]
+fn task_workspace_renders_as_child_and_collapses() {
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let state = Arc::new(Mutex::new(BTreeMap::from([
+        ("root".to_string(), fixture("root")),
+        ("child".to_string(), fixture("child")),
+    ])));
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call {
+                method,
+                params,
+                reply,
+                ..
+            } = request
+            {
+                if method == "test.stop" {
+                    let _ = reply.send(Ok(Value::Null));
+                    break;
+                }
+                let st = state.lock().unwrap();
+                let result = match method.as_str() {
+                    "workspace.list" => Ok(json!({
+                        "workspaces": st.values().map(|s| s["workspace"].clone()).collect::<Vec<_>>()
+                    })),
+                    "workspace.get" => st
+                        .get(params["workspace_id"].as_str().unwrap())
+                        .cloned()
+                        .ok_or("NO_SUCH_WORKSPACE".into()),
+                    "task.list" => {
+                        let now = chrono::Utc::now();
+                        let task = signaltty_core::Task {
+                            id: "task_1".into(),
+                            context_id: "tctx_1".into(),
+                            parent_task_id: None,
+                            pane_id: Some("pane_child".into()),
+                            parent_pane_id: Some("pane_root".into()),
+                            root_pane_id: Some("pane_root".into()),
+                            relationship: signaltty_core::Relationship::Subagent,
+                            label: "Subtask".into(),
+                            contract: signaltty_core::Contract::new("Do work").unwrap(),
+                            agent: None,
+                            source_repo: std::path::PathBuf::from("/tmp"),
+                            target_branch: None,
+                            worktree_path: std::path::PathBuf::from("/tmp"),
+                            branch: "task/subtask".into(),
+                            preexisting_branch: false,
+                            base_ref: "HEAD".into(),
+                            base_sha: "123456".into(),
+                            state: signaltty_core::TaskState::Working,
+                            result: None,
+                            disposition: signaltty_core::Disposition::default(),
+                            pr: None,
+                            status_reason: None,
+                            finish_error: None,
+                            worker_pid: None,
+                            worker_cmd: None,
+                            client_request_id: None,
+                            created_at: now,
+                            updated_at: now,
+                        };
+                        Ok(json!({
+                            "tasks": [serde_json::to_value(&task).unwrap()]
+                        }))
+                    }
+                    _ => panic!("unexpected IPC {method}"),
+                };
+                let _ = reply.send(result);
+            }
+        }
+    });
+    let (ui, _events) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.refresh();
+    drain_refresh(&app);
+
+    // Root row and child row should both exist in order root -> child
+    let root_row = find_sidebar_row(&app, "root").expect("root row exists");
+    let child_row = find_sidebar_row(&app, "child").expect("child row exists");
+
+    assert!(
+        !root_row.has_css_class("workspace-child"),
+        "root row is not a child"
+    );
+    assert!(
+        child_row.has_css_class("workspace-child"),
+        "child row has workspace-child class"
+    );
+    assert!(child_row.get_visible(), "child row is visible initially");
+
+    // Parent row shows disclosure button with "▾ 1 task"
+    let disclosure = find_disclosure_button(&root_row).expect("disclosure button on root");
+    assert!(disclosure.get_visible(), "disclosure button is visible");
+    assert!(disclosure
+        .label()
+        .as_deref()
+        .unwrap_or("")
+        .contains("1 task"));
+    assert!(disclosure.label().as_deref().unwrap_or("").starts_with("▾"));
+
+    // Clicking disclosure collapses the group
+    disclosure.emit_clicked();
+    assert!(
+        !child_row.get_visible(),
+        "child row is hidden when collapsed"
+    );
+    assert!(disclosure.label().as_deref().unwrap_or("").starts_with("▸"));
+
+    // Clicking disclosure again expands the group
+    disclosure.emit_clicked();
+    assert!(
+        child_row.get_visible(),
+        "child row is visible when expanded"
+    );
+    assert!(disclosure.label().as_deref().unwrap_or("").starts_with("▾"));
+
+    // Collapse again, then select child workspace -> auto-expands
+    disclosure.emit_clicked();
+    assert!(!child_row.get_visible());
+    app.sidebar.select("child");
+    assert!(
+        child_row.get_visible(),
+        "selecting child auto-expands the group"
+    );
+    assert!(disclosure.label().as_deref().unwrap_or("").starts_with("▾"));
+    assert!(child_row.is_selected(), "child row is selected");
+
+    glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
+    app.window.destroy();
+    drop(app);
+    worker.join().unwrap();
+}
