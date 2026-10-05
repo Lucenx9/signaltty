@@ -2768,3 +2768,20 @@ async fn tool_hooks_start_work_but_never_clear_blocked() {
     }
     srv.shutdown().await;
 }
+
+/// A server whose test never calls `shutdown` (panic, early return) must
+/// still be reaped when it drops.
+#[tokio::test]
+async fn dropped_test_server_is_reaped() {
+    let srv = TestServer::start().await;
+    let socket = srv.socket.to_string_lossy().to_string();
+    let running = || {
+        std::fs::read_dir("/proc").unwrap().flatten().any(|e| {
+            std::fs::read(e.path().join("cmdline"))
+                .is_ok_and(|c| String::from_utf8_lossy(&c).contains(&socket))
+        })
+    };
+    assert!(running(), "server should be running");
+    drop(srv);
+    assert!(!running(), "dropped server is still running");
+}

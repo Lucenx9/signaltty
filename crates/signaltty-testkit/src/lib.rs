@@ -103,28 +103,14 @@ impl TestServer {
         for (k, v) in extra_envs {
             cmd.env(k, v);
         }
-        let mut child = cmd
+        let child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn signaltty-server");
-        // Wait for readiness.
-        let mut ready = false;
-        for _ in 0..100 {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            if let Ok(mut c) = TestClient::connect(&socket).await {
-                if c.call("server.status", json!({})).await.is_ok() {
-                    ready = true;
-                    break;
-                }
-            }
-            if let Ok(Some(_)) = child.try_wait() {
-                panic!("server exited during startup");
-            }
-        }
-        assert!(ready, "server did not become ready");
-        TestServer {
+        // Owned before the readiness wait: a startup panic drops (and reaps) it.
+        let mut srv = TestServer {
             socket,
             state_dir,
             integration_home,
@@ -133,31 +119,38 @@ impl TestServer {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             child,
+        };
+        let mut ready = false;
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if let Ok(mut c) = TestClient::connect(&srv.socket).await {
+                if c.call("server.status", json!({})).await.is_ok() {
+                    ready = true;
+                    break;
+                }
+            }
+            if let Ok(Some(_)) = srv.child.try_wait() {
+                panic!("server exited during startup");
+            }
         }
+        assert!(ready, "server did not become ready");
+        srv
     }
 
     pub async fn client(&self) -> TestClient {
         TestClient::connect(&self.socket).await.expect("connect")
     }
 
-    /// Ask the server to shut down (force), then reap.
-    pub async fn shutdown(mut self) {
+    /// Ask the server to shut down (force), then reap (see `Drop`).
+    pub async fn shutdown(self) {
         if let Ok(mut c) = TestClient::connect(&self.socket).await {
             let _ = c.call("server.shutdown", json!({"force": true})).await;
         }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        if let Ok(None) = self.child.try_wait() {
-            let _ = self.child.kill();
-        }
-        let _ = self.child.wait();
-        std::fs::remove_dir_all(self.socket.parent().unwrap()).ok();
     }
 
     /// Kill -9 without graceful shutdown (crash simulation).
-    pub async fn kill(mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
+    pub async fn kill(self) {}
 
     /// Graceful shutdown + respawn on the SAME socket/state paths,
     /// exercising snapshot restore.
@@ -202,6 +195,20 @@ impl TestServer {
             }
         }
         assert!(ready, "respawned server did not become ready");
+    }
+}
+
+/// A failed or early-returning test must not leak its server: std's `Child`
+/// does not kill on drop, so reap here.
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        if let Ok(None) = self.child.try_wait() {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+        if let Some(base) = self.socket.parent() {
+            let _ = std::fs::remove_dir_all(base);
+        }
     }
 }
 
