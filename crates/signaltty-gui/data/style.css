@@ -164,6 +164,15 @@
   padding: 6px 6px 6px 8px;
 }
 
+/* Finished child task workspace: reduced opacity until hovered or selected */
+.navigation-sidebar > row.workspace-finished {
+  opacity: 0.55;
+}
+.navigation-sidebar > row.workspace-finished:hover,
+.navigation-sidebar > row.workspace-finished:selected {
+  opacity: 1;
+}
+
 /* Disclosure button for root rows with child workspaces */
 .workspace-disclosure {
   padding: 0 4px;

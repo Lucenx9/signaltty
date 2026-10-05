@@ -18,6 +18,10 @@
 //!       [Task Working] Tests…               task chips, then headline
 //! ```
 //!
+//! Finished child task rows (`workspace-finished`) recede with reduced opacity
+//! until hovered or selected. Finished children sort after unfinished siblings
+//! within their group.
+//!
 //! Close has a separate trailing target, revealed on hover or keyboard
 //! focus without hiding urgency. Right-clicking or pressing Menu / Shift+F10
 //! displays a context menu. When rows (or any child in a group) need you,
@@ -27,6 +31,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use chrono::{DateTime, Utc};
+use gtk4::gio;
 use gtk4::prelude::*;
 
 use signaltty_core::{AgentKind, Attention, Lifecycle, Pane, Workspace};
@@ -45,6 +50,8 @@ pub struct WsSummary {
     /// Parent workspace id when this workspace is a task workspace nested
     /// under another workspace.
     pub parent: Option<String>,
+    /// True when this task workspace has finished its turn or resolved.
+    pub finished: bool,
     /// Set during sorting: true if this workspace or any member of its
     /// group needs human attention.
     pub group_needs_you: bool,
@@ -93,6 +100,7 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
         name: ws.name.clone(),
         disambiguator: None,
         parent: None,
+        finished: false,
         group_needs_you: needs_you(attention),
         created_at: ws.created_at,
         lifecycle,
@@ -206,8 +214,11 @@ pub fn sort_summaries(items: &mut [WsSummary]) {
             .then(a.name.cmp(&b.name))
     };
 
+    let child_cmp =
+        |a: &WsSummary, b: &WsSummary| a.finished.cmp(&b.finished).then_with(|| item_cmp(a, b));
+
     for children in children_by_root.values_mut() {
-        children.sort_by(item_cmp);
+        children.sort_by(child_cmp);
     }
 
     // 3. Assemble and rank groups.
@@ -345,6 +356,43 @@ pub fn agent_name(kind: AgentKind) -> Option<&'static str> {
     }
 }
 
+/// Pure helper calculating the text for the disclosure button on a parent workspace row.
+pub fn disclosure_label(
+    active_count: usize,
+    needs_count: usize,
+    finished_count: usize,
+    is_collapsed: bool,
+) -> Option<String> {
+    if active_count == 0 && finished_count == 0 {
+        return None;
+    }
+    let arrow = if is_collapsed { "▸" } else { "▾" };
+    let mut parts = Vec::new();
+
+    if active_count > 0 {
+        if active_count == 1 {
+            parts.push("1 task".to_string());
+        } else {
+            parts.push(format!("{active_count} tasks"));
+        }
+        if needs_count > 0 {
+            if needs_count == 1 {
+                parts.push("1 need you".to_string());
+            } else {
+                parts.push(format!("{needs_count} need you"));
+            }
+        }
+    }
+
+    if finished_count > 0 {
+        parts.push(format!("{finished_count} done"));
+    }
+
+    Some(format!("{arrow} {}", parts.join(" · ")))
+}
+
+type MenuBuilderCallback = Rc<RefCell<Option<Box<dyn Fn(&str) -> gio::Menu>>>>;
+
 struct Row {
     id: String,
     parent: Option<String>,
@@ -366,6 +414,7 @@ struct Row {
     summary: Option<WsSummary>,
     child_count: usize,
     child_needs_count: usize,
+    child_finished_count: usize,
     is_collapsed: bool,
 }
 
@@ -383,6 +432,7 @@ impl Row {
         list: &gtk4::ListBox,
         on_close: &CloseCallback,
         on_toggle: &ToggleCallback,
+        menu_builder: &MenuBuilderCallback,
     ) -> Row {
         let label = |classes: &[&str]| {
             let l = gtk4::Label::new(None);
@@ -459,7 +509,7 @@ impl Row {
         row.set_widget_name(id);
         row.set_child(Some(&grid));
 
-        let popover = gtk4::PopoverMenu::from_model(Some(&crate::actions::sidebar_menu()));
+        let popover = gtk4::PopoverMenu::from_model(None::<&gio::MenuModel>);
         popover.set_parent(&row);
         // Anchored at the pointer, like any context menu: no arrow.
         popover.set_has_arrow(false);
@@ -470,12 +520,18 @@ impl Row {
         let list_weak = list.downgrade();
         let popover_click = popover.clone();
         let row_click = row.clone();
+        let id_click = id.to_string();
+        let menu_builder_click = Rc::clone(menu_builder);
         click_gesture.connect_pressed(move |g, _n_press, x, y| {
             g.set_state(gtk4::EventSequenceState::Claimed);
             // Selecting activates the workspace (`on_select`), so every
             // `win.*` item acts on this row.
             if let Some(list) = list_weak.upgrade() {
                 list.select_row(Some(&row_click));
+            }
+            if let Some(ref builder) = *menu_builder_click.borrow() {
+                let menu = builder(&id_click);
+                popover_click.set_menu_model(Some(&menu));
             }
             let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
             popover_click.set_pointing_to(Some(&rect));
@@ -488,6 +544,8 @@ impl Row {
         let list_weak = list.downgrade();
         let popover_key = popover.clone();
         let row_key = row.clone();
+        let id_key = id.to_string();
+        let menu_builder_key = Rc::clone(menu_builder);
         key_controller.connect_key_pressed(move |_, keyval, _keycode, state| {
             let is_menu = keyval == gtk4::gdk::Key::Menu;
             let is_shift_f10 = keyval == gtk4::gdk::Key::F10
@@ -495,6 +553,10 @@ impl Row {
             if is_menu || is_shift_f10 {
                 if let Some(list) = list_weak.upgrade() {
                     list.select_row(Some(&row_key));
+                }
+                if let Some(ref builder) = *menu_builder_key.borrow() {
+                    let menu = builder(&id_key);
+                    popover_key.set_menu_model(Some(&menu));
                 }
                 popover_key.set_pointing_to(None);
                 popover_key.popup();
@@ -524,6 +586,7 @@ impl Row {
             summary: None,
             child_count: 0,
             child_needs_count: 0,
+            child_finished_count: 0,
             is_collapsed: false,
         }
     }
@@ -554,6 +617,11 @@ impl Row {
             self.row.add_css_class(NEEDS_YOU);
         } else {
             self.row.remove_css_class(NEEDS_YOU);
+        }
+        if s.parent.is_some() && s.finished {
+            self.row.add_css_class("workspace-finished");
+        } else {
+            self.row.remove_css_class("workspace-finished");
         }
         // Same-name workspaces are otherwise indistinguishable rows;
         // the unique handle tells them apart (spec 001 amendment).
@@ -598,15 +666,23 @@ impl Row {
             }
         } else {
             self.row.remove_css_class("workspace-child");
+            self.row.remove_css_class("workspace-finished");
             self.mark.set_visible(true);
             self.metadata.set_visible(true);
             self.row.set_tooltip_text(None);
         }
     }
 
-    fn update_disclosure(&mut self, count: usize, needs_count: usize, is_collapsed: bool) {
+    fn update_disclosure(
+        &mut self,
+        count: usize,
+        needs_count: usize,
+        finished_count: usize,
+        is_collapsed: bool,
+    ) {
         self.child_count = count;
         self.child_needs_count = needs_count;
+        self.child_finished_count = finished_count;
         self.is_collapsed = is_collapsed;
         self.render_disclosure();
     }
@@ -617,36 +693,27 @@ impl Row {
     }
 
     fn render_disclosure(&self) {
-        if self.child_count == 0 {
-            self.disclosure.set_visible(false);
-            return;
-        }
-        self.disclosure.set_visible(true);
-        let arrow = if self.is_collapsed { "▸" } else { "▾" };
-        let task_str = if self.child_count == 1 {
-            "1 task"
-        } else {
-            &format!("{} tasks", self.child_count)
-        };
-        let label = if self.child_needs_count > 0 {
-            let needs_str = if self.child_needs_count == 1 {
-                "1 needs you"
+        if let Some(label) = disclosure_label(
+            self.child_count,
+            self.child_needs_count,
+            self.child_finished_count,
+            self.is_collapsed,
+        ) {
+            self.disclosure.set_visible(true);
+            self.disclosure.set_label(&label);
+            let action_str = if self.is_collapsed {
+                "Expand"
             } else {
-                &format!("{} need you", self.child_needs_count)
+                "Collapse"
             };
-            format!("{arrow} {task_str} · {needs_str}")
+            // "Collapse 3 tasks · 2 done": the visible text minus the arrow.
+            let counts = label.split_once(' ').map_or("", |(_, rest)| rest);
+            let acc_label = format!("{action_str} {counts}");
+            self.disclosure
+                .update_property(&[gtk4::accessible::Property::Label(&acc_label)]);
         } else {
-            format!("{arrow} {task_str}")
-        };
-        self.disclosure.set_label(&label);
-        let action_str = if self.is_collapsed {
-            "Expand"
-        } else {
-            "Collapse"
-        };
-        let acc_label = format!("{action_str} {task_str}");
-        self.disclosure
-            .update_property(&[gtk4::accessible::Property::Label(&acc_label)]);
+            self.disclosure.set_visible(false);
+        }
     }
 
     fn refresh_time(&self) {
@@ -727,6 +794,7 @@ pub struct Sidebar {
     on_select: SelectCallback,
     on_close: CloseCallback,
     on_toggle: ToggleCallback,
+    menu_builder: MenuBuilderCallback,
 }
 
 impl Sidebar {
@@ -738,6 +806,7 @@ impl Sidebar {
         let on_select: SelectCallback = Rc::new(RefCell::new(None));
         let on_close: CloseCallback = Rc::new(RefCell::new(None));
         let on_toggle: ToggleCallback = Rc::new(RefCell::new(None));
+        let menu_builder: MenuBuilderCallback = Rc::new(RefCell::new(None));
         let rows: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
         let collapsed_roots: Rc<RefCell<std::collections::HashSet<String>>> =
             Rc::new(RefCell::new(std::collections::HashSet::new()));
@@ -789,7 +858,12 @@ impl Sidebar {
             on_select,
             on_close,
             on_toggle,
+            menu_builder,
         }
+    }
+
+    pub fn set_menu_builder<F: Fn(&str) -> gio::Menu + 'static>(&self, cb: F) {
+        *self.menu_builder.borrow_mut() = Some(Box::new(cb));
     }
 
     pub fn set_on_select(&self, cb: impl Fn(String) + 'static) {
@@ -829,7 +903,13 @@ impl Sidebar {
                     rows.insert(i, row);
                 }
                 None => {
-                    let mut row = Row::new(&item.id, &self.list, &self.on_close, &self.on_toggle);
+                    let mut row = Row::new(
+                        &item.id,
+                        &self.list,
+                        &self.on_close,
+                        &self.on_toggle,
+                        &self.menu_builder,
+                    );
                     row.update(item.clone());
                     self.list.insert(&row.row, i as i32);
                     rows.insert(i, row);
@@ -841,18 +921,24 @@ impl Sidebar {
             std::collections::HashMap::new();
         let mut child_needs_counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
+        let mut child_finished_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for item in &items {
             if let Some(parent_id) = &item.parent {
-                *child_counts.entry(parent_id.clone()).or_default() += 1;
-                if needs_you(item.attention) {
-                    *child_needs_counts.entry(parent_id.clone()).or_default() += 1;
+                if item.finished {
+                    *child_finished_counts.entry(parent_id.clone()).or_default() += 1;
+                } else {
+                    *child_counts.entry(parent_id.clone()).or_default() += 1;
+                    if needs_you(item.attention) {
+                        *child_needs_counts.entry(parent_id.clone()).or_default() += 1;
+                    }
                 }
             }
         }
 
         self.collapsed_roots
             .borrow_mut()
-            .retain(|id| child_counts.contains_key(id));
+            .retain(|id| child_counts.contains_key(id) || child_finished_counts.contains_key(id));
 
         let collapsed = self.collapsed_roots.borrow();
         for row in rows.iter_mut() {
@@ -865,8 +951,9 @@ impl Sidebar {
                 row.row.set_visible(true);
                 let count = child_counts.get(&row.id).copied().unwrap_or(0);
                 let needs = child_needs_counts.get(&row.id).copied().unwrap_or(0);
+                let finished = child_finished_counts.get(&row.id).copied().unwrap_or(0);
                 let is_collapsed = collapsed.contains(&row.id);
-                row.update_disclosure(count, needs, is_collapsed);
+                row.update_disclosure(count, needs, finished, is_collapsed);
             }
         }
         drop(collapsed);
@@ -941,6 +1028,7 @@ mod tests {
             name: name.to_string(),
             disambiguator: None,
             parent: None,
+            finished: false,
             group_needs_you: false,
             created_at: Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
             lifecycle,
@@ -1260,5 +1348,110 @@ mod tests {
         let stopped = summarize(&workspace(), &[restored]);
         assert_eq!(stopped.lifecycle, Lifecycle::Exited);
         assert_eq!(stopped.headline(now), "Exited");
+    }
+
+    #[test]
+    fn sort_summaries_finished_children_sort_after_unfinished_siblings() {
+        let root = summary("root", Lifecycle::Idle, Attention::None, Some(0));
+
+        let mut child_unfinished_working = summary(
+            "child-unfin-work",
+            Lifecycle::Working,
+            Attention::None,
+            Some(0),
+        );
+        child_unfinished_working.parent = Some("root".into());
+        child_unfinished_working.finished = false;
+
+        let mut child_finished_working = summary(
+            "child-fin-work",
+            Lifecycle::Working,
+            Attention::None,
+            Some(0),
+        );
+        child_finished_working.parent = Some("root".into());
+        child_finished_working.finished = true;
+
+        let mut child_unfinished_idle = summary(
+            "child-unfin-idle",
+            Lifecycle::Idle,
+            Attention::None,
+            Some(0),
+        );
+        child_unfinished_idle.parent = Some("root".into());
+        child_unfinished_idle.finished = false;
+
+        let mut child_finished_idle =
+            summary("child-fin-idle", Lifecycle::Idle, Attention::None, Some(0));
+        child_finished_idle.parent = Some("root".into());
+        child_finished_idle.finished = true;
+
+        let mut items = vec![
+            child_finished_working,
+            child_unfinished_idle,
+            root,
+            child_finished_idle,
+            child_unfinished_working,
+        ];
+        sort_summaries(&mut items);
+
+        // Group ordering: root is at 0, followed by children
+        assert_eq!(items[0].name, "root");
+        // Unfinished children sort before finished children:
+        // Among unfinished: child-unfin-work (Working) ranks before child-unfin-idle (Idle)
+        assert_eq!(items[1].name, "child-unfin-work");
+        assert_eq!(items[2].name, "child-unfin-idle");
+        // Among finished: child-fin-work (Working) ranks before child-fin-idle (Idle)
+        assert_eq!(items[3].name, "child-fin-work");
+        assert_eq!(items[4].name, "child-fin-idle");
+    }
+
+    #[test]
+    fn disclosure_label_formatting() {
+        // No tasks -> None
+        assert_eq!(disclosure_label(0, 0, 0, false), None);
+        assert_eq!(disclosure_label(0, 0, 0, true), None);
+
+        // Only active
+        assert_eq!(
+            disclosure_label(1, 0, 0, false),
+            Some("▾ 1 task".to_string())
+        );
+        assert_eq!(
+            disclosure_label(3, 0, 0, true),
+            Some("▸ 3 tasks".to_string())
+        );
+
+        // Active with needs you
+        assert_eq!(
+            disclosure_label(3, 1, 0, false),
+            Some("▾ 3 tasks · 1 need you".to_string())
+        );
+        assert_eq!(
+            disclosure_label(3, 2, 0, true),
+            Some("▸ 3 tasks · 2 need you".to_string())
+        );
+
+        // Active with finished
+        assert_eq!(
+            disclosure_label(3, 0, 2, false),
+            Some("▾ 3 tasks · 2 done".to_string())
+        );
+
+        // Active with needs you and finished
+        assert_eq!(
+            disclosure_label(3, 1, 2, false),
+            Some("▾ 3 tasks · 1 need you · 2 done".to_string())
+        );
+
+        // Only finished (0 active)
+        assert_eq!(
+            disclosure_label(0, 0, 2, false),
+            Some("▾ 2 done".to_string())
+        );
+        assert_eq!(
+            disclosure_label(0, 0, 1, true),
+            Some("▸ 1 done".to_string())
+        );
     }
 }

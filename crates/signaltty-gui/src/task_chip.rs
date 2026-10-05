@@ -256,6 +256,10 @@ impl TaskIndex {
         true
     }
 
+    pub fn get_by_id(&self, task_id: &str) -> Option<&Task> {
+        self.by_id.get(task_id)
+    }
+
     #[cfg(test)]
     fn get(&self, pane_id: &str) -> Option<&Task> {
         self.by_pane.get(pane_id)

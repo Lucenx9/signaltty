@@ -27,9 +27,11 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use serde_json::{json, Value};
 
-use signaltty_core::{Attention, Layout, Lifecycle, Pane, SplitDir, Tab, Workspace};
+use signaltty_core::{Attention, Layout, Lifecycle, Pane, SplitDir, Tab, Task, Workspace};
 
+use crate::actions;
 use crate::actor::{IpcHandle, UiEvent, UiTx};
+use crate::board;
 use crate::notif::Notifier;
 use crate::refresh::{PendingRefresh, Snapshot, WorkspaceCache};
 use crate::sidebar::{self, Sidebar};
@@ -139,13 +141,13 @@ fn pane_to_workspace_map(snapshots: &HashMap<String, Snapshot>) -> HashMap<Strin
     map
 }
 
-/// Map from child_ws_id -> parent_ws_id derived from tasks that link
-/// a child pane to a parent pane in different workspaces.
-fn task_workspace_parents(
+/// Derives parent workspace ID and associated Task for each child task workspace.
+fn task_workspace_info(
     tasks: &TaskIndex,
     pane_to_ws: &HashMap<String, String>,
-) -> HashMap<String, String> {
+) -> (HashMap<String, String>, HashMap<String, Task>) {
     let mut parents = HashMap::new();
+    let mut child_tasks = HashMap::new();
     for task in tasks.iter() {
         let (Some(pane_id), Some(parent_pane_id)) =
             (task.pane_id.as_deref(), task.parent_pane_id.as_deref())
@@ -159,9 +161,22 @@ fn task_workspace_parents(
         };
         if child_ws != parent_ws {
             parents.insert(child_ws.clone(), parent_ws.clone());
+            child_tasks.insert(child_ws.clone(), task.clone());
         }
     }
-    parents
+    (parents, child_tasks)
+}
+
+fn resolve_root<'a>(mut curr: &'a str, parent_map: &'a HashMap<String, String>) -> &'a str {
+    let mut visited = HashSet::new();
+    while visited.insert(curr) {
+        if let Some(p) = parent_map.get(curr) {
+            curr = p.as_str();
+        } else {
+            break;
+        }
+    }
+    curr
 }
 
 impl App {
@@ -431,6 +446,15 @@ impl App {
                 }
             }) as Box<dyn Fn()>
         };
+        let str_method = |f: fn(&App, &str)| {
+            let w = self.weak();
+            Box::new(move |param: String| {
+                if let Some(a) = w.upgrade() {
+                    f(&a, &param);
+                }
+            }) as Box<dyn Fn(String)>
+        };
+
         crate::actions::install(
             &self.window,
             application,
@@ -453,6 +477,14 @@ impl App {
                 preferences: method(App::action_preferences),
                 about: method(App::show_about),
             },
+            crate::actions::TaskActionHandlers {
+                task_open_pr: str_method(App::action_task_open_pr),
+                task_create_pr: str_method(App::action_task_create_pr),
+                task_merge: str_method(App::action_task_merge),
+                task_cancel: str_method(App::action_task_cancel),
+                task_discard: str_method(App::action_task_discard),
+                clear_finished_tasks: str_method(App::action_clear_finished_tasks),
+            },
         );
     }
 
@@ -474,6 +506,14 @@ impl App {
         self.sidebar.set_on_close(move |ws_id| {
             if let Some(a) = w.upgrade() {
                 a.action_close_workspace(&ws_id);
+            }
+        });
+        let w = self.weak();
+        self.sidebar.set_menu_builder(move |ws_id| {
+            if let Some(a) = w.upgrade() {
+                a.build_sidebar_row_menu(ws_id)
+            } else {
+                gtk4::gio::Menu::new()
             }
         });
         // Track the tab the user is looking at, so refreshes never yank
@@ -973,7 +1013,7 @@ impl App {
     fn build_sidebar_items(&self) -> (Vec<sidebar::WsSummary>, Vec<Attention>) {
         let m = self.model.borrow();
         let pane_to_ws = pane_to_workspace_map(&m.cache.snapshots);
-        let parents = task_workspace_parents(&m.tasks, &pane_to_ws);
+        let (parents, child_tasks) = task_workspace_info(&m.tasks, &pane_to_ws);
 
         let mut items = Vec::new();
         let mut needing = Vec::new();
@@ -981,6 +1021,9 @@ impl App {
             if let Some(snapshot) = m.cache.snapshots.get(&ws.id) {
                 let mut summary = sidebar::summarize(&snapshot.workspace, &snapshot.panes);
                 summary.parent = parents.get(&ws.id).cloned();
+                if let Some(task) = child_tasks.get(&ws.id) {
+                    summary.finished = board::board_column(task) == board::BoardColumn::Done;
+                }
                 items.push(summary);
                 needing.extend(
                     snapshot
@@ -2010,6 +2053,186 @@ impl App {
                 if let Some(a) = w2.upgrade() {
                     a.new_ws_open.set(false);
                 }
+            },
+        );
+    }
+
+    /// Context menu for a sidebar row, built when it opens so task
+    /// items match the task's current state.
+    fn build_sidebar_row_menu(&self, ws_id: &str) -> gtk4::gio::Menu {
+        let child_task = {
+            let m = self.model.borrow();
+            let pane_to_ws = pane_to_workspace_map(&m.cache.snapshots);
+            task_workspace_info(&m.tasks, &pane_to_ws).1.remove(ws_id)
+        };
+        let kind = match child_task {
+            Some(task) => actions::SidebarRowKind::Child(actions::TaskMenuFacts::from_task(&task)),
+            None => actions::SidebarRowKind::Root {
+                ws_id: ws_id.to_string(),
+                finished_children_count: self.finished_children(ws_id).len(),
+            },
+        };
+        actions::build_sidebar_menu(&kind)
+    }
+
+    /// Re-read tasks after a task action and repaint what shows them.
+    async fn reload_tasks(&self) {
+        self.seed_tasks().await;
+        self.refresh_sidebar();
+        self.paint_task_chips();
+        self.refresh_open_board();
+    }
+
+    /// Run a task IPC call, then reload; failures surface as a toast.
+    fn task_call(&self, method: &'static str, params: Value, failed: &'static str) {
+        self.run(move |app| async move {
+            match app.actor.call(method, params).await {
+                Ok(_) => app.reload_tasks().await,
+                Err(e) => app.toast(&format!("{failed} — {e}")),
+            }
+        });
+    }
+
+    /// Destructive confirmation shaped like `action_close_workspace`:
+    /// Cancel is the default, `verb` runs `on_confirm`.
+    fn confirm(&self, heading: &str, body: &str, verb: &str, on_confirm: impl Fn(&App) + 'static) {
+        let dialog = adw::AlertDialog::builder()
+            .heading(heading)
+            .body(body)
+            .build();
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("confirm", verb);
+        dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let w = self.weak();
+        dialog.connect_response(Some("confirm"), move |_, _| {
+            if let Some(a) = w.upgrade() {
+                on_confirm(&a);
+            }
+        });
+        dialog.present(Some(&self.window));
+    }
+
+    fn task(&self, task_id: &str) -> Option<Task> {
+        self.model.borrow().tasks.get_by_id(task_id).cloned()
+    }
+
+    fn action_task_open_pr(&self, task_id: &str) {
+        let url = self
+            .task(task_id)
+            .and_then(|t| t.pr)
+            .map(|pr| pr.url)
+            .filter(|url| !url.is_empty());
+        if let Some(url) = url {
+            gtk4::UriLauncher::new(&url).launch(
+                Some(&self.window),
+                gtk4::gio::Cancellable::NONE,
+                |_| {},
+            );
+        }
+    }
+
+    fn action_task_create_pr(&self, task_id: &str) {
+        self.task_call(
+            "task.pr_open",
+            json!({"task_id": task_id}),
+            "Couldn't create pull request",
+        );
+    }
+
+    fn action_task_merge(&self, task_id: &str) {
+        let Some(task) = self.task(task_id) else {
+            return;
+        };
+        let target = task.target_branch.as_deref().unwrap_or("its target");
+        let branch_fate = if task.preexisting_branch {
+            format!("{} is kept", task.branch)
+        } else {
+            format!("{} is deleted", task.branch)
+        };
+        let params = json!({"task_id": task_id, "mode": "merge"});
+        self.confirm(
+            &format!("Merge {} into {target}?", task.label),
+            &format!(
+                "The worker stops and its worktree is removed; {branch_fate} after the merge."
+            ),
+            "Merge",
+            move |a| a.task_call("task.finish", params.clone(), "Couldn't merge task"),
+        );
+    }
+
+    fn action_task_cancel(&self, task_id: &str) {
+        let Some(task) = self.task(task_id) else {
+            return;
+        };
+        let params = json!({"task_id": task_id});
+        self.confirm(
+            &format!("Cancel {}?", task.label),
+            "The worker stops. Its branch and worktree are kept.",
+            "Cancel Task",
+            move |a| a.task_call("task.cancel", params.clone(), "Couldn't cancel task"),
+        );
+    }
+
+    fn action_task_discard(&self, task_id: &str) {
+        let Some(task) = self.task(task_id) else {
+            return;
+        };
+        let params = json!({"task_id": task_id, "mode": "discard"});
+        self.confirm(
+            &format!("Discard {}?", task.label),
+            &format!(
+                "The worker stops and its worktree is removed, with any uncommitted changes. {} is kept.",
+                task.branch
+            ),
+            "Discard Task",
+            move |a| a.task_call("task.finish", params.clone(), "Couldn't discard task"),
+        );
+    }
+
+    /// Finished task workspaces nested under `root_ws_id`.
+    fn finished_children(&self, root_ws_id: &str) -> Vec<String> {
+        let m = self.model.borrow();
+        let pane_to_ws = pane_to_workspace_map(&m.cache.snapshots);
+        let (parents, child_tasks) = task_workspace_info(&m.tasks, &pane_to_ws);
+        parents
+            .keys()
+            .filter(|child| {
+                resolve_root(child, &parents) == root_ws_id
+                    && child_tasks
+                        .get(*child)
+                        .is_some_and(|t| board::board_column(t) == board::BoardColumn::Done)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn action_clear_finished_tasks(&self, root_ws_id: &str) {
+        let ids = self.finished_children(root_ws_id);
+        let heading = match ids.len() {
+            0 => return,
+            1 => "Clear 1 finished task?".to_string(),
+            n => format!("Clear {n} finished tasks?"),
+        };
+        self.confirm(
+            &heading,
+            "Their workspaces close. Task branches and any remaining worktrees are kept.",
+            "Clear",
+            move |a| {
+                let ids = ids.clone();
+                a.run(move |app| async move {
+                    for id in ids {
+                        if let Err(e) = app
+                            .actor
+                            .call("workspace.close", json!({"workspace_id": id}))
+                            .await
+                        {
+                            app.toast(&format!("Couldn't close a task workspace — {e}"));
+                        }
+                    }
+                    app.refresh_async().await;
+                });
             },
         );
     }

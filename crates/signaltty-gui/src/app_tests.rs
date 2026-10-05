@@ -2606,6 +2606,10 @@ fn task_workspace_renders_as_child_and_collapses() {
         child_row.has_css_class("workspace-child"),
         "child row has workspace-child class"
     );
+    assert!(
+        !child_row.has_css_class("workspace-finished"),
+        "active child row does not have workspace-finished class"
+    );
     assert!(child_row.get_visible(), "child row is visible initially");
 
     // Parent row shows disclosure button with "▾ 1 task"
@@ -2644,6 +2648,116 @@ fn task_workspace_renders_as_child_and_collapses() {
     );
     assert!(disclosure.label().as_deref().unwrap_or("").starts_with("▾"));
     assert!(child_row.is_selected(), "child row is selected");
+
+    glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
+    app.window.destroy();
+    drop(app);
+    worker.join().unwrap();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session (or xvfb-run)"]
+fn finished_task_workspace_has_workspace_finished_css_class() {
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let state = Arc::new(Mutex::new(BTreeMap::from([
+        ("root".to_string(), fixture("root")),
+        ("child".to_string(), fixture("child")),
+    ])));
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call {
+                method,
+                params,
+                reply,
+                ..
+            } = request
+            {
+                if method == "test.stop" {
+                    let _ = reply.send(Ok(Value::Null));
+                    break;
+                }
+                let st = state.lock().unwrap();
+                let result = match method.as_str() {
+                    "workspace.list" => Ok(json!({
+                        "workspaces": st.values().map(|s| s["workspace"].clone()).collect::<Vec<_>>()
+                    })),
+                    "workspace.get" => st
+                        .get(params["workspace_id"].as_str().unwrap())
+                        .cloned()
+                        .ok_or("NO_SUCH_WORKSPACE".into()),
+                    "task.list" => {
+                        let now = chrono::Utc::now();
+                        let task = signaltty_core::Task {
+                            id: "task_1".into(),
+                            context_id: "tctx_1".into(),
+                            parent_task_id: None,
+                            pane_id: Some("pane_child".into()),
+                            parent_pane_id: Some("pane_root".into()),
+                            root_pane_id: Some("pane_root".into()),
+                            relationship: signaltty_core::Relationship::Subagent,
+                            label: "Subtask".into(),
+                            contract: signaltty_core::Contract::new("Do work").unwrap(),
+                            agent: None,
+                            source_repo: std::path::PathBuf::from("/tmp"),
+                            target_branch: None,
+                            worktree_path: std::path::PathBuf::from("/tmp"),
+                            branch: "task/subtask".into(),
+                            preexisting_branch: false,
+                            base_ref: "HEAD".into(),
+                            base_sha: "123456".into(),
+                            state: signaltty_core::TaskState::Completed,
+                            result: None,
+                            disposition: signaltty_core::Disposition {
+                                outcome: signaltty_core::DispositionOutcome::Merged,
+                                ..Default::default()
+                            },
+                            pr: None,
+                            status_reason: None,
+                            finish_error: None,
+                            worker_pid: None,
+                            worker_cmd: None,
+                            client_request_id: None,
+                            created_at: now,
+                            updated_at: now,
+                        };
+                        Ok(json!({
+                            "tasks": [serde_json::to_value(&task).unwrap()]
+                        }))
+                    }
+                    _ => panic!("unexpected IPC {method}"),
+                };
+                let _ = reply.send(result);
+            }
+        }
+    });
+    let (ui, _events) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.refresh();
+    drain_refresh(&app);
+
+    let root_row = find_sidebar_row(&app, "root").expect("root row exists");
+    let child_row = find_sidebar_row(&app, "child").expect("child row exists");
+
+    assert!(child_row.has_css_class("workspace-child"));
+    assert!(
+        child_row.has_css_class("workspace-finished"),
+        "finished child row has workspace-finished css class"
+    );
+
+    let disclosure = find_disclosure_button(&root_row).expect("disclosure button on root");
+    assert!(disclosure.get_visible(), "disclosure button is visible");
+    assert!(disclosure
+        .label()
+        .as_deref()
+        .unwrap_or("")
+        .contains("1 done"));
 
     glib::MainContext::default()
         .block_on(app.actor.call("test.stop", json!({})))
