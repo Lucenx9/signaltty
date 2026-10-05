@@ -1452,8 +1452,13 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
                 contract["acceptance_criteria"] = json!(crit);
             }
 
+            // The server resolves paths against its own cwd, not ours.
+            let abs = |path: &str| {
+                std::path::absolute(path)
+                    .map_err(|e| CliError::Usage(format!("cannot resolve path '{path}': {e}")))
+            };
             let mut p = json!({
-                "repo": repo,
+                "repo": abs(&repo)?,
                 "contract": contract,
             });
             if let Some(a) = agent {
@@ -1481,7 +1486,7 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
                 p["branch"] = json!(b);
             }
             if let Some(pa) = path {
-                p["path"] = json!(pa);
+                p["path"] = json!(abs(&pa)?);
             }
             if let Some(rt) = ready_timeout_s {
                 p["ready_timeout_s"] = json!(rt);

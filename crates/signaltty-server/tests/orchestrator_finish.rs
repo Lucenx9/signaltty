@@ -611,14 +611,107 @@ async fn test_task_finish_discard_scoping_and_disposition() {
     // Repo itself remains intact
     assert!(repo.path().exists(), "main repo must not be touched");
 
-    // Worker pane closed
-    let pane_res = c
+    // The task workspace pointed at the removed worktree: it closes with
+    // its worker pane.
+    let ws_id = start_res["pane"]["workspace_id"].as_str().unwrap();
+    let err = c
+        .call("workspace.get", json!({ "workspace_id": ws_id }))
+        .await
+        .unwrap_err();
+    assert!(err.starts_with(code::NO_SUCH_WORKSPACE), "{err}");
+    let err = c
         .call("pane.get", json!({ "pane_id": pane_id }))
         .await
-        .unwrap();
-    assert_eq!(pane_res["pane"]["live"]["state"], "exited");
+        .unwrap_err();
+    assert!(err.starts_with(code::NO_SUCH_PANE), "{err}");
 
     srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn task_finish_preserves_workspace_only_for_live_outside_panes() {
+    for live in [true, false] {
+        let srv = TestServer::start().await;
+        let mut c = srv.client().await;
+        let repo = TempGitRepo::new();
+        let wt = srv.state_dir.join("task-worktree");
+        // A shared string prefix does not put this directory inside the worktree.
+        let outside = srv.state_dir.join("task-worktree-other");
+        std::fs::create_dir_all(&outside).unwrap();
+        let start = c
+            .call(
+                "task.start",
+                json!({
+                    "repo": repo.path().to_string_lossy(),
+                    "path": wt.to_string_lossy(),
+                    "contract": {"objective": "Preserve unrelated work"},
+                    "agent": "codex",
+                    "argv": ["sleep", "60"],
+                }),
+            )
+            .await
+            .unwrap();
+        let ws_id = &start["pane"]["workspace_id"];
+        let tab = c
+            .call(
+                "tab.create",
+                json!({"workspace_id": ws_id, "title": "Other work"}),
+            )
+            .await
+            .unwrap();
+        let pane = c
+            .call(
+                "pane.spawn",
+                json!({
+                    "workspace_id": ws_id,
+                    "tab_id": tab["tab"]["id"],
+                    "cwd": outside.to_string_lossy(),
+                    "argv": if live { vec!["sleep", "60"] } else { vec!["true"] },
+                }),
+            )
+            .await
+            .unwrap();
+        let pane_id = &pane["pane"]["id"];
+        if !live {
+            let wait = c
+                .call(
+                    "wait",
+                    json!({"pane_id": pane_id, "until": "exited", "timeout_s": 5}),
+                )
+                .await
+                .unwrap();
+            assert_eq!(wait["satisfied"], true);
+        }
+
+        let finish = c
+            .call(
+                "task.finish",
+                json!({"task_id": start["task"]["id"], "mode": "discard"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(finish["task"]["disposition"]["outcome"], "discarded");
+        assert!(finish.get("cleanup_error").is_none());
+        assert!(!wt.exists());
+        assert!(outside.exists());
+
+        let workspace = c
+            .call("workspace.get", json!({"workspace_id": ws_id}))
+            .await;
+        let pane = c.call("pane.get", json!({"pane_id": pane_id})).await;
+        if live {
+            assert!(
+                workspace.is_ok(),
+                "live outside pane lost its workspace: {workspace:?}"
+            );
+            let pane = pane.unwrap();
+            assert_eq!(pane["pane"]["live"]["state"], "live");
+        } else {
+            assert!(workspace.unwrap_err().starts_with(code::NO_SUCH_WORKSPACE));
+            assert!(pane.unwrap_err().starts_with(code::NO_SUCH_PANE));
+        }
+        srv.shutdown().await;
+    }
 }
 
 #[tokio::test]

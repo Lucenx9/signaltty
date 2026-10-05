@@ -2036,6 +2036,59 @@ async fn task_start_relative_path_is_bad_params() {
 }
 
 #[tokio::test]
+async fn task_start_relative_repo_is_bad_params() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let err = c
+        .call(
+            "task.start",
+            json!({
+                "repo": ".",
+                "contract": {"objective": "relative repo"},
+                "argv": ["sleep", "60"],
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("repo path must be absolute"), "{err}");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn task_exists_before_its_worker_runs() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let mut sub = srv.client().await;
+    sub.call(
+        "subscribe",
+        json!({"events": ["task.created", "pane.created"]}),
+    )
+    .await
+    .unwrap();
+
+    c.call(
+        "task.start",
+        json!({
+            "repo": repo.path().to_string_lossy(),
+            "contract": {"objective": "report right away"},
+            "argv": ["sh"],
+        }),
+    )
+    .await
+    .unwrap();
+
+    // A worker that reports at once must find its task.
+    let events = sub.read_events(2, Duration::from_secs(5)).await;
+    assert_eq!(events[0]["event"], "task.created", "{events:?}");
+    assert_eq!(events[1]["event"], "pane.created", "{events:?}");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn background_submit_outcome_reaches_the_snapshot() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;

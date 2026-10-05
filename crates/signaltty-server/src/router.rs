@@ -425,7 +425,7 @@ fn close_pane_locked(ctx: &Ctx, s: &mut crate::store::Store, pane_id: &str, sign
     }
 }
 
-fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
+pub(crate) fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::WorkspaceClose = decode(params)?;
     let raw = p.workspace_id;
     let signal = p.signal;
