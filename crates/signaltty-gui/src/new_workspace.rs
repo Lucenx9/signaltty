@@ -44,12 +44,13 @@ pub struct CommandOption {
 
 /// Agents in dialog order. Binaries come from each adapter's
 /// metadata; labels are the short product names.
-fn agent_kinds() -> [(AgentKind, &'static str); 4] {
+fn agent_kinds() -> [(AgentKind, &'static str); 5] {
     [
         (AgentKind::Claude, "Claude"),
         (AgentKind::Codex, "Codex"),
         (AgentKind::Opencode, "opencode"),
         (AgentKind::Cursor, "Cursor"),
+        (AgentKind::Pi, "Pi"),
     ]
 }
 
