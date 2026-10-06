@@ -288,11 +288,7 @@ pub async fn h_task_start(ctx: &Ctx, req: &Request, params: &Value) -> (Response
     let short_id = &task_id[task_id.len().saturating_sub(8)..];
     let branch = match p.branch {
         Some(b) => b,
-        None => {
-            let label_sanitized =
-                crate::git::sanitize_branch_for_path(p.label.as_deref().unwrap_or("task"));
-            format!("signaltty/{label_sanitized}-{short_id}")
-        }
+        None => crate::git::default_task_branch(p.label.as_deref().unwrap_or("task"), short_id),
     };
     if let Err(e) = crate::git::validate_branch_name(&branch) {
         return (
