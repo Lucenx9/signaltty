@@ -13,8 +13,14 @@ case "${1:-}" in
     # the installed binary. Quoting covers spaces; these characters would
     # need Desktop Entry escaping and are refused instead.
     case "$prefix" in
-      *[\"\`\$\\%]*)
-        echo "SIGNALTTY_PREFIX must not contain \" \` \$ \\ or %: $prefix" >&2
+      *[\"\`\$\\%]*|*"$(printf '\t')"*|*"$(printf '\r')"*|*'
+'*)
+        echo "SIGNALTTY_PREFIX must not contain newline, tab, carriage return, \" \` \$ \\ or %: $prefix" >&2
+        exit 2
+        ;;
+      /*) ;;
+      *)
+        echo "SIGNALTTY_PREFIX must be an absolute path: $prefix" >&2
         exit 2
         ;;
     esac
