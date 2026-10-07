@@ -63,6 +63,8 @@ To remove these files:
 ./contrib/install-desktop.sh uninstall
 ```
 
+To remove the server, CLI and agent hooks too, see [Uninstall](#uninstall).
+
 To close a workspace, use the close button on its sidebar row, or select it
 and choose **Close Workspace** from the main menu. Confirming stops its
 running terminals and agents. Closing the GUI window leaves them running.
@@ -148,6 +150,21 @@ cp contrib/signaltty-server.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now signaltty-server
 ```
+
+## Uninstall
+
+```bash
+./contrib/uninstall.sh          # add --purge to also delete state and config
+```
+
+This removes the agent hooks and skills signaltty installed (other agent
+settings stay), stops and removes the user service, runs the desktop
+uninstall, and removes the `signaltty` and `signaltty-server` binaries from
+`~/.local/bin` and `~/.cargo/bin`. `--purge` also deletes
+`~/.local/state/signaltty` (saved workspaces, history, audit log) and
+`~/.config/signaltty` (GUI preferences, plugins, agent overlays). Agent
+worktrees under `~/.local/share/signaltty/worktrees` are always kept. System
+packages such as VTE are left installed.
 
 ## Development
 
