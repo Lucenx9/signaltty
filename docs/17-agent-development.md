@@ -15,7 +15,9 @@ scripts/verify.sh doctor
 and the toolchain from `rust-toolchain.toml`. It is safe to repeat. On another
 distribution install equivalent packages and run it without `--system`.
 The doctor reports missing dependencies without installing anything. Python 3.9+
-is required by the verification runner. The locked GTK packages require Rust 1.92;
+is required by the verification runner. Node runs behavioral tests of the installed
+OpenCode plugin (both provider entrypoints); it is development tooling, not a
+Signaltty runtime dependency. The locked GTK packages require Rust 1.92;
 development uses 1.94.0 and CI compiles all targets separately on 1.92.0.
 
 To build the same container without an editor:

@@ -20,7 +20,7 @@ class VerificationCLI(unittest.TestCase):
                 'cargo': 'case "$1" in clippy) echo clippy;; *) echo broken-check; exit 42;; esac',
                 'rustc': 'echo "rustc 1.94.0 (fixture)"',
                 'rustfmt': 'exit 0', 'git': 'exit 0',
-                'pkg-config': 'echo 99.0', 'cc': 'exit 0',
+                'pkg-config': 'echo 99.0', 'cc': 'exit 0', 'node': 'exit 0',
             }.items():
                 tool = root / name
                 tool.write_text('#!/bin/sh\n' + body + '\n')
@@ -45,7 +45,7 @@ class VerificationCLI(unittest.TestCase):
             for name, body in {
                 'cargo': 'case "$1" in clippy) echo clippy;; *) echo $$ > "$SIGNALTTY_TEST_PID"; exec /bin/sleep 60;; esac',
                 'rustc': 'echo "rustc 1.94.0 (fixture)"',
-                'rustfmt': 'exit 0', 'git': 'exit 0', 'pkg-config': 'echo 99.0', 'cc': 'exit 0',
+                'rustfmt': 'exit 0', 'git': 'exit 0', 'pkg-config': 'echo 99.0', 'cc': 'exit 0', 'node': 'exit 0',
             }.items():
                 tool = root / name
                 tool.write_text('#!/bin/sh\n' + body + '\n')

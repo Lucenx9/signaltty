@@ -96,9 +96,13 @@ pub fn answer(ctx: &Ctx, pane_id: &str, id: &str, option: &str) -> Result<Value,
         .ok_or_else(|| (code::NO_SUCH_DECISION.to_owned(), id.to_owned()))?;
     store.answer_decision(pane_id, id, option).unwrap();
     store.mark_seen(pane_id, "decision_answer");
+    // Resume only once the hook is actually answered.
+    let delivered = route.sender.send(verdict).is_ok();
+    if delivered {
+        store.resume_after_answer(pane_id);
+    }
     let pane = &store.panes[pane_id];
     let result = json!({"answered":true,"lifecycle":pane.lifecycle.as_str(),"attention":pane.attention.as_str()});
-    let delivered = route.sender.send(verdict).is_ok();
     drop(store);
 
     ctx.mark_persist();
