@@ -3464,6 +3464,7 @@ fn task_board_live_activation_and_neighbor_fallback_use_current_rows() {
     let previous = list.row_at_index(19).unwrap();
     assert!(focused.grab_focus());
     settle();
+    settle();
     // Removing the focused row while its next neighbor changes columns must
     // choose the previous row in the original column.
     tasks[21].pr = serde_json::from_value(json!({"number": 12, "url": "https://github.com/example/repo/pull/12", "state": "open", "checks": "failing"})).ok();
@@ -3475,6 +3476,7 @@ fn task_board_live_activation_and_neighbor_fallback_use_current_rows() {
     assert!(previous.has_focus());
     assert_ne!(previous.parent(), next.parent());
     assert!(focused.parent().is_none());
+    settle();
     let vertical = list
         .ancestor(gtk4::ScrolledWindow::static_type())
         .and_downcast::<gtk4::ScrolledWindow>()
@@ -3496,6 +3498,7 @@ fn task_board_live_activation_and_neighbor_fallback_use_current_rows() {
     // A new choice in another column owns focus, but does not abandon this anchor.
     assert!(next.grab_focus());
     board.update(&tasks);
+    settle();
     settle();
     assert!(next.has_focus());
     assert!(
