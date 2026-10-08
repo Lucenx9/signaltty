@@ -79,7 +79,7 @@ One status vocabulary, shared by every surface
 A sidebar row is three quiet lines, modelled on t3code's thread rows:
 the workspace mark (monogram on a stable per-workspace tint, kept off
 the accent and status hues; the content header repeats it in a
-left-aligned `mark name / branch · path` breadcrumb) and name with the
+left-aligned `mark name / context` breadcrumb) and name with the
 status slot on the right — "Working 3m", the age dropped under a
 minute — the latest message (or the
 verb-tense run state), then branch or folder with the agents on the
@@ -93,8 +93,12 @@ worst attention it counts, in the same colours.
 
 The close target reserves space on the name/status line only. Activity and
 the location/agent line span the row's full width, with roomier line spacing
-and readable secondary text. Workspace header context puts the branch before
-the directory; hovering the title exposes the complete context.
+and readable secondary text. Workspace header context shows the agent summary when agents are present.
+For shell workspaces it puts the branch before the directory, or shows the
+directory alone without a branch. The separator follows context visibility;
+startup and the last-workspace removal leave no dangling slash. Hovering the
+context exposes the complete branch and path, including when the visible
+labels ellipsize in a narrow window.
 
 Rules that keep it calm:
 

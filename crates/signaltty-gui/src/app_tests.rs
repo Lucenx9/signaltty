@@ -1090,6 +1090,206 @@ fn capture_workflow(window: &adw::ApplicationWindow, name: &str) {
 
 #[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
+fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&gtk4::gdk::Display::default().unwrap())
+        .add_resource_path("/dev/signaltty/gui/icons");
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call { method, reply, .. } = request {
+                let value = match method.as_str() {
+                    "workspace.list" => json!({"workspaces": []}),
+                    "task.list" => json!({"tasks": []}),
+                    "test.stop" => {
+                        let _ = reply.send(Ok(Value::Null));
+                        break;
+                    }
+                    _ => Value::Null,
+                };
+                let _ = reply.send(Ok(value));
+            }
+        }
+    });
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let style = adw::StyleManager::default();
+    let original_scheme = style.color_scheme();
+    let app = App::new(&application, actor.clone(), ui);
+    app.apply_preference(signaltty_core::theme::GuiPreference::default());
+    app.window.set_default_size(720, 600);
+    app.window.present();
+    let separator = try_descendant(app.window.upcast_ref(), "crumb-sep").unwrap();
+    assert!(!separator.is_visible(), "startup has no context separator");
+    let mut shell = fixture("shell");
+    shell["workspace"]["name"] = json!("Signaltty");
+    shell["workspace"]["cwd"] = json!("/tmp/signaltty <literal>&");
+    shell["workspace"]["git"] = json!({"branch": "feature/header"});
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    wait_ui(|| app.title.is_mapped());
+    style.set_color_scheme(adw::ColorScheme::ForceLight);
+    capture_workflow(&app.window, "header-shell-light");
+    style.set_color_scheme(adw::ColorScheme::ForceDark);
+    capture_workflow(&app.window, "header-shell-dark");
+    assert_eq!(
+        app.title_context.text(),
+        "feature/header · /tmp/signaltty <literal>&"
+    );
+    assert!(app.title_context.is_visible() && separator.is_visible());
+    assert_eq!(
+        app.title_context.tooltip_text().as_deref(),
+        Some("feature/header · /tmp/signaltty <literal>&")
+    );
+    shell["workspace"]["git"]["branch"] = json!("   ");
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert_eq!(app.title_context.text(), "/tmp/signaltty <literal>&");
+    shell["workspace"]["git"]["branch"] = Value::Null;
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert_eq!(app.title_context.text(), "/tmp/signaltty <literal>&");
+    shell["panes"][0]["agent"] = json!({"kind": "claude"});
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert_eq!(app.title_context.text(), "Claude");
+    assert_eq!(
+        app.title_context.tooltip_text().as_deref(),
+        Some("/tmp/signaltty <literal>&")
+    );
+    shell["workspace"]["git"]["branch"] = json!("feature/header");
+    let home_path = format!("{}/signaltty", std::env::var("HOME").unwrap());
+    shell["workspace"]["cwd"] = json!(home_path);
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert_eq!(app.title_context.text(), "Claude");
+    assert_eq!(
+        app.title_context.tooltip_text().as_deref(),
+        Some("feature/header · ~/signaltty")
+    );
+    capture_workflow(&app.window, "header-agent-dark");
+    shell["panes"][0]["agent"] = json!({"kind": "none"});
+    shell["workspace"]["cwd"] = json!("");
+    shell["workspace"]["git"]["branch"] = Value::Null;
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert!(!app.title_context.is_visible() && !separator.is_visible());
+
+    let settings = gtk4::Settings::default().unwrap();
+    let original_font = settings.gtk_font_name();
+    shell["workspace"]["name"] =
+        json!("A workspace with a very long literal <name>& that must shrink");
+    shell["workspace"]["cwd"] =
+        json!("/tmp/an/extremely/long/path/that/must/ellipsize/inside/the/header");
+    shell["workspace"]["git"]["branch"] = json!("feature/a-very-long-branch-name");
+    app.model
+        .borrow_mut()
+        .cache
+        .snapshots
+        .insert("shell".into(), serde_json::from_value(shell).unwrap());
+    app.show_workspace("shell");
+    app.window.set_default_size(360, 600);
+    app.split_view.set_show_sidebar(false);
+    for (scheme, name, font) in [
+        (
+            adw::ColorScheme::ForceLight,
+            "header-narrow-light",
+            "Sans 11",
+        ),
+        (
+            adw::ColorScheme::ForceDark,
+            "header-narrow-dark-large",
+            "Sans 18",
+        ),
+    ] {
+        style.set_color_scheme(scheme);
+        settings.set_gtk_font_name(Some(font));
+        wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
+        let width = f64::from(app.window.width());
+        capture_workflow(&app.window, name);
+        for widget in [
+            app.title.clone().upcast::<gtk4::Widget>(),
+            app.title_context.clone().upcast(),
+            button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)")
+                .unwrap()
+                .upcast(),
+            try_descendant(app.window.upcast_ref(), "crumb-sep").unwrap(),
+        ] {
+            let bounds = widget_bounds(&widget, app.window.upcast_ref());
+            assert!(
+                bounds.w > 0.0 && bounds.x >= 0.0 && bounds.x + bounds.w <= width,
+                "header child outside narrow window"
+            );
+        }
+        let context = widget_bounds(app.title_context.upcast_ref(), app.window.upcast_ref());
+        let new_tab =
+            button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
+        let new_tab_bounds = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
+        assert!(
+            context.x + context.w <= new_tab_bounds.x,
+            "context overlaps New Tab"
+        );
+        assert!(app.title.layout().is_ellipsized() || app.title_context.layout().is_ellipsized());
+        assert_eq!(app.title_context.tooltip_text().as_deref(), Some("feature/a-very-long-branch-name · /tmp/an/extremely/long/path/that/must/ellipsize/inside/the/header"));
+        let sidebar_toggle =
+            find_matching_widget::<gtk4::ToggleButton>(app.window.upcast_ref(), &|button| {
+                button.tooltip_text().as_deref() == Some("Toggle Sidebar (F9)")
+            })
+            .unwrap();
+        let sidebar_bounds = widget_bounds(sidebar_toggle.upcast_ref(), app.window.upcast_ref());
+        assert!(
+            sidebar_toggle.is_mapped()
+                && sidebar_bounds.x >= 0.0
+                && sidebar_bounds.x + sidebar_bounds.w <= width
+        );
+        let menu = find_widget::<gtk4::MenuButton>(app.window.upcast_ref()).unwrap();
+        let bounds = widget_bounds(menu.upcast_ref(), app.window.upcast_ref());
+        assert!(menu.is_mapped() && bounds.x + bounds.w <= width);
+    }
+    settings.set_gtk_font_name(original_font.as_deref());
+    style.set_color_scheme(original_scheme);
+    glib::MainContext::default().block_on(app.refresh_async());
+    assert_eq!(app.title.text(), "signaltty");
+    assert!(!app.title_mark.is_visible());
+    assert!(!app.title_context.is_visible() && !separator.is_visible());
+    assert!(app.title_context.text().is_empty() && app.title_context.tooltip_text().is_none());
+    glib::MainContext::default()
+        .block_on(actor.call("test.stop", json!({})))
+        .unwrap();
+    worker.join().unwrap();
+    app.window.destroy();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
 fn palette_keyboard_selection_stays_visible_while_search_keeps_focus() {
     adw::init().unwrap();
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();

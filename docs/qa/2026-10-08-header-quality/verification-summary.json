@@ -1,0 +1,688 @@
+{
+  "mode": "full",
+  "status": "passed",
+  "steps": [
+    {
+      "name": "tooling-tests",
+      "command": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/tests",
+        "-v"
+      ],
+      "log": "tooling-tests.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.666
+    },
+    {
+      "name": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "log": "fmt.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.464
+    },
+    {
+      "name": "metadata",
+      "command": [
+        "cargo",
+        "metadata",
+        "--locked",
+        "--format-version",
+        "1"
+      ],
+      "log": "metadata.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.114
+    },
+    {
+      "name": "architecture",
+      "command": [
+        "/usr/bin/python3",
+        "scripts/check-quality.py",
+        "architecture",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/verification/full-umnjk34_/metadata.json"
+      ],
+      "log": "architecture.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.064
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--message-format=json"
+      ],
+      "log": "clippy.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.366
+    },
+    {
+      "name": "warning-policy",
+      "command": [
+        "/usr/bin/python3",
+        "scripts/check-quality.py",
+        "clippy",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/verification/full-umnjk34_/clippy.jsonl"
+      ],
+      "log": "warning-policy.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.064
+    },
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "build",
+        "--workspace",
+        "--locked"
+      ],
+      "log": "build.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.164
+    },
+    {
+      "name": "workspace-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--locked"
+      ],
+      "log": "workspace-tests.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 60.329
+    },
+    {
+      "name": "server-qa",
+      "command": [
+        "/usr/bin/python3",
+        "scripts/qa-server-edge-cases.py"
+      ],
+      "log": "server-qa.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.114
+    },
+    {
+      "name": "gui-build",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "signaltty-gui",
+        "--locked",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "log": "gui-build.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.114
+    },
+    {
+      "name": "gui-list-0",
+      "command": [
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--list",
+        "--ignored",
+        "--format",
+        "terse"
+      ],
+      "log": "gui-list-0.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.032
+    },
+    {
+      "name": "gtk-01",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::close_workspace_confirms_the_selected_target_and_refreshes",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-01.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.369
+    },
+    {
+      "name": "gtk-02",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::delayed_new_tab_keeps_the_workspace_selected_after_the_action",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-02.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.32
+    },
+    {
+      "name": "gtk-03",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::desktop_motion_preference_applies_at_startup_and_changes_live",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-03.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.269
+    },
+    {
+      "name": "gtk-04",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::event_batches_keep_sidebar_attention_tabs_and_notifications_consistent",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-04.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.469
+    },
+    {
+      "name": "gtk-05",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::events_received_during_refresh_are_applied_in_the_next_batch",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-05.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.319
+    },
+    {
+      "name": "gtk-06",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::file_diff_reader_uses_native_numbered_selectable_controls",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-06.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 4.672
+    },
+    {
+      "name": "gtk-07",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::finished_task_workspace_has_workspace_finished_css_class",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-07.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.319
+    },
+    {
+      "name": "gtk-08",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::integration_setup_notice_is_visible_in_light_and_dark",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-08.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.319
+    },
+    {
+      "name": "gtk-09",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-09.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 4.972
+    },
+    {
+      "name": "gtk-10",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::palette_empty_results_and_shortcuts_fit_narrow_appearances",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-10.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 4.621
+    },
+    {
+      "name": "gtk-11",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::palette_keyboard_selection_stays_visible_while_search_keeps_focus",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-11.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.519
+    },
+    {
+      "name": "gtk-12",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-12.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 4.171
+    },
+    {
+      "name": "gtk-13",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::stalled_action_keeps_the_gtk_main_loop_responsive",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-13.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.569
+    },
+    {
+      "name": "gtk-14",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::task_board_fits_narrow_windows_and_reveals_last_column",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-14.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 4.27
+    },
+    {
+      "name": "gtk-15",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::task_board_shows_columns_and_navigates_to_pane",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-15.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.921
+    },
+    {
+      "name": "gtk-16",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::task_workspace_renders_as_child_and_collapses",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-16.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.319
+    },
+    {
+      "name": "gtk-17",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::theme_and_appearance_swapping_updates_window_classes",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-17.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.319
+    },
+    {
+      "name": "gtk-18",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::worker_chip_sits_with_the_pane_title",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-18.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 4.621
+    },
+    {
+      "name": "gtk-19",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-19.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 4.371
+    },
+    {
+      "name": "gtk-20",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "new_workspace::tests::dialog_confirm_emits_validated_request",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-20.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.319
+    },
+    {
+      "name": "gtk-21",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "terminal::tests::approval_question_and_choices_fit_a_narrow_pane",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-21.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.87
+    },
+    {
+      "name": "gtk-22",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "terminal::tests::dropped_pane_widget_is_freed",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-22.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.269
+    },
+    {
+      "name": "gtk-23",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "terminal::tests::keyboard_focus_renders_an_inactive_panes_controls",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-23.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.52
+    },
+    {
+      "name": "gtk-24",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "terminal::tests::reduced_motion_removes_rendered_press_scaling",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-24.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.62
+    },
+    {
+      "name": "gtk-25",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "dbus-run-session",
+        "--",
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/debug/deps/signaltty_gui-2cfb3042f03700e1",
+        "--exact",
+        "terminal::tests::terminal_search_is_literal_and_keeps_the_terminal",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "log": "gtk-25.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.369
+    },
+    {
+      "name": "refresh-benchmark",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1600x1200x24",
+        "/usr/bin/python3",
+        "scripts/bench-gui-refresh.py",
+        "--check"
+      ],
+      "log": "refresh-benchmark.log",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 9.078
+    }
+  ],
+  "errors": [],
+  "limits": [
+    "Screenshots require visual review; automated success is not visual approval.",
+    "IME, folder chooser, notification clicks and paid provider sessions require manual checks.",
+    "Native accessibility QA runs only in desktop mode; Xvfb does not certify a compositor."
+  ],
+  "revision": "4815c16678dad0128053bde775a06b9691592da5",
+  "dirty": true,
+  "versions": {
+    "gtk4": "4.24.1",
+    "libadwaita-1": "1.10.0",
+    "vte-2.91-gtk4": "0.84.1",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Arch Linux rust 1:1.99.0-1)",
+    "clippy": "clippy 0.1.94 (4a4ef493e3 2026-03-02)"
+  },
+  "display_tests": 25
+}
