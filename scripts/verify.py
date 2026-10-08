@@ -32,7 +32,7 @@ def doctor(mode):
     errors, versions = [], {}
     if mode != 'doctor' and os.geteuid() == 0:
         errors.append('run verification as an unprivileged user; filesystem-permission tests cannot run as root')
-    required = ['cargo', 'rustc', 'rustfmt', 'git', 'pkg-config', 'cc']
+    required = ['cargo', 'rustc', 'rustfmt', 'git', 'pkg-config', 'cc', 'node']
     if mode in {'doctor', 'full', 'desktop'}:
         required += ['xvfb-run', 'Xvfb', 'xauth', 'dbus-run-session']
     for executable in required:

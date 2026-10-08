@@ -13,6 +13,6 @@ The native 25-task fixture failed with “truncated history needs explicit feedb
 
 The change follows apple/emil feedback and restrained native hierarchy, and t3code collapse-and-count. No CSS token, motion, dependency, state or IPC change. Pointer tooltips and ellipsized task labels remain; screen-reader, actual desktop high contrast and paid provider sessions are not certified by Xvfb. Source snapshots are fixtures, not production task history.
 
-Sonnet5.5 read-only review found no evidence blockers in the diff or captures. Grok4.7 direct xAI scope review is pending; all review findings and full verification are resolved before merge.
+Sonnet5.5 read-only review found no evidence blockers in the diff or captures. Grok4.7 direct xAI scope review confirms this conditional notice and its native wrapping treatment. Its attention-before-refresh sequencing risk applies to the next PRs; refresh is implemented first. A tooltip fallback is unnecessary for this unellipsized, wrapping sentence. Actual desktop high contrast remains outside this proof.
 
 Full gate passed in `target/verification/full-4wc6lgij`: 37 steps / 25 isolated GTK tests, workspace checks, real-server QA and refresh benchmark. Durable native captures and source hashes are in [2026-10-08-board-history](2026-10-08-board-history/). No code changed after this run.
