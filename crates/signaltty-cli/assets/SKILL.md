@@ -110,8 +110,11 @@ signaltty --json task finish "$A" --discard
 Rules: cap is 4 parallel tasks (over-cap → `RATE_LIMITED`, nothing
 created). Never auto-merge: read `task diff` first. Workers report via
 `signaltty report --status completed|failed|rejected --summary …` (it reads
-`$SIGNALTTY_TASK` inside the worker pane). `task.wait` on a context ends at
-the first `input_required` too — loop until everything is terminal.
+`$SIGNALTTY_TASK` inside the worker pane). `task.wait` on a context returns
+when every task is terminal or `input_required`. A blocked worker does not
+end the wait while another worker is still working. To react to a specific
+worker sooner, wait on its task id. Follow up on tasks at `input_required`.
+Use `--until terminal` to wait until every task reaches a terminal state.
 `signaltty schema` is the exact contract when in doubt.
 
 Workers must be agents whose hooks report readiness (`--agent claude`,
@@ -135,7 +138,7 @@ signaltty --json task wait --context "$CTX" --until working --timeout 300   # ba
 signaltty --json task wait --context "$CTX" --timeout 3600                     # ends at input_required
 T3=$(jq -r .task.id task3.json); P3=$(jq -r .pane.id task3.json)
 signaltty --json pane submit "$P3" --text "please report your result now"
-signaltty --json task wait --context "$CTX" --timeout 3600                     # all terminal
+signaltty --json task wait --context "$CTX" --until terminal --timeout 3600    # all terminal
 for f in task1 task2 task3; do signaltty --json task diff "$(jq -r .task.id $f.json)"; done
 signaltty --json task finish "$(jq -r .task.id task1.json)" --merge
 signaltty --json task finish "$(jq -r .task.id task2.json)" --merge --keep-branch

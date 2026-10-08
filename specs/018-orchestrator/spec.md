@@ -157,8 +157,8 @@ branch retention, and worktree cleanup.
    changes (tracked + untracked), computed without mutating the index.
 2. **Given** a completed task with a clean target, **When** I finish with merge,
    **Then** the branch merges, the worktree is removed, and the task records the
-   merge; a task-created branch is deleted only on explicit request, a
-   pre-existing branch never.
+   merge. A task-created branch is deleted by default; `--keep-branch`
+   retains it. A pre-existing branch is never deleted.
 3. **Given** a merge conflict, **When** I finish with merge, **Then** the target
    is left clean (merge aborted), the conflict stays in the source worktree with
    the conflicted files named, and the task records the failure.
@@ -285,7 +285,9 @@ pane row shows the task label and state in light and dark schemes.
   ready-wait + gated submit MUST run server-side in the background (surviving
   client disconnect, cancelled cleanly by `task.cancel`/discard/shutdown),
   moving the task to `working` on submit-accept or `failed` with `{stage:
-  ready_timeout|submit_refused|activity_gate, …}` evidence. `task.start` MUST
+  ready_timeout|submit_refused, …}` evidence. An unconfirmed activity gate
+  parks the task at `input_required` with `submit_unconfirmed` evidence;
+  a later worker turn resumes it. `task.start` MUST
   record the resolved base SHA, the `target_branch` (source repo's
   checked-out branch; detached HEAD leaves it unset), create worktree +
   branch under a per-path lock, and spawn the worker pane there; default
@@ -304,12 +306,14 @@ pane row shows the task label and state in light and dark schemes.
   untracked) with no index mutation (`git add -N` forbidden as a read side effect).
 - **FR-015**: `task.finish --merge` MUST require a completed task and a clean
   target, refuse dirt per the workmux rules, abort conflicts leaving the target
-  clean, delete only task-created branches and only on request, and report
+  clean, delete task-created branches by default unless `--keep-branch`
+  is set, preserve pre-existing branches, and report
   cleanup failures separately from merge success. The merge target defaults to
   the recorded `target_branch` (FR-024).
 - **FR-016**: `task.finish --discard` MUST stop the worker and remove only that
   task's worktree, keeping the branch unless explicitly deleted (never when
-  pre-existing); a second finish is refused.
+  pre-existing). A second finish retries cleanup while the recorded worktree
+  exists and is refused once that path is gone.
 - **FR-017**: Worker results (status, summary, artifacts, evidence) MUST be stored
   on the task via `signaltty report` and emitted as a task event.
 - **FR-018**: Task transitions MUST emit `task.*` events into the existing
@@ -366,8 +370,9 @@ script + synthetic `hook-event` calls, no real LLM):
    change, including an untracked file from one worker).
 7. Server restarts. All 3 tasks still completed with results; diffs still work.
 8. Orchestrator finishes: merge 2, discard 1. Merged branches land in the source
-   repo; the discarded worktree is gone; task-created branches deleted only where
-   requested; the repo's pre-existing branch is untouched.
+   repo; the discarded worktree is gone. Merged task-created branches are
+   deleted unless `--keep-branch` is set; discarded branches remain unless
+   explicitly deleted. The repo's pre-existing branch is untouched.
 9. Failure paths (separate tests): dirty-target refusal; dirty-source refusal
    without ignore; merge conflict leaves target clean with conflicted files
    named; pane crash → task failed with evidence; over-cap start refused;
