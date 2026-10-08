@@ -303,15 +303,7 @@ impl CardWidgets {
         self.row.set_activatable(card.pane_id.is_some());
         self.title.set_text(&card.label);
         self.pill.set_text(card.state_word);
-        for class in [
-            "task-working",
-            "task-input",
-            "task-completed",
-            "task-failed",
-            "task-canceled",
-            "task-rejected",
-            "task-pending",
-        ] {
+        for class in crate::task_chip::TASK_CHIP_CLASSES {
             self.pill.remove_css_class(class);
         }
         self.pill.add_css_class(card.css_class);
@@ -331,19 +323,54 @@ struct ColumnWidgets {
     list: gtk4::ListBox,
 }
 
+#[derive(Clone)]
+struct RestorePoint {
+    focus_epoch: u64,
+    focused: Option<String>,
+    neighbors: Option<(gtk4::ListBox, Option<String>, Option<String>)>,
+    positions: Vec<(f64, Option<(String, f64)>)>,
+    x: f64,
+}
+
+fn focus_target(
+    rows: &std::collections::HashMap<String, CardWidgets>,
+    point: &RestorePoint,
+) -> Option<gtk4::ListBoxRow> {
+    point
+        .focused
+        .as_ref()
+        .and_then(|id| rows.get(id))
+        .or_else(|| {
+            let (list, next, previous) = point.neighbors.as_ref()?;
+            [next, previous]
+                .into_iter()
+                .filter_map(|id| id.as_ref().and_then(|id| rows.get(id)))
+                .find(|widgets| widgets.row.parent().as_ref() == Some(list.upcast_ref()))
+        })
+        .map(|widgets| widgets.row.clone())
+}
+
 /// A live board keeps its dialog and keyed task rows through server updates.
 pub struct Board {
     pub dialog: libadwaita::Dialog,
     stack: gtk4::Stack,
     scroll: gtk4::ScrolledWindow,
+    content: gtk4::Box,
     columns: Vec<ColumnWidgets>,
-    rows: RefCell<std::collections::HashMap<String, CardWidgets>>,
+    rows: Rc<RefCell<std::collections::HashMap<String, CardWidgets>>>,
+    pending: Rc<RefCell<Option<RestorePoint>>>,
     cards: Rc<RefCell<std::collections::HashMap<String, TaskCardView>>>,
     revision: Rc<std::cell::Cell<u64>>,
+    focus_epoch: Rc<std::cell::Cell<u64>>,
+    reconciling: Rc<std::cell::Cell<bool>>,
+    closing: Rc<std::cell::Cell<bool>>,
 }
 
 impl Board {
     pub fn update(&self, tasks: &[Task]) {
+        if self.closing.get() {
+            return;
+        }
         let focus = self.dialog.focus();
         let focused = self.rows.borrow().iter().find_map(|(id, widgets)| {
             focus
@@ -358,6 +385,7 @@ impl Board {
             let row = &rows.get(id)?.row;
             let list = row.parent()?.downcast::<gtk4::ListBox>().ok()?;
             Some((
+                list.clone(),
                 list.row_at_index(row.index() + 1)
                     .map(|r| r.widget_name().to_string()),
                 list.row_at_index(row.index() - 1)
@@ -384,12 +412,36 @@ impl Board {
                 (y, anchor)
             })
             .collect::<Vec<_>>();
-        let x = self.scroll.hadjustment().value();
+        let snapshot = self
+            .pending
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| RestorePoint {
+                focus_epoch: self.focus_epoch.get(),
+                focused: focused.clone(),
+                neighbors: focused_neighbors.clone(),
+                positions: positions.clone(),
+                x: self.scroll.hadjustment().value(),
+            });
+        let mut snapshot = snapshot;
+        if snapshot.focus_epoch != self.focus_epoch.get() {
+            snapshot.focus_epoch = self.focus_epoch.get();
+            snapshot.x = self.scroll.hadjustment().value();
+            if let Some((list, _, _)) = focused_neighbors.as_ref() {
+                if let Some(index) = self.columns.iter().position(|column| &column.list == list) {
+                    snapshot.positions[index] = positions[index].clone();
+                }
+            }
+            snapshot.focused = focused;
+            snapshot.neighbors = focused_neighbors;
+        }
+        *self.pending.borrow_mut() = Some(snapshot.clone());
         let board = build_board(tasks, Utc::now());
         let current = board
             .iter()
             .flat_map(|col| col.cards.iter().map(|card| (card.id.clone(), card.clone())))
             .collect::<std::collections::HashMap<_, _>>();
+        self.reconciling.set(true);
         let mut rows = self.rows.borrow_mut();
         rows.retain(|id, widgets| {
             if current.contains_key(id) {
@@ -427,66 +479,147 @@ impl Board {
         *self.cards.borrow_mut() = current;
         self.stack
             .set_visible_child_name(if tasks.is_empty() { "empty" } else { "board" });
-        let focused_row = focused
-            .as_ref()
-            .and_then(|id| rows.get(id))
-            .or_else(|| {
-                let (next, previous) = focused_neighbors.as_ref()?;
-                next.as_ref()
-                    .and_then(|id| rows.get(id))
-                    .or_else(|| previous.as_ref().and_then(|id| rows.get(id)))
-            })
-            .map(|widgets| widgets.row.clone());
+        // Restore identity immediately so GTK does not choose its first row
+        // while another event arrives before the next allocation.
+        if snapshot.focused.is_some() {
+            if let Some(row) = focus_target(&rows, &snapshot) {
+                row.grab_focus();
+            }
+        }
         drop(rows);
+        self.reconciling.set(false);
+        if !self.dialog.is_mapped() {
+            self.pending.borrow_mut().take();
+            return;
+        }
+        let focus_epoch = self.focus_epoch.clone();
+        let focus_ticket = focus_epoch.get();
         let revision = self.revision.get().wrapping_add(1);
         self.revision.set(revision);
         let generation = self.revision.clone();
         let dialog = self.dialog.downgrade();
+        let content = self.content.clone();
+        let rows = self.rows.clone();
+        let pending = self.pending.clone();
+        let closing = self.closing.clone();
         let horizontal = self.scroll.hadjustment();
         let columns = self
             .columns
             .iter()
             .map(|col| (col.list.clone(), col.scroll.vadjustment()))
             .collect::<Vec<_>>();
-        // Wait for GTK's new row allocations; the generation guard discards older updates.
-        gtk4::glib::timeout_add_local_once(std::time::Duration::from_millis(30), move || {
-            if generation.get() != revision {
-                return;
+        // Tick twice: the first frame allocates changed rows, the next reads them.
+        let allocated = std::cell::Cell::new(false);
+        self.stack.add_tick_callback(move |_, _| {
+            if generation.get() != revision || closing.get() {
+                return gtk4::glib::ControlFlow::Break;
+            }
+            if !allocated.replace(true) {
+                return gtk4::glib::ControlFlow::Continue;
             }
             let Some(dialog) = dialog.upgrade().filter(|dialog| dialog.is_mapped()) else {
-                return;
+                pending.borrow_mut().take();
+                return gtk4::glib::ControlFlow::Break;
             };
-            horizontal.set_value(x);
-            for ((list, adjustment), (old, anchor)) in columns.into_iter().zip(positions) {
-                let value = if old <= 0.0 {
+            pending.borrow_mut().take();
+            let user_focus = focus_epoch.get() != focus_ticket
+                && dialog
+                    .focus()
+                    .is_some_and(|widget| !widget.is::<gtk4::ListBox>());
+            let current_focus = dialog.focus();
+            let rows = rows.borrow();
+            let focused_row = focus_target(&rows, &snapshot);
+            let RestorePoint {
+                x,
+                positions,
+                focused,
+                ..
+            } = &snapshot;
+            if !user_focus {
+                horizontal.set_value(*x);
+            }
+            for ((list, adjustment), (old, anchor)) in columns.iter().zip(positions.iter()) {
+                // New navigation owns its column; unrelated columns retain anchors.
+                if user_focus
+                    && current_focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_ancestor(list))
+                {
+                    continue;
+                }
+                let value = if *old <= 0.0 {
                     0.0
                 } else {
                     anchor
+                        .as_ref()
                         .and_then(|(id, offset)| {
                             let mut index = 0;
                             while let Some(row) = list.row_at_index(index) {
-                                if row.widget_name() == id {
+                                if row.widget_name().as_str() == id {
                                     return row
-                                        .compute_bounds(&list)
-                                        .map(|bounds| f64::from(bounds.y()) - offset);
+                                        .compute_bounds(list)
+                                        .map(|bounds| f64::from(bounds.y()) - *offset);
                                 }
                                 index += 1;
                             }
                             None
                         })
-                        .unwrap_or(old)
+                        .unwrap_or(*old)
                 };
-                adjustment
-                    .set_value(value.min((adjustment.upper() - adjustment.page_size()).max(0.0)));
+                adjustment.set_value(
+                    value.clamp(0.0, (adjustment.upper() - adjustment.page_size()).max(0.0)),
+                );
+            }
+            if user_focus {
+                return gtk4::glib::ControlFlow::Break;
             }
             if let Some(row) = focused_row {
                 if row.parent().is_some() {
+                    let reveal = snapshot.neighbors.as_ref().is_some_and(|(list, _, _)| {
+                        row.parent().as_ref() != Some(list.upcast_ref())
+                    }) || focused
+                        .as_ref()
+                        .is_some_and(|id| row.widget_name().as_str() != id);
                     row.grab_focus();
+                    if reveal {
+                        if let (Some(bounds), Some(content_bounds)) = (
+                            row.compute_bounds(&content),
+                            content.compute_bounds(&content),
+                        ) {
+                            // CSS padding places the content origin inside its border box.
+                            let left = f64::from(bounds.x() - content_bounds.x());
+                            horizontal.clamp_page(left, left + f64::from(bounds.width()));
+                        }
+                        if let Some(list) = row.parent().and_downcast::<gtk4::ListBox>() {
+                            if let Some(vertical) = list
+                                .ancestor(gtk4::ScrolledWindow::static_type())
+                                .and_downcast::<gtk4::ScrolledWindow>()
+                            {
+                                if let Some(bounds) = row.compute_bounds(&list) {
+                                    vertical.vadjustment().clamp_page(
+                                        f64::from(bounds.y()),
+                                        f64::from(bounds.y() + bounds.height()),
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             } else if focused.is_some() {
                 dialog.set_focus(None::<&gtk4::Widget>);
+                if let Some(body) = dialog.child() {
+                    body.child_focus(gtk4::DirectionType::TabForward);
+                }
             }
+            gtk4::glib::ControlFlow::Break
         });
+    }
+}
+
+impl Drop for Board {
+    fn drop(&mut self) {
+        self.revision.set(self.revision.get().wrapping_add(1));
+        self.pending.borrow_mut().take();
     }
 }
 
@@ -577,20 +710,37 @@ pub fn present(
         });
     }
     dialog.set_child(Some(&body));
+    let closing = Rc::new(std::cell::Cell::new(false));
+    let closed = closing.clone();
     let on_closed = RefCell::new(Some(on_closed));
     dialog.connect_closed(move |dialog| {
+        closed.set(true);
         if let Some(cb) = on_closed.borrow_mut().take() {
             cb(dialog, chosen.take());
+        }
+    });
+    let focus_epoch = Rc::new(std::cell::Cell::new(0_u64));
+    let reconciling = Rc::new(std::cell::Cell::new(false));
+    let epoch = focus_epoch.clone();
+    let updating = reconciling.clone();
+    dialog.connect_focus_widget_notify(move |_| {
+        if !updating.get() {
+            epoch.set(epoch.get().wrapping_add(1));
         }
     });
     let board = Board {
         dialog,
         stack,
         scroll,
+        content: container,
         columns,
-        rows: RefCell::new(std::collections::HashMap::new()),
+        rows: Rc::default(),
+        pending: Rc::default(),
         cards,
         revision: Rc::default(),
+        focus_epoch,
+        reconciling,
+        closing,
     };
     board.update(tasks);
     board.dialog.present(Some(window));
