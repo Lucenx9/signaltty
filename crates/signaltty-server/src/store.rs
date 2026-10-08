@@ -527,7 +527,10 @@ impl Store {
         let task_id = self
             .tasks
             .values()
-            .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::Working)
+            .find(|t| {
+                t.pane_id.as_deref() == Some(pane_id)
+                    && matches!(t.state, TaskState::Working | TaskState::InputRequired)
+            })
             .map(|t| t.id.clone());
         if let Some(tid) = task_id {
             self.task_input_required_on_decision(&tid, &decision.id);
@@ -697,7 +700,10 @@ impl Store {
             // lifecycle done with no report: park in input_required here, in
             // the same write, instead of a working state nobody will end.
             // Idle is not turn end.
-            if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
+            if let Some(evidence) = Self::decision_evidence(&self.panes, task) {
+                task.transition_to(TaskState::InputRequired, now).ok()?;
+                task.status_reason = Some(evidence);
+            } else if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
                 task.state = TaskState::InputRequired;
                 task.status_reason = Some(evidence);
                 task.updated_at = now;
@@ -706,6 +712,16 @@ impl Store {
         };
         let ev = self.emit_task_updated(&task_clone, Some(prev_state));
         Some(ev)
+    }
+
+    fn decision_evidence(panes: &HashMap<String, Pane>, task: &Task) -> Option<Value> {
+        let decision = task
+            .pane_id
+            .as_deref()
+            .and_then(|pid| panes.get(pid))?
+            .pending_decision
+            .as_ref()?;
+        Some(json!({"reason": "decision_required", "decision_id": decision.id}))
     }
 
     /// Evidence for a turn that ended with no report: the worker pane
@@ -805,7 +821,11 @@ impl Store {
                 .as_deref()
                 .and_then(|pid| self.panes.get(pid))
                 .is_some_and(|p| matches!(p.lifecycle, Lifecycle::Working | Lifecycle::Blocked));
-            if started {
+            if let Some(evidence) = Self::decision_evidence(&self.panes, task) {
+                task.transition_to(TaskState::InputRequired, now).ok()?;
+                task.status_reason = Some(evidence);
+                (task.clone(), prev_state)
+            } else if started {
                 (task.clone(), prev_state)
             } else {
                 task.transition_to(TaskState::InputRequired, now).ok()?;
@@ -944,6 +964,9 @@ impl Store {
             if task.state != TaskState::InputRequired {
                 return None;
             }
+            if Self::decision_evidence(&self.panes, task).is_some() {
+                return None;
+            }
             let now = Utc::now();
             // A follow-up whose Stop arrives before the resume commits must
             // land: refresh the turn-end evidence instead of going working.
@@ -964,8 +987,9 @@ impl Store {
     }
 
     /// A pending decision blocks the worker: `working` → `input_required`
-    /// with the decision as evidence. Only fires from `working` (a `pending`
-    /// task's first submit is still in flight; terminal tasks never move).
+    /// with the decision as evidence, or refreshes an existing interrupt's
+    /// evidence. A `pending` task's first submit is still in flight; terminal
+    /// tasks never move.
     pub fn task_input_required_on_decision(
         &mut self,
         task_id: &str,
@@ -973,7 +997,7 @@ impl Store {
     ) -> Option<StoredEvent> {
         let (task_clone, prev_state) = {
             let task = self.tasks.get_mut(task_id)?;
-            if task.state != TaskState::Working {
+            if !matches!(task.state, TaskState::Working | TaskState::InputRequired) {
                 return None;
             }
             let prev_state = task.state;
@@ -1460,8 +1484,6 @@ mod tests {
             "attention_cleared",
         ] {
             store.set_decision(&pane_id, decision());
-            // set_decision only moves working -> input_required; force it here.
-            store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
             store.clear_decision(&pane_id, reason);
             assert_eq!(
                 store.tasks[&task_id].state,
@@ -1471,7 +1493,21 @@ mod tests {
         }
         // The answer path still resumes.
         store.set_decision(&pane_id, decision());
-        store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
+        store.answer_decision(&pane_id, "d1", "once");
+        assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+        // A fast permission hook can settle a follow-up before its submit
+        // activity gate resumes the task. That gate must preserve the decision.
+        store.task_input_required_on_turn_end(
+            &task_id,
+            Some(json!({"reason": "turn_ended_without_report"})),
+        );
+        store.set_decision(&pane_id, decision());
+        store.task_resume_working(&task_id);
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(json!({"reason": "decision_required", "decision_id": "d1"}))
+        );
         store.answer_decision(&pane_id, "d1", "once");
         assert_eq!(store.tasks[&task_id].state, TaskState::Working);
     }
@@ -1589,6 +1625,31 @@ mod tests {
         });
         store.task_background_ready(&task_id).unwrap();
         assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+        // Replay a first submit whose permission arrives before the background
+        // commit: set_decision cannot yet transition the pending task.
+        let pending = Task {
+            state: TaskState::Pending,
+            ..store.tasks[&task_id].clone()
+        };
+        store.task_create(pending);
+        let pane_id = store.tasks[&task_id].pane_id.clone().unwrap();
+        store.set_lifecycle(&pane_id, Lifecycle::Blocked);
+        store.set_decision(
+            &pane_id,
+            signaltty_core::model::Decision {
+                id: "first-decision".into(),
+                prompt: "Allow?".into(),
+                options: vec![],
+                answerable: false,
+                received_at: Utc::now(),
+            },
+        );
+        store.task_background_ready(&task_id).unwrap();
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(json!({"reason": "decision_required", "decision_id": "first-decision"}))
+        );
     }
 
     #[test]

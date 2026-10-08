@@ -126,6 +126,20 @@ create new tasks. The merge target defaults to the recorded
 branch currently checked out in the source repo (`BAD_PARAMS` with
 `details: {expected, actual}` otherwise).
 
+`pane.submit` rechecks decisions immediately before its delayed Enter. If a
+permission request or pending decision arrived after paste, it returns
+`AGENT_BUSY` with `details: {stage: "delayed_enter", paste_delivered: true}`
+without writing Enter. The pasted text is already in the worker input box;
+inspect and resolve the decision before sending more input. Automatic Enter
+retries hold the same store read guard for the decision check and Enter write.
+For a task's background first submit, a refusal after paste uses recoverable
+`input_required` rather than failing the task. A current decision is recorded
+as `decision_required`; when no decision remains, existing submit-unconfirmed
+recovery applies. The pane's decision remains unanswered. If a decision arrives
+after Enter but before submit confirmation,
+the task commit preserves `input_required` and its `decision_required` evidence,
+for both the background first prompt and a follow-up.
+
 `task.wait` takes exactly one of `task_id` / `context_id` (both or neither
 → `BAD_PARAMS`); `until` accepts task states plus the pseudo-states
 `terminal` (any of completed/failed/canceled/rejected) and `settled`
