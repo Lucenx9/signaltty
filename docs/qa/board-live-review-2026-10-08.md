@@ -19,4 +19,8 @@ Only X11/Xvfb with isolated D-Bus and explicit `GDK_BACKEND=x11`/Cairo captures 
 
 A final native regression reproduced “pending update overwrote manual horizontal scrolling”. Per-adjustment epochs now let manual horizontal/vertical scrolling after an update win over its deferred restore. Writes made by reconciliation/restoration are excluded from those epochs. Initial native focus animation finishes before the baseline viewport is sampled.
 
-Final full-gate record and inspected light/dark captures are added after completion.
+Full gate passed in `target/verification/full-hdvy7agz`:40 steps /28 isolated GTK tests, workspace checks, architecture/warning policy, real-server QA and refresh benchmark. Native [updated board](2026-10-08-board-live/board-live-update.png), [light](2026-10-08-board-live/board-live-light.png) and [dark](2026-10-08-board-live/board-live-dark.png) captures were inspected. The [source hashes](2026-10-08-board-live/verified-sources.json) record the test-only animation-wait update during the run; application code was unchanged. [Verification summary](2026-10-08-board-live/verification-summary.json).
+
+Gemini round3 found no remaining code blockers before the final adjustment-epoch follow-up. The final manual-scroll regression and both native tests pass with that follow-up, and the full gate passes. Direct Grok final round4 remains pending at publication; prior rounds supplied concrete findings and their resolutions above. No approval is claimed for a pending review.
+
+The user requested this PR's merge and then stopping. The initial Needs you reveal follow-up is deferred and is not included here.
