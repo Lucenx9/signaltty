@@ -1485,7 +1485,7 @@ async fn pane_resume_repairs_stale_bare_resume_argv() {
     c.call("server.shutdown", json!({"force": true}))
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(250)).await;
+    srv.wait_for_shutdown().await;
     let snap_path = srv.state_dir.join("snapshot.json");
     let raw = std::fs::read_to_string(&snap_path).unwrap();
     let mut snap: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -3362,5 +3362,124 @@ async fn session_end_keeps_unanswered_permission_gate() {
         assert_eq!(p["attention"], "permission_required", "{agent}");
         assert_eq!(p["pending_decision"]["id"], "gate1", "{agent}");
     }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn relative_selected_executable_survives_live_cwd_change() {
+    relative_launch_survives_chdir(false).await;
+}
+
+#[tokio::test]
+async fn split_relative_selected_executable_survives_live_cwd_change() {
+    relative_launch_survives_chdir(true).await;
+}
+
+async fn relative_launch_survives_chdir(split: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let srv = TestServer::start().await;
+    let root = srv.socket.parent().unwrap().join("launch");
+    let bin = root.join("bin");
+    let other = root.join("other");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    let program = bin.join("codex");
+    std::fs::write(
+        &program,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = --no-daemon ]; then shift; fi
+case "$1" in
+--version) echo fixture-codex ;;
+resume) echo original-binary-resumed; read line ;;
+*) cd '{}'; echo cwd-moved; read line ;;
+esac
+"#,
+            other.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut c = srv.client().await;
+    let ws = c
+        .call("workspace.create", json!({"cwd":root}))
+        .await
+        .unwrap();
+    let started = if split {
+        let parent = c
+            .call(
+                "pane.spawn",
+                json!({
+                    "workspace_id":ws["workspace"]["id"], "argv":["sh", "-c", "read line"]
+                }),
+            )
+            .await
+            .unwrap();
+        c.call(
+            "pane.split",
+            json!({"pane_id":parent["pane"]["id"],
+            "argv":["./bin/codex"], "cwd":root}),
+        )
+        .await
+        .unwrap()
+    } else {
+        c.call(
+            "pane.spawn",
+            json!({"workspace_id":ws["workspace"]["id"],
+            "argv":["./bin/codex"]}),
+        )
+        .await
+        .unwrap()
+    };
+    let pane = started["pane"]["id"].as_str().unwrap();
+    wait_for_text(&mut c, pane, "cwd-moved", Duration::from_secs(5)).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let snapshot = c.call("pane.get", json!({"pane_id":pane})).await.unwrap();
+        if snapshot["pane"]["cwd"] == other.to_string_lossy().as_ref() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "cwd scanner did not observe chdir"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let reported = c
+        .call(
+            "report-session",
+            json!({"pane_id":pane,"agent":"codex",
+        "agent_session_id":"relative-session"}),
+        )
+        .await
+        .unwrap();
+    assert!(std::path::Path::new(
+        reported["pane"]["agent"]["resume_argv"][0]
+            .as_str()
+            .unwrap()
+    )
+    .is_absolute());
+    c.call(
+        "pane.input",
+        json!({"pane_id":pane,"data_b64":base64_encode("\n")}),
+    )
+    .await
+    .unwrap();
+    c.call(
+        "wait",
+        json!({"pane_id":pane,"until":"exited","timeout_s":5}),
+    )
+    .await
+    .unwrap();
+    c.call("pane.resume", json!({"pane_id":pane}))
+        .await
+        .unwrap();
+    wait_for_text(
+        &mut c,
+        pane,
+        "original-binary-resumed",
+        Duration::from_secs(5),
+    )
+    .await;
     srv.shutdown().await;
 }

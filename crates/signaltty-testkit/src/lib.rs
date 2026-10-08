@@ -149,6 +149,22 @@ impl TestServer {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
+    /// Reap a server already asked to shut down, before mutating its snapshot.
+    pub async fn wait_for_shutdown(&mut self) {
+        for _ in 0..100 {
+            if self
+                .child
+                .try_wait()
+                .expect("wait for owned server")
+                .is_some()
+            {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("owned server did not shut down");
+    }
+
     /// Kill -9 without graceful shutdown (crash simulation).
     pub async fn kill(self) {}
 

@@ -684,6 +684,20 @@ fn launch_result(pane: &Pane, integration: Value) -> Value {
     result
 }
 
+fn anchor_launch_executable(
+    mut argv: Vec<String>,
+    cwd: &str,
+) -> Result<Vec<String>, (String, String)> {
+    let program = std::path::Path::new(&argv[0]);
+    if argv[0].contains('/') && !program.is_absolute() {
+        argv[0] = std::path::absolute(std::path::Path::new(cwd).join(program))
+            .map_err(|e| (code::IO_ERROR.to_string(), e.to_string()))?
+            .to_string_lossy()
+            .into_owned();
+    }
+    Ok(argv)
+}
+
 pub(crate) fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::PaneSpawn = decode(params)?;
     let raw = p.workspace_id;
@@ -737,6 +751,7 @@ pub(crate) fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(bad_params(format!("cwd is not a directory: {cwd}")));
     }
+    let argv = anchor_launch_executable(argv, &cwd)?;
     let existing_tab = p.tab_id.or_else(|| ws.active_tab_id.clone());
     let staged_tab = if existing_tab.is_none() {
         Some(Tab {
@@ -863,6 +878,7 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
     if argv.is_empty() {
         return Err(bad_params("'argv' must not be empty"));
     }
+    let argv = anchor_launch_executable(argv, &cwd)?;
     let now = Utc::now();
     let mut pane = Pane::new(ws_id, tab_id.clone(), cwd.clone(), argv.clone(), size, now);
     pane.agent.kind = ctx.detect_kind(&argv);

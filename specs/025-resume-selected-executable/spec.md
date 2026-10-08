@@ -51,3 +51,5 @@ Consequently:
 - **SC-002**: Real IPC regression sibling test `report_session_builds_resume_retains_selected_executable_without_manifest` launches an absolute Codex fixture without any manifest resume template, reports session, calls `pane.resume`, and verifies both `fixture-resume:<id>` and `fixture-local-runtime`.
 - **SC-003**: Hook-event writer and stale snapshot repair tests verify dynamic resolution at both entry points.
 - **SC-004**: Zero new clippy warnings and formatting clean.
+
+- **FR-007 (Stable Relative Launch)**: Anchor path-qualified relative executables to the initial spawn or split directory before process launch and store that absolute path in existing pane argv. Live cwd refresh must not redirect resume.

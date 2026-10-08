@@ -298,3 +298,7 @@ matching bare resume commands retain that selected path. Explicit manifest
 resume paths remain authoritative; promoted shell panes keep the adapter
 command. Resume arguments come from the adapter rather than the initial launch
 options. Existing bare snapshot commands are repaired when resumed.
+
+Relative executable paths supplied to `pane.spawn` or `pane.split` are anchored
+to their launch directory before spawning and stored as absolute paths. Later
+process directory changes therefore cannot redirect a session resume.

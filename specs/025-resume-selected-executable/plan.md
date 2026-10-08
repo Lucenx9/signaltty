@@ -53,3 +53,5 @@ Rules:
    - Run clippy and fmt on `signaltty-agent` and `signaltty-server`.
 4. **Documentation**:
    - Update `docs/07-agents.md` and `docs/08-ipc.md`.
+
+Review follow-up: normalize relative path-qualified argv0 before spawn/split, using launch cwd under the existing Store lock, without canonicalizing symlinks or changing bare PATH commands. Reap the owned server before editing old snapshot fixtures.

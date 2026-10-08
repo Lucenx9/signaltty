@@ -39,3 +39,7 @@ Full gate and independent native xAI Grok review are in progress.
 Full verification passed: target/verification/full-d_404mi0/summary.json, 25 GTK tests, workspace tests/clippy/formatting, server QA and benchmark. Independent Grok review pending.
 
 Combined branch gate passed after parent PR45 follow-ups: target/verification/full-sgeu79m7/summary.json (25 GTK tests). Parent PR45 subsequently merged; native xAI Grok review is still pending.
+
+Grok final review found relative launch paths could drift after cwd refresh. Real IPC regression observed chdir, then failed on non-absolute resume argv after 10s. Anchor launch argv for spawn/split; replace snapshot-edit delay with owned-child exit fence. Green and revised full gate pending.
+
+Green: both real chdir regressions (spawn/split), plus both session reporters, passed; selected executable resumes from the changed cwd. Independent Grok r9 and revised full gate pending.
