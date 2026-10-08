@@ -12,5 +12,5 @@
 
 ## Verification
 
-- [ ] T005 Inspect native light/dark renders and run scripts/verify.sh full; record docs/qa/ evidence.
-- [ ] T006 Update docs/06-gui-toolkit.md and complete independent diff review.
+- [x] T005 Inspect native light/dark renders and run scripts/verify.sh full; record docs/qa/ evidence.
+- [x] T006 Update docs/06-gui-toolkit.md and complete independent diff review.
