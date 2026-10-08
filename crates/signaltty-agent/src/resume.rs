@@ -1,16 +1,18 @@
-//! Resume argv resolution: retains the selected path-qualified executable
-//! when the pane was launched with a path-qualified binary matching the official
+//! Resume argv resolution: retains the selected absolute executable
+//! when the pane records an absolute launch binary matching the official
 //! command's basename.
 
 /// Resolve effective resume argv from the pane's original launch argv and the adapter's
 /// official resume argv.
 ///
 /// Explicit adapter paths take precedence. Only matching bare commands are
-/// replaced; launch options and the adapter's resume arguments stay separate.
+/// replaced; legacy relative launch paths have no reliable directory anchor.
+/// Launch options and the adapter's resume arguments stay separate.
 pub fn resolve_resume_argv(original_argv: &[String], resume_argv: &[String]) -> Vec<String> {
     let mut resolved = resume_argv.to_vec();
     if let (Some(selected), Some(program)) = (original_argv.first(), resolved.first_mut()) {
-        if selected.contains('/')
+        if std::path::Path::new(selected).is_absolute()
+            && !program.is_empty()
             && !program.contains('/')
             && selected.rsplit('/').next() == Some(program.as_str())
         {
@@ -68,22 +70,22 @@ mod tests {
     }
 
     #[test]
-    fn relative_paths() {
+    fn legacy_relative_paths_keep_adapter_command() {
         let cases = [
             (
                 &["./bin/codex"][..],
                 &["codex", "resume", "s1"][..],
-                &["./bin/codex", "resume", "s1"][..],
+                &["codex", "resume", "s1"][..],
             ),
             (
                 &["../tools/claude"][..],
                 &["claude", "--resume", "s2"][..],
-                &["../tools/claude", "--resume", "s2"][..],
+                &["claude", "--resume", "s2"][..],
             ),
             (
                 &["vendor/bin/opencode"][..],
                 &["opencode", "--session", "s3"][..],
-                &["vendor/bin/opencode", "--session", "s3"][..],
+                &["opencode", "--session", "s3"][..],
             ),
         ];
 

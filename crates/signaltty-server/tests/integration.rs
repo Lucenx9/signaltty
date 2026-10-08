@@ -1452,6 +1452,15 @@ async fn hook_event_session_retains_selected_executable() {
 
 #[tokio::test]
 async fn pane_resume_repairs_stale_bare_resume_argv() {
+    restored_resume_fixture(false).await;
+}
+
+#[tokio::test]
+async fn legacy_relative_launch_keeps_bare_session_command_after_restore() {
+    restored_resume_fixture(true).await;
+}
+
+async fn restored_resume_fixture(legacy_relative: bool) {
     let mut srv = TestServer::start().await;
     let codex = codex_fixture(srv.socket.parent().unwrap());
     let mut c = srv.client().await;
@@ -1492,6 +1501,11 @@ async fn pane_resume_repairs_stale_bare_resume_argv() {
     for p in snap["panes"].as_array_mut().unwrap() {
         if p["id"] == pane {
             p["agent"]["resume_argv"] = json!(["codex", "resume", "stale-sid"]);
+            if legacy_relative {
+                p["argv"] = json!(["./bin/codex", "--version"]);
+                // Legacy cwd may have been refreshed; initial launch cwd is absent.
+                p["cwd"] = json!(srv.integration_home);
+            }
         }
     }
     std::fs::write(&snap_path, serde_json::to_string(&snap).unwrap()).unwrap();
@@ -1502,6 +1516,22 @@ async fn pane_resume_repairs_stale_bare_resume_argv() {
         p["pane"]["agent"]["resume_argv"],
         json!(["codex", "resume", "stale-sid"])
     );
+    if legacy_relative {
+        let report = c
+            .call(
+                "report-session",
+                json!({"pane_id":pane,
+            "agent":"codex", "agent_session_id":"legacy-sid"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            report["pane"]["agent"]["resume_argv"],
+            json!(["codex", "resume", "legacy-sid"])
+        );
+        srv.shutdown().await;
+        return;
+    }
     let r = c
         .call("pane.resume", json!({"pane_id": pane}))
         .await

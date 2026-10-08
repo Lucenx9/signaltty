@@ -43,3 +43,7 @@ Combined branch gate passed after parent PR45 follow-ups: target/verification/fu
 Grok final review found relative launch paths could drift after cwd refresh. Real IPC regression observed chdir, then failed on non-absolute resume argv after 10s. Anchor launch argv for spawn/split; replace snapshot-edit delay with owned-child exit fence. Green and revised full gate pending.
 
 Green: both real chdir regressions (spawn/split), plus both session reporters, passed; selected executable resumes from the changed cwd. Independent Grok r9 and revised full gate pending.
+
+Codex P1: legacy snapshots bypass launch anchoring. Red helper matrix and restored-snapshot report-session test both substituted ./bin/codex incorrectly; restrict original selection to absolute paths, preserving adapter command for legacy relative argv. Revised gate pending.
+
+Green: all8 helper tests and restored legacy-relative snapshot IPC test pass. Both fresh relative launch paths remain anchored by spawn/split. Final full gate and native xAI Grok r10 pending.

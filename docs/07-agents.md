@@ -302,3 +302,6 @@ options. Existing bare snapshot commands are repaired when resumed.
 Relative executable paths supplied to `pane.spawn` or `pane.split` are anchored
 to their launch directory before spawning and stored as absolute paths. Later
 process directory changes therefore cannot redirect a session resume.
+
+Legacy snapshots with a relative original executable keep the adapter command:
+they do not persist a reliable initial directory to anchor that relative path.

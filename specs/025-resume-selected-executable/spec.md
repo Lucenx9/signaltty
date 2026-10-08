@@ -18,7 +18,7 @@ Consequently:
 
 ### Functional Requirements
 
-- **FR-001 (Executable Retention)**: When a pane's original launch `argv[0]` is path-qualified (contains at least one `/`) and its filename/basename matches the bare official resume command (`resume_argv[0]`), the resume command's `argv[0]` must be replaced with the original path-qualified `argv[0]`.
+- **FR-001 (Executable Retention)**: When a pane's original launch `argv[0]` is absolute (including relative launch paths anchored at spawn) and its filename/basename matches the bare official resume command (`resume_argv[0]`), the resume command's `argv[0]` must be replaced with the original path-qualified `argv[0]`.
 - **FR-002 (Preserve Adapter Arguments)**: The remaining arguments from the adapter's official resume command (e.g. `["resume", "<session_id>"]` or `["--resume", "<session_id>"]`) must be retained intact. Original launch options, model names, profile arguments, or suffix flags must NOT be copied into the resume argv.
 - **FR-003 (Preserve Configuration Environment)**: The pane's retained `agent.config_env` (e.g. `CODEX_HOME`, `CLAUDE_CONFIG_DIR`) must continue to be passed to the resumed process unchanged.
 - **FR-004 (Preserve Promoted Shells)**: If a pane was started with a shell (e.g. `/bin/bash` or `/usr/bin/zsh`) and later promoted to an agent kind, the original basename (`"bash"`) does not match the bare official command (`"codex"`). In this case, the helper must NOT replace the command; bare `"codex"` is preserved.
@@ -53,3 +53,5 @@ Consequently:
 - **SC-004**: Zero new clippy warnings and formatting clean.
 
 - **FR-007 (Stable Relative Launch)**: Anchor path-qualified relative executables to the initial spawn or split directory before process launch and store that absolute path in existing pane argv. Live cwd refresh must not redirect resume.
+
+- **FR-008 (Legacy Relative Compatibility)**: A restored relative original launch path must not replace a bare adapter resume command, because the initial launch directory is not reliably persisted.
