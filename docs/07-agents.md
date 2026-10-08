@@ -115,6 +115,12 @@ BEL only).
 - Shim: a small plugin file calling `signaltty hook-event --agent
   opencode`. `session.status busy/idle` → working/done; idle →
   done+unread. `serve` API is the future native-integration path.
+  V1 creation identity also comes from `properties.info.id`; nested provider
+  error messages are preserved. V2 `session.execution.failed` normalizes to
+  `session.error` (failed + error attention), while success and interruption
+  retain idle completion behavior. Installed-plugin tests execute both loaders
+  rather than only checking the generated source shape. Event contracts:
+  [OpenCode 2.0.25](https://github.com/anomalyco/opencode/blob/v2.0.25/packages/schema/src/session-event.ts).
 
 ### Cursor Agent (`cursor-agent`)
 
@@ -270,3 +276,8 @@ and disabled settings as before.
 Sources: [Claude PermissionRequest reference](https://code.claude.com/docs/en/hooks#permissionrequest-decision-control),
 [Codex 0.159.1 permission execution](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/events/permission_request.rs),
 [Codex output parser](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/engine/output_parser.rs).
+
+After an accepted answer to a pending decision, the shared Store transition
+returns a blocked pane to working for both native permission replies and the
+terminal answer channel. Stale answers and non-answer clears do not resume it;
+ordinary tool traffic still cannot clear an unanswered blocked state.

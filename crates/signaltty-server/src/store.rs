@@ -570,6 +570,16 @@ impl Store {
             self.task_resume_working(&tid);
         }
 
+        // Later tool hooks never clear Blocked, so the answer is the one
+        // place a blocked pane resumes. Any other lifecycle is left alone.
+        if self
+            .panes
+            .get(pane_id)
+            .is_some_and(|p| p.lifecycle == Lifecycle::Blocked)
+        {
+            self.set_lifecycle(pane_id, Lifecycle::Working);
+        }
+
         Some(ev)
     }
 
@@ -1154,6 +1164,41 @@ mod tests {
         let e = store.clear_decision(&id, "attention_cleared").unwrap();
         assert_eq!(e.name, "decision.cleared");
         assert_eq!(e.payload["reason"], serde_json::json!("attention_cleared"));
+    }
+
+    #[test]
+    fn answered_decision_resumes_only_a_blocked_pane() {
+        use signaltty_core::model::{Decision, DecisionOption};
+        let decision = |did: &str| Decision {
+            id: did.to_string(),
+            prompt: "Allow?".to_string(),
+            options: vec![DecisionOption {
+                id: "once".into(),
+                label: "Once".into(),
+            }],
+            answerable: true,
+            received_at: Utc::now(),
+        };
+        let mut store = Store::new();
+        let p = pane_with(Attention::None, 0);
+        let id = p.id.clone();
+        store.panes.insert(id.clone(), p);
+        store.set_lifecycle(&id, Lifecycle::Blocked);
+        store.set_decision(&id, decision("d1")).unwrap();
+        // Stale answers and non-answer clears leave the pane blocked.
+        assert!(store.answer_decision(&id, "stale", "once").is_none());
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
+        store.clear_decision(&id, "native_cancelled").unwrap();
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
+        // A current answer returns Blocked to Working.
+        store.set_decision(&id, decision("d2")).unwrap();
+        store.answer_decision(&id, "d2", "once").unwrap();
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Working);
+        // An unrelated lifecycle is never overwritten.
+        store.set_lifecycle(&id, Lifecycle::Done);
+        store.set_decision(&id, decision("d3")).unwrap();
+        store.answer_decision(&id, "d3", "once").unwrap();
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Done);
     }
 
     #[test]

@@ -462,15 +462,15 @@ async fn decision_answer_delivers_bytes_and_consumes() {
         .await
         .unwrap();
     assert_eq!(r["answered"], true);
+    assert_eq!(r["lifecycle"], "working");
     assert_eq!(r["attention"], "none");
-    assert_eq!(r["lifecycle"], "blocked");
     wait_for_text(&mut c, &pane, "1", Duration::from_secs(5)).await;
 
     // Consumed: the bar is gone and a repeat never redelivers.
     let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
     assert!(p["pane"].get("pending_decision").is_none());
     assert_eq!(p["pane"]["attention"], "none");
-    assert_eq!(p["pane"]["lifecycle"], "blocked");
+    assert_eq!(p["pane"]["lifecycle"], "working");
     let err = c
         .call(
             "decision.answer",
@@ -1129,6 +1129,54 @@ async fn hook_event_claude_notification_and_cursor_stop() {
     assert_eq!(
         p["pane"]["agent"]["resume_argv"],
         json!(["cursor-agent", "--resume", "chat-9"])
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn hook_event_opencode_failure_keeps_error_attention_and_resume_identity() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    for (event, payload, lifecycle, attention) in [
+        (
+            "session.created",
+            json!({"session_id":"oc-session"}),
+            "idle",
+            "none",
+        ),
+        (
+            "session.status",
+            json!({"session_id":"oc-session", "status":"busy"}),
+            "working",
+            "none",
+        ),
+        (
+            "session.error",
+            json!({"session_id":"oc-session", "message":"provider unavailable"}),
+            "failed",
+            "error",
+        ),
+    ] {
+        let r = c
+            .call(
+                "hook-event",
+                json!({
+                    "agent":"opencode", "event":event, "pane_id":pane, "payload":payload
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["lifecycle"], lifecycle);
+        assert_eq!(r["attention"], attention);
+    }
+    let p = c.call("pane.get", json!({"pane_id":pane})).await.unwrap();
+    assert_eq!(p["pane"]["lifecycle"], "failed");
+    assert_eq!(p["pane"]["attention"], "error");
+    assert_eq!(p["pane"]["agent"]["agent_session_id"], "oc-session");
+    assert_eq!(
+        p["pane"]["agent"]["resume_argv"],
+        json!(["opencode", "--session", "oc-session"])
     );
     srv.shutdown().await;
 }
