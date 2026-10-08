@@ -52,8 +52,9 @@ Logs are saved before running the next step. On failure, read the failed step lo
 and `qa-logs/`. CI uploads the evidence even when verification fails.
 
 Full runs each ignored GTK test by its exact discovered name, in a fresh Xvfb
-display and D-Bus session. This is necessary because GTK thread ownership cannot
-be reset merely by setting `--test-threads=1`. Native window renders emitted by
+display at 1600×1200 pixels and D-Bus session. The explicit screen size keeps
+wide-window fixtures independent of distribution defaults. Separate processes are
+necessary because GTK thread ownership cannot be reset merely by setting `--test-threads=1`. Native window renders emitted by
 existing tests go to `screenshots/`; inspect them before declaring a visual change
 complete. Ordinary tests alone are not the delivery gate.
 

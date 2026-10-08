@@ -162,7 +162,7 @@ class Verification:
                      if line.endswith(': test')]
             for name in names:
                 count += 1
-                self.run(f'gtk-{count:02d}', ['xvfb-run', '-a', 'dbus-run-session', '--',
+                self.run(f'gtk-{count:02d}', ['xvfb-run', '-a', '-s', '-screen 0 1600x1200x24', 'dbus-run-session', '--',
                                             binary, '--exact', name, '--ignored', '--test-threads=1'],
                          timeout=120, env={'GTK_A11Y': 'none', 'GDK_BACKEND': 'x11',
                                           'GSK_RENDERER': 'cairo',
@@ -170,7 +170,7 @@ class Verification:
         if not count:
             raise RuntimeError('no ignored GTK tests discovered')
         self.report['display_tests'] = count
-        self.run('refresh-benchmark', ['xvfb-run', '-a', sys.executable,
+        self.run('refresh-benchmark', ['xvfb-run', '-a', '-s', '-screen 0 1600x1200x24', sys.executable,
                                       'scripts/bench-gui-refresh.py', '--check'],
                  env={'GTK_A11Y': 'none', 'GDK_BACKEND': 'x11', 'GSK_RENDERER': 'cairo'})
         if mode == 'desktop':
