@@ -24,6 +24,10 @@ refusal, background-process cwd checks and removal racing ordinary creation/laun
 Run each display test in its own process with `GTK_A11Y=none dbus-run-session --
 cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1`:
 
+- `app::tests::open_task_board_preserves_identity_scroll_and_focus_on_updates`
+- `app::tests::task_board_live_activation_and_neighbor_fallback_use_current_rows`
+  covers current pane activation, same-column fallback and surviving reading anchors
+  when removals force GTK to clamp a nearly-bottom viewport.
 - `app::tests::task_board_explains_truncated_done_history`
 - `app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions`
 - `app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls`
@@ -73,3 +77,9 @@ pending replies finish. The closed dialog releases its child from the native hos
 The completed-history board test compares 25 versus 20 finished tasks, checks
 the newest 20 rows, total heading and conditional subset notice, and exports
 light/dark enlarged-text scenes through `SIGNALTTY_UI_EVIDENCE`.
+
+Live board tests exercise production App refresh, dialog/row identity, metadata,
+viewport anchors, narrow focused migration, rapid event bursts, newer focus,
+original-column neighbor fallback, current pane activation, empty transitions
+and close with pending restoration. Native GTK animations are allowed to finish
+before asserting final geometry; no provider requests are made.

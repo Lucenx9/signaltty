@@ -325,6 +325,14 @@ classification and pane activation remain unchanged. Done keeps its total count
 and newest 20 cards; when more exist, a wrapping “Showing latest 20 of N”
 notice explains the visible subset.
 
+Background task events reconcile the open board in place. Task IDs retain row
+widgets, current metadata and pane destinations. Scrolled columns keep their
+surviving viewport anchors through insertions and removals; a moved focused card follows its
+identity into its new column. Removal chooses the next/previous surviving row
+in the original column, then native dialog focus. New navigation wins over
+pending restoration; GTK layout clamps and board-triggered focus animations
+do not count as new user scrolling. Empty/nonempty transitions retain the dialog.
+
 The isolated display test
 `task_board_fits_narrow_windows_and_reveals_last_column` checks narrow
 light/dark scenes, enlarged high-contrast text, scrolling to Done and
