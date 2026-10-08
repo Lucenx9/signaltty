@@ -7,4 +7,4 @@
 - [ ] T006 Publish/link and merge PR after parent and checks pass.
 Sequential dependencies; independent read-only review.
 
-Full gate full-hdvy7agz passed40 steps/28 GTK tests. User requested merge of this PR and stop; initial attention reveal deferred. T006 remains pending until host checks and merge complete.
+Full gate full-19dmlviu passed40 steps/28 GTK tests. User requested merge of this PR and stop; initial attention reveal deferred. T006 remains pending until host checks and merge complete.

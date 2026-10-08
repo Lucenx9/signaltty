@@ -26,6 +26,8 @@ cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1`:
 
 - `app::tests::open_task_board_preserves_identity_scroll_and_focus_on_updates`
 - `app::tests::task_board_live_activation_and_neighbor_fallback_use_current_rows`
+  covers current pane activation, same-column fallback and surviving reading anchors
+  when removals force GTK to clamp a nearly-bottom viewport.
 - `app::tests::task_board_explains_truncated_done_history`
 - `app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions`
 - `app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls`

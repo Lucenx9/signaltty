@@ -16,7 +16,7 @@
       "log": "tooling-tests.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 1.766
+      "seconds": 1.716
     },
     {
       "name": "fmt",
@@ -42,7 +42,7 @@
       "log": "metadata.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 0.164
+      "seconds": 0.114
     },
     {
       "name": "architecture",
@@ -50,7 +50,7 @@
         "/usr/bin/python3",
         "scripts/check-quality.py",
         "architecture",
-        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/verification/full-hdvy7agz/metadata.json"
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/verification/full-19dmlviu/metadata.json"
       ],
       "log": "architecture.log",
       "status": "passed",
@@ -70,7 +70,7 @@
       "log": "clippy.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 2.167
+      "seconds": 1.566
     },
     {
       "name": "warning-policy",
@@ -78,7 +78,7 @@
         "/usr/bin/python3",
         "scripts/check-quality.py",
         "clippy",
-        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/verification/full-hdvy7agz/clippy.jsonl"
+        "/home/simone/.t3/worktrees/signaltty/t3-2743a9dd/target/verification/full-19dmlviu/clippy.jsonl"
       ],
       "log": "warning-policy.log",
       "status": "passed",
@@ -96,7 +96,7 @@
       "log": "build.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.022
+      "seconds": 2.12
     },
     {
       "name": "workspace-tests",
@@ -109,7 +109,7 @@
       "log": "workspace-tests.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 63.671
+      "seconds": 61.767
     },
     {
       "name": "server-qa",
@@ -170,7 +170,7 @@
       "log": "gtk-01.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.37
+      "seconds": 3.419
     },
     {
       "name": "gtk-02",
@@ -190,7 +190,7 @@
       "log": "gtk-02.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.32
+      "seconds": 3.319
     },
     {
       "name": "gtk-03",
@@ -210,7 +210,7 @@
       "log": "gtk-03.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.319
+      "seconds": 3.269
     },
     {
       "name": "gtk-04",
@@ -250,7 +250,7 @@
       "log": "gtk-05.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.319
+      "seconds": 3.321
     },
     {
       "name": "gtk-06",
@@ -290,7 +290,7 @@
       "log": "gtk-07.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.319
+      "seconds": 3.322
     },
     {
       "name": "gtk-08",
@@ -330,7 +330,7 @@
       "log": "gtk-09.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 5.072
+      "seconds": 5.027
     },
     {
       "name": "gtk-10",
@@ -350,7 +350,7 @@
       "log": "gtk-10.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 6.324
+      "seconds": 6.325
     },
     {
       "name": "gtk-11",
@@ -370,7 +370,7 @@
       "log": "gtk-11.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 4.672
+      "seconds": 4.621
     },
     {
       "name": "gtk-12",
@@ -390,7 +390,7 @@
       "log": "gtk-12.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.52
+      "seconds": 3.523
     },
     {
       "name": "gtk-13",
@@ -470,7 +470,7 @@
       "log": "gtk-16.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 4.271
+      "seconds": 4.272
     },
     {
       "name": "gtk-17",
@@ -490,7 +490,7 @@
       "log": "gtk-17.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 4.922
+      "seconds": 5.377
     },
     {
       "name": "gtk-18",
@@ -570,7 +570,7 @@
       "log": "gtk-21.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 4.622
+      "seconds": 4.571
     },
     {
       "name": "gtk-22",
@@ -590,7 +590,7 @@
       "log": "gtk-22.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 4.371
+      "seconds": 4.37
     },
     {
       "name": "gtk-23",
@@ -630,7 +630,7 @@
       "log": "gtk-24.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.871
+      "seconds": 3.92
     },
     {
       "name": "gtk-25",
@@ -670,7 +670,7 @@
       "log": "gtk-26.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.47
+      "seconds": 3.469
     },
     {
       "name": "gtk-27",
@@ -690,7 +690,7 @@
       "log": "gtk-27.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.62
+      "seconds": 3.619
     },
     {
       "name": "gtk-28",
@@ -710,7 +710,7 @@
       "log": "gtk-28.log",
       "status": "passed",
       "exit_code": 0,
-      "seconds": 3.371
+      "seconds": 3.369
     },
     {
       "name": "refresh-benchmark",
@@ -735,7 +735,7 @@
     "IME, folder chooser, notification clicks and paid provider sessions require manual checks.",
     "Native accessibility QA runs only in desktop mode; Xvfb does not certify a compositor."
   ],
-  "revision": "619ed94778b5a40069152597c982cf34ed64f702",
+  "revision": "d93cddac59709853c89ed5d1249e96c533b12d8f",
   "dirty": false,
   "versions": {
     "gtk4": "4.24.1",

@@ -1,9 +1,9 @@
 {
-  "revision": "d0d3d17b2ea1847b0a3eedd40c31c49812a934eb",
+  "revision": "d93cddac59709853c89ed5d1249e96c533b12d8f",
   "sha256": {
-    "crates/signaltty-gui/src/board.rs": "790d209bcf572c37c11f78f05c55defc5682b1cdfacdeb6f0412fed5d0286b89",
+    "crates/signaltty-gui/src/board.rs": "2353b78ffc041d4b4fcbe30acec69fdd4317e4c6f0609ae23c039ceaea2dad29",
     "crates/signaltty-gui/src/app.rs": "bc2650fd42691a9e2b42990155d09281a857ef8337f2c72d22a31da7c8e66675",
-    "crates/signaltty-gui/src/app_tests.rs": "b3fff2a40c73f5e42acf82f4c9c2257b9b2a715fc52edbaee79f6469487c4683"
+    "crates/signaltty-gui/src/app_tests.rs": "f05e695d6e596ff23bbfee512865ce4d23d2322e83af2eb25339a91c3c178b97"
   },
-  "note": "Full runner began at619ed94. The subsequent d0d3d17 test-only commit adds three native animation-settling waits; GUI build/display tests in this run include it. Application code unchanged throughout full gate."
+  "note": "Application and native test source remained unchanged throughout full-19dmlviu. Subsequent evidence/documentation commits do not change these sources."
 }
