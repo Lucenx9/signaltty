@@ -321,6 +321,29 @@ struct ColumnWidgets {
     notice: gtk4::Label,
     scroll: gtk4::ScrolledWindow,
     list: gtk4::ListBox,
+    scroll_epoch: Rc<std::cell::Cell<u64>>,
+}
+
+#[derive(Clone)]
+struct ColumnPosition {
+    value: f64,
+    anchor: Option<(String, f64)>,
+    scroll_epoch: u64,
+}
+
+fn track_adjustment(
+    adjustment: &gtk4::Adjustment,
+    reconciling: &Rc<std::cell::Cell<bool>>,
+) -> Rc<std::cell::Cell<u64>> {
+    let epoch = Rc::new(std::cell::Cell::new(0_u64));
+    let changed = epoch.clone();
+    let updating = reconciling.clone();
+    adjustment.connect_value_changed(move |_| {
+        if !updating.get() {
+            changed.set(changed.get().wrapping_add(1));
+        }
+    });
+    epoch
 }
 
 #[derive(Clone)]
@@ -328,7 +351,8 @@ struct RestorePoint {
     focus_epoch: u64,
     focused: Option<String>,
     neighbors: Option<(gtk4::ListBox, Option<String>, Option<String>)>,
-    positions: Vec<(f64, Option<(String, f64)>)>,
+    positions: Vec<ColumnPosition>,
+    horizontal_epoch: u64,
     x: f64,
 }
 
@@ -356,6 +380,7 @@ pub struct Board {
     stack: gtk4::Stack,
     scroll: gtk4::ScrolledWindow,
     content: gtk4::Box,
+    horizontal_epoch: Rc<std::cell::Cell<u64>>,
     columns: Vec<ColumnWidgets>,
     rows: Rc<RefCell<std::collections::HashMap<String, CardWidgets>>>,
     pending: Rc<RefCell<Option<RestorePoint>>>,
@@ -409,7 +434,11 @@ impl Board {
                     }
                     index += 1;
                 }
-                (y, anchor)
+                ColumnPosition {
+                    value: y,
+                    anchor,
+                    scroll_epoch: col.scroll_epoch.get(),
+                }
             })
             .collect::<Vec<_>>();
         let snapshot = self
@@ -422,11 +451,13 @@ impl Board {
                 neighbors: focused_neighbors.clone(),
                 positions: positions.clone(),
                 x: self.scroll.hadjustment().value(),
+                horizontal_epoch: self.horizontal_epoch.get(),
             });
         let mut snapshot = snapshot;
         if snapshot.focus_epoch != self.focus_epoch.get() {
             snapshot.focus_epoch = self.focus_epoch.get();
             snapshot.x = self.scroll.hadjustment().value();
+            snapshot.horizontal_epoch = self.horizontal_epoch.get();
             if let Some((list, _, _)) = focused_neighbors.as_ref() {
                 if let Some(index) = self.columns.iter().position(|column| &column.list == list) {
                     snapshot.positions[index] = positions[index].clone();
@@ -502,11 +533,19 @@ impl Board {
         let rows = self.rows.clone();
         let pending = self.pending.clone();
         let closing = self.closing.clone();
+        let updating = self.reconciling.clone();
+        let horizontal_epoch = self.horizontal_epoch.clone();
         let horizontal = self.scroll.hadjustment();
         let columns = self
             .columns
             .iter()
-            .map(|col| (col.list.clone(), col.scroll.vadjustment()))
+            .map(|col| {
+                (
+                    col.list.clone(),
+                    col.scroll.vadjustment(),
+                    col.scroll_epoch.clone(),
+                )
+            })
             .collect::<Vec<_>>();
         // Tick twice: the first frame allocates changed rows, the next reads them.
         let allocated = std::cell::Cell::new(false);
@@ -535,10 +574,19 @@ impl Board {
                 focused,
                 ..
             } = &snapshot;
-            if !user_focus {
+            updating.set(true);
+            let restore_horizontal =
+                !user_focus && horizontal_epoch.get() == snapshot.horizontal_epoch;
+            if restore_horizontal {
                 horizontal.set_value(*x);
             }
-            for ((list, adjustment), (old, anchor)) in columns.iter().zip(positions.iter()) {
+            for ((list, adjustment, epoch), position) in columns.iter().zip(positions.iter()) {
+                if epoch.get() != position.scroll_epoch {
+                    continue;
+                }
+                let ColumnPosition {
+                    value: old, anchor, ..
+                } = position;
                 // New navigation owns its column; unrelated columns retain anchors.
                 if user_focus
                     && current_focus
@@ -571,6 +619,7 @@ impl Board {
                 );
             }
             if user_focus {
+                updating.set(false);
                 return gtk4::glib::ControlFlow::Break;
             }
             if let Some(row) = focused_row {
@@ -582,24 +631,33 @@ impl Board {
                         .is_some_and(|id| row.widget_name().as_str() != id);
                     row.grab_focus();
                     if reveal {
-                        if let (Some(bounds), Some(content_bounds)) = (
-                            row.compute_bounds(&content),
-                            content.compute_bounds(&content),
-                        ) {
-                            // CSS padding places the content origin inside its border box.
-                            let left = f64::from(bounds.x() - content_bounds.x());
-                            horizontal.clamp_page(left, left + f64::from(bounds.width()));
+                        if restore_horizontal {
+                            if let (Some(bounds), Some(content_bounds)) = (
+                                row.compute_bounds(&content),
+                                content.compute_bounds(&content),
+                            ) {
+                                // CSS padding places the content origin inside its border box.
+                                let left = f64::from(bounds.x() - content_bounds.x());
+                                horizontal.clamp_page(left, left + f64::from(bounds.width()));
+                            }
                         }
                         if let Some(list) = row.parent().and_downcast::<gtk4::ListBox>() {
-                            if let Some(vertical) = list
-                                .ancestor(gtk4::ScrolledWindow::static_type())
-                                .and_downcast::<gtk4::ScrolledWindow>()
-                            {
-                                if let Some(bounds) = row.compute_bounds(&list) {
-                                    vertical.vadjustment().clamp_page(
-                                        f64::from(bounds.y()),
-                                        f64::from(bounds.y() + bounds.height()),
-                                    );
+                            let restore_vertical = columns.iter().zip(positions).any(
+                                |((old_list, _, epoch), position)| {
+                                    old_list == &list && epoch.get() == position.scroll_epoch
+                                },
+                            );
+                            if restore_vertical {
+                                if let Some(vertical) = list
+                                    .ancestor(gtk4::ScrolledWindow::static_type())
+                                    .and_downcast::<gtk4::ScrolledWindow>()
+                                {
+                                    if let Some(bounds) = row.compute_bounds(&list) {
+                                        vertical.vadjustment().clamp_page(
+                                            f64::from(bounds.y()),
+                                            f64::from(bounds.y() + bounds.height()),
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -611,6 +669,7 @@ impl Board {
                     body.child_focus(gtk4::DirectionType::TabForward);
                 }
             }
+            updating.set(false);
             gtk4::glib::ControlFlow::Break
         });
     }
@@ -653,6 +712,8 @@ pub fn present(
     body.append(&stack);
     let cards: Rc<RefCell<std::collections::HashMap<String, TaskCardView>>> = Rc::default();
     let chosen: Rc<RefCell<Option<String>>> = Rc::default();
+    let reconciling = Rc::new(std::cell::Cell::new(false));
+    let horizontal_epoch = track_adjustment(&scroll.hadjustment(), &reconciling);
     let mut columns = Vec::new();
     for column in [
         BoardColumn::Working,
@@ -702,11 +763,13 @@ pub fn present(
         vertical.set_child(Some(&list));
         col.append(&vertical);
         container.append(&col);
+        let scroll_epoch = track_adjustment(&vertical.vadjustment(), &reconciling);
         columns.push(ColumnWidgets {
             header,
             notice,
             scroll: vertical,
             list,
+            scroll_epoch,
         });
     }
     dialog.set_child(Some(&body));
@@ -720,7 +783,6 @@ pub fn present(
         }
     });
     let focus_epoch = Rc::new(std::cell::Cell::new(0_u64));
-    let reconciling = Rc::new(std::cell::Cell::new(false));
     let epoch = focus_epoch.clone();
     let updating = reconciling.clone();
     dialog.connect_focus_widget_notify(move |_| {
@@ -733,6 +795,7 @@ pub fn present(
         stack,
         scroll,
         content: container,
+        horizontal_epoch,
         columns,
         rows: Rc::default(),
         pending: Rc::default(),

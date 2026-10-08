@@ -3208,6 +3208,10 @@ fn open_task_board_preserves_identity_scroll_and_focus_on_updates() {
         .downcast::<gtk4::ScrolledWindow>()
         .unwrap();
     wait_ui(|| vertical.vadjustment().value() > 0.0);
+    // Let native focus scrolling finish before recording a stable viewport.
+    settle();
+    settle();
+    settle();
     let horizontal = find_matching_widget::<gtk4::ScrolledWindow>(&root, &|scroll| {
         scroll.hscrollbar_policy() == gtk4::PolicyType::Automatic
             && scroll.vscrollbar_policy() == gtk4::PolicyType::Never
@@ -3251,6 +3255,19 @@ fn open_task_board_preserves_identity_scroll_and_focus_on_updates() {
     assert!(
         other.has_focus(),
         "deferred refresh stole a newer focus choice"
+    );
+    app.refresh_open_board();
+    horizontal.hadjustment().set_value(200.0);
+    let user_y = vertical.vadjustment().value() + 20.0;
+    vertical.vadjustment().set_value(user_y);
+    settle();
+    assert!(
+        (horizontal.hadjustment().value() - 200.0).abs() <= 1.0,
+        "pending update overwrote manual horizontal scrolling"
+    );
+    assert!(
+        (vertical.vadjustment().value() - user_y).abs() <= 1.0,
+        "pending update overwrote manual vertical scrolling"
     );
     assert!(row.grab_focus());
     settle();
