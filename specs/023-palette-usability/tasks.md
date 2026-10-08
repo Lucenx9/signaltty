@@ -7,6 +7,8 @@
 - [x] T005 [US2] Add native empty feedback and shortcut hints.
 - [x] T006 Inspect native light/dark, narrow and enlarged high-contrast renders.
 - [x] T007 Resolve Grok review, update docs and feature map, run full verification.
-- [ ] T008 Commit, publish PR and link it to the thread.
+- [x] T008 Commit, publish PR and link it to the thread.
 
 Dependencies: T002 precedes T003; T004 precedes T005; both feed T006/T007 then T008. Parent is the sole writer; Grok is the independent read-only reviewer.
+
+Published PR: https://github.com/Lucenx9/signaltty/pull/39.
