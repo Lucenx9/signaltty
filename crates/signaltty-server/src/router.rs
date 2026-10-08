@@ -1610,6 +1610,17 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             decision.lifecycle = None;
             decision.attention = None;
         }
+        // A session end trailing a finished turn restates the outcome: it must
+        // not reopen a read `done`, rewrite `failed` as `done`, or replace the
+        // useful last message with "session ended".
+        if hook.eq_ignore_ascii_case("sessionend")
+            && decision.lifecycle == Some(Lifecycle::Done)
+            && s.panes
+                .get(&pid)
+                .is_some_and(|p| matches!(p.lifecycle, Lifecycle::Done | Lifecycle::Failed))
+        {
+            decision = signaltty_agent::LifecycleDecision::default();
+        }
         if let Some(msg) = &decision.message {
             if let Some(p) = s.panes.get_mut(&pid) {
                 p.last_message = Some(msg.clone());
