@@ -39,9 +39,14 @@ registry. Raw input, prompt paste and terminal decision replies run in the
 blocking pool so a stalled child leaves the async executor and other pane
 lookups available. Queued input stays bound to the original PTY across a
 respawn. Delayed/retried Enter still uses the Store guard to preserve decision
-checks. This does not make writes cancelable or bounded: a large syscall may
-outlive the child, and the blocking pool has finite capacity. See
-[ADR-0022](adr/0022-pane-input-isolation.md).
+checks. The writer uses nonblocking native descriptors and a five-second budget
+covering queue, mutex and write waits. Close, reaping and shutdown cancel the
+bound writer; accepted bytes remain delivered. Output reads wait for readiness
+and drain available data before EOF. Descriptor destruction performs no EOF
+write. The blocking pool still has finite capacity, so heavy scheduling load can
+delay a response beyond its I/O budget. See
+[ADR-0022](adr/0022-pane-input-isolation.md) and
+[ADR-0023](adr/0023-bounded-pty-input.md).
 
 ## Resize arbitration
 

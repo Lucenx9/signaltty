@@ -1,10 +1,14 @@
 //! PTY ownership: spawn, pumps, resize, signals, exit reaping.
 //! The server — never clients — owns all of this. See docs/04.
 
+use crate::pty_io::{self, InputError, INPUT_TIMEOUT};
+use signaltty_proto::code;
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
+use std::fs::File;
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use base64::Engine;
 use chrono::Utc;
@@ -35,7 +39,8 @@ const ENV_PREFIX_ALLOW: &[&str] = &["SIGNALTTY_", "CLAUDE_", "CODEX_", "OPENCODE
 const ENV_BLOCK: &[&str] = &["LD_PRELOAD", "LD_LIBRARY_PATH", "SIGNALTTY_SOCKET"];
 
 struct PtyWriter {
-    io: Mutex<Box<dyn Write + Send>>,
+    io: Mutex<File>,
+    canceled: AtomicBool,
     queue: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -45,6 +50,12 @@ pub struct PtyHandle {
     master: Box<dyn portable_pty::MasterPty + Send>,
     writer: SharedWriter,
     child_pid: Option<u32>,
+}
+
+impl Drop for PtyHandle {
+    fn drop(&mut self) {
+        self.writer.canceled.store(true, Ordering::Release);
+    }
 }
 
 pub struct SpawnRequest {
@@ -198,20 +209,13 @@ impl PtyManager {
         cmd.env("SIGNALTTY_PANE", &req.pane_id);
         cmd.env("SIGNALTTY_SOCKET", &req.socket_path);
 
+        let (writer, reader) = pty_io::open(pair.master.as_ref())
+            .map_err(|e| format!("pty descriptors failed: {e}"))?;
         let child = pair
             .slave
             .spawn_command(cmd)
             .map_err(|e| format!("spawn failed: {e:#}"))?;
         let child_pid = child.process_id();
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| format!("pty reader failed: {e:#}"))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|e| format!("pty writer failed: {e:#}"))?;
-
         self.terms
             .lock()
             .unwrap()
@@ -222,6 +226,7 @@ impl PtyManager {
                 master: pair.master,
                 writer: Arc::new(PtyWriter {
                     io: Mutex::new(writer),
+                    canceled: AtomicBool::new(false),
                     queue: Arc::new(tokio::sync::Mutex::new(())),
                 }),
                 child_pid,
@@ -234,7 +239,7 @@ impl PtyManager {
         let pane_id = req.pane_id.clone();
         std::thread::Builder::new()
             .name(format!("pty-pump-{pane_id}"))
-            .spawn(move || pump.run(pane_id, reader, child))
+            .spawn(move || pump.run(pane_id, Box::new(reader), child))
             .map_err(|e| format!("pump thread failed: {e}"))?;
 
         Ok(integration)
@@ -351,41 +356,71 @@ impl PtyManager {
         self.mark_persist();
     }
 
-    fn writer(&self, pane_id: &str) -> Result<SharedWriter, String> {
+    fn writer(&self, pane_id: &str) -> Result<SharedWriter, InputError> {
         self.handles
             .lock()
             .unwrap()
             .get(pane_id)
             .map(|h| h.writer.clone())
-            .ok_or_else(|| "pane has no live PTY".to_string())
+            .ok_or_else(|| InputError::new(code::PANE_EXITED, "pane has no live PTY", 0))
     }
 
-    pub fn input(&self, pane_id: &str, data: &[u8]) -> Result<usize, String> {
-        Self::write_input(&self.writer(pane_id)?, data)
+    pub fn input(&self, pane_id: &str, data: &[u8]) -> Result<usize, InputError> {
+        Self::write_input(&self.writer(pane_id)?, data, Instant::now() + INPUT_TIMEOUT)
     }
 
-    pub async fn input_async(&self, pane_id: &str, data: Vec<u8>) -> Result<usize, String> {
-        // Bind this PTY before scheduling: a queued request must never resolve
-        // its pane ID again and write into a replacement process.
+    pub async fn input_async(&self, pane_id: &str, data: Vec<u8>) -> Result<usize, InputError> {
+        let deadline = Instant::now() + INPUT_TIMEOUT;
+        // Resolve once, so queued input cannot target a replacement process.
         let writer = self.writer(pane_id)?;
-        let turn = writer.queue.clone().lock_owned().await;
+        InputError::check(&writer.canceled, deadline, 0)?;
+        let turn = tokio::time::timeout_at(
+            tokio::time::Instant::from_std(deadline),
+            writer.queue.clone().lock_owned(),
+        )
+        .await
+        .map_err(|_| InputError::new(code::TIMEOUT, "PTY input queue timed out", 0))?;
+        InputError::check(&writer.canceled, deadline, 0)?;
         tokio::task::spawn_blocking(move || {
-            // Cancellation of the awaiting future must not admit the next
-            // input until the actual writer operation has completed.
+            // Keep the turn until the actual I/O ends, even if its waiter drops.
             let _turn = turn;
-            Self::write_input(&writer, &data)
+            Self::write_input(&writer, &data, deadline)
         })
         .await
-        .map_err(|e| format!("PTY input worker failed: {e}"))?
+        .map_err(|e| InputError {
+            code: code::IO_ERROR,
+            message: format!("PTY input worker failed: {e}"),
+            written_bytes: None,
+        })?
     }
 
-    fn write_input(writer: &SharedWriter, data: &[u8]) -> Result<usize, String> {
-        // A stalled child owns only its writer lock. Signal/resize/other pane
-        // lookups must remain possible while its input buffer is full.
-        let mut writer = writer.io.lock().unwrap();
-        writer.write_all(data).map_err(|e| e.to_string())?;
-        writer.flush().map_err(|e| e.to_string())?;
-        Ok(data.len())
+    fn write_input(
+        writer: &SharedWriter,
+        data: &[u8],
+        deadline: Instant,
+    ) -> Result<usize, InputError> {
+        loop {
+            InputError::check(&writer.canceled, deadline, 0)?;
+            match writer.io.try_lock() {
+                Ok(mut io) => return pty_io::write(&mut io, data, deadline, &writer.canceled),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    std::thread::sleep(std::time::Duration::from_millis(5))
+                }
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(InputError::new(
+                        code::IO_ERROR,
+                        "PTY writer lock poisoned",
+                        0,
+                    ))
+                }
+            }
+        }
+    }
+
+    pub fn cancel_inputs(&self) {
+        for handle in self.handles.lock().unwrap().values() {
+            handle.writer.canceled.store(true, Ordering::Release);
+        }
     }
 
     pub fn resize(&self, pane_id: &str, size: PtySize) -> Result<(), String> {
