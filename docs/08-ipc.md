@@ -105,9 +105,12 @@ Without `after`, an already matching current state succeeds immediately.
 
 `task.start` requires `agent` or `argv` (else `BAD_PARAMS`) and runs cap →
 base → worktree → spawn synchronously: over-cap starts are refused with
-`RATE_LIMITED` before creating anything, and base/worktree/spawn failures
-are synchronous errors (`BAD_PARAMS` / `IO_ERROR`) that create no task.
-Only the background ready-wait + prompt write produces `failed` tasks with
+`RATE_LIMITED` before creating anything. Validation and base/worktree failures
+before the checkout exists return synchronous errors and create no task.
+Once the checkout exists, workspace/tab/parent/spawn failures persist a
+`failed` task and leave its worktree available for inspection or discard.
+The error includes `details: {task_id, stage}`. Background ready-wait and
+prompt-write failures also persist `failed` tasks with
 `{stage: ready_timeout|submit_refused, …}` evidence (`ready_timeout` adds
 `screen_tail`, the pane's last screen lines). The background step
 waits for the worker pane to reach `idle`/`done` (default
@@ -146,7 +149,7 @@ for both the background first prompt and a follow-up.
 (terminal OR `input_required`, the default). A context wait ends when every
 task in it matches (an empty context matches immediately); unknown tasks →
 `NO_SUCH_TASK`, expiry → `TIMEOUT` (default timeout 3600 s). Unknown `until`
-strings never match (the wait runs to timeout). Unlike pane `wait`, the
+strings and an empty `until` array return `BAD_PARAMS`. Unlike pane `wait`, the
 task waiter is a polling loop, not a single-flight connection: it does not
 cancel on client disconnect.
 

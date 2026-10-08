@@ -110,8 +110,11 @@ signaltty --json task finish "$A" --discard
 Rules: cap is 4 parallel tasks (over-cap → `RATE_LIMITED`, nothing
 created). Never auto-merge: read `task diff` first. Workers report via
 `signaltty report --status completed|failed|rejected --summary …` (it reads
-`$SIGNALTTY_TASK` inside the worker pane). `task.wait` on a context ends at
-the first `input_required` too — loop until everything is terminal.
+`$SIGNALTTY_TASK` inside the worker pane). `task.wait` on a context returns
+when every task is terminal or `input_required`. A blocked worker does not
+end the wait while another worker is still working. To react to a specific
+worker sooner, wait on its task id. Follow up on tasks at `input_required`
+and wait again until everything is terminal.
 `signaltty schema` is the exact contract when in doubt.
 
 Workers must be agents whose hooks report readiness (`--agent claude`,

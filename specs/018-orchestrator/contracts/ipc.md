@@ -186,8 +186,9 @@ Exactly one of `task_id` / `context_id`; `{…, until?, timeout_s?}` →
   non-string) → `BAD_PARAMS`.
 - `context_id` waits until ALL tasks in the context match (covers "wait on
   all"); empty context matches immediately. Unknown task → `NO_SUCH_TASK`.
-- Connection-bound like `wait` (single-flight; EOF/shutdown cancels); does not
-  survive restart — task state does, the waiter reconnects and re-reads.
+- Unlike pane `wait`, task waits use a polling loop and do not cancel on
+  client disconnect. A waiter does not survive restart; task state does,
+  so the caller reconnects and re-reads.
 
 ### `task.report` — structured result write side
 
