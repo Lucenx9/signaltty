@@ -25,6 +25,8 @@ Run each display test in its own process with `GTK_A11Y=none dbus-run-session --
 cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1`:
 
 - `app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls`
+- `app::tests::palette_keyboard_selection_stays_visible_while_search_keeps_focus`
+- `app::tests::palette_empty_results_and_shortcuts_fit_narrow_appearances`
 - `app::tests::file_diff_reader_uses_native_numbered_selectable_controls`
 - `app::tests::pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios`
 - `terminal::tests::terminal_search_is_literal_and_keeps_the_terminal`
@@ -34,7 +36,10 @@ test to export actual GTK window renders of palette/worktrees/changes in light
 and dark themes. Terminal search and zoom tests export their scenes to the same
 path when supported. Inspect every saved image before accepting it.
 
-Observe immediate typing+Enter navigation, blank rename refusal, stable handles,
+Observe selected-result visibility through long-list arrow navigation and filtering
+after scrolling, mapped no-match guidance and recovery, readable shortcut subtitles at
+360px with enlarged text, immediate typing+Enter navigation, blank rename refusal,
+stable handles,
 unchanged VTE objects, continued hidden output, unchanged server ratios, literal
 file labels and binary/untracked indicators. Actor tests also prove slow worktree
 requests keep the normal control and PTY stream available and are never retried.

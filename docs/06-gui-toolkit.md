@@ -244,7 +244,12 @@ configuration does not add another status badge (ADR-0013).
 The primary menu and command/workspace palette share the action registry.
 Ctrl+Shift+P opens the palette. It filters commands and cached workspace names
 and paths immediately, so typing and pressing Enter selects the current match.
-Up/Down selects a result; Enter invokes the existing action or switches the
+Up/Down selects a result and scrolls just enough to keep it visible while search retains
+focus. Filtering resets to the first visible match. No matches shows a native status
+page with recovery guidance; clearing the query restores the list. Commands show
+GTK-formatted shortcuts below their titles, including accessible descriptions, without
+narrowing the title at large text sizes. Full workspace names and paths remain available
+as literal tooltips. Enter invokes the existing action or switches the
 workspace. Escape restores terminal focus. Workspace switches keep already
 created VTE widgets attached to the output stream, including inactive workspaces;
 closing a pane or workspace prunes those widgets after the cache refresh.
@@ -296,6 +301,14 @@ The display tests `navigation_palette_fast_enter_and_git_dialogs_use_native_cont
 Set `SIGNALTTY_UI_EVIDENCE=/tmp/signaltty-local-workflows` on the first two to
 export light/dark palette, Git, search and zoom snapshots, including narrow Git
 dialogs. The fixtures use independent GTK windows and IPC channels.
+
+The isolated display tests
+`palette_keyboard_selection_stays_visible_while_search_keeps_focus` and
+`palette_empty_results_and_shortcuts_fit_narrow_appearances` cover long-list navigation,
+filtering after scrolling, no-match recovery and 360px layouts. `SIGNALTTY_UI_EVIDENCE`
+exports their native renders, including enlarged text with the application's
+high-contrast class. This class-based scene does not certify a screen-reader or a real
+desktop high-contrast theme.
 
 ## Task Board presentation
 
