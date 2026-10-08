@@ -6,9 +6,9 @@
 
 ## User story 1
 
-- [ ] T002 [US1] Extend the existing native approval regression in crates/signaltty-gui/src/terminal.rs and prove it fails.
-- [ ] T003 [US1] Reuse the Decision snapshot to detect current choice changes in crates/signaltty-gui/src/terminal.rs.
-- [ ] T004 [US1] Verify read-only toggles, option callbacks, stable buttons and VTE identity in crates/signaltty-gui/src/terminal.rs.
+- [x] T002 [US1] Extend the existing native approval regression in crates/signaltty-gui/src/terminal.rs and prove it fails.
+- [x] T003 [US1] Reuse the Decision snapshot to detect current choice changes in crates/signaltty-gui/src/terminal.rs.
+- [x] T004 [US1] Verify read-only toggles, option callbacks, stable buttons and VTE identity in crates/signaltty-gui/src/terminal.rs.
 
 ## Verification
 

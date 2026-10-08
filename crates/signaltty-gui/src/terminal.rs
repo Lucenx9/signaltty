@@ -108,7 +108,7 @@ pub struct PaneWidget {
     decision_prompt: gtk4::Label,
     decision_options: libadwaita::WrapBox,
     decision_hint: gtk4::Label,
-    shown_decision: RefCell<Option<String>>,
+    shown_decision: RefCell<Option<Decision>>,
     on_action: Rc<ActionCallback>,
     pane_id: String,
     actor: IpcHandle,
@@ -594,7 +594,8 @@ impl PaneWidget {
     }
 
     /// Toggle the inline decision bar. Buttons rebuild only when the
-    /// decision id changes; showing/hiding never touches the VTE.
+    /// decision id, answerability or options change; showing/hiding
+    /// never touches the VTE.
     fn sync_decision_bar(&self, decision: Option<&Decision>) {
         match decision {
             None => {
@@ -607,7 +608,15 @@ impl PaneWidget {
                 self.decision_prompt
                     .set_tooltip_text(Some(&rendered.prompt));
                 self.decision_hint.set_visible(rendered.read_only);
-                if self.shown_decision.borrow().as_deref() != Some(d.id.as_str()) {
+                let rebuild = match self.shown_decision.borrow().as_ref() {
+                    Some(shown) => {
+                        shown.id != d.id
+                            || shown.answerable != d.answerable
+                            || shown.options != d.options
+                    }
+                    None => true,
+                };
+                if rebuild {
                     while let Some(child) = self.decision_options.first_child() {
                         self.decision_options.remove(&child);
                     }
@@ -642,7 +651,7 @@ impl PaneWidget {
                         });
                         self.decision_options.append(&button);
                     }
-                    *self.shown_decision.borrow_mut() = Some(d.id.clone());
+                    *self.shown_decision.borrow_mut() = Some(d.clone());
                 }
                 self.decision_bar.set_visible(true);
             }
@@ -874,8 +883,26 @@ mod tests {
         widget.update_meta(&pane);
         assert!(!widget.decision_hint.is_visible());
         assert!(widget.decision_options.first_child().is_some());
-        approval.options[0].id = "allow_current".into();
         approval.options[0].label = "Allow current request".into();
+        pane.pending_decision = Some(approval.clone());
+        widget.update_meta(&pane);
+        let renamed = widget
+            .decision_options
+            .first_child()
+            .unwrap()
+            .downcast::<gtk4::Button>()
+            .unwrap();
+        assert_eq!(
+            renamed
+                .child()
+                .unwrap()
+                .downcast::<gtk4::Label>()
+                .unwrap()
+                .text(),
+            "Allow current request",
+            "a label-only update under the same decision ID must refresh choices"
+        );
+        approval.options[0].id = "allow_current".into();
         pane.pending_decision = Some(approval.clone());
         widget.update_meta(&pane);
         let current = widget
@@ -900,6 +927,52 @@ mod tests {
                 if id == "pane-narrow" && decision_id == "d1" && option_id == "allow_current"
         ));
         assert_eq!(widget.term, terminal);
+        let capture = |name: &str| {
+            let Some(directory) = std::env::var_os("SIGNALTTY_UI_EVIDENCE") else {
+                return;
+            };
+            let directory = std::path::PathBuf::from(directory);
+            std::fs::create_dir_all(&directory).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(120);
+            while std::time::Instant::now() < deadline {
+                while gtk4::glib::MainContext::default().iteration(false) {}
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let paintable = gtk4::WidgetPaintable::new(Some(&window));
+            let snapshot = gtk4::Snapshot::new();
+            paintable.snapshot(&snapshot, window.width() as f64, window.height() as f64);
+            let renderer = gtk4::gsk::CairoRenderer::new();
+            renderer.realize_for_display(&display).unwrap();
+            let texture = renderer.render_texture(snapshot.to_node().unwrap(), None);
+            renderer.unrealize();
+            texture
+                .save_to_png(directory.join(format!("{name}.png")))
+                .unwrap();
+        };
+        let style = libadwaita::StyleManager::default();
+        let old_scheme = style.color_scheme();
+        for (name, scheme) in [
+            ("light", libadwaita::ColorScheme::ForceLight),
+            ("dark", libadwaita::ColorScheme::ForceDark),
+        ] {
+            style.set_color_scheme(scheme);
+            if scheme == libadwaita::ColorScheme::ForceDark {
+                window.add_css_class("dark");
+            } else {
+                window.remove_css_class("dark");
+            }
+            approval.answerable = true;
+            pane.pending_decision = Some(approval.clone());
+            widget.update_meta(&pane);
+            capture(&format!("approval-current-{name}"));
+            approval.answerable = false;
+            pane.pending_decision = Some(approval.clone());
+            widget.update_meta(&pane);
+            assert!(widget.decision_options.first_child().is_none());
+            capture(&format!("approval-read-only-{name}"));
+            assert_eq!(widget.term, terminal);
+        }
+        style.set_color_scheme(old_scheme);
         pane.pending_decision = None;
         widget.update_meta(&pane);
         assert_eq!(

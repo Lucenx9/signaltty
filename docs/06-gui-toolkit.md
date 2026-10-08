@@ -152,6 +152,10 @@ native `AdwWrapBox` choices. Long option labels wrap as well, so a 320px
 pane never forces the split wider. Choices keep their original decision
 and option IDs; removing the decision bar retains the mounted VTE.
 Header controls and workspace rows expose descriptive accessible names.
+Choice buttons follow the current decision ID, answerability and options,
+including when those options change under the same ID. Losing the answer
+channel removes the choices and shows the existing terminal-answer hint.
+Prompt-only updates keep mounted choice buttons and the VTE.
 
 Dividers persist: each `GtkPaned` reports to `tab.set_ratio` with its
 tree path once the drag rests 300 ms, never mid-drag. Reconciliation
