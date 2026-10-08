@@ -34,6 +34,15 @@ the client overrides.
   (pane exists, live) → writes to PTY master. No PTY input echo
   synthesis; the kernel/child echoes.
 
+Input serialization belongs to the bound PTY writer, not the global handle
+registry. Raw input, prompt paste and terminal decision replies run in the
+blocking pool so a stalled child leaves the async executor and other pane
+lookups available. Queued input stays bound to the original PTY across a
+respawn. Delayed/retried Enter still uses the Store guard to preserve decision
+checks. This does not make writes cancelable or bounded: a large syscall may
+outlive the child, and the blocking pool has finite capacity. See
+[ADR-0022](adr/0022-pane-input-isolation.md).
+
 ## Resize arbitration
 
 | Situation | Policy |

@@ -172,7 +172,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::PANE_SPAWN => h_pane_spawn(ctx, &req.params),
         method::PANE_SPLIT => h_pane_split(ctx, &req.params),
         method::PANE_GET => h_pane_get(ctx, &req.params),
-        method::PANE_INPUT => h_pane_input(ctx, &req.params),
+        method::PANE_INPUT => h_pane_input(ctx, &req.params).await,
         method::PANE_RESIZE => h_pane_resize(ctx, &req.params),
         method::PANE_SIGNAL => h_pane_signal(ctx, &req.params),
         method::PANE_READ => h_pane_read(ctx, &req.params),
@@ -181,7 +181,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::PANE_CLOSE => h_pane_close(ctx, &req.params),
         method::PANE_RESUME => h_pane_resume(ctx, &req.params),
         method::PANE_MARK_SEEN => h_pane_mark_seen(ctx, &req.params),
-        method::DECISION_ANSWER => h_decision_answer(ctx, &req.params),
+        method::DECISION_ANSWER => h_decision_answer(ctx, &req.params).await,
         method::NOTIFY => h_notify(ctx, &req.params),
         method::HOOK_EVENT => match decode::<params::HookEvent>(&req.params) {
             Ok(p) if p.wait_for_answer => return crate::approvals::wait(ctx, req).await,
@@ -917,7 +917,7 @@ fn h_pane_get(ctx: &Ctx, params: &Value) -> Handler {
     ))
 }
 
-fn h_pane_input(ctx: &Ctx, params: &Value) -> Handler {
+async fn h_pane_input(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::PaneInput = decode(params)?;
     let id = p.pane_id;
     let data_b64 = p.data_b64;
@@ -940,7 +940,7 @@ fn h_pane_input(ctx: &Ctx, params: &Value) -> Handler {
             return Err((code::PANE_EXITED.to_string(), id));
         }
     }
-    let written = ctx.ptys.input(&id, &data).map_err(|e| {
+    let written = ctx.ptys.input_async(&id, data).await.map_err(|e| {
         if e == "pane has no live PTY" {
             (code::PANE_EXITED.to_string(), id.clone())
         } else {
@@ -1207,7 +1207,7 @@ fn h_pane_mark_seen(ctx: &Ctx, params: &Value) -> Handler {
 /// Consumes the id first so a concurrent clear can never double-deliver;
 /// stale/double answers are typed `NO_SUCH_DECISION` (the client refreshes
 /// and drops its bar), never a redelivery.
-fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
+async fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::DecisionAnswer = decode(params)?;
     let (kind, live) = {
         let s = ctx.store.read().unwrap();
@@ -1257,9 +1257,11 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
     };
     let bytes = signaltty_agent::answer_bytes(channel, &pending.options, &p.option_id)
         .ok_or_else(|| bad_params(format!("unknown option '{}'", p.option_id)))?;
-    match consume_deliver_resume(&ctx.store, &p, || {
-        ctx.ptys.input(&p.pane_id, &bytes).map(|_| ())
-    }) {
+    match consume_deliver_resume(&ctx.store, &p, || async {
+        ctx.ptys.input_async(&p.pane_id, bytes).await.map(|_| ())
+    })
+    .await
+    {
         Ok(()) => {}
         Err(TypedAnswerError::Stale) => {
             return Err((
@@ -1277,7 +1279,10 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
     }
     let (lifecycle, attention) = {
         let s = ctx.store.read().unwrap();
-        let pane = s.panes.get(&p.pane_id).unwrap();
+        let pane = s
+            .panes
+            .get(&p.pane_id)
+            .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), p.pane_id.clone()))?;
         (
             pane.lifecycle.as_str().to_string(),
             pane.attention.as_str().to_string(),
@@ -1299,10 +1304,10 @@ enum TypedAnswerError {
 /// stale-id, never a second delivery. The pane and its task resume only once
 /// `deliver` landed; on failure the gate stays consumed but the pane keeps
 /// its blocked state so the user answers in-terminal.
-fn consume_deliver_resume(
+async fn consume_deliver_resume<F: std::future::Future<Output = Result<(), String>>>(
     store: &SharedStore,
     p: &params::DecisionAnswer,
-    deliver: impl FnOnce() -> Result<(), String>,
+    deliver: impl FnOnce() -> F,
 ) -> Result<(), TypedAnswerError> {
     let consumed = {
         let mut s = store.write().unwrap();
@@ -1318,7 +1323,7 @@ fn consume_deliver_resume(
         return Err(TypedAnswerError::Stale);
     }
 
-    if let Err(e) = deliver() {
+    if let Err(e) = deliver().await {
         // The gate is consumed but the bytes never landed (the child
         // exited between the checks): loud error, user answers in-terminal.
         store.write().unwrap().emit(
@@ -2030,10 +2035,41 @@ mod tests {
         s.events.iter().map(|e| e.name.clone()).collect()
     }
 
-    #[test]
-    fn failed_typed_delivery_keeps_the_pane_blocked() {
+    #[tokio::test]
+    async fn pending_typed_delivery_keeps_the_pane_blocked_until_bytes_land() {
         let (store, p) = blocked_store();
-        let err = consume_deliver_resume(&store, &p, || Err("pane has no live PTY".into()));
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let delivering = consume_deliver_resume(&store, &p, || async {
+            wait.await.unwrap();
+            Ok(())
+        });
+        tokio::pin!(delivering);
+        std::future::poll_fn(|cx| {
+            use std::future::Future;
+            assert!(delivering.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        {
+            let s = store.read().unwrap();
+            let pane = &s.panes[&p.pane_id];
+            assert!(pane.pending_decision.is_none());
+            assert_eq!(pane.lifecycle, Lifecycle::Blocked);
+        }
+        release.send(()).unwrap();
+        assert!(delivering.await.is_ok());
+        assert_eq!(
+            store.read().unwrap().panes[&p.pane_id].lifecycle,
+            Lifecycle::Working
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_typed_delivery_keeps_the_pane_blocked() {
+        let (store, p) = blocked_store();
+        let err =
+            consume_deliver_resume(&store, &p, || async { Err("pane has no live PTY".into()) })
+                .await;
         assert!(matches!(err, Err(TypedAnswerError::Delivery(_))));
         let s = store.read().unwrap();
         let pane = &s.panes[&p.pane_id];
@@ -2048,10 +2084,12 @@ mod tests {
         assert!(!events.contains(&"agent.working".to_string()));
     }
 
-    #[test]
-    fn delivered_typed_answer_resumes_the_blocked_pane() {
+    #[tokio::test]
+    async fn delivered_typed_answer_resumes_the_blocked_pane() {
         let (store, p) = blocked_store();
-        assert!(consume_deliver_resume(&store, &p, || Ok(())).is_ok());
+        assert!(consume_deliver_resume(&store, &p, || async { Ok(()) })
+            .await
+            .is_ok());
         let s = store.read().unwrap();
         let pane = &s.panes[&p.pane_id];
         assert!(pane.pending_decision.is_none());
@@ -2059,11 +2097,11 @@ mod tests {
         assert_eq!(pane.attention, Attention::None);
     }
 
-    #[test]
-    fn stale_typed_answer_never_delivers() {
+    #[tokio::test]
+    async fn stale_typed_answer_never_delivers() {
         let (store, mut p) = blocked_store();
         p.decision_id = "old".into();
-        let err = consume_deliver_resume(&store, &p, || panic!("must not deliver"));
+        let err = consume_deliver_resume(&store, &p, || async { panic!("must not deliver") }).await;
         assert!(matches!(err, Err(TypedAnswerError::Stale)));
         let s = store.read().unwrap();
         assert_eq!(s.panes[&p.pane_id].lifecycle, Lifecycle::Blocked);

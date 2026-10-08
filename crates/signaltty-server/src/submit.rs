@@ -231,7 +231,8 @@ pub async fn submit_prompt(
     // Bracketed paste wrap: ESC[200~ text ESC[201~
     let paste = format!("\x1b[200~{text}\x1b[201~");
     ctx.ptys
-        .input(pane_id, paste.as_bytes())
+        .input_async(pane_id, paste.into_bytes())
+        .await
         .map_err(|e| SubmitError::new(code::IO_ERROR, format!("PTY input error: {e}")))?;
 
     tokio::time::sleep(submit_delay).await;
