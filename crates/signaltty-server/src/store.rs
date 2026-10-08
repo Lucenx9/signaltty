@@ -76,6 +76,15 @@ pub struct Store {
 /// confirmed by agent activity.
 pub const SUBMIT_UNCONFIRMED: &str = "submit_unconfirmed";
 
+/// `done`/`failed` outcome the user already read: nothing left to look at and
+/// no open decision (docs/03 "turn finished, user reviewed"). Trailing exit
+/// signals must leave such a pane quiet.
+pub(crate) fn is_reviewed_terminal(pane: &Pane) -> bool {
+    matches!(pane.lifecycle, Lifecycle::Done | Lifecycle::Failed)
+        && pane.attention == Attention::None
+        && pane.pending_decision.is_none()
+}
+
 impl Store {
     pub fn new() -> Store {
         Store {
@@ -169,6 +178,7 @@ impl Store {
         if !matches!(pane.live, signaltty_core::model::LiveState::Live) {
             return;
         }
+        let reviewed = is_reviewed_terminal(pane);
         pane.live = signaltty_core::model::LiveState::Exited { code };
         pane.restore_state = signaltty_core::model::RestoreState::Exited;
         pane.last_activity_at = Utc::now();
@@ -202,7 +212,11 @@ impl Store {
         ) {
             self.clear_attention(pane_id, "pane_exited");
         }
-        self.raise_attention(pane_id, Attention::Unread);
+        // Exiting after the outcome was read is not news (the process was
+        // expected to end); first completions and working exits still alert.
+        if !reviewed {
+            self.raise_attention(pane_id, Attention::Unread);
+        }
         self.clear_decision(pane_id, "pane_exited");
 
         let task_id = self
@@ -1311,6 +1325,93 @@ mod tests {
         store.panes.insert(done_id.clone(), done);
         store.set_exited(&done_id, Some(0));
         assert_eq!(store.panes[&done_id].lifecycle, Lifecycle::Done);
+    }
+
+    fn exit_after(
+        kind: AgentKind,
+        lifecycle: Lifecycle,
+        attention: Attention,
+        decision: bool,
+    ) -> (Store, String) {
+        let mut store = Store::new();
+        let mut pane = pane_with(attention, 0);
+        pane.agent.kind = kind;
+        pane.lifecycle = lifecycle;
+        if decision {
+            pane.pending_decision = Some(signaltty_core::model::Decision {
+                id: "d1".into(),
+                prompt: "Allow?".into(),
+                options: vec![signaltty_core::model::DecisionOption {
+                    id: "once".into(),
+                    label: "Once".into(),
+                }],
+                answerable: true,
+                received_at: Utc::now(),
+            });
+        }
+        let id = pane.id.clone();
+        store.panes.insert(id.clone(), pane);
+        store.set_exited(&id, Some(0));
+        (store, id)
+    }
+
+    #[test]
+    fn reviewed_terminal_exit_stays_reviewed() {
+        for (kind, lifecycle) in [
+            (AgentKind::Claude, Lifecycle::Done),
+            (AgentKind::Codex, Lifecycle::Failed),
+            (AgentKind::Generic, Lifecycle::Done),
+        ] {
+            let (store, id) = exit_after(kind, lifecycle, Attention::None, false);
+            let pane = &store.panes[&id];
+            assert_eq!(pane.attention, Attention::None, "{kind:?} {lifecycle:?}");
+            assert_eq!(pane.lifecycle, lifecycle);
+            assert!(matches!(
+                pane.live,
+                signaltty_core::model::LiveState::Exited { code: Some(0) }
+            ));
+            assert!(!store
+                .events
+                .iter()
+                .any(|e| e.name == signaltty_proto::event::ATTENTION_CREATED));
+        }
+    }
+
+    #[test]
+    fn exit_still_alerts_when_nothing_was_reviewed() {
+        // First completion of a one-shot, a working agent, an idle session,
+        // an unreviewed outcome and a dropped decision all stay unread.
+        for (kind, lifecycle, attention, decision) in [
+            (
+                AgentKind::Generic,
+                Lifecycle::Unknown,
+                Attention::None,
+                false,
+            ),
+            (
+                AgentKind::Claude,
+                Lifecycle::Working,
+                Attention::None,
+                false,
+            ),
+            (AgentKind::Claude, Lifecycle::Idle, Attention::None, false),
+            (AgentKind::Claude, Lifecycle::Done, Attention::Unread, false),
+            (
+                AgentKind::Claude,
+                Lifecycle::Failed,
+                Attention::Error,
+                false,
+            ),
+            (AgentKind::Claude, Lifecycle::Done, Attention::None, true),
+        ] {
+            let (store, id) = exit_after(kind, lifecycle, attention, decision);
+            let expected = attention.raise(Attention::Unread);
+            assert_eq!(
+                store.panes[&id].attention, expected,
+                "{kind:?} {lifecycle:?} {attention:?} decision={decision}"
+            );
+            assert!(store.panes[&id].pending_decision.is_none());
+        }
     }
 
     #[test]

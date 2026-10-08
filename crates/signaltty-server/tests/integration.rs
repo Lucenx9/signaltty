@@ -2833,3 +2833,349 @@ async fn dropped_test_server_is_reaped() {
     drop(srv);
     assert!(!running(), "dropped server is still running");
 }
+
+// ---- reviewed terminal attention (specs/024-reviewed-terminal-attention) ----
+
+/// (agent, SessionStart, UserPromptSubmit, Stop, SessionEnd, Stop summary)
+const TURN_HOOKS: [(&str, &str, &str, &str, &str, &str); 3] = [
+    (
+        "claude",
+        "SessionStart",
+        "UserPromptSubmit",
+        "Stop",
+        "SessionEnd",
+        "All tests pass",
+    ),
+    (
+        "codex",
+        "SessionStart",
+        "UserPromptSubmit",
+        "Stop",
+        "SessionEnd",
+        "All tests pass",
+    ),
+    (
+        "cursor",
+        "sessionStart",
+        "beforeSubmitPrompt",
+        "stop",
+        "sessionEnd",
+        "turn complete",
+    ),
+];
+
+async fn send_hook(
+    c: &mut TestClient,
+    agent: &str,
+    event: &str,
+    pane: &str,
+    payload: serde_json::Value,
+) -> serde_json::Value {
+    c.call(
+        "hook-event",
+        json!({"agent": agent, "event": event, "pane_id": pane, "payload": payload}),
+    )
+    .await
+    .unwrap()
+}
+
+async fn pane_snapshot(c: &mut TestClient, pane: &str) -> serde_json::Value {
+    c.call("pane.get", json!({"pane_id": pane})).await.unwrap()["pane"].clone()
+}
+
+/// Drive a full turn: session start, prompt, Stop, then the user reads it.
+async fn reviewed_turn(
+    c: &mut TestClient,
+    (agent, start, prompt, stop, _end, summary): (&str, &str, &str, &str, &str, &str),
+    pane: &str,
+) {
+    send_hook(c, agent, start, pane, json!({"session_id": "s1"})).await;
+    send_hook(c, agent, prompt, pane, json!({"session_id": "s1"})).await;
+    let r = send_hook(
+        c,
+        agent,
+        stop,
+        pane,
+        json!({"session_id": "s1", "last_assistant_message": "All tests pass"}),
+    )
+    .await;
+    assert_eq!(
+        (r["lifecycle"].as_str(), r["attention"].as_str()),
+        (Some("done"), Some("unread"))
+    );
+    c.call("pane.mark_seen", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    let p = pane_snapshot(c, pane).await;
+    assert_eq!(
+        (p["lifecycle"].as_str(), p["attention"].as_str()),
+        (Some("done"), Some("none"))
+    );
+    assert_eq!(p["last_message"], summary);
+}
+
+#[tokio::test]
+async fn reviewed_terminal_session_end_stays_done_none_and_keeps_identity() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for hooks in TURN_HOOKS {
+        let (agent, _, _, _, end, summary) = hooks;
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        reviewed_turn(&mut c, hooks, &pane).await;
+
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s2"})).await;
+        assert_eq!(r["lifecycle"], "done", "{agent}");
+        assert_eq!(
+            r["attention"], "none",
+            "{agent} session end re-raised unread"
+        );
+        let p = pane_snapshot(&mut c, &pane).await;
+        assert_eq!(p["last_message"], summary, "{agent} lost its last message");
+        // Identity and resume still follow the trailing event.
+        assert_eq!(p["agent"]["agent_session_id"], "s2", "{agent}");
+        assert_eq!(p["agent"]["resume_argv"][2], "s2", "{agent}");
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn reviewed_terminal_pty_exit_after_session_end_stays_none() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for hooks in TURN_HOOKS {
+        let (agent, _, _, _, end, summary) = hooks;
+        let (_ws, pane) = new_pane(&mut c, vec!["sh", "-c", "read line"]).await;
+        reviewed_turn(&mut c, hooks, &pane).await;
+        send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+
+        c.call(
+            "pane.input",
+            json!({"pane_id": pane, "data_b64": base64_encode("\n")}),
+        )
+        .await
+        .unwrap();
+        let w = c
+            .call(
+                "wait",
+                json!({"pane_id": pane, "until": "exited", "timeout_s": 5}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(w["satisfied"], true, "{agent}");
+        let p = pane_snapshot(&mut c, &pane).await;
+        assert_eq!(p["live"]["state"], "exited", "{agent}");
+        assert_eq!(p["lifecycle"], "done", "{agent}");
+        assert_eq!(p["attention"], "none", "{agent} exit re-raised unread");
+        assert_eq!(p["last_message"], summary, "{agent}");
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn session_end_never_rewrites_a_failed_outcome() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-agents-failed-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    write_manifest(
+        &dir,
+        "claude.toml",
+        r#"
+[agent]
+kind = "claude"
+
+[lifecycle.TurnFailed]
+lifecycle = "failed"
+attention = "error"
+message = "build failed"
+"#,
+    );
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let mut c = srv.client().await;
+    for reviewed in [false, true] {
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(
+            &mut c,
+            "claude",
+            "UserPromptSubmit",
+            &pane,
+            json!({"session_id": "s1"}),
+        )
+        .await;
+        let r = send_hook(
+            &mut c,
+            "claude",
+            "TurnFailed",
+            &pane,
+            json!({"session_id": "s1"}),
+        )
+        .await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("failed"), Some("error"))
+        );
+        if reviewed {
+            c.call("pane.mark_seen", json!({"pane_id": pane}))
+                .await
+                .unwrap();
+        }
+        let expected = if reviewed { "none" } else { "error" };
+
+        let r = send_hook(
+            &mut c,
+            "claude",
+            "SessionEnd",
+            &pane,
+            json!({"session_id": "s1"}),
+        )
+        .await;
+        assert_eq!(r["lifecycle"], "failed", "reviewed={reviewed}");
+        assert_eq!(r["attention"], expected, "reviewed={reviewed}");
+        let p = pane_snapshot(&mut c, &pane).await;
+        assert_eq!(p["last_message"], "build failed", "reviewed={reviewed}");
+    }
+    srv.shutdown().await;
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn session_end_and_exit_still_alert_when_nothing_was_reviewed() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for hooks in TURN_HOOKS {
+        let (agent, start, prompt, stop, end, summary) = hooks;
+
+        // First completion: working → session end.
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("done"), Some("unread")),
+            "{agent} working"
+        );
+        assert_eq!(
+            pane_snapshot(&mut c, &pane).await["last_message"],
+            "session ended"
+        );
+
+        // An idle session that ends is a completion too.
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(&mut c, agent, start, &pane, json!({"session_id": "s1"})).await;
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("done"), Some("unread")),
+            "{agent} idle"
+        );
+
+        // Unreviewed Stop then session end stays unread, summary kept.
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        send_hook(
+            &mut c,
+            agent,
+            stop,
+            &pane,
+            json!({"session_id": "s1", "last_assistant_message": "All tests pass"}),
+        )
+        .await;
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("done"), Some("unread")),
+            "{agent} unreviewed"
+        );
+        assert_eq!(pane_snapshot(&mut c, &pane).await["last_message"], summary);
+
+        // Working exit raises unread.
+        let (_ws, pane) = new_pane(&mut c, vec!["sh", "-c", "read line"]).await;
+        send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        c.call(
+            "pane.input",
+            json!({"pane_id": pane, "data_b64": base64_encode("\n")}),
+        )
+        .await
+        .unwrap();
+        c.call(
+            "wait",
+            json!({"pane_id": pane, "until": "exited", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            pane_snapshot(&mut c, &pane).await["attention"],
+            "unread",
+            "{agent} exit"
+        );
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn fresh_turn_after_review_raises_attention_again() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for hooks in TURN_HOOKS {
+        let (agent, _, prompt, stop, end, _) = hooks;
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        reviewed_turn(&mut c, hooks, &pane).await;
+
+        let r = send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("working"), Some("none")),
+            "{agent}"
+        );
+        let r = send_hook(
+            &mut c,
+            agent,
+            stop,
+            &pane,
+            json!({"session_id": "s1", "last_assistant_message": "Second answer"}),
+        )
+        .await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("done"), Some("unread")),
+            "{agent} second turn"
+        );
+
+        // …and the trailing session end after the new, unread turn keeps it.
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(r["attention"], "unread", "{agent}");
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn session_end_keeps_unanswered_permission_gate() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for (agent, prompt, end) in [
+        ("claude", "UserPromptSubmit", "SessionEnd"),
+        ("codex", "UserPromptSubmit", "SessionEnd"),
+    ] {
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        c.call(
+            "hook-event",
+            json!({"agent": agent, "event": "PermissionRequest", "pane_id": pane,
+                   "decision": decision_payload("gate1")}),
+        )
+        .await
+        .unwrap();
+        c.call("pane.mark_seen", json!({"pane_id": pane}))
+            .await
+            .unwrap();
+        send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        let p = pane_snapshot(&mut c, &pane).await;
+        assert_eq!(p["attention"], "permission_required", "{agent}");
+        assert_eq!(p["pending_decision"]["id"], "gate1", "{agent}");
+    }
+    srv.shutdown().await;
+}
