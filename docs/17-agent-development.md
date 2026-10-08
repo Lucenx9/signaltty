@@ -15,7 +15,9 @@ scripts/verify.sh doctor
 and the toolchain from `rust-toolchain.toml`. It is safe to repeat. On another
 distribution install equivalent packages and run it without `--system`.
 The doctor reports missing dependencies without installing anything. Python 3.9+
-is required by the verification runner. The locked GTK packages require Rust 1.92;
+is required by the verification runner. Node runs behavioral tests of the installed
+OpenCode plugin (both provider entrypoints); it is development tooling, not a
+Signaltty runtime dependency. The locked GTK packages require Rust 1.92;
 development uses 1.94.0 and CI compiles all targets separately on 1.92.0.
 
 To build the same container without an editor:
@@ -53,7 +55,9 @@ and `qa-logs/`. CI uploads the evidence even when verification fails.
 
 Full runs each ignored GTK test by its exact discovered name, in a fresh Xvfb
 display and D-Bus session. This is necessary because GTK thread ownership cannot
-be reset merely by setting `--test-threads=1`. Native window renders emitted by
+be reset merely by setting `--test-threads=1`. The virtual display is explicitly
+1920×1080 so distribution-specific Xvfb defaults cannot clamp wide test scenes.
+Native window renders emitted by
 existing tests go to `screenshots/`; inspect them before declaring a visual change
 complete. Ordinary tests alone are not the delivery gate.
 

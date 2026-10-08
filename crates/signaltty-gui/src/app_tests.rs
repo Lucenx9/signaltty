@@ -933,6 +933,8 @@ fn theme_and_appearance_swapping_updates_window_classes() {
     assert_eq!(app.split_view.sidebar_width_unit(), adw::LengthUnit::Px);
     let handle = try_descendant(app.sidebar_overlay.upcast_ref(), "sidebar-handle").unwrap();
     assert!(handle.is_focusable());
+    app.split_view.set_show_sidebar(true);
+    wait_ui(|| handle.is_mapped());
     assert!(handle.grab_focus());
     let keys = handle
         .observe_controllers()
