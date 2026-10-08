@@ -25,6 +25,7 @@ Run each display test in its own process with `GTK_A11Y=none dbus-run-session --
 cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1`:
 
 - `app::tests::task_board_explains_truncated_done_history`
+- `app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions`
 - `app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls`
 - `app::tests::palette_keyboard_selection_stays_visible_while_search_keeps_focus`
 - `app::tests::palette_empty_results_and_shortcuts_fit_narrow_appearances`
@@ -36,6 +37,11 @@ Set `SIGNALTTY_UI_EVIDENCE=/absolute/evidence/path` for the navigation
 test to export actual GTK window renders of palette/worktrees/changes in light
 and dark themes. Terminal search and zoom tests export their scenes to the same
 path when supported. Inspect every saved image before accepting it.
+
+Observe shell branch/path fallback, preserved agent summary, cleared context and
+separator after the last workspace, and header controls inside 360px in both
+appearances with enlarged text. The header test exports native scenes through
+`SIGNALTTY_UI_EVIDENCE`.
 
 Observe selected-result visibility through long-list arrow navigation and filtering
 after scrolling, mapped no-match guidance and recovery, readable shortcut subtitles at

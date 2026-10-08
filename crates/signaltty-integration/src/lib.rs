@@ -528,7 +528,7 @@ function report(hook, payload) {
 
 function sessionId(event) {
   const p = event.properties ?? {};
-  return p.sessionID ?? p.sessionId ?? p.session_id ?? event.sessionID ?? null;
+  return p.sessionID ?? p.sessionId ?? p.session_id ?? event.sessionID ?? p.info?.id ?? null;
 }
 
 function handleEvent(event) {
@@ -551,7 +551,9 @@ function handleEvent(event) {
     case "session.error":
       report("session.error", {
         ...(sid ? { session_id: sid } : {}),
-        message: String(event.properties?.message ?? event.error ?? "unknown"),
+        message: String(event.properties?.message ?? event.properties?.error?.data?.message ??
+          event.properties?.error?.message ?? event.error?.data?.message ??
+          event.error?.message ?? event.error ?? "unknown"),
       });
       break;
     default:
@@ -571,9 +573,11 @@ function translateV2Event(type, data) {
   if (type === "session.execution.started") {
     return { type: "session.status", properties: { ...properties, status: { type: "busy" } } };
   }
+  if (type === "session.execution.failed") {
+    return { type: "session.error", properties };
+  }
   if (
     type === "session.execution.succeeded" ||
-    type === "session.execution.failed" ||
     type === "session.execution.interrupted"
   ) {
     return { type: "session.status", properties: { ...properties, status: { type: "idle" } } };

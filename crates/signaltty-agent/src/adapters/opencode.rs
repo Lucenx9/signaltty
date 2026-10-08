@@ -6,6 +6,8 @@
 //! `session.idle`, `session.error`, each carrying `session_id`).
 //! Raw plugin event fields (`properties.sessionID`) are handled in the
 //! plugin itself; the adapter only sees normalized payloads.
+//! V2 execution failures normalize to `session.error`, retaining the provider
+//! message rather than reporting successful idle completion.
 
 use signaltty_core::model::{AgentKind, NotificationSeverity};
 use signaltty_core::state::{Attention, Lifecycle};

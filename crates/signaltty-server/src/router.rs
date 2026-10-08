@@ -1257,37 +1257,23 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
     };
     let bytes = signaltty_agent::answer_bytes(channel, &pending.options, &p.option_id)
         .ok_or_else(|| bad_params(format!("unknown option '{}'", p.option_id)))?;
-    // Consume before delivering: a concurrent clear turns this into a
-    // typed stale-id on retry, never a second delivery.
-    let consumed = {
-        let mut s = ctx.store.write().unwrap();
-        s.answer_decision(&p.pane_id, &p.decision_id, &p.option_id)
-            .map(|ev| {
-                // Resolve this gate under the consume lock. A newer decision
-                // arriving during delivery must retain its own attention.
-                let cleared = s.mark_seen(&p.pane_id, "decision_answer");
-                (ev, cleared)
-            })
-    };
-    let Some(_) = consumed else {
-        return Err((
-            code::NO_SUCH_DECISION.to_string(),
-            format!("decision {} is stale", p.decision_id),
-        ));
-    };
-
-    if let Err(e) = ctx.ptys.input(&p.pane_id, &bytes) {
-        // The gate is consumed but the bytes never landed (the child
-        // exited between the checks): loud error, user answers in-terminal.
-        ctx.store.write().unwrap().emit(
-            event::DECISION_CLEARED,
-            json!({"pane_id": p.pane_id, "decision_id": p.decision_id, "reason": "pane_exited"}),
-        );
-        return Err(if e == "pane has no live PTY" {
-            (code::PANE_EXITED.to_string(), p.pane_id)
-        } else {
-            (code::IO_ERROR.to_string(), e)
-        });
+    match consume_deliver_resume(&ctx.store, &p, || {
+        ctx.ptys.input(&p.pane_id, &bytes).map(|_| ())
+    }) {
+        Ok(()) => {}
+        Err(TypedAnswerError::Stale) => {
+            return Err((
+                code::NO_SUCH_DECISION.to_string(),
+                format!("decision {} is stale", p.decision_id),
+            ));
+        }
+        Err(TypedAnswerError::Delivery(e)) => {
+            return Err(if e == "pane has no live PTY" {
+                (code::PANE_EXITED.to_string(), p.pane_id)
+            } else {
+                (code::IO_ERROR.to_string(), e)
+            });
+        }
     }
     let (lifecycle, attention) = {
         let s = ctx.store.read().unwrap();
@@ -1302,6 +1288,47 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
         json!({"answered": true, "lifecycle": lifecycle, "attention": attention}),
         ConnEffect::default(),
     ))
+}
+
+enum TypedAnswerError {
+    Stale,
+    Delivery(String),
+}
+
+/// Consume before delivering: a concurrent clear turns a retry into a typed
+/// stale-id, never a second delivery. The pane and its task resume only once
+/// `deliver` landed; on failure the gate stays consumed but the pane keeps
+/// its blocked state so the user answers in-terminal.
+fn consume_deliver_resume(
+    store: &SharedStore,
+    p: &params::DecisionAnswer,
+    deliver: impl FnOnce() -> Result<(), String>,
+) -> Result<(), TypedAnswerError> {
+    let consumed = {
+        let mut s = store.write().unwrap();
+        s.answer_decision(&p.pane_id, &p.decision_id, &p.option_id)
+            .map(|ev| {
+                // Resolve this gate under the consume lock. A newer decision
+                // arriving during delivery must retain its own attention.
+                let cleared = s.mark_seen(&p.pane_id, "decision_answer");
+                (ev, cleared)
+            })
+    };
+    if consumed.is_none() {
+        return Err(TypedAnswerError::Stale);
+    }
+
+    if let Err(e) = deliver() {
+        // The gate is consumed but the bytes never landed (the child
+        // exited between the checks): loud error, user answers in-terminal.
+        store.write().unwrap().emit(
+            event::DECISION_CLEARED,
+            json!({"pane_id": p.pane_id, "decision_id": p.decision_id, "reason": "pane_exited"}),
+        );
+        return Err(TypedAnswerError::Delivery(e));
+    }
+    store.write().unwrap().resume_after_answer(&p.pane_id);
+    Ok(())
 }
 
 // ---- notifications ----
@@ -1938,5 +1965,95 @@ async fn h_pane_submit(ctx: &Ctx, req: &Request, params: &Value) -> (Response, C
             };
             (resp, ConnEffect::default())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Store;
+    use signaltty_core::model::{Decision, DecisionOption, Pane, PtySize};
+    use signaltty_core::state::Attention;
+    use std::sync::RwLock;
+
+    fn blocked_store() -> (SharedStore, params::DecisionAnswer) {
+        let now = chrono::Utc::now();
+        let mut pane = Pane::new(
+            "ws_1".into(),
+            "tab_1".into(),
+            "/tmp".into(),
+            vec!["sh".into()],
+            PtySize::default(),
+            now,
+        );
+        pane.lifecycle = Lifecycle::Blocked;
+        let pane_id = pane.id.clone();
+        let mut store = Store::new();
+        store.panes.insert(pane_id.clone(), pane);
+        store.set_decision(
+            &pane_id,
+            Decision {
+                id: "d1".into(),
+                prompt: "Allow?".into(),
+                options: vec![DecisionOption {
+                    id: "once".into(),
+                    label: "Once".into(),
+                }],
+                answerable: true,
+                received_at: now,
+            },
+        );
+        store.raise_attention(&pane_id, Attention::PermissionRequired);
+        let answer = params::DecisionAnswer {
+            pane_id,
+            decision_id: "d1".into(),
+            option_id: "once".into(),
+        };
+        (Arc::new(RwLock::new(store)), answer)
+    }
+
+    fn names(store: &SharedStore) -> Vec<String> {
+        let s = store.read().unwrap();
+        s.events.iter().map(|e| e.name.clone()).collect()
+    }
+
+    #[test]
+    fn failed_typed_delivery_keeps_the_pane_blocked() {
+        let (store, p) = blocked_store();
+        let err = consume_deliver_resume(&store, &p, || Err("pane has no live PTY".into()));
+        assert!(matches!(err, Err(TypedAnswerError::Delivery(_))));
+        let s = store.read().unwrap();
+        let pane = &s.panes[&p.pane_id];
+        // The gate is consumed (no second delivery) but nothing resumed.
+        assert!(pane.pending_decision.is_none());
+        assert_eq!(pane.lifecycle, Lifecycle::Blocked);
+        let events = names(&store);
+        assert!(events.contains(&signaltty_proto::event::DECISION_ANSWERED.to_string()));
+        let last = s.events.back().unwrap();
+        assert_eq!(last.name, event::DECISION_CLEARED);
+        assert_eq!(last.payload["reason"], "pane_exited");
+        assert!(!events.contains(&"agent.working".to_string()));
+    }
+
+    #[test]
+    fn delivered_typed_answer_resumes_the_blocked_pane() {
+        let (store, p) = blocked_store();
+        assert!(consume_deliver_resume(&store, &p, || Ok(())).is_ok());
+        let s = store.read().unwrap();
+        let pane = &s.panes[&p.pane_id];
+        assert!(pane.pending_decision.is_none());
+        assert_eq!(pane.lifecycle, Lifecycle::Working);
+        assert_eq!(pane.attention, Attention::None);
+    }
+
+    #[test]
+    fn stale_typed_answer_never_delivers() {
+        let (store, mut p) = blocked_store();
+        p.decision_id = "old".into();
+        let err = consume_deliver_resume(&store, &p, || panic!("must not deliver"));
+        assert!(matches!(err, Err(TypedAnswerError::Stale)));
+        let s = store.read().unwrap();
+        assert_eq!(s.panes[&p.pane_id].lifecycle, Lifecycle::Blocked);
+        assert!(s.panes[&p.pane_id].pending_decision.is_some());
     }
 }
