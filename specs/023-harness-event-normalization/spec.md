@@ -31,14 +31,14 @@ The session is available for explicit resume as soon as the provider reports its
 
 ### User Story 3 — Answered approvals resume work (P1)
 
-After an answer to a pending approval, a blocked pane returns to Working.
+After successful delivery of an answer to a pending approval, a blocked pane returns to Working.
 A stale answer or a decision cleared without an answer must not resume work.
 
 **Independent Test**: Store transition tests and real native permission-reporter
 IPC tests for Claude/Codex. Existing TypeText answers use the same transition.
 
 **Acceptance Scenarios**:
-1. An accepted answer clears the decision and returns Blocked to Working.
+1. A delivered answer clears the decision and returns Blocked to Working. Failed delivery keeps the pane and interrupted task blocked.
 2. Superseded/stale answers do not change lifecycle.
 3. Timeout, cancellation and disconnect keep existing lifecycle behavior.
 
@@ -52,7 +52,7 @@ Errors without a message use the existing unknown fallback; invalid V2 event env
 - FR-002: Read V1 creation identity from session information as well as the already supported fields.
 - FR-003: Preserve nested V1/V2 provider error messages and legacy direct messages.
 - FR-004: Keep both plugin loaders, unmanaged-pane no-op, bounded reporter execution and subscription cleanup functional.
-- FR-006: Answering a current blocked decision resumes the pane through Store transitions; stale answers and non-answer clears do not.
+- FR-006: Successfully delivering an answer to a current blocked decision resumes the pane and task through Store transitions; stale answers and non-answer clears do not.
 - FR-005: Exercise the installed JavaScript plugin behavior in the shared verification gate, without paid model calls.
 
 ## Success Criteria

@@ -541,7 +541,8 @@ impl Store {
 
     /// Consume the pending decision on answer. `None` when absent or the
     /// id is stale (superseded / already answered): the caller reports
-    /// `{answered: false}`, never an error.
+    /// `{answered: false}`, never an error. Consuming does not resume the
+    /// pane or task: call `resume_after_answer` once delivery succeeded.
     pub fn answer_decision(
         &mut self,
         pane_id: &str,
@@ -564,32 +565,38 @@ impl Store {
             }),
         );
 
+        Some(ev)
+    }
+
+    /// The consumed answer demonstrably reached the agent (PTY write or
+    /// native reply succeeded): resume the interrupted task and the blocked
+    /// pane. Later tool hooks never clear Blocked, so delivery is the one
+    /// place a blocked pane resumes. Any other lifecycle is left alone, and a
+    /// newer decision that arrived during delivery keeps its own gate.
+    pub fn resume_after_answer(&mut self, pane_id: &str) -> Option<StoredEvent> {
+        let pane = self.panes.get(pane_id)?;
+        if pane.pending_decision.is_some() {
+            return None;
+        }
+        let blocked = pane.lifecycle == Lifecycle::Blocked;
+
         let task_id = self
             .tasks
             .values()
             .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::InputRequired)
             .map(|t| t.id.clone());
-        if let Some(tid) = task_id {
-            self.task_resume_working(&tid);
-        }
+        let mut ev = task_id.and_then(|tid| self.task_resume_working(&tid));
 
-        // Later tool hooks never clear Blocked, so the answer is the one
-        // place a blocked pane resumes. Any other lifecycle is left alone.
-        if self
-            .panes
-            .get(pane_id)
-            .is_some_and(|p| p.lifecycle == Lifecycle::Blocked)
-        {
-            self.set_lifecycle(pane_id, Lifecycle::Working);
+        if blocked {
+            ev = self.set_lifecycle(pane_id, Lifecycle::Working).or(ev);
         }
-
-        Some(ev)
+        ev
     }
 
     /// Drop the pending decision without answering. `None` when absent.
     ///
     /// Never resumes a worker task: only an explicit answer (via
-    /// `answer_decision`) or an accepted follow-up submit moves an
+    /// `answer_decision` + `resume_after_answer`) or an accepted follow-up submit moves an
     /// `input_required` task back to `working`. Timeout, disconnect
     /// (`native_cancelled`) and turn-end (`moved_on`) drops park the task
     /// in `input_required` so the stall is visible instead of silently
@@ -1214,14 +1221,25 @@ mod tests {
         assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
         store.clear_decision(&id, "native_cancelled").unwrap();
         assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
-        // A current answer returns Blocked to Working.
+        // Consuming the answer is not delivery: the pane stays blocked until
+        // the answer demonstrably landed.
         store.set_decision(&id, decision("d2")).unwrap();
         store.answer_decision(&id, "d2", "once").unwrap();
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
+        // Delivery success returns Blocked to Working.
+        store.resume_after_answer(&id).unwrap();
         assert_eq!(store.panes[&id].lifecycle, Lifecycle::Working);
+        // A newer decision that arrived during delivery keeps its own gate.
+        store.set_lifecycle(&id, Lifecycle::Blocked);
+        store.set_decision(&id, decision("d2b")).unwrap();
+        assert!(store.resume_after_answer(&id).is_none());
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
+        store.clear_decision(&id, "moved_on").unwrap();
         // An unrelated lifecycle is never overwritten.
         store.set_lifecycle(&id, Lifecycle::Done);
         store.set_decision(&id, decision("d3")).unwrap();
         store.answer_decision(&id, "d3", "once").unwrap();
+        assert!(store.resume_after_answer(&id).is_none());
         assert_eq!(store.panes[&id].lifecycle, Lifecycle::Done);
     }
 
@@ -1491,9 +1509,11 @@ mod tests {
                 "clear_decision({reason}) must not resume the task"
             );
         }
-        // The answer path still resumes.
+        // The answer path resumes once delivery succeeded, not on consume.
         store.set_decision(&pane_id, decision());
         store.answer_decision(&pane_id, "d1", "once");
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        store.resume_after_answer(&pane_id);
         assert_eq!(store.tasks[&task_id].state, TaskState::Working);
         // A fast permission hook can settle a follow-up before its submit
         // activity gate resumes the task. That gate must preserve the decision.
@@ -1509,6 +1529,7 @@ mod tests {
             Some(json!({"reason": "decision_required", "decision_id": "d1"}))
         );
         store.answer_decision(&pane_id, "d1", "once");
+        store.resume_after_answer(&pane_id);
         assert_eq!(store.tasks[&task_id].state, TaskState::Working);
     }
 

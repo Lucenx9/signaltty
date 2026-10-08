@@ -11,5 +11,7 @@
 Dependencies: T001 → T002 → T003 → T004 → T005 → T008/T009 → T006 → T007.
 Independent review is read-only and runs alongside implementation; one writer owns all edits.
 
-- [x] T008 [US3] Reproduce stale blocked state in crates/signaltty-server/src/store.rs and tests/native_permissions.rs, then resume lifecycle through Store::answer_decision.
+- [x] T008 [US3] Reproduce stale blocked state in crates/signaltty-server/src/store.rs and tests/native_permissions.rs, then resume lifecycle through a Store transition after successful delivery.
 - [x] T009 Stabilize cairo focus readiness in crates/signaltty-gui/src/app_tests.rs and set explicit Xvfb desktop geometry in scripts/verify.py; rerun exact display test and full gate.
+
+- [x] T010 Address review P2: defer pane/task resume until PTY or native delivery succeeds, cover failed/stale/successful delivery and newer decisions.

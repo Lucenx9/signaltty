@@ -277,7 +277,7 @@ Sources: [Claude PermissionRequest reference](https://code.claude.com/docs/en/ho
 [Codex 0.159.1 permission execution](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/events/permission_request.rs),
 [Codex output parser](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/engine/output_parser.rs).
 
-After an accepted answer to a pending decision, the shared Store transition
+After successful delivery of an answer to a pending decision, the shared Store transition
 returns a blocked pane to working for both native permission replies and the
 terminal answer channel. Stale answers and non-answer clears do not resume it;
 ordinary tool traffic still cannot clear an unanswered blocked state.

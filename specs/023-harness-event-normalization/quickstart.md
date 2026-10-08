@@ -52,3 +52,23 @@ Final `scripts/verify.sh full`: PASSED. Evidence directory:
 All workspace/build/fmt/clippy/architecture/tooling checks, server QA, 22 isolated
 GTK tests and refresh benchmark passed. Native light/dark scene renders were
 inspected; this does not certify manual desktop/IME/accessibility or paid sessions.
+
+## Delivery review follow-up
+
+GitHub review identified premature resume on failed answer delivery. Sonnet
+reproduced Working after consume where Blocked was required, then separated
+consumption from Store::resume_after_answer. Native and typed paths call that
+transition only after successful delivery; a newer pending decision retains its gate.
+Three router regressions cover failed, successful and stale deliveries. All 70
+server library tests and native_permissions, integration, orchestrator_tasks,
+orchestrator_e2e and orchestrator_submit passed; server clippy passed. Failure
+retains existing consume-before-delivery semantics; a live PTY failure and the
+native receiver race were not reproduced end-to-end.
+
+Merged main's explicit 1600×1200 Xvfb geometry (same distribution-independent
+intent as this branch's 1920×1080 setting). Full verification will be rerun on
+the combined branch before merging.
+
+Combined branch full gate PASSED: `target/verification/full-hsmuinq1/summary.json`,
+24 isolated GTK tests plus workspace tests, server QA and refresh benchmark.
+The current approval light-theme render was inspected and is readable.
