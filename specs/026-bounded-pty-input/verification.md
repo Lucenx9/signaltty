@@ -24,7 +24,10 @@ TestServer's observation helper does not terminate the process.
 
 Full verification passed on the pre-rebase tree: target/verification/full-evg5gqbt
 (36 steps, 24 GTK tests); light/dark renders inspected. Current-main integration
-requires another full run. Native Grok final review pending. Sonnet
+also passed all 38 steps (26 isolated GTK tests), evidence
+`target/verification/full-95snagrf/summary.json`, with light/dark native approval
+renders inspected. The final production code/test tree is ba08e2b; documentation
+only changes follow. Gemini 3.8 high final review is pending; no approval yet. Sonnet
 design delegation was rate-limited and returned no review. No OpenRouter.
 
 ## Remaining integration
@@ -32,7 +35,8 @@ design delegation was rate-limited and returned no review. No OpenRouter.
 main advanced with PR 40's delivery/resume semantics. The isolation
 PR was resolved against it with async consume/deliver/resume; queue and bounded
 input rebased. The generic helper carries typed InputError in production while
-retaining all four async helper regressions. Repeat full integration checks.
+retaining all four async helper regressions. All four helper tests and the real IPC tests pass on this integration.
+Queued close/death/timeout input reports zero accepted bytes.
 Synchronous Enter still waits under the Store guard, now bounded by the I/O
 budget; spec 027 will make it try-only. Native provider sessions and desktop
 accessibility are outside this server patch's proof.
