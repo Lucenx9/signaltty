@@ -2249,6 +2249,108 @@ fn task_board_shows_columns_and_navigates_to_pane() {
     }
 }
 
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn task_board_fits_narrow_windows_and_reveals_last_column() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let settings = gtk4::Settings::default().unwrap();
+    settings.set_gtk_enable_animations(false);
+    let old_font = settings.gtk_font_name();
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(360, 600);
+    window.present();
+    let mut task = chip_scene_task("A long task title with <literal> symbols & branch context");
+    task["pane_id"] = json!("pane_done");
+    task["state"] = json!("completed");
+    task["disposition"] = json!({"outcome": "merged"});
+    task["agent"] = json!("codex");
+    task["branch"] = json!("fix/a-long-branch-name-with-review-context");
+    let task: signaltty_core::Task = serde_json::from_value(task).unwrap();
+    let mut working = task.clone();
+    working.id = "task_working".into();
+    working.pane_id = Some("pane_working".into());
+    working.state = signaltty_core::TaskState::Working;
+    working.disposition.outcome = signaltty_core::DispositionOutcome::None;
+    let tasks = [working, task];
+    let chosen = Rc::new(RefCell::new(None));
+    for (name, scheme, high_contrast) in [
+        ("light", adw::ColorScheme::ForceLight, false),
+        ("dark", adw::ColorScheme::ForceDark, false),
+        ("large-high-contrast", adw::ColorScheme::ForceLight, true),
+    ] {
+        adw::StyleManager::default().set_color_scheme(scheme);
+        if scheme == adw::ColorScheme::ForceDark {
+            window.add_css_class("dark");
+        } else {
+            window.remove_css_class("dark");
+        }
+        if high_contrast {
+            window.add_css_class("high-contrast");
+            settings.set_gtk_font_name(Some("Sans 18"));
+        }
+        let result = chosen.clone();
+        let dialog = crate::board::present(&window, &tasks, move |_, pane| {
+            result.replace(pane);
+        });
+        wait_ui(|| dialog.width() > 0);
+        capture_workflow(&window, &format!("board-narrow-{name}-start"));
+        assert!(window.width() <= 360, "board must not widen its parent");
+        assert!(
+            dialog.width() <= window.width(),
+            "dialog width {} exceeds parent",
+            dialog.width()
+        );
+        let root = dialog.child().unwrap();
+        let mut horizontal = None;
+        walk_widgets(&root, &mut |widget| {
+            if let Some(scroll) = widget.downcast_ref::<gtk4::ScrolledWindow>() {
+                if scroll.hadjustment().upper() > scroll.hadjustment().page_size() {
+                    horizontal = Some(scroll.clone());
+                    return true;
+                }
+            }
+            false
+        });
+        let scroll = horizontal.expect("overflowing columns must be scrollable");
+        let adjustment = scroll.hadjustment();
+        adjustment.set_value(adjustment.upper() - adjustment.page_size());
+        let done = try_descendant(&root, "board-column-done").unwrap();
+        let row = find_widget::<gtk4::ListBoxRow>(&done).unwrap();
+        wait_ui(|| {
+            row.compute_bounds(&scroll).is_some_and(|bounds| {
+                bounds.x() >= 0.0 && bounds.x() + bounds.width() <= scroll.width() as f32
+            })
+        });
+        capture_workflow(&window, &format!("board-narrow-{name}-done"));
+        adjustment.set_value(0.0);
+        wait_ui(|| {
+            row.compute_bounds(&scroll)
+                .is_some_and(|bounds| bounds.x() > scroll.width() as f32)
+        });
+        gtk4::prelude::GtkWindowExt::set_focus(&window, None::<&gtk4::Widget>);
+        assert!(row.grab_focus());
+        wait_ui(|| adjustment.value() > 0.0);
+        row.activate();
+        wait_ui(|| window.visible_dialog().is_none());
+        assert_eq!(chosen.borrow().as_deref(), Some("pane_done"));
+        chosen.replace(None);
+    }
+    settings.set_gtk_font_name(old_font.as_deref());
+    window.destroy();
+}
+
 fn chip_scene_snapshot() -> crate::refresh::Snapshot {
     let now = chrono::Utc::now().to_rfc3339();
     let mut value = fixture("fix");

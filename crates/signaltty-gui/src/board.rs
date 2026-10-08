@@ -1,9 +1,10 @@
 //! Task board: multi-column view of orchestrated tasks grouped by what they need.
 //!
-//! Tasks are derived into four columns:
+//! Tasks are derived into five columns:
 //! - Working: active tasks still running or pending.
 //! - Needs you: tasks requiring input, failed, or rejected.
 //! - In review: completed tasks waiting for diff review and merge/discard.
+//! - Ready to merge: tasks with passing checks and review ready to merge.
 //! - Done: archived tasks that were merged, discarded, or canceled.
 
 use std::cell::RefCell;
@@ -16,7 +17,7 @@ use signaltty_core::{DispositionOutcome, PrChecks, PrReview, PrState, Task, Task
 
 use crate::task_chip::{state_class, state_word};
 
-/// The four kanban columns representing a task's lifecycle stage.
+/// The five kanban columns representing a task's lifecycle stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BoardColumn {
     Working,
@@ -190,7 +191,7 @@ pub struct BoardColumnView {
     pub cards: Vec<TaskCardView>,
 }
 
-/// Build the 4 columns for a slice of tasks, sorting cards by `updated_at` descending.
+/// Build the 5 columns for a slice of tasks, sorting cards by `updated_at` descending.
 /// The Done column shows at most 20 latest cards while retaining the total count.
 pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
     let mut working = Vec::new();
@@ -257,7 +258,7 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
 
 /// Present the Task Board dialog.
 ///
-/// If tasks is empty, displays an `adw::StatusPage`. Otherwise displays 4 columns
+/// If tasks is empty, displays an `adw::StatusPage`. Otherwise displays 5 columns
 /// side by side. Activating a card with a `pane_id` closes the dialog.
 /// `on_closed` runs once the dialog is gone, with the chosen pane if any, so
 /// focusing that pane is not undone by the close restoring the old focus.
@@ -345,7 +346,6 @@ pub fn present(
                 let subtitle = card.subtitle();
                 let meta = gtk4::Label::new(Some(&subtitle));
                 meta.add_css_class("board-card-meta");
-                meta.add_css_class("dim-label");
                 meta.set_ellipsize(gtk4::pango::EllipsizeMode::End);
                 meta.set_halign(gtk4::Align::Start);
                 card_box.append(&meta);
@@ -376,7 +376,12 @@ pub fn present(
             col_box.append(&scroll);
             cols_box.append(&col_box);
         }
-        body.append(&cols_box);
+        let board_scroll = gtk4::ScrolledWindow::new();
+        board_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
+        board_scroll.set_vexpand(true);
+        board_scroll.set_hexpand(true);
+        board_scroll.set_child(Some(&cols_box));
+        body.append(&board_scroll);
     }
 
     dialog.set_child(Some(&body));
