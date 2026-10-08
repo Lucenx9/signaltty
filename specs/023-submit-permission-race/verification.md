@@ -25,7 +25,7 @@ answering the decision resumes work. All 13 submission and 18 Store tests pass.
 
 ## Repository checks
 
-The final fast gate evidence is `target/verification/fast-ctv92ofe/summary.json`.
+The final fast gate passed. Its evidence is `target/verification/fast-ctv92ofe/summary.json`.
 Full runs are recorded in `target/verification/full-wl83q0cc/summary.json` and
 `target/verification/full-2kx1ruey/summary.json`. Workspace tests, server QA,
 formatting, architecture, build and warning policy passed in those full runs.
@@ -64,3 +64,5 @@ a decision arrives on an already interrupted task, with a red-green regression.
 Gemini 3.6 Flash was attempted through Copilot; the provider rejected the model.
 The user chose to continue with Grok and the parent review. OpenRouter was not
 used. No temporary debug instrumentation remains.
+
+Draft PR: https://github.com/Lucenx9/signaltty/pull/38.

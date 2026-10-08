@@ -9,4 +9,4 @@
 - [x] Reproduce and preserve recoverability for background refusal after paste.
 - [x] Document partial-delivery behavior and run full verification; record GTK gate failures.
 - [x] Complete independent review.
-- [ ] Publish the draft PR.
+- [x] Publish draft PR https://github.com/Lucenx9/signaltty/pull/38.
