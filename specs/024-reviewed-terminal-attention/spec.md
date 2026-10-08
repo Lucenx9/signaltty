@@ -2,7 +2,7 @@
 
 **Feature Branch**: `t3/reviewed-terminal-attention`
 **Created**: 2026-10-08
-**Status**: Ready for implementation
+**Status**: Implemented; full verification passed, independent review pending
 **Input**: Close the attention loop (directive 1, `docs/14`): a finished turn the user already read must not light up again when the agent process merely shuts down.
 
 ## Problem
