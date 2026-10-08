@@ -2023,6 +2023,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_typed_delivery_keeps_the_pane_blocked_until_bytes_land() {
+        let (store, p) = blocked_store();
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let delivering = consume_deliver_resume(&store, &p, || async {
+            wait.await.unwrap();
+            Ok(())
+        });
+        tokio::pin!(delivering);
+        std::future::poll_fn(|cx| {
+            use std::future::Future;
+            assert!(delivering.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        {
+            let s = store.read().unwrap();
+            let pane = &s.panes[&p.pane_id];
+            assert!(pane.pending_decision.is_none());
+            assert_eq!(pane.lifecycle, Lifecycle::Blocked);
+        }
+        release.send(()).unwrap();
+        assert!(delivering.await.is_ok());
+        assert_eq!(
+            store.read().unwrap().panes[&p.pane_id].lifecycle,
+            Lifecycle::Working
+        );
+    }
+
+    #[tokio::test]
     async fn failed_typed_delivery_keeps_the_pane_blocked() {
         let (store, p) = blocked_store();
         let err =

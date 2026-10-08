@@ -75,3 +75,14 @@ explicit limits, not covered by this isolation regression.
 Published draft: https://github.com/Lucenx9/signaltty/pull/42 (linked to this thread).
 Next step: consume Grok's result and address any blockers before marking ready.
 Check host CI on the exact published head.
+
+## Integration with current main
+
+Rebased onto e6d1845 after PR 40 added resume-after-delivery semantics. The
+conflicting helper now awaits an async delivery future: gate consumption still
+happens before bytes, resume happens only after successful I/O, and failure
+keeps the pane blocked. Existing stale/success/failure tests use that same async
+helper. A pending-delivery test asserts Blocked until the delivery future resolves.
+Grok approved f9ce543 before this integration; a new pinned review and full
+verification are required for the new head. No previous verdict is represented
+as approval of the conflict resolution.
