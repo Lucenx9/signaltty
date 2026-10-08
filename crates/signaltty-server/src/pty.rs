@@ -34,9 +34,11 @@ const ENV_ALLOW: &[&str] = &[
 const ENV_PREFIX_ALLOW: &[&str] = &["SIGNALTTY_", "CLAUDE_", "CODEX_", "OPENCODE_", "CURSOR_"];
 const ENV_BLOCK: &[&str] = &["LD_PRELOAD", "LD_LIBRARY_PATH", "SIGNALTTY_SOCKET"];
 
+type PtyWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+
 pub struct PtyHandle {
     master: Box<dyn portable_pty::MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    writer: PtyWriter,
     child_pid: Option<u32>,
 }
 
@@ -209,14 +211,15 @@ impl PtyManager {
             .lock()
             .unwrap()
             .ensure_surface(&req.pane_id, req.size.cols, req.size.rows);
-        self.handles.lock().unwrap().insert(
+        let previous = self.handles.lock().unwrap().insert(
             req.pane_id.clone(),
             PtyHandle {
                 master: pair.master,
-                writer,
+                writer: Arc::new(Mutex::new(writer)),
                 child_pid,
             },
         );
+        drop(previous);
 
         // Reader + reaper thread. Blocking I/O by design; one per pane.
         let pump = self.clone();
@@ -333,19 +336,41 @@ impl PtyManager {
     }
 
     fn on_exit(&self, pane_id: &str, code: Option<i32>) {
-        self.handles.lock().unwrap().remove(pane_id);
+        let removed = self.handles.lock().unwrap().remove(pane_id);
+        drop(removed);
         // Viewers belong to connections, so they survive a child restart.
         self.store.write().unwrap().set_exited(pane_id, code);
         self.mark_persist();
     }
 
+    fn writer(&self, pane_id: &str) -> Result<PtyWriter, String> {
+        self.handles
+            .lock()
+            .unwrap()
+            .get(pane_id)
+            .map(|h| h.writer.clone())
+            .ok_or_else(|| "pane has no live PTY".to_string())
+    }
+
     pub fn input(&self, pane_id: &str, data: &[u8]) -> Result<usize, String> {
-        let mut handles = self.handles.lock().unwrap();
-        let h = handles
-            .get_mut(pane_id)
-            .ok_or_else(|| "pane has no live PTY".to_string())?;
-        h.writer.write_all(data).map_err(|e| e.to_string())?;
-        h.writer.flush().map_err(|e| e.to_string())?;
+        Self::write_input(&self.writer(pane_id)?, data)
+    }
+
+    pub async fn input_async(&self, pane_id: &str, data: Vec<u8>) -> Result<usize, String> {
+        // Bind this PTY before scheduling: a queued request must never resolve
+        // its pane ID again and write into a replacement process.
+        let writer = self.writer(pane_id)?;
+        tokio::task::spawn_blocking(move || Self::write_input(&writer, &data))
+            .await
+            .map_err(|e| format!("PTY input worker failed: {e}"))?
+    }
+
+    fn write_input(writer: &PtyWriter, data: &[u8]) -> Result<usize, String> {
+        // A stalled child owns only its writer lock. Signal/resize/other pane
+        // lookups must remain possible while its input buffer is full.
+        let mut writer = writer.lock().unwrap();
+        writer.write_all(data).map_err(|e| e.to_string())?;
+        writer.flush().map_err(|e| e.to_string())?;
         Ok(data.len())
     }
 
@@ -390,7 +415,8 @@ impl PtyManager {
     /// itself is removed by the router.
     pub fn destroy(&self, pane_id: &str, sig: Option<&str>) {
         let _ = self.signal(pane_id, sig.unwrap_or("TERM"), false);
-        self.handles.lock().unwrap().remove(pane_id);
+        let removed = self.handles.lock().unwrap().remove(pane_id);
+        drop(removed);
         self.viewers.lock().unwrap().remove(pane_id);
         let mut terms = self.terms.lock().unwrap();
         terms.destroy(pane_id);
