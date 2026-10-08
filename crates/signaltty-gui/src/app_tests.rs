@@ -2278,6 +2278,12 @@ fn task_board_fits_narrow_windows_and_reveals_last_column() {
     task["agent"] = json!("codex");
     task["branch"] = json!("fix/a-long-branch-name-with-review-context");
     let task: signaltty_core::Task = serde_json::from_value(task).unwrap();
+    let mut working = task.clone();
+    working.id = "task_working".into();
+    working.pane_id = Some("pane_working".into());
+    working.state = signaltty_core::TaskState::Working;
+    working.disposition.outcome = signaltty_core::DispositionOutcome::None;
+    let tasks = [working, task];
     let chosen = Rc::new(RefCell::new(None));
     for (name, scheme, high_contrast) in [
         ("light", adw::ColorScheme::ForceLight, false),
@@ -2295,7 +2301,7 @@ fn task_board_fits_narrow_windows_and_reveals_last_column() {
             settings.set_gtk_font_name(Some("Sans 18"));
         }
         let result = chosen.clone();
-        let dialog = crate::board::present(&window, std::slice::from_ref(&task), move |_, pane| {
+        let dialog = crate::board::present(&window, &tasks, move |_, pane| {
             result.replace(pane);
         });
         wait_ui(|| dialog.width() > 0);
@@ -2320,7 +2326,8 @@ fn task_board_fits_narrow_windows_and_reveals_last_column() {
         let scroll = horizontal.expect("overflowing columns must be scrollable");
         let adjustment = scroll.hadjustment();
         adjustment.set_value(adjustment.upper() - adjustment.page_size());
-        let row = find_widget::<gtk4::ListBoxRow>(&root).unwrap();
+        let done = try_descendant(&root, "board-column-done").unwrap();
+        let row = find_widget::<gtk4::ListBoxRow>(&done).unwrap();
         wait_ui(|| {
             row.compute_bounds(&scroll).is_some_and(|bounds| {
                 bounds.x() >= 0.0 && bounds.x() + bounds.width() <= scroll.width() as f32
@@ -2328,6 +2335,11 @@ fn task_board_fits_narrow_windows_and_reveals_last_column() {
         });
         capture_workflow(&window, &format!("board-narrow-{name}-done"));
         adjustment.set_value(0.0);
+        wait_ui(|| {
+            row.compute_bounds(&scroll)
+                .is_some_and(|bounds| bounds.x() > scroll.width() as f32)
+        });
+        gtk4::prelude::GtkWindowExt::set_focus(&window, None::<&gtk4::Widget>);
         assert!(row.grab_focus());
         wait_ui(|| adjustment.value() > 0.0);
         row.activate();

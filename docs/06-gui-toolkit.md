@@ -292,3 +292,17 @@ The display tests `navigation_palette_fast_enter_and_git_dialogs_use_native_cont
 Set `SIGNALTTY_UI_EVIDENCE=/tmp/signaltty-local-workflows` on the first two to
 export light/dark palette, Git, search and zoom snapshots, including narrow Git
 dialogs. The fixtures use independent GTK windows and IPC channels.
+
+## Task Board presentation
+
+The Task Board retains its five lifecycle columns and native vertical lists.
+A horizontal GTK scroller keeps every column reachable in narrow windows,
+including by keyboard focus. Cards keep complete tooltips while labels
+ellipsize. Secondary metadata uses a single foreground treatment; high
+contrast restores metadata and column headings to full strength. Task
+classification and pane activation remain unchanged.
+
+The isolated display test
+`task_board_fits_narrow_windows_and_reveals_last_column` checks narrow
+light/dark scenes, enlarged high-contrast text, scrolling to Done and
+activating its pane. `SIGNALTTY_UI_EVIDENCE` exports the native renders.

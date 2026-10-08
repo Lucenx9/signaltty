@@ -22,7 +22,7 @@ A user opens the existing Task Board in a 360px window and reaches every column 
 
 ### User story 2: Read secondary text in each appearance (P2)
 
-A user reads agent, branch and age without overlapping opacity reductions.
+A user reads agent, branch and age with readable secondary text.
 
 **Why this priority**: Branch context supports existing task decisions.
 **Independent test**: Inspect light, dark and high-contrast native renders, including enlarged text.
@@ -44,7 +44,7 @@ A user reads agent, branch and age without overlapping opacity reductions.
 - FR-001: The board must fit a 360px parent window without forcing it wider.
 - FR-002: Every existing column must remain reachable by native scrolling and keyboard focus.
 - FR-003: Column classification, counts, card activation, and task requests must remain unchanged.
-- FR-004: Secondary text must not combine dim styling with an additional opacity reduction.
+- FR-004: Secondary text must use one readable foreground treatment without redundant dim styling.
 - FR-005: High contrast must remove custom muting from board headings and metadata.
 
 ## Key entities
