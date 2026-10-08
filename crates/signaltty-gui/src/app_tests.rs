@@ -2846,6 +2846,97 @@ fn find_disclosure_button(row: &gtk4::ListBoxRow) -> Option<gtk4::Button> {
 }
 
 #[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn task_board_explains_truncated_done_history() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(360, 680);
+    window.present();
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let style = adw::StyleManager::default();
+    let old_scheme = style.color_scheme();
+    let tasks = (0..25)
+        .map(|i| {
+            let mut value = chip_scene_task(&format!("Finished task {i:02}"));
+            value["id"] = json!(format!("finished-{i}"));
+            value["state"] = json!("completed");
+            value["disposition"] = json!({"outcome": "merged"});
+            value["updated_at"] =
+                json!((chrono::Utc::now() - chrono::Duration::minutes(i)).to_rfc3339());
+            serde_json::from_value::<signaltty_core::Task>(value).unwrap()
+        })
+        .collect::<Vec<_>>();
+    for (count, scheme, name) in [
+        (25, adw::ColorScheme::ForceLight, "light"),
+        (25, adw::ColorScheme::ForceDark, "dark-large"),
+        (20, adw::ColorScheme::ForceLight, "untruncated"),
+    ] {
+        style.set_color_scheme(scheme);
+        if scheme == adw::ColorScheme::ForceDark {
+            window.add_css_class("dark");
+            settings.set_gtk_font_name(Some("Sans 18"));
+        } else {
+            window.remove_css_class("dark");
+            settings.set_gtk_font_name(old_font.as_deref());
+        }
+        let dialog = crate::board::present(&window, &tasks[..count], |_, _| {});
+        let root = dialog.child().unwrap();
+        wait_ui(|| dialog.width() > 0);
+        let done = try_descendant(&root, "board-column-done").unwrap();
+        let scroll = find_widget::<gtk4::ScrolledWindow>(&root).unwrap();
+        scroll
+            .hadjustment()
+            .set_value(scroll.hadjustment().upper() - scroll.hadjustment().page_size());
+        capture_workflow(&window, &format!("board-history-{name}"));
+        assert!(has_label(&done, &format!("Done · {count}")));
+        let list = find_widget::<gtk4::ListBox>(&done).unwrap();
+        assert!(list.row_at_index(19).is_some() && list.row_at_index(20).is_none());
+        assert!(has_label(
+            list.row_at_index(0).unwrap().upcast_ref(),
+            "Finished task 00"
+        ));
+        assert!(has_label(
+            list.row_at_index(19).unwrap().upcast_ref(),
+            "Finished task 19"
+        ));
+        assert_eq!(
+            has_label(&done, "Showing latest 20 of 25"),
+            count > 20,
+            "truncated history needs explicit feedback"
+        );
+        if count > 20 {
+            let notice = find_matching_widget::<gtk4::Label>(&done, &|label| {
+                label.text() == "Showing latest 20 of 25"
+            })
+            .unwrap();
+            let bounds = notice.compute_bounds(&done).unwrap();
+            assert!(
+                notice.is_mapped()
+                    && bounds.x() >= 0.0
+                    && bounds.x() + bounds.width() <= done.width() as f32
+            );
+        }
+        dialog.force_close();
+        wait_ui(|| window.visible_dialog().is_none());
+    }
+    settings.set_gtk_font_name(old_font.as_deref());
+    style.set_color_scheme(old_scheme);
+    window.destroy();
+}
+
+#[test]
 #[ignore = "requires a GTK display; run with dbus-run-session (or xvfb-run)"]
 fn task_workspace_renders_as_child_and_collapses() {
     std::env::set_var("SIGNALTTY_NOTIFY", "0");

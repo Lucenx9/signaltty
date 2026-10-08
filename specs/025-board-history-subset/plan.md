@@ -1,0 +1,2 @@
+# Plan
+GTK4/libadwaita Rust2021, pinned toolchain. Add a wrapping native label under the Done heading only when cards.len() < total_count. Reuse board-card-meta semantic text treatment. Add actual GTK fixture before code; no pure unit test mirrors the format. Verify latest order/card cap at 25 versus20 and renders in both appearances, 360px/Sans18. Parent sole writer/builder, Grok directxAI scope and Sonnet diff review. Full gate required; no ADR for an explanatory label.
