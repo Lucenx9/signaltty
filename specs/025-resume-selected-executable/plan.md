@@ -17,7 +17,7 @@ pub fn resolve_resume_argv(original_argv: &[String], resume_argv: &[String]) -> 
 Rules:
 1. If `resume_argv` is empty, return empty vector.
 2. If `resume_argv[0]` contains `/` (path-qualified, e.g. explicit manifest path), return `resume_argv` as-is.
-3. If `original_argv` is empty, or `original_argv[0]` does not contain `/`, return `resume_argv` as-is.
+3. If `original_argv` is empty, its first path is not absolute, or the resume program is empty, return `resume_argv` as-is. Legacy relative paths have no reliable launch directory.
 4. Extract `original_basename` from `original_argv[0]`. If `original_basename == Some(resume_argv[0])`:
    Replace `argv[0]` with `original_argv[0]`, keeping `resume_argv[1..]`.
 5. Otherwise (e.g. promoted shell, wrapper with different basename), return `resume_argv` as-is.
@@ -26,7 +26,7 @@ Rules:
 
 - `h_hook_event`: When `adapter.session_identity` updates `p.agent.resume_argv`, resolve via `resolve_resume_argv(&p.argv, &resume_argv)`.
 - `h_pane_report_session`: When writing `pane.agent.resume_argv`, resolve via `resolve_resume_argv(&pane.argv, &r.argv)`.
-- `h_pane_resume`: When extracting `raw_argv` from `pane.agent.resume_argv`, resolve via `resolve_resume_argv(&pane.argv, &raw_argv)`, update `pane.agent.resume_argv = Some(resolved.clone())`, and spawn with `resolved`.
+- `h_pane_resume`: When extracting `raw_argv` from `pane.agent.resume_argv`, resolve via `resolve_resume_argv(&pane.argv, &raw_argv)`, spawn with `resolved`, and update `pane.agent.resume_argv = Some(resolved.clone())` only after successful spawn.
 
 ## TDD Plan
 
@@ -54,4 +54,4 @@ Rules:
 4. **Documentation**:
    - Update `docs/07-agents.md` and `docs/08-ipc.md`.
 
-Review follow-up: normalize relative path-qualified argv0 before spawn/split, using launch cwd under the existing Store lock, without canonicalizing symlinks or changing bare PATH commands. Reap the owned server before editing old snapshot fixtures.
+Review follow-up: normalize relative path-qualified argv0 before spawn/split, using launch cwd under the existing Store lock, without canonicalizing symlinks or changing bare PATH commands. Await and reap the owned server via the existing `wait_for_exit` testkit helper before editing old snapshot fixtures.

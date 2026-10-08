@@ -20,7 +20,7 @@
 
 - [x] T008 Update `docs/07-agents.md` and `docs/08-ipc.md`.
 - [x] T009 Run focused formatting and clippy (`cargo fmt --check`, `cargo clippy -p signaltty-agent -p signaltty-server --all-targets`).
-- [ ] T010 Final summary report.
+- [x] T010 Final summary report.
 
 ## Evidence
 
@@ -47,3 +47,5 @@ Green: both real chdir regressions (spawn/split), plus both session reporters, p
 Codex P1: legacy snapshots bypass launch anchoring. Red helper matrix and restored-snapshot report-session test both substituted ./bin/codex incorrectly; restrict original selection to absolute paths, preserving adapter command for legacy relative argv. Revised gate pending.
 
 Green: all8 helper tests and restored legacy-relative snapshot IPC test pass. Both fresh relative launch paths remain anchored by spawn/split. Final full gate and native xAI Grok r10 pending.
+
+Final code verification passed on ae621dd: target/verification/full-njr2rvuv/summary.json, 26 isolated GTK tests, workspace/clippy/formatting, server QA and refresh benchmark. CI rust and minimum-rust passed on ae621dd. Native xAI Grok4.7 r10 APPROVE on ae621dd (read-only, no cargo); remaining spec/plan wording aligned in this documentation-only follow-up. No paid provider sessions or manual desktop accessibility claimed.
