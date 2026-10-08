@@ -61,6 +61,11 @@ approved both review rounds with no blocking findings. Test timing and error/doc
 wording suggestions were applied. The final refinement refreshes evidence when
 a decision arrives on an already interrupted task, with a red-green regression.
 
+Grok's final review approved committed fix `fc4d5e0` with no blocking findings.
+It checked decision preservation, answer/resume, terminal immutability and lock
+ordering. It did not run tests. A single-byte Enter can still block on a full
+PTY buffer while holding the store read lock; this remains a delivery limit.
+
 Gemini 3.6 Flash was attempted through Copilot; the provider rejected the model.
 The user chose to continue with Grok and the parent review. OpenRouter was not
 used. No temporary debug instrumentation remains.
