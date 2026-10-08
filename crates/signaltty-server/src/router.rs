@@ -1610,6 +1610,8 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             decision.lifecycle = None;
             decision.attention = None;
         }
+        // Preserve turn-end intent even when its pane outcome is already settled.
+        let ends_turn = decision.lifecycle == Some(Lifecycle::Done);
         // A session end trailing a finished turn restates the outcome: it must
         // not reopen a read `done`, rewrite `failed` as `done`, or replace the
         // useful last message with "session ended".
@@ -1629,22 +1631,22 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         }
         if let Some(lifecycle) = decision.lifecycle {
             s.set_lifecycle(&pid, lifecycle);
-            // Only `done` ends a turn. `idle` (e.g. SessionStart after the
-            // task is already working) is not turn end.
-            if lifecycle == Lifecycle::Done {
-                let target_task_id = s
-                    .tasks
-                    .values()
-                    .find(|t| t.pane_id.as_deref() == Some(&pid) && t.state == TaskState::Working)
-                    .map(|t| t.id.clone());
-                if let Some(tid) = target_task_id {
-                    let last_message = s.panes.get(&pid).and_then(|p| p.last_message.clone());
-                    let evidence = json!({
-                        "reason": "turn_ended_without_report",
-                        "last_message": last_message,
-                    });
-                    s.task_input_required_on_turn_end(&tid, Some(evidence));
-                }
+        }
+        // A suppressed SessionEnd still settles a worker that did not report.
+        // Idle hooks never end a turn.
+        if ends_turn {
+            let target_task_id = s
+                .tasks
+                .values()
+                .find(|t| t.pane_id.as_deref() == Some(&pid) && t.state == TaskState::Working)
+                .map(|t| t.id.clone());
+            if let Some(tid) = target_task_id {
+                let last_message = s.panes.get(&pid).and_then(|p| p.last_message.clone());
+                let evidence = json!({
+                    "reason": "turn_ended_without_report",
+                    "last_message": last_message,
+                });
+                s.task_input_required_on_turn_end(&tid, Some(evidence));
             }
         }
         match decision.attention {

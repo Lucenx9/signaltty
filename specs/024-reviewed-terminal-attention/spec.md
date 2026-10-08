@@ -51,6 +51,7 @@ Observed sequence: `Stop` (done/unread) → user focuses the pane (`mark_seen`, 
 - FR-002: `Store::set_exited` must not raise `unread` when, before the exit, the pane was `done`/`failed` with attention `none` and no pending decision. All other exit effects (live state, `pane.exited`, task failure, decision/attention demotion) are unchanged.
 - FR-003: Behavior for non-terminal panes (`unknown`, `idle`, `working`, `blocked`) is unchanged.
 - FR-004: No wire, adapter, GUI or notification change.
+- FR-005: A suppressed terminal SessionEnd still settles an unreported working task as input_required, retaining the pane outcome and message.
 
 ## Key entities
 
