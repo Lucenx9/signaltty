@@ -149,9 +149,9 @@ for both the background first prompt and a follow-up.
 (terminal OR `input_required`, the default). A context wait ends when every
 task in it matches (an empty context matches immediately); unknown tasks →
 `NO_SUCH_TASK`, expiry → `TIMEOUT` (default timeout 3600 s). Unknown `until`
-strings and an empty `until` array return `BAD_PARAMS`. Unlike pane `wait`, the
-task waiter is a polling loop, not a single-flight connection: it does not
-cancel on client disconnect.
+strings and an empty `until` array return `BAD_PARAMS`. Like pane `wait`,
+`task.wait` is connection-bound and single-flight: client disconnect or server
+shutdown cancels the waiter. Task state persists independently of the waiter.
 
 `task.finish` records disposition through a store transition that emits
 `task.updated` with a top-level `task_id`. Conflict file names and a cleanup
