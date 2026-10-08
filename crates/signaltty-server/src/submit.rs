@@ -233,7 +233,13 @@ pub async fn submit_prompt(
     ctx.ptys
         .input_async(pane_id, paste.into_bytes())
         .await
-        .map_err(|e| SubmitError::new(code::IO_ERROR, format!("PTY input error: {e}")))?;
+        .map_err(|e| {
+            SubmitError::with_details(
+                e.code,
+                format!("PTY input error: {e}"),
+                serde_json::json!({"written_bytes":e.written_bytes}),
+            )
+        })?;
 
     tokio::time::sleep(submit_delay).await;
 
@@ -262,9 +268,13 @@ pub async fn submit_prompt(
             ));
         }
         // Keep this single-byte write under the decision check's read guard.
-        ctx.ptys
-            .input(pane_id, b"\r")
-            .map_err(|e| SubmitError::new(code::IO_ERROR, format!("PTY input error: {e}")))?;
+        ctx.ptys.input(pane_id, b"\r").map_err(|e| {
+            SubmitError::with_details(
+                e.code,
+                format!("PTY input error: {e}"),
+                serde_json::json!({"written_bytes":e.written_bytes}),
+            )
+        })?;
     }
 
     if !check_activity {

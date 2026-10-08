@@ -261,6 +261,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    ctx.ptys.cancel_inputs();
     Ok(())
 }
 
