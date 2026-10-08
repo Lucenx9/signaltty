@@ -1494,7 +1494,10 @@ async fn restored_resume_fixture(legacy_relative: bool) {
     c.call("server.shutdown", json!({"force": true}))
         .await
         .unwrap();
-    srv.wait_for_shutdown().await;
+    assert!(
+        srv.wait_for_exit(Duration::from_secs(5)).await,
+        "owned server did not shut down before snapshot edit"
+    );
     let snap_path = srv.state_dir.join("snapshot.json");
     let raw = std::fs::read_to_string(&snap_path).unwrap();
     let mut snap: serde_json::Value = serde_json::from_str(&raw).unwrap();

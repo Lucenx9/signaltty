@@ -67,7 +67,7 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?, parent_pane_id?, label?, relationship?, task_id?}` | `{pane, integration?}` |
 | `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane, integration?}` (new sibling) |
 | `pane.get` | `{pane_id}` | `{pane, wait_baseline}` |
-| `pane.input` | `{pane_id, data_b64}` | `{written}` |
+| `pane.input` | `{pane_id, data_b64}` | `{written}`; five-second input budget, stalled input → `TIMEOUT`, closed bound PTY → `PANE_EXITED`; write failures carry `details.written_bytes` (kernel-accepted prefix, `null` if a worker failure makes it unknown); no automatic retry |
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
 | `pane.signal` | `{pane_id, signal, group?}` | `{sent}` (`INT TERM KILL HUP QUIT WINCH USR1 USR2`, case-insensitive, optional `SIG`; any other name, here or in a `*.close` `signal`, → `BAD_PARAMS`) |
 | `pane.read` | `{pane_id, mode: "screen"\|"tail"\|"rendered", lines?, strip_ansi?, after_seq?}` | `screen`/`tail` → `{text, truncated}`; `rendered` → `{text, seq, next_seq, dropped, truncated}` |
