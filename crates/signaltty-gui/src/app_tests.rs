@@ -2391,7 +2391,13 @@ fn task_board_shows_columns_and_navigates_to_pane() {
         })
     });
     let dialog = app.window.visible_dialog().unwrap();
-    assert_eq!(app.board_dialog.borrow().as_ref(), Some(&dialog));
+    assert_eq!(
+        app.board_dialog
+            .borrow()
+            .as_ref()
+            .map(|board| &board.dialog),
+        Some(&dialog)
+    );
     app.window.visible_dialog().unwrap().close();
     wait_ui(|| app.window.visible_dialog().is_none());
     app.refresh_open_board();
@@ -2532,9 +2538,10 @@ fn task_board_fits_narrow_windows_and_reveals_last_column() {
             settings.set_gtk_font_name(Some("Sans 18"));
         }
         let result = chosen.clone();
-        let dialog = crate::board::present(&window, &tasks, move |_, pane| {
+        let board = crate::board::present(&window, &tasks, move |_, pane| {
             result.replace(pane);
         });
+        let dialog = &board.dialog;
         wait_ui(|| dialog.width() > 0);
         capture_workflow(&window, &format!("board-narrow-{name}-start"));
         assert!(window.width() <= 360, "board must not widen its parent");
@@ -2891,7 +2898,8 @@ fn task_board_explains_truncated_done_history() {
             window.remove_css_class("dark");
             settings.set_gtk_font_name(old_font.as_deref());
         }
-        let dialog = crate::board::present(&window, &tasks[..count], |_, _| {});
+        let board = crate::board::present(&window, &tasks[..count], |_, _| {});
+        let dialog = &board.dialog;
         let root = dialog.child().unwrap();
         wait_ui(|| dialog.width() > 0);
         let done = try_descendant(&root, "board-column-done").unwrap();
@@ -2934,6 +2942,86 @@ fn task_board_explains_truncated_done_history() {
     settings.set_gtk_font_name(old_font.as_deref());
     style.set_color_scheme(old_scheme);
     window.destroy();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn open_task_board_preserves_identity_scroll_and_focus_on_updates() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.window.set_default_size(720, 600);
+    app.window.present();
+    let mut tasks = (0..35)
+        .map(|i| {
+            let mut value = chip_scene_task(&format!("Review task {i:02}"));
+            value["id"] = json!(format!("review-{i:02}"));
+            value["pane_id"] = json!(format!("pane-{i:02}"));
+            value["state"] = json!("completed");
+            value["updated_at"] =
+                json!((chrono::Utc::now() - chrono::Duration::minutes(i)).to_rfc3339());
+            value
+        })
+        .collect::<Vec<_>>();
+    for task in &tasks {
+        assert!(app
+            .model
+            .borrow_mut()
+            .tasks
+            .apply_event(signaltty_proto::event::TASK_CREATED, &json!({"task": task})));
+    }
+    app.present_board();
+    let dialog = app.board_dialog.borrow().as_ref().unwrap().dialog.clone();
+    wait_ui(|| dialog.width() > 0);
+    let root = dialog.child().unwrap();
+    let list =
+        find_matching_widget::<gtk4::ListBox>(&root, &|list| list.row_at_index(30).is_some())
+            .unwrap();
+    let row = list.row_at_index(20).unwrap();
+    assert!(row.grab_focus());
+    let vertical = list
+        .ancestor(gtk4::ScrolledWindow::static_type())
+        .unwrap()
+        .downcast::<gtk4::ScrolledWindow>()
+        .unwrap();
+    wait_ui(|| vertical.vadjustment().value() > 0.0);
+    let horizontal = find_widget::<gtk4::ScrolledWindow>(&root).unwrap();
+    let x = horizontal.hadjustment().value();
+    let y = vertical.vadjustment().value();
+    tasks[20]["label"] = json!("Updated focused task");
+    app.model.borrow_mut().tasks.apply_event(
+        signaltty_proto::event::TASK_UPDATED,
+        &json!({"task": tasks[20]}),
+    );
+    app.refresh_open_board();
+    assert_eq!(
+        app.board_dialog
+            .borrow()
+            .as_ref()
+            .map(|board| &board.dialog),
+        Some(&dialog),
+        "task update replaced the board dialog"
+    );
+    wait_ui(|| has_label(row.upcast_ref(), "Updated focused task"));
+    assert_eq!(list.row_at_index(20).as_ref(), Some(&row));
+    assert!(row.has_focus());
+    assert!((vertical.vadjustment().value() - y).abs() <= 1.0);
+    assert!((horizontal.hadjustment().value() - x).abs() <= 1.0);
+    capture_workflow(&app.window, "board-live-update");
+    dialog.force_close();
+    wait_ui(|| app.board_dialog.borrow().is_none());
+    app.window.destroy();
 }
 
 #[test]

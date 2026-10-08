@@ -111,7 +111,7 @@ pub struct App {
     focused_pane: RefCell<Option<String>>,
     zoom: RefCell<Option<(String, String)>>,
     palette_dialog: RefCell<Option<adw::Dialog>>,
-    board_dialog: RefCell<Option<adw::Dialog>>,
+    board_dialog: RefCell<Option<board::Board>>,
     /// Divider state machine (ratios, drags, echo suppression);
     /// widgets live separately in `paned_widgets`.
     dividers: crate::dividers::Dividers,
@@ -2001,10 +2001,15 @@ impl App {
     }
 
     fn refresh_open_board(&self) {
-        let previous = self.board_dialog.borrow_mut().take();
-        if let Some(dialog) = previous {
-            dialog.force_close();
-            self.present_board();
+        if let Some(board) = self.board_dialog.borrow().as_ref() {
+            let tasks = self
+                .model
+                .borrow()
+                .tasks
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            board.update(&tasks);
         }
     }
 
@@ -2014,7 +2019,13 @@ impl App {
         let dialog = crate::board::present(&self.window, &tasks, move |closed, chosen| {
             let Some(app) = weak.upgrade() else { return };
             // Closing a replaced dialog must not clear its successor or move focus.
-            if app.board_dialog.borrow().as_ref() != Some(closed) {
+            if app
+                .board_dialog
+                .borrow()
+                .as_ref()
+                .map(|board| &board.dialog)
+                != Some(closed)
+            {
                 return;
             }
             app.board_dialog.borrow_mut().take();
