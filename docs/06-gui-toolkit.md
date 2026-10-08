@@ -321,7 +321,9 @@ A horizontal GTK scroller keeps every column reachable in narrow windows,
 including by keyboard focus. Cards keep complete tooltips while labels
 ellipsize. Secondary metadata uses a single foreground treatment; high
 contrast restores metadata and column headings to full strength. Task
-classification and pane activation remain unchanged.
+classification and pane activation remain unchanged. Done keeps its total count
+and newest 20 cards; when more exist, a wrapping “Showing latest 20 of N”
+notice explains the visible subset.
 
 The isolated display test
 `task_board_fits_narrow_windows_and_reveals_last_column` checks narrow

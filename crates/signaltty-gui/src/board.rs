@@ -307,6 +307,17 @@ pub fn present(
             header_label.add_css_class("board-column-header");
             header_label.set_halign(gtk4::Align::Start);
             col_box.append(&header_label);
+            if col_view.cards.len() < col_view.total_count {
+                let notice = gtk4::Label::new(Some(&format!(
+                    "Showing latest {} of {}",
+                    col_view.cards.len(),
+                    col_view.total_count
+                )));
+                notice.add_css_class("board-card-meta");
+                notice.set_wrap(true);
+                notice.set_xalign(0.0);
+                col_box.append(&notice);
+            }
 
             let scroll = gtk4::ScrolledWindow::new();
             scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
