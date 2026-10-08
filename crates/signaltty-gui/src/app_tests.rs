@@ -933,6 +933,8 @@ fn theme_and_appearance_swapping_updates_window_classes() {
     assert_eq!(app.split_view.sidebar_width_unit(), adw::LengthUnit::Px);
     let handle = try_descendant(app.sidebar_overlay.upcast_ref(), "sidebar-handle").unwrap();
     assert!(handle.is_focusable());
+    app.split_view.set_show_sidebar(true);
+    wait_ui(|| handle.is_mapped());
     assert!(handle.grab_focus());
     let keys = handle
         .observe_controllers()
@@ -1084,6 +1086,235 @@ fn capture_workflow(window: &adw::ApplicationWindow, name: &str) {
     texture
         .save_to_png(directory.join(format!("{name}.png")))
         .unwrap();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn palette_keyboard_selection_stays_visible_while_search_keeps_focus() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(720, 600);
+    window.present();
+    gtk4::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
+    let workspaces = (0..40)
+        .map(|i| {
+            let mut value = fixture(&format!("workspace-{i:02}"))["workspace"].clone();
+            value["name"] = json!(format!("Workspace {i:02}"));
+            serde_json::from_value(value).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let activated = Rc::new(RefCell::new(None));
+    let chosen = activated.clone();
+    let dialog = crate::palette::present(
+        &window,
+        &workspaces,
+        move |id| *chosen.borrow_mut() = Some(id.to_string()),
+        || {},
+    );
+    let body = dialog.child().unwrap();
+    let entry = find_widget::<gtk4::SearchEntry>(&body).unwrap();
+    let list = find_widget::<gtk4::ListBox>(&body).unwrap();
+    let scroll = find_widget::<gtk4::ScrolledWindow>(&body).unwrap();
+    wait_ui(|| scroll.height() > 0 && list.height() > scroll.height());
+    let search_focus = gtk4::prelude::GtkWindowExt::focus(&window).unwrap();
+    assert!(search_focus.is_ancestor(&entry));
+    let keys = entry
+        .observe_controllers()
+        .iter::<glib::Object>()
+        .filter_map(Result::ok)
+        .find_map(|controller| controller.downcast::<gtk4::EventControllerKey>().ok())
+        .unwrap();
+    let press = |key: gtk4::gdk::Key| {
+        keys.emit_by_name::<bool>(
+            "key-pressed",
+            &[&key, &0u32, &gtk4::gdk::ModifierType::empty()],
+        )
+    };
+    for _ in 0..30 {
+        assert!(press(gtk4::gdk::Key::Down));
+        while glib::MainContext::default().iteration(false) {}
+    }
+    assert_eq!(list.selected_row().unwrap().index(), 30);
+    wait_ui(|| {
+        list.selected_row()
+            .unwrap()
+            .compute_bounds(&scroll)
+            .is_some_and(|bounds| {
+                bounds.y() >= -1.0 && bounds.y() + bounds.height() <= scroll.height() as f32 + 1.0
+            })
+    });
+    capture_workflow(&window, "palette-keyboard-selection");
+    let selected = list.selected_row().unwrap();
+    let bounds = selected.compute_bounds(&scroll).unwrap();
+    assert!(
+        bounds.y() >= -1.0 && bounds.y() + bounds.height() <= scroll.height() as f32 + 1.0,
+        "selected result must be visible: y={}, height={}, viewport={}",
+        bounds.y(),
+        bounds.height(),
+        scroll.height()
+    );
+    assert_eq!(
+        gtk4::prelude::GtkWindowExt::focus(&window),
+        Some(search_focus)
+    );
+    for _ in 0..100 {
+        press(gtk4::gdk::Key::Down);
+    }
+    let last = list.selected_row().unwrap().index();
+    assert!(list.row_at_index(last + 1).is_none());
+    press(gtk4::gdk::Key::Down);
+    assert_eq!(list.selected_row().unwrap().index(), last);
+    for _ in 0..100 {
+        press(gtk4::gdk::Key::Up);
+    }
+    assert_eq!(list.selected_row().unwrap().index(), 0);
+    press(gtk4::gdk::Key::Up);
+    assert_eq!(list.selected_row().unwrap().index(), 0);
+    for _ in 0..30 {
+        press(gtk4::gdk::Key::Down);
+    }
+    entry.set_text("Workspace 3");
+    wait_ui(|| list.height() < 1000);
+    let bounds = list
+        .selected_row()
+        .unwrap()
+        .compute_bounds(&scroll)
+        .unwrap();
+    assert!(
+        bounds.y() >= -1.0,
+        "first filtered result must stay visible: y={}",
+        bounds.y()
+    );
+    entry.set_text("Workspace 00");
+    wait_ui(|| list.selected_row().is_some_and(|row| row.index() == 0));
+    wait_ui(|| {
+        list.selected_row()
+            .unwrap()
+            .compute_bounds(&scroll)
+            .is_some_and(|bounds| bounds.y() >= -1.0)
+    });
+    entry.set_text("Workspace 3");
+    entry.emit_activate();
+    wait_ui(|| activated.borrow().as_deref() == Some("workspace-30"));
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(360, 640);
+    window.present();
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let old_motion = settings.is_gtk_enable_animations();
+    let old_scheme = adw::StyleManager::default().color_scheme();
+    settings.set_gtk_enable_animations(false);
+    let activated = Rc::new(RefCell::new(None));
+    let mut value = fixture("long")["workspace"].clone();
+    value["name"] = json!("Workspace <literal> & a very long name for parallel coding agents");
+    value["cwd"] = json!(format!("/tmp/{}", "long-unbroken-directory".repeat(8)));
+    let workspaces = [serde_json::from_value(value).unwrap()];
+    for (name, scheme, large) in [
+        ("light", adw::ColorScheme::ForceLight, false),
+        ("dark", adw::ColorScheme::ForceDark, false),
+        ("large-high-contrast", adw::ColorScheme::ForceLight, true),
+    ] {
+        adw::StyleManager::default().set_color_scheme(scheme);
+        if scheme == adw::ColorScheme::ForceDark {
+            window.add_css_class("dark");
+        } else {
+            window.remove_css_class("dark");
+        }
+        if large {
+            settings.set_gtk_font_name(Some("Sans 18"));
+            window.add_css_class("high-contrast");
+        }
+        let chosen = activated.clone();
+        let dialog = crate::palette::present(
+            &window,
+            &workspaces,
+            move |id| *chosen.borrow_mut() = Some(id.to_string()),
+            || {},
+        );
+        let body = dialog.child().unwrap();
+        let entry = find_widget::<gtk4::SearchEntry>(&body).unwrap();
+        let list = find_widget::<gtk4::ListBox>(&body).unwrap();
+        wait_ui(|| dialog.width() > 0);
+        entry.set_text("no-such-command-or-workspace");
+        capture_workflow(&window, &format!("palette-empty-narrow-{name}"));
+        assert!(
+            has_label(&body, "No matches"),
+            "empty search needs explicit feedback"
+        );
+        let empty = find_widget::<adw::StatusPage>(&body).unwrap();
+        let scroll = find_widget::<gtk4::ScrolledWindow>(&body).unwrap();
+        assert!(empty.is_mapped() && !scroll.is_visible());
+        assert!(has_label(&body, "Try another command or workspace name."));
+        assert!(list.selected_row().is_none());
+        entry.emit_activate();
+        assert!(window.visible_dialog().is_some());
+        assert!(activated.borrow().is_none());
+        entry.set_text("New Workspace");
+        wait_ui(|| list.selected_row().is_some());
+        wait_ui(|| scroll.is_mapped() && !empty.is_visible());
+        let row = list.selected_row().unwrap();
+        let hint = find_matching_widget::<gtk4::Label>(row.upcast_ref(), &|label| {
+            label.text().contains("Ctrl") && label.text().contains('N')
+        })
+        .expect("command result should teach its existing shortcut");
+        capture_workflow(&window, &format!("palette-shortcut-narrow-{name}"));
+        let title = find_matching_widget::<gtk4::Label>(row.upcast_ref(), &|label| {
+            label.text() == "New Workspace"
+        })
+        .unwrap();
+        assert!(
+            !title.layout().is_ellipsized(),
+            "shortcut must not truncate a short command name"
+        );
+        assert!(window.width() <= 360);
+        assert!(dialog.width() <= window.width());
+        let bounds = hint.compute_bounds(&window).unwrap();
+        assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= window.width() as f32);
+        entry.set_text("");
+        wait_ui(|| list.selected_row().is_some_and(|row| row.index() == 0));
+        capture_workflow(&window, &format!("palette-results-narrow-{name}"));
+        assert!(window.width() <= 360);
+        assert!(has_label(&body, workspaces[0].name.as_str()));
+        entry.emit_activate();
+        wait_ui(|| activated.borrow().as_deref() == Some("long"));
+        activated.replace(None);
+        wait_ui(|| window.visible_dialog().is_none());
+    }
+    settings.set_gtk_font_name(old_font.as_deref());
+    settings.set_gtk_enable_animations(old_motion);
+    adw::StyleManager::default().set_color_scheme(old_scheme);
+    window.close();
 }
 
 #[test]
