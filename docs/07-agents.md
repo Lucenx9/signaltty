@@ -292,3 +292,16 @@ After successful delivery of an answer to a pending decision, the shared Store t
 returns a blocked pane to working for both native permission replies and the
 terminal answer channel. Stale answers and non-answer clears do not resume it;
 ordinary tool traffic still cannot clear an unanswered blocked state.
+
+When an agent was launched directly through a path-qualified executable,
+matching bare resume commands retain that selected path. Explicit manifest
+resume paths remain authoritative; promoted shell panes keep the adapter
+command. Resume arguments come from the adapter rather than the initial launch
+options. Existing bare snapshot commands are repaired when resumed.
+
+Relative executable paths supplied to `pane.spawn` or `pane.split` are anchored
+to their launch directory before spawning and stored as absolute paths. Later
+process directory changes therefore cannot redirect a session resume.
+
+Legacy snapshots with a relative original executable keep the adapter command:
+they do not persist a reliable initial directory to anchor that relative path.
