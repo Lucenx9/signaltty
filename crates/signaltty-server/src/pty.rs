@@ -34,11 +34,16 @@ const ENV_ALLOW: &[&str] = &[
 const ENV_PREFIX_ALLOW: &[&str] = &["SIGNALTTY_", "CLAUDE_", "CODEX_", "OPENCODE_", "CURSOR_"];
 const ENV_BLOCK: &[&str] = &["LD_PRELOAD", "LD_LIBRARY_PATH", "SIGNALTTY_SOCKET"];
 
-type PtyWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+struct PtyWriter {
+    io: Mutex<Box<dyn Write + Send>>,
+    queue: Arc<tokio::sync::Mutex<()>>,
+}
+
+type SharedWriter = Arc<PtyWriter>;
 
 pub struct PtyHandle {
     master: Box<dyn portable_pty::MasterPty + Send>,
-    writer: PtyWriter,
+    writer: SharedWriter,
     child_pid: Option<u32>,
 }
 
@@ -215,7 +220,10 @@ impl PtyManager {
             req.pane_id.clone(),
             PtyHandle {
                 master: pair.master,
-                writer: Arc::new(Mutex::new(writer)),
+                writer: Arc::new(PtyWriter {
+                    io: Mutex::new(writer),
+                    queue: Arc::new(tokio::sync::Mutex::new(())),
+                }),
                 child_pid,
             },
         );
@@ -343,7 +351,7 @@ impl PtyManager {
         self.mark_persist();
     }
 
-    fn writer(&self, pane_id: &str) -> Result<PtyWriter, String> {
+    fn writer(&self, pane_id: &str) -> Result<SharedWriter, String> {
         self.handles
             .lock()
             .unwrap()
@@ -360,15 +368,21 @@ impl PtyManager {
         // Bind this PTY before scheduling: a queued request must never resolve
         // its pane ID again and write into a replacement process.
         let writer = self.writer(pane_id)?;
-        tokio::task::spawn_blocking(move || Self::write_input(&writer, &data))
-            .await
-            .map_err(|e| format!("PTY input worker failed: {e}"))?
+        let turn = writer.queue.clone().lock_owned().await;
+        tokio::task::spawn_blocking(move || {
+            // Cancellation of the awaiting future must not admit the next
+            // input until the actual writer operation has completed.
+            let _turn = turn;
+            Self::write_input(&writer, &data)
+        })
+        .await
+        .map_err(|e| format!("PTY input worker failed: {e}"))?
     }
 
-    fn write_input(writer: &PtyWriter, data: &[u8]) -> Result<usize, String> {
+    fn write_input(writer: &SharedWriter, data: &[u8]) -> Result<usize, String> {
         // A stalled child owns only its writer lock. Signal/resize/other pane
         // lookups must remain possible while its input buffer is full.
-        let mut writer = writer.lock().unwrap();
+        let mut writer = writer.io.lock().unwrap();
         writer.write_all(data).map_err(|e| e.to_string())?;
         writer.flush().map_err(|e| e.to_string())?;
         Ok(data.len())
@@ -485,5 +499,90 @@ pub(crate) fn parse_signal(sig: &str) -> Result<nix::sys::signal::Signal, String
         "USR1" => Ok(SIGUSR1),
         "USR2" => Ok(SIGUSR2),
         _ => Err(format!("unsupported signal: {sig}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+    use std::sync::RwLock;
+    use std::task::Poll;
+    use std::time::Duration;
+
+    #[test]
+    fn same_pane_waiters_leave_blocking_pool_available() {
+        run_writer_queue_case(false);
+    }
+
+    #[test]
+    fn canceled_input_future_keeps_its_writer_turn_until_io_finishes() {
+        run_writer_queue_case(true);
+    }
+
+    fn run_writer_queue_case(cancel_first: bool) {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let repo = signaltty_testkit::TempGitRepo::new();
+                let ready = repo.path().join("ready");
+                let release = repo.path().join("release");
+                let (bcast, _) = broadcast::channel(64);
+                let ptys = PtyManager::new(
+                    Arc::new(RwLock::new(crate::store::Store::new())),
+                    bcast,
+                    Arc::new(AtomicBool::new(false)),
+                );
+                let child = "import os, sys, time, tty\ntty.setraw(0)\nopen(sys.argv[1], 'w').close()\nwhile not os.path.exists(sys.argv[2]): time.sleep(0.005)\nwhile True: os.read(0, 4096)\n";
+                for (id, argv) in [
+                    ("stalled", vec!["python3".to_string(), "-c".to_string(), child.to_string(), ready.to_string_lossy().into_owned(), release.to_string_lossy().into_owned()]),
+                    ("other", vec!["cat".to_string()]),
+                ] {
+                    ptys.spawn(SpawnRequest {
+                        pane_id: id.to_string(), cwd: repo.path().to_string_lossy().into_owned(), argv,
+                        env: HashMap::new(), size: PtySize {cols: 80, rows: 24},
+                        socket_path: repo.path().join("unused.sock").to_string_lossy().into_owned(),
+                    }).unwrap();
+                }
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while !ready.exists() { tokio::time::sleep(Duration::from_millis(5)).await; }
+                }).await.expect("raw child ready");
+                let first_manager = ptys.clone();
+                let first = tokio::spawn(async move {
+                    first_manager.input_async("stalled", vec![b'x'; 256 * 1024]).await
+                });
+                let writer = ptys.writer("stalled").unwrap();
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while writer.io.try_lock().is_ok() { tokio::task::yield_now().await; }
+                }).await.expect("first request owns the stalled writer");
+                if cancel_first {
+                    first.abort();
+                    tokio::task::yield_now().await;
+                }
+                let mut second = Box::pin(ptys.input_async("stalled", b"queued".to_vec()));
+                // Poll to the serialization wait before probing the other pane.
+                // On the old code this schedules a second blocked pool thread.
+                std::future::poll_fn(|cx| match second.as_mut().poll(cx) {
+                    Poll::Pending => Poll::Ready(()),
+                    Poll::Ready(_) => panic!("same-pane request must remain queued"),
+                }).await;
+                let other = tokio::time::timeout(Duration::from_secs(1), ptys.input_async("other", b"independent\n".to_vec())).await;
+                std::fs::write(&release, b"release").unwrap();
+                let first_result = tokio::time::timeout(Duration::from_secs(3), first).await;
+                let second_result = tokio::time::timeout(Duration::from_secs(3), second).await;
+                ptys.destroy("stalled", Some("TERM"));
+                ptys.destroy("other", Some("TERM"));
+                if cancel_first {
+                    assert!(first_result.unwrap().unwrap_err().is_cancelled());
+                } else {
+                    assert_eq!(first_result.unwrap().unwrap().unwrap(), 256 * 1024);
+                }
+                assert_eq!(second_result.unwrap().unwrap(), 6);
+                assert_eq!(other.expect("same-pane waiters must not occupy every pool thread").unwrap(), 12);
+            });
     }
 }
