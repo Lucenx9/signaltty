@@ -3508,6 +3508,41 @@ fn task_board_live_activation_and_neighbor_fallback_use_current_rows() {
             .abs()
             <= 1.0
     );
+    // Shrinking a nearly-bottom viewport makes GTK clamp its adjustment.
+    // That automatic change must not be mistaken for new user scrolling.
+    board.dialog.set_focus(None::<&gtk4::Widget>);
+    vertical
+        .vadjustment()
+        .set_value(vertical.vadjustment().upper() - vertical.vadjustment().page_size() - 32.0);
+    settle();
+    let anchor = (0..35)
+        .filter_map(|i| list.row_at_index(i))
+        .find(|row| {
+            row.compute_bounds(&list)
+                .is_some_and(|b| f64::from(b.y() + b.height()) > vertical.vadjustment().value())
+        })
+        .unwrap();
+    let offset =
+        f64::from(anchor.compute_bounds(&list).unwrap().y()) - vertical.vadjustment().value();
+    let removed = (0..10)
+        .map(|i| list.row_at_index(i).unwrap().widget_name())
+        .collect::<Vec<_>>();
+    tasks.retain(|task| !removed.iter().any(|id| id.as_str() == task.id));
+    board.update(&tasks);
+    board.update(&tasks);
+    settle();
+    settle();
+    assert!(
+        (f64::from(anchor.compute_bounds(&list).unwrap().y())
+            - vertical.vadjustment().value()
+            - offset)
+            .abs()
+            <= 1.0,
+        "GTK clamp after removals lost the surviving viewport anchor: y={} value={} old_offset={}",
+        anchor.compute_bounds(&list).unwrap().y(),
+        vertical.vadjustment().value(),
+        offset
+    );
     let id = previous.widget_name();
     let task = tasks
         .iter_mut()

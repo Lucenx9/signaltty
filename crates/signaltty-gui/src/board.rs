@@ -336,10 +336,39 @@ fn track_adjustment(
     reconciling: &Rc<std::cell::Cell<bool>>,
 ) -> Rc<std::cell::Cell<u64>> {
     let epoch = Rc::new(std::cell::Cell::new(0_u64));
+    let value = Rc::new(std::cell::Cell::new(adjustment.value()));
+    let configured = Rc::new(std::cell::Cell::new(None::<f64>));
+    let geometry = Rc::new(std::cell::Cell::new((
+        adjustment.lower(),
+        adjustment.upper(),
+        adjustment.page_size(),
+    )));
+    let configuration_geometry = geometry.clone();
+    let previous = value.clone();
+    let configuration = configured.clone();
+    adjustment.connect_changed(move |adjustment| {
+        // configure emits changed with its new value before value-changed.
+        // A layout clamp therefore does not represent new user navigation.
+        configuration_geometry.set((
+            adjustment.lower(),
+            adjustment.upper(),
+            adjustment.page_size(),
+        ));
+        configuration.set((adjustment.value() != previous.get()).then_some(adjustment.value()));
+    });
     let changed = epoch.clone();
     let updating = reconciling.clone();
-    adjustment.connect_value_changed(move |_| {
-        if !updating.get() {
+    adjustment.connect_value_changed(move |adjustment| {
+        let bounds = (
+            adjustment.lower(),
+            adjustment.upper(),
+            adjustment.page_size(),
+        );
+        // A scrollbar handler may clamp reentrantly before our changed handler.
+        let layout_change =
+            geometry.replace(bounds) != bounds || configured.take() == Some(adjustment.value());
+        value.set(adjustment.value());
+        if !updating.get() && !layout_change {
             changed.set(changed.get().wrapping_add(1));
         }
     });
@@ -514,7 +543,17 @@ impl Board {
         // while another event arrives before the next allocation.
         if snapshot.focused.is_some() {
             if let Some(row) = focus_target(&rows, &snapshot) {
-                row.grab_focus();
+                if !row.has_focus() {
+                    row.grab_focus();
+                    // Stop the focus animation initiated by reconciliation;
+                    // restore against the allocated geometry on the next tick.
+                    let horizontal = self.scroll.hadjustment();
+                    horizontal.set_value(horizontal.value());
+                    for column in &self.columns {
+                        let vertical = column.scroll.vadjustment();
+                        vertical.set_value(vertical.value());
+                    }
+                }
             }
         }
         drop(rows);
@@ -629,7 +668,13 @@ impl Board {
                     }) || focused
                         .as_ref()
                         .is_some_and(|id| row.widget_name().as_str() != id);
-                    row.grab_focus();
+                    if !row.has_focus() {
+                        row.grab_focus();
+                        horizontal.set_value(horizontal.value());
+                        for (_, adjustment, _) in &columns {
+                            adjustment.set_value(adjustment.value());
+                        }
+                    }
                     if reveal {
                         if restore_horizontal {
                             if let (Some(bounds), Some(content_bounds)) = (
