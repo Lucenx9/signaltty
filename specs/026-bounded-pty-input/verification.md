@@ -22,15 +22,17 @@ read exactly the reported accepted prefix; server.shutdown is followed by actual
 owned process exit within two seconds (not a cleanup kill mistaken for exit).
 TestServer's observation helper does not terminate the process.
 
-Full verification is running in target/verification/full-evg5gqbt. Do not claim
-it passed until its summary is final. Native Grok final review pending. Sonnet
+Full verification passed on the pre-rebase tree: target/verification/full-evg5gqbt
+(36 steps, 24 GTK tests); light/dark renders inspected. Current-main integration
+requires another full run. Native Grok final review pending. Sonnet
 design delegation was rate-limited and returned no review. No OpenRouter.
 
 ## Remaining integration
 
-main advanced with PR 40's delivery/resume semantics. Resolve the underlying
-isolation PR against it, preserving resume only after actual delivery, then
-rebase queue and bounded-input layers and repeat final integration checks.
+main advanced with PR 40's delivery/resume semantics. The isolation
+PR was resolved against it with async consume/deliver/resume; queue and bounded
+input rebased. The generic helper carries typed InputError in production while
+retaining all four async helper regressions. Repeat full integration checks.
 Synchronous Enter still waits under the Store guard, now bounded by the I/O
 budget; spec 027 will make it try-only. Native provider sessions and desktop
 accessibility are outside this server patch's proof.

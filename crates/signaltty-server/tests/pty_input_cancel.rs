@@ -65,6 +65,19 @@ async fn run_case(action: &str) {
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!input.is_finished(), "fixture must saturate the PTY");
+    let mut queued_client = srv.client().await;
+    let queued_id = pane_id.clone();
+    let queued = tokio::spawn(async move {
+        queued_client
+            .call_raw_resp(
+                "pane.input",
+                json!({"pane_id":queued_id,
+            "data_b64":base64::engine::general_purpose::STANDARD.encode(b"queued")}),
+            )
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!queued.is_finished(), "second input must be queued");
     if action == "shutdown" {
         let stopped = c.call("server.shutdown", json!({"force":true})).await;
         let exited = srv.wait_for_exit(Duration::from_secs(2)).await;
@@ -94,6 +107,7 @@ async fn run_case(action: &str) {
         input,
     )
     .await;
+    let queued_response = tokio::time::timeout(Duration::from_secs(1), queued).await;
     changed.unwrap();
     let response = settled
         .expect("pane close must release the actual input operation")
@@ -110,6 +124,14 @@ async fn run_case(action: &str) {
             signaltty_proto::code::PANE_EXITED
         }
     );
+    let queued_error = queued_response
+        .expect("queued input must settle")
+        .unwrap()
+        .unwrap()
+        .error
+        .unwrap();
+    assert_eq!(queued_error.code, error.code);
+    assert_eq!(queued_error.details["written_bytes"], 0);
     let written = error.details["written_bytes"]
         .as_u64()
         .expect("partial byte evidence");
