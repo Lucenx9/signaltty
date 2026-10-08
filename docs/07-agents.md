@@ -177,6 +177,17 @@ fallback survives sandboxed agents that strip hook env, and safely
 ignores foreign hooks (Cursor Desktop shares `hooks.json` but its
 processes are never our descendants → accepted, classified nothing).
 
+## Session end after review
+
+Claude/Codex `SessionEnd` and Cursor `sessionEnd` map to `done` + `unread`
+("session ended") for a session that ends mid-turn or before any turn. When the
+pane is already `done` or `failed` the hook only restates the outcome: lifecycle,
+attention and the useful last message are left as they are, so a read pane stays
+`done`/`none` and `failed` is never overwritten with `done`. Session identity and
+resume argv from the payload are still recorded. The pane's later PTY exit
+likewise does not re-raise `unread` on a reviewed `done`/`failed` pane. See
+[03](03-lifecycle-attention.md#clearing-rules).
+
 ## Detection overlays: manifests (data, not code)
 
 `$XDG_CONFIG_HOME/signaltty/agents/*.toml` (`SIGNALTTY_AGENTS_DIR`

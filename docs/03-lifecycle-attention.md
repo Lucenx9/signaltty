@@ -69,6 +69,16 @@ warning > unread > none`. A pane shows its highest outstanding item.
   focusing, notification clicks, and default attach. An answer or agent
   transition resolves the decision. See [ADR-0012](adr/0012-acknowledgment-and-async-gui.md).
 - New signals re-raise attention (`attention.created`).
+- A trailing terminal signal is not a new signal. Once a `done`/`failed`
+  pane is reviewed (`attention=none`, no pending decision), a session-end hook
+  (Claude/Codex `SessionEnd`, Cursor `sessionEnd`) and the PTY exit leave it
+  with its terminal lifecycle and attention `none`; its useful last message stays. A session-end hook
+  on any `done`/`failed` pane never rewrites the outcome (`failed` stays
+  `failed`). A first completion (`working`/`idle` → session end or exit) and a
+  new turn (`UserPromptSubmit` then `Stop`) still raise `unread`. Session end
+  retains existing gate behavior; process exit still clears pending decisions
+  and demotes required attention to `unread`.
+  Spec: [024](../specs/024-reviewed-terminal-attention/spec.md).
 - Desktop notifications are suppressed when the target pane is already
   focused; clicking one focuses workspace+tab+pane and acknowledges reading.
 - "Jump to next unread" walks panes ordered by severity then recency.
