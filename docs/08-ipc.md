@@ -386,3 +386,8 @@ defaults to `--until settled`; `finish` needs `--merge` or `--discard`);
 `pane.spawn`; `signaltty attention [--limit N]` → `attention.pending`.
 `signaltty schema` prints the live contract (same constants the router
 dispatches on); a sync test proves every listed method dispatches.
+
+`pane.resume` retains a directly selected path-qualified executable when its
+basename matches the adapter's bare resume command, including older snapshots.
+Explicit manifest resume paths and the retained configuration environment remain
+authoritative. Launch options are not copied into resume arguments.

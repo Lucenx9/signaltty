@@ -1156,7 +1156,7 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
         (
             pane.cwd.clone(),
             pane.pty_size,
-            argv,
+            signaltty_agent::resolve_resume_argv(&pane.argv, &argv),
             pane.agent.config_env.clone(),
         )
     };
@@ -1166,7 +1166,7 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
         .spawn(SpawnRequest {
             pane_id: id.clone(),
             cwd,
-            argv,
+            argv: argv.clone(),
             env,
             size,
             socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
@@ -1176,6 +1176,7 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
         {
             let pane = s.panes.get_mut(&id).unwrap();
             pane.live = LiveState::Live;
+            pane.agent.resume_argv = Some(argv);
             pane.restore_state = RestoreState::Live;
             pane.last_activity_at = Utc::now();
         }
@@ -1560,7 +1561,8 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         if let Some(p) = s.panes.get_mut(&pid) {
             p.agent.kind = kind;
             if resume.is_some() {
-                p.agent.resume_argv = resume;
+                p.agent.resume_argv =
+                    resume.map(|argv| signaltty_agent::resolve_resume_argv(&p.argv, &argv));
             }
             p.last_activity_at = Utc::now();
         }
@@ -1783,7 +1785,7 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
     pane.agent.resume_argv = ctx
         .adapter_for_kind(kind)
         .resume_capability(&session_id)
-        .map(|r| r.argv);
+        .map(|r| signaltty_agent::resolve_resume_argv(&pane.argv, &r.argv));
     let changed = s.set_agent_session(&pane_id, session_id).is_some();
     let pane = s.panes[&pane_id].clone();
     if !changed {

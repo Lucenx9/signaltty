@@ -7,11 +7,13 @@ pub mod adapters;
 pub mod manifest;
 pub mod permission;
 pub mod registry;
+pub mod resume;
 pub mod types;
 
 pub use adapters::{claude, codex, cursor, generic, opencode, pi};
 pub use manifest::{detect_kind_with_overlays, parse_manifest, Manifest, OverlayAdapter};
 pub use registry::{adapter_for_kind, adapter_for_name, all_adapters, detect_kind};
+pub use resume::resolve_resume_argv;
 pub use types::{
     AdapterEvent, AdapterMetadata, AgentAdapter, AnswerChannel, LifecycleDecision,
     NotificationDraft, ProcessInfo, ResumeCommand,
