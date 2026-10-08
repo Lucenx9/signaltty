@@ -750,7 +750,11 @@ pub(crate) fn spawn_background_submit(
                 }
                 Err(e) => {
                     let mut s = bg_submit_ctx.store.write().unwrap();
-                    if e.code == code::TIMEOUT {
+                    let pasted_before_decision = e.code == code::AGENT_BUSY
+                        && e.details.as_ref().is_some_and(|details| {
+                            details.get("paste_delivered") == Some(&json!(true))
+                        });
+                    if e.code == code::TIMEOUT || pasted_before_decision {
                         s.task_submit_unconfirmed(&bg_task_id, &e.message);
                     } else {
                         s.task_fail(
