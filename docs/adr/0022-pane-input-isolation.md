@@ -36,9 +36,12 @@ while its input request, blocking-pool thread and master fd remain alive.
 seconds; runtime shutdown waiting for the blocking task is a hypothesis, not a
 confirmed stack trace. The old implementation instead stalled the whole server.
 
-A disconnected request does not roll back accepted bytes. Same-pane waiters
-currently each use a blocking-pool thread; the pool has finite capacity and
-ordering across concurrent connections remains unspecified. Automatic Enter can
+A disconnected request does not roll back accepted bytes. Spec 025 adds a
+per-writer async gate acquired before the blocking-pool handoff. Its owned guard
+moves into the blocking operation, so cancellation of the awaiting future cannot
+admit the next input early. Same-pane waiters do not consume pool threads; active
+stalled writes still do. Ordering across concurrent connections remains a client
+coordination responsibility. Automatic Enter can
 retain the Store guard while waiting for another same-pane writer, as well as
 while writing its byte. Portable-pty's writer destructor also writes EOF and can
 block; dropping the registry entry outside its lock does not make destruction
