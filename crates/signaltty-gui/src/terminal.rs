@@ -852,6 +852,54 @@ mod tests {
                 if id == "pane-narrow" && decision_id == "d1" && option_id == "always"
         ));
         let terminal = widget.term.clone();
+        approval.prompt = "Updated approval context".into();
+        approval.received_at = chrono::Utc::now();
+        pane.pending_decision = Some(approval.clone());
+        widget.update_meta(&pane);
+        assert_eq!(
+            widget.decision_options.first_child().unwrap(),
+            choices[0].clone().upcast::<gtk4::Widget>(),
+            "prompt and timestamp changes must retain the choice widgets"
+        );
+        approval.answerable = false;
+        pane.pending_decision = Some(approval.clone());
+        widget.update_meta(&pane);
+        assert!(widget.decision_hint.is_visible());
+        assert!(
+            widget.decision_options.first_child().is_none(),
+            "the same decision ID becoming read-only must remove stale choices"
+        );
+        approval.answerable = true;
+        pane.pending_decision = Some(approval.clone());
+        widget.update_meta(&pane);
+        assert!(!widget.decision_hint.is_visible());
+        assert!(widget.decision_options.first_child().is_some());
+        approval.options[0].id = "allow_current".into();
+        approval.options[0].label = "Allow current request".into();
+        pane.pending_decision = Some(approval.clone());
+        widget.update_meta(&pane);
+        let current = widget
+            .decision_options
+            .first_child()
+            .unwrap()
+            .downcast::<gtk4::Button>()
+            .unwrap();
+        assert_eq!(
+            current
+                .child()
+                .unwrap()
+                .downcast::<gtk4::Label>()
+                .unwrap()
+                .text(),
+            "Allow current request"
+        );
+        current.emit_clicked();
+        assert!(matches!(
+            selected.borrow().as_ref(),
+            Some((id, PaneAction::AnswerDecision { decision_id, option_id }))
+                if id == "pane-narrow" && decision_id == "d1" && option_id == "allow_current"
+        ));
+        assert_eq!(widget.term, terminal);
         pane.pending_decision = None;
         widget.update_meta(&pane);
         assert_eq!(
