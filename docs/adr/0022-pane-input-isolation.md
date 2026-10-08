@@ -30,7 +30,17 @@ thread, exact received bytes and a child-side signal acknowledgment.
 
 This is isolation, not a cancellation or timeout contract. Linux's large
 blocking write can remain pending after the child dies (observed in a TERM probe
-and debugger stack). A disconnected request does not roll back accepted bytes;
-the blocking pool has finite capacity. Automatic Enter can still retain the
-Store guard during backpressure. These limits are recorded for the next audit;
-no new wire errors or partial-write semantics are introduced here.
+and debugger stack). Independent review also reproduced `pane.close` returning
+while its input request, blocking-pool thread and master fd remain alive.
+`server.shutdown` replied but the server process was still alive after eight
+seconds; runtime shutdown waiting for the blocking task is a hypothesis, not a
+confirmed stack trace. The old implementation instead stalled the whole server.
+
+A disconnected request does not roll back accepted bytes. Same-pane waiters
+currently each use a blocking-pool thread; the pool has finite capacity and
+ordering across concurrent connections remains unspecified. Automatic Enter can
+retain the Store guard while waiting for another same-pane writer, as well as
+while writing its byte. Portable-pty's writer destructor also writes EOF and can
+block; dropping the registry entry outside its lock does not make destruction
+bounded. These limits are recorded for the next audit; no new wire errors or
+partial-write semantics are introduced here.

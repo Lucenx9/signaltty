@@ -55,13 +55,23 @@ IME and paid provider sessions were not run.
 ## Review and remaining work
 
 Grok 4.7 (native xAI provider, no OpenRouter) is independently auditing the
-backpressure/lock boundary. Sonnet 5.5 high is reviewing the working diff.
-Their final findings remain pending; do not treat this record as approval.
+backpressure/lock boundary; its result remains pending.
+
+Sonnet 5.5 high completed its independent diff review: **approve, no blockers**.
+It ran the regression and decision/submit filters, and independently compared
+close/shutdown probes with the old implementation. Its requested documentation
+of pending input/thread/fd ownership after close/death and delayed shutdown is
+added to ADR-0022. The shutdown cause remains a hypothesis. Follow-ups include
+async same-pane serialization before blocking-pool handoff, the Enter waiting
+on another writer, writer destruction, and backpressure tests for the paste and
+legacy reply paths. Existing normal submit/decision tests pass; those stress
+paths and respawn identity are review-supported, not independently stress-tested.
 
 Remaining audit items: make automatic Enter bounded while keeping the decision
 check atomic; diagnose/contain a large write that outlives a killed child;
 consider finite blocking-pool capacity under many stalled requests. These are
 explicit limits, not covered by this isolation regression.
 
-Next step: publish/link a draft PR, consume both review results and address any
-blockers before marking it ready. Check host CI on the exact published head.
+Published draft: https://github.com/Lucenx9/signaltty/pull/42 (linked to this thread).
+Next step: consume Grok's result and address any blockers before marking ready.
+Check host CI on the exact published head.

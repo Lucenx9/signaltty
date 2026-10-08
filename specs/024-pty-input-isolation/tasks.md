@@ -6,4 +6,4 @@
 - [x] Document locking and remaining automatic-Enter risk.
 - [x] Verify regressions and workspace/full checks.
 - [ ] Complete independent reviews and address blockers.
-- [ ] Open and link the next PR with explicit evidence and proof limits.
+- [x] Open and link the next PR with explicit evidence and proof limits.
