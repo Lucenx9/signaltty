@@ -53,6 +53,10 @@ struct PaneProgress {
     lifecycle_seq: u64,
     attention_seq: u64,
     transitions: HashMap<&'static str, u64>,
+    /// A hook reached this process: screen rules stay silent (ADR-0006).
+    hooked: bool,
+    /// The current `input_required` was raised by a screen rule.
+    screen_attention: bool,
 }
 
 pub struct Store {
@@ -133,6 +137,8 @@ impl Store {
                     (self.panes[pane_id].lifecycle.as_str(), self.seq),
                     (self.panes[pane_id].attention.as_str(), self.seq),
                 ]),
+                hooked: false,
+                screen_attention: false,
             },
         );
     }
@@ -489,6 +495,68 @@ impl Store {
             }
         }
         Some(ev)
+    }
+
+    /// The first hook takes the pane over from screen rules and withdraws
+    /// the `input_required` they raised; other attention stays.
+    pub fn mark_hooked(&mut self, pane_id: &str) -> Option<StoredEvent> {
+        let progress = self.progress.get_mut(pane_id)?;
+        progress.hooked = true;
+        if !std::mem::take(&mut progress.screen_attention)
+            || self.panes.get(pane_id)?.attention != Attention::InputRequired
+        {
+            return None;
+        }
+        self.clear_attention(pane_id, "hook")
+    }
+
+    pub fn is_hooked(&self, pane_id: &str) -> bool {
+        self.progress.get(pane_id).is_some_and(|p| p.hooked)
+    }
+
+    /// Screen-rule classification (docs/07): only for a live pane whose
+    /// current process has seen no hook. `idle` closes a `working` turn as
+    /// `done`, settles a `blocked` pane as `idle`, and is otherwise a no-op.
+    /// Leaving `blocked` withdraws its `input_required`.
+    pub fn apply_screen_state(
+        &mut self,
+        pane_id: &str,
+        state: signaltty_agent::screen::ScreenState,
+    ) -> Vec<StoredEvent> {
+        use signaltty_agent::screen::ScreenState;
+        let Some(pane) = self.panes.get(pane_id) else {
+            return Vec::new();
+        };
+        if !matches!(pane.live, signaltty_core::model::LiveState::Live) || self.is_hooked(pane_id) {
+            return Vec::new();
+        }
+        let (lifecycle, attention) = match (state, pane.lifecycle) {
+            (ScreenState::Working, _) => (Lifecycle::Working, None),
+            (ScreenState::Blocked, _) => (Lifecycle::Blocked, Some(Attention::InputRequired)),
+            (ScreenState::Idle, Lifecycle::Working) => (Lifecycle::Done, Some(Attention::Unread)),
+            (ScreenState::Idle, Lifecycle::Blocked) => (Lifecycle::Idle, None),
+            (ScreenState::Idle, _) => return Vec::new(),
+        };
+        // Leaving `blocked` withdraws the input_required raised for it, so a
+        // later `done` can still raise `unread`; other attention stays.
+        let withdraw = pane.lifecycle == Lifecycle::Blocked
+            && lifecycle != Lifecycle::Blocked
+            && pane.attention == Attention::InputRequired;
+        let Some(ev) = self.set_lifecycle(pane_id, lifecycle) else {
+            return Vec::new();
+        };
+        let mut events = vec![ev];
+        if withdraw {
+            events.extend(self.clear_attention(pane_id, "screen"));
+        }
+        let raised = attention.and_then(|a| self.raise_attention(pane_id, a));
+        if let Some(progress) = self.progress.get_mut(pane_id) {
+            if withdraw || raised.is_some() {
+                progress.screen_attention = attention == Some(Attention::InputRequired);
+            }
+        }
+        events.extend(raised);
+        events
     }
 
     /// Raise attention and publish its paired event only when more severe.
@@ -1106,6 +1174,129 @@ mod tests {
         assert_eq!(coverage["returned"], 2);
         assert_eq!(events.len(), 2);
         std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn screen_states_map_to_lifecycle_and_attention() {
+        use signaltty_agent::screen::ScreenState::{Blocked, Idle, Working};
+        use Attention::{Error, InputRequired, Unread};
+        let none = Attention::None;
+        // (from lifecycle, from attention, screen state, lifecycle, attention)
+        let cases = [
+            (Lifecycle::Unknown, none, Working, Lifecycle::Working, none),
+            (
+                Lifecycle::Unknown,
+                none,
+                Blocked,
+                Lifecycle::Blocked,
+                InputRequired,
+            ),
+            (Lifecycle::Working, none, Idle, Lifecycle::Done, Unread),
+            // Leaving blocked withdraws the input_required it raised...
+            (
+                Lifecycle::Blocked,
+                InputRequired,
+                Idle,
+                Lifecycle::Idle,
+                none,
+            ),
+            (
+                Lifecycle::Blocked,
+                InputRequired,
+                Working,
+                Lifecycle::Working,
+                none,
+            ),
+            // ...but never another signal's attention.
+            (
+                Lifecycle::Blocked,
+                Error,
+                Working,
+                Lifecycle::Working,
+                Error,
+            ),
+            (Lifecycle::Unknown, none, Idle, Lifecycle::Unknown, none),
+            (Lifecycle::Done, none, Idle, Lifecycle::Done, none),
+        ];
+        for (from, from_attention, state, lifecycle, attention) in cases {
+            let mut store = Store::new();
+            let mut pane = pane_with(from_attention, 0);
+            pane.lifecycle = from;
+            let id = pane.id.clone();
+            store.panes.insert(id.clone(), pane.clone());
+            store.publish_pane(&pane, false);
+            let events = store.apply_screen_state(&id, state);
+            let p = &store.panes[&id];
+            assert_eq!(
+                (p.lifecycle, p.attention),
+                (lifecycle, attention),
+                "{from:?} + {state:?}"
+            );
+            assert_eq!(events.is_empty(), from == lifecycle, "{from:?} + {state:?}");
+        }
+    }
+
+    #[test]
+    fn an_answered_screen_prompt_still_ends_the_turn_unread() {
+        use signaltty_agent::screen::ScreenState::{Blocked, Idle, Working};
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Unknown;
+        let id = pane.id.clone();
+        store.panes.insert(id.clone(), pane.clone());
+        store.publish_pane(&pane, false);
+        for state in [Blocked, Working, Idle] {
+            store.apply_screen_state(&id, state);
+        }
+        let p = &store.panes[&id];
+        assert_eq!(
+            (p.lifecycle, p.attention),
+            (Lifecycle::Done, Attention::Unread)
+        );
+    }
+
+    #[test]
+    fn a_hook_withdraws_only_screen_raised_attention() {
+        use signaltty_agent::screen::ScreenState::Blocked;
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Unknown;
+        let id = pane.id.clone();
+        store.panes.insert(id.clone(), pane.clone());
+        store.publish_pane(&pane, false);
+        store.apply_screen_state(&id, Blocked);
+        assert!(store.mark_hooked(&id).is_some());
+        assert_eq!(store.panes[&id].attention, Attention::None);
+        assert!(store.mark_hooked(&id).is_none());
+
+        // input_required raised by anything else survives the takeover.
+        store.publish_pane(&pane, true);
+        store.raise_attention(&id, Attention::InputRequired);
+        assert!(store.mark_hooked(&id).is_none());
+        assert_eq!(store.panes[&id].attention, Attention::InputRequired);
+    }
+
+    #[test]
+    fn hooks_and_exit_stop_screen_states_until_a_new_process() {
+        use signaltty_agent::screen::ScreenState::Working;
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Idle;
+        let id = pane.id.clone();
+        store.panes.insert(id.clone(), pane.clone());
+        store.publish_pane(&pane, false);
+        assert!(!store.is_hooked(&id));
+        store.mark_hooked(&id);
+        assert!(store.is_hooked(&id));
+        assert!(store.apply_screen_state(&id, Working).is_empty());
+        // A new process (spawn/resume) starts unhooked.
+        store.publish_pane(&pane, true);
+        assert!(!store.is_hooked(&id));
+        assert!(!store.apply_screen_state(&id, Working).is_empty());
+        store.set_exited(&id, Some(0));
+        let exited = store.panes[&id].lifecycle;
+        assert!(store.apply_screen_state(&id, Working).is_empty());
+        assert_eq!(store.panes[&id].lifecycle, exited);
     }
 
     #[test]

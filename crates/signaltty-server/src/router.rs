@@ -96,6 +96,16 @@ impl Ctx {
             .unwrap_or_else(|| signaltty_agent::adapter_for_kind(kind))
     }
 
+    /// `[[screen]]` rules of every overlay for `kind`, in file then
+    /// declaration order (several generic manifests may each add rules).
+    pub fn screen_rules(&self, kind: AgentKind) -> Vec<&signaltty_agent::screen::ScreenRule> {
+        self.overlays
+            .iter()
+            .filter(|o| o.kind() == kind)
+            .flat_map(|o| o.screen_rules())
+            .collect()
+    }
+
     pub fn detect_kind(&self, argv: &[String]) -> AgentKind {
         signaltty_agent::detect_kind_with_overlays(argv, &self.overlays)
     }
@@ -1578,6 +1588,9 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         }
     }
 
+    // Hooks dominate screen rules for the rest of this process (ADR-0006).
+    ctx.store.write().unwrap().mark_hooked(&pid);
+
     // 1. Session identity (+ resume argv) from the adapter.
     if let Some(sid) = adapter.session_identity(&event) {
         let kind = adapter.metadata().kind;
@@ -1835,6 +1848,38 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
 
     ctx.mark_persist();
     Ok((pane_result(&pane), ConnEffect::default()))
+}
+
+/// One screen-rule pass over live, hook-less panes (spec 027). True when
+/// any pane changed state.
+pub fn classify_screens(ctx: &Ctx) -> bool {
+    let candidates: Vec<(String, AgentKind, String)> = {
+        let s = ctx.store.read().unwrap();
+        s.panes
+            .values()
+            .filter(|p| matches!(p.live, LiveState::Live) && !s.is_hooked(&p.id))
+            .map(|p| (p.id.clone(), p.agent.kind, p.title.clone()))
+            .collect()
+    };
+    let mut changed = false;
+    for (id, kind, title) in candidates {
+        let rules = ctx.screen_rules(kind);
+        if rules.is_empty() {
+            continue;
+        }
+        // ponytail: one full visible-screen snapshot per rule-carrying pane per
+        // tick; skip unchanged output offsets if many such panes make it hot.
+        let screen = ctx.ptys.terms().lock().unwrap().snapshot(&id);
+        if let Some(rule) = signaltty_agent::screen::classify(rules, &title, &screen) {
+            let events = ctx
+                .store
+                .write()
+                .unwrap()
+                .apply_screen_state(&id, rule.state);
+            changed |= !events.is_empty();
+        }
+    }
+    changed
 }
 
 // ---- subscribe / wait / focus ----
