@@ -1469,7 +1469,7 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
         entry.set_text("no-such-command-or-workspace");
         capture_workflow(&window, &format!("palette-empty-narrow-{name}"));
         assert!(
-            has_label(&body, "No matches"),
+            has_label(&body, "No Matches"),
             "empty search needs explicit feedback"
         );
         let empty = find_widget::<adw::StatusPage>(&body).unwrap();
@@ -2486,7 +2486,7 @@ fn task_board_shows_columns_and_navigates_to_pane() {
     // 1. Test empty state
     gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-board", None).unwrap();
     let dialog = app.window.visible_dialog().unwrap();
-    wait_ui(|| has_label(&dialog.child().unwrap(), "No tasks yet"));
+    wait_ui(|| has_label(&dialog.child().unwrap(), "No Tasks Yet"));
     capture_workflow(&app.window, "board-empty");
     app.window.visible_dialog().unwrap().close();
     wait_ui(|| app.window.visible_dialog().is_none());
@@ -3383,7 +3383,7 @@ fn open_task_board_preserves_identity_scroll_and_focus_on_updates() {
     }
     app.refresh_open_board();
     settle();
-    assert!(has_label(&dialog.child().unwrap(), "No tasks yet"));
+    assert!(has_label(&dialog.child().unwrap(), "No Tasks Yet"));
     app.model.borrow_mut().tasks.apply_event(
         signaltty_proto::event::TASK_CREATED,
         &json!({"task": tasks[1]}),

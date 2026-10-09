@@ -65,7 +65,7 @@ pub fn present(
     body.append(&scroll);
     let empty = adw::StatusPage::new();
     empty.set_icon_name(Some("system-search-symbolic"));
-    empty.set_title("No matches");
+    empty.set_title("No Matches");
     empty.set_description(Some("Try another command or workspace name."));
     empty.set_vexpand(true);
     empty.set_visible(false);
