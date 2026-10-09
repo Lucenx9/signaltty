@@ -1,13 +1,13 @@
 //! Screen rules shipped with signaltty (`screen/*.toml`), ported from herdr.
 //! Parsed through [`parse_manifest`] so they obey the same validation as
 //! user manifests. User `[[screen]]` rules of a kind replace these (docs/07,
-//! ADR-0025).
+//! ADR-0025); generic ones are scoped to their `binaries` (ADR-0028).
 
 use std::sync::OnceLock;
 
 use signaltty_core::model::AgentKind;
 
-use crate::manifest::parse_manifest;
+use crate::manifest::{parse_manifest, OverlayAdapter};
 use crate::screen::ScreenRule;
 
 const BUNDLED: &[&str] = &[
@@ -16,30 +16,32 @@ const BUNDLED: &[&str] = &[
     include_str!("../screen/cursor.toml"),
     include_str!("../screen/claude.toml"),
     include_str!("../screen/codex.toml"),
+    include_str!("../screen/gemini.toml"),
+    include_str!("../screen/copilot.toml"),
+    include_str!("../screen/droid.toml"),
+    include_str!("../screen/kilo.toml"),
+    include_str!("../screen/qodercli.toml"),
 ];
 
-/// Bundled `[[screen]]` rules for `kind`, in declaration order.
-pub fn bundled_screen_rules(kind: AgentKind) -> &'static [ScreenRule] {
-    static RULES: OnceLock<Vec<(AgentKind, Vec<ScreenRule>)>> = OnceLock::new();
-    let rules = RULES.get_or_init(|| {
-        BUNDLED
-            .iter()
-            .map(|text| {
-                let manifest = parse_manifest(text).expect("bundled screen manifest");
-                let rules = manifest
-                    .screen
-                    .iter()
-                    .map(|r| ScreenRule::compile(r).expect("bundled screen rule"))
-                    .collect();
-                (manifest.kind().expect("bundled kind"), rules)
-            })
-            .collect()
-    });
-    rules
+/// Bundled `[[screen]]` rules for a pane of `kind` running `process`, in
+/// file then declaration order. Generic manifests are scoped to their
+/// `binaries` (spec 033); other kinds ignore `process`.
+pub fn bundled_screen_rules(kind: AgentKind, process: &str) -> Vec<&'static ScreenRule> {
+    static MANIFESTS: OnceLock<Vec<OverlayAdapter>> = OnceLock::new();
+    MANIFESTS
+        .get_or_init(|| {
+            BUNDLED
+                .iter()
+                .map(|text| {
+                    let manifest = parse_manifest(text).expect("bundled screen manifest");
+                    OverlayAdapter::new(manifest).expect("bundled screen manifest")
+                })
+                .collect()
+        })
         .iter()
-        .find(|(k, _)| *k == kind)
-        .map(|(_, r)| r.as_slice())
-        .unwrap_or(&[])
+        .filter(|m| m.kind() == kind)
+        .flat_map(|m| m.screen_rules_for(process))
+        .collect()
 }
 
 #[cfg(test)]
@@ -48,7 +50,25 @@ mod tests {
     use crate::screen::{classify, ScreenState};
 
     fn state(kind: AgentKind, screen: &str) -> Option<(ScreenState, String)> {
-        classify(bundled_screen_rules(kind), "", screen).map(|r| (r.state, r.id.clone()))
+        classify(bundled_screen_rules(kind, ""), "", screen).map(|r| (r.state, r.id.clone()))
+    }
+
+    /// A generic pane running `process`.
+    fn program(process: &str, screen: &str) -> Option<(ScreenState, String)> {
+        classify(
+            bundled_screen_rules(AgentKind::Generic, process),
+            "",
+            screen,
+        )
+        .map(|r| (r.state, r.id.clone()))
+    }
+
+    fn assert_program(process: &str, screen: &str, want: ScreenState, rule: &str) {
+        assert_eq!(
+            program(process, screen),
+            Some((want, rule.to_string())),
+            "{process} on:\n{screen}"
+        );
     }
 
     fn assert_state(kind: AgentKind, screen: &str, want: ScreenState, rule: &str) {
@@ -68,7 +88,7 @@ mod tests {
             AgentKind::Claude,
             AgentKind::Codex,
         ] {
-            let rules = bundled_screen_rules(kind);
+            let rules = bundled_screen_rules(kind, "");
             assert!(!rules.is_empty(), "{kind:?}");
             let lowest = rules.iter().min_by_key(|r| r.priority).unwrap();
             assert_eq!(
@@ -76,7 +96,24 @@ mod tests {
                 ("idle_fallback", ScreenState::Idle)
             );
         }
-        assert!(bundled_screen_rules(AgentKind::Generic).is_empty());
+        // Generic rules only apply to their own programs, shells excluded.
+        for process in [
+            "gemini", "copilot", "ghcs", "droid", "kilo", "qodercli", "qoder",
+        ] {
+            let rules = bundled_screen_rules(AgentKind::Generic, process);
+            assert!(!rules.is_empty(), "{process}");
+            let lowest = rules.iter().min_by_key(|r| r.priority).unwrap();
+            assert_eq!(lowest.id.as_str(), "idle_fallback", "{process}");
+        }
+        for process in ["bash", "sh", "", "geminix", "codex"] {
+            assert!(
+                bundled_screen_rules(AgentKind::Generic, process).is_empty(),
+                "{process}"
+            );
+        }
+        // A program's rules never leak into another program's.
+        let gemini = bundled_screen_rules(AgentKind::Generic, "gemini");
+        assert!(gemini.iter().all(|r| r.id != "esc_interrupt_working"));
     }
 
     #[test]
@@ -208,7 +245,7 @@ mod tests {
     }
 
     fn claude_title(title: &str, screen: &str) -> Option<(ScreenState, String)> {
-        classify(bundled_screen_rules(AgentKind::Claude), title, screen)
+        classify(bundled_screen_rules(AgentKind::Claude, ""), title, screen)
             .map(|r| (r.state, r.id.clone()))
     }
 
@@ -381,7 +418,7 @@ mod tests {
     }
 
     fn codex(title: &str, screen: &str) -> Option<(ScreenState, String)> {
-        classify(bundled_screen_rules(AgentKind::Codex), title, screen)
+        classify(bundled_screen_rules(AgentKind::Codex, ""), title, screen)
             .map(|r| (r.state, r.id.clone()))
     }
 
@@ -401,8 +438,8 @@ mod tests {
         assert_eq!(codex("", idle), Some((Idle, "idle_fallback".into())));
         // The idle title rule itself vetoes spinners and Action Required, even
         // though higher-priority title rules usually win first.
-        let rule = bundled_screen_rules(AgentKind::Codex)
-            .iter()
+        let rule = bundled_screen_rules(AgentKind::Codex, "")
+            .into_iter()
             .find(|r| r.id == "osc_title_idle")
             .unwrap();
         assert!(rule.matches("codex", idle));
@@ -507,5 +544,193 @@ mod tests {
             Hold,
             "transcript_viewer",
         );
+    }
+
+    #[test]
+    fn gemini_screens() {
+        use ScreenState::*;
+        assert_program(
+            "gemini",
+            "│ Apply this change?\n│ ● 1. Yes\n",
+            Blocked,
+            "apply_or_allow_change",
+        );
+        assert_program(
+            "gemini",
+            "│ Allow execution of: rm -rf build\n",
+            Blocked,
+            "apply_or_allow_change",
+        );
+        assert_program(
+            "gemini",
+            "  ❯ 1. Yes, allow once\n",
+            Blocked,
+            "apply_or_allow_change",
+        );
+        assert_program(
+            "gemini",
+            "Waiting for user confirmation...\n 1. Yes\n",
+            Blocked,
+            "confirmation_prompt",
+        );
+        assert_program(
+            "gemini",
+            "⠋ Thinking (esc to cancel, 3s)\n",
+            Working,
+            "esc_cancel_working",
+        );
+        // Blocked outranks the cancel hint on the same screen.
+        assert_program(
+            "gemini",
+            "│ Apply this change?\n(esc to cancel)\n",
+            Blocked,
+            "apply_or_allow_change",
+        );
+        assert_program("gemini", "> \n", Idle, "idle_fallback");
+        // "yes" alone is not a confirmation.
+        assert_program("gemini", "yes, that worked\n", Idle, "idle_fallback");
+        // herdr needs the box rule or the question mark around "proceed".
+        assert_program(
+            "gemini",
+            "Do you want to proceed to step 2: yes\n",
+            Idle,
+            "idle_fallback",
+        );
+        assert_program(
+            "gemini",
+            "│ Do you want to proceed\n 1. Yes\n",
+            Blocked,
+            "confirmation_prompt",
+        );
+    }
+
+    #[test]
+    fn copilot_screens() {
+        use ScreenState::*;
+        assert_program(
+            "copilot",
+            "Run this command?\n Enter to confirm · Esc to cancel\n",
+            Blocked,
+            "selection_blocker",
+        );
+        assert_program(
+            "ghcs",
+            "Pick one\nenter accept  esc cancel\n",
+            Blocked,
+            "selection_blocker",
+        );
+        assert_program(
+            "copilot",
+            "> fix\n◎ Waiting for background agents · 2 running\n",
+            Working,
+            "background_agents_working",
+        );
+        assert_program(
+            "copilot",
+            "Thinking… (Esc to cancel)\n",
+            Working,
+            "working_cancel_hint",
+        );
+        assert_program(
+            "copilot",
+            "Thinking… esc interrupt\n",
+            Working,
+            "working_cancel_hint",
+        );
+        // The background-agents line only counts in the last six lines.
+        let old = "◎ Waiting for background agents\na\nb\nc\nd\ne\nf\n";
+        assert_program("copilot", old, Idle, "idle_fallback");
+    }
+
+    #[test]
+    fn droid_screens() {
+        use ScreenState::*;
+        assert_program(
+            "droid",
+            "Execute rm -rf build?\n> Yes, allow\n  No, cancel\nUse ↑↓ to navigate · Enter to select · Esc to cancel\n",
+            Blocked,
+            "execute_selection_blocker",
+        );
+        assert_program(
+            "droid",
+            "Choose model\n ↑↓ navigate  enter select  esc cancel\n",
+            Blocked,
+            "selection_menu_blocker",
+        );
+        assert_program(
+            "droid",
+            "⠙ Running tests (esc to stop)\n",
+            Working,
+            "spinner_stop_working",
+        );
+        assert_program(
+            "droid",
+            "Running tests (esc to stop)\n",
+            Working,
+            "stop_hint_working",
+        );
+        // Navigation footer without an allow/cancel choice is the menu rule's job.
+        assert_program(
+            "droid",
+            "↑↓ to navigate · enter to select · esc to cancel\n",
+            Idle,
+            "idle_fallback",
+        );
+    }
+
+    #[test]
+    fn kilo_and_qodercli_screens() {
+        use ScreenState::*;
+        assert_program(
+            "kilo",
+            "△ Permission required\nbash: ls\n",
+            Blocked,
+            "opencode_permission",
+        );
+        assert_program(
+            "kilo-code",
+            "Pick\n↑↓ select  enter confirm  esc dismiss\n",
+            Blocked,
+            "opencode_permission_dialog",
+        );
+        assert_program(
+            "kilo",
+            "Building  esc interrupt\n",
+            Working,
+            "esc_interrupt_working",
+        );
+        assert_program(
+            "kilo",
+            "enter confirm  esc dismiss\n",
+            Idle,
+            "idle_fallback",
+        );
+
+        assert_program(
+            "qodercli",
+            "Waiting for user confirmation\n  Allow  Reject\n",
+            Blocked,
+            "confirmation_or_input_blocker",
+        );
+        assert_program(
+            "qoder",
+            "Permission required for Bash\n",
+            Blocked,
+            "confirmation_or_input_blocker",
+        );
+        assert_program(
+            "qodercli",
+            "Allow once or always?\n",
+            Blocked,
+            "confirmation_or_input_blocker",
+        );
+        assert_program(
+            "qodercli",
+            "Thinking (esc to cancel, 4s)\n",
+            Working,
+            "cancel_hint_working",
+        );
+        assert_program("qodercli", "⠙ Reading files\n", Working, "spinner_working");
+        assert_program("qodercli", "⠙\n", Idle, "idle_fallback");
     }
 }

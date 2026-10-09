@@ -7,6 +7,7 @@ pub mod adapters;
 pub mod bundled;
 pub mod manifest;
 pub mod permission;
+pub mod process;
 pub mod registry;
 pub mod resume;
 pub mod screen;

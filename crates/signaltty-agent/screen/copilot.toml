@@ -1,0 +1,43 @@
+# Ported from herdr (https://github.com/herdrdev/herdr) src/detect/manifests/github-copilot.toml
+# at commit 2563803, Copyright herdr contributors, Apache-2.0
+# (https://www.apache.org/licenses/LICENSE-2.0). Changes: a generic manifest
+# scoped to herdr's binary names (spec 033); `contains` lists (all must appear)
+# become case-insensitive escaped regexes in `all`; `line_regex` becomes a
+# `(?m)` regex with `\s` narrowed to `[ \t]`; nested any/all gates become
+# alternations, `(?is)a.*b|b.*a` pairs or split rules; `whole_recent` becomes
+# `lines = 200`; herdr's known-agent idle fallback is the explicit
+# `idle_fallback` rule.
+
+[agent]
+kind = "generic"
+binaries = ["copilot", "github-copilot", "ghcs"]
+
+[[screen]]
+id = "selection_blocker"
+state = "blocked"
+priority = 300
+lines = 200
+all = [
+  '(?i)esc to cancel|esc cancel',
+  '(?i)enter to select|enter to confirm|enter to submit|enter accept',
+]
+
+[[screen]]
+id = "background_agents_working"
+state = "working"
+priority = 110
+lines = 6
+regex = ['(?m)^[ \t]*◎[ \t]+Waiting for background agents(?:[ \t]|·|$)']
+
+[[screen]]
+id = "working_cancel_hint"
+state = "working"
+priority = 100
+lines = 200
+regex = ['(?i)esc to cancel|esc cancel|esc again to cancel|esc interrupt']
+
+[[screen]]
+id = "idle_fallback"
+state = "idle"
+priority = -1000
+regex = ['']

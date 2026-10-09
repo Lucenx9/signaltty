@@ -130,6 +130,18 @@ impl OverlayAdapter {
         &self.screen
     }
 
+    /// The `[[screen]]` rules that apply to a pane running `process`: a
+    /// generic manifest with `binaries` only applies to those programs
+    /// (spec 033); any other manifest applies to every pane of its kind.
+    pub fn screen_rules_for(&self, process: &str) -> &[ScreenRule] {
+        let binaries = &self.manifest.agent.binaries;
+        let scoped = self.kind() == AgentKind::Generic && !binaries.is_empty();
+        if scoped && !binaries.iter().any(|b| b == process) {
+            return &[];
+        }
+        &self.screen
+    }
+
     pub fn kind(&self) -> AgentKind {
         self.manifest.kind().unwrap_or(AgentKind::Generic)
     }
@@ -306,6 +318,31 @@ message = "future says hi"
         assert!(parse_manifest(bad_screen)
             .unwrap_err()
             .contains("[[screen]] 'x'"));
+    }
+
+    #[test]
+    fn only_generic_screen_rules_are_scoped_to_binaries() {
+        let with = |kind: &str| {
+            OverlayAdapter::new(
+                parse_manifest(&format!(
+                    "[agent]\nkind = \"{kind}\"\nbinaries = [\"wrap\"]\n[[screen]]\nid = \"r\"\nstate = \"idle\"\nregex = ['x']\n"
+                ))
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        // A specific kind's binaries only add detection names.
+        assert_eq!(with("codex").screen_rules_for("codex").len(), 1);
+        assert_eq!(with("codex").screen_rules_for("wrap").len(), 1);
+        // A generic manifest applies only to its own programs.
+        assert_eq!(with("generic").screen_rules_for("wrap").len(), 1);
+        assert!(with("generic").screen_rules_for("bash").is_empty());
+        // Without binaries a generic manifest applies to every generic pane.
+        let open = OverlayAdapter::new(
+            parse_manifest("[agent]\nkind = \"generic\"\n[[screen]]\nid = \"r\"\nstate = \"idle\"\nregex = ['x']\n").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(open.screen_rules_for("bash").len(), 1);
     }
 
     #[test]

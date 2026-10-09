@@ -1,0 +1,41 @@
+# Ported from herdr (https://github.com/herdrdev/herdr) src/detect/manifests/gemini.toml
+# at commit 2563803, Copyright herdr contributors, Apache-2.0
+# (https://www.apache.org/licenses/LICENSE-2.0). Changes: a generic manifest
+# scoped to herdr's binary names (spec 033); `contains` lists (all must appear)
+# become case-insensitive escaped regexes in `all`; `line_regex` becomes a
+# `(?m)` regex with `\s` narrowed to `[ \t]`; nested any/all gates become
+# alternations, `(?is)a.*b|b.*a` pairs or split rules; `whole_recent` becomes
+# `lines = 200`; herdr's known-agent idle fallback is the explicit
+# `idle_fallback` rule.
+
+[agent]
+kind = "generic"
+binaries = ["gemini"]
+
+[[screen]]
+id = "apply_or_allow_change"
+state = "blocked"
+priority = 300
+lines = 200
+regex = ['(?i)│ apply this change', '(?i)│ allow execution', '(?im)^[ \t]*❯.*(?:yes|allow)']
+
+# herdr apply_or_allow_change, "yes" + confirmation branch.
+[[screen]]
+id = "confirmation_prompt"
+state = "blocked"
+priority = 300
+lines = 200
+all = ['(?i)yes', '(?i)waiting for user confirmation|│ do you want to proceed|do you want to proceed\?']
+
+[[screen]]
+id = "esc_cancel_working"
+state = "working"
+priority = 100
+lines = 200
+regex = ['(?i)esc to cancel']
+
+[[screen]]
+id = "idle_fallback"
+state = "idle"
+priority = -1000
+regex = ['']
