@@ -20,7 +20,10 @@ resize, signals, exit reaping, scrollback, and client attach/detach.
 
 Environment: pane inherits a sanitized copy of the server environment
 plus per-request overrides. `TERM` defaults to `xterm-256color` unless
-the client overrides.
+the client overrides. The server advertises `TERM_PROGRAM=signaltty` and
+`TERM_PROGRAM_VERSION`, injects `SIGNALTTY_PANE` and `SIGNALTTY_SOCKET`,
+and drops outer host terminal handles (such as `TMUX`, `WEZTERM_PANE`,
+`KITTY_WINDOW_ID`, `ZELLIJ*`, and outer agent tokens).
 
 ## I/O paths
 

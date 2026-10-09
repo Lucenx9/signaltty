@@ -38,6 +38,28 @@ const ENV_ALLOW: &[&str] = &[
 const ENV_PREFIX_ALLOW: &[&str] = &["SIGNALTTY_", "CLAUDE_", "CODEX_", "OPENCODE_", "CURSOR_"];
 const ENV_BLOCK: &[&str] = &["LD_PRELOAD", "LD_LIBRARY_PATH", "SIGNALTTY_SOCKET"];
 
+/// Inherited handles to the outer terminal or an outer agent session; wrong
+/// inside a pane. Explicit `req.env` overrides may still set allowlisted ones.
+const HOST_ENV_DROP: &[&str] = &[
+    "ITERM_SESSION_ID",
+    "LC_TERMINAL",
+    "LC_TERMINAL_VERSION",
+    "WEZTERM_PANE",
+    "KITTY_WINDOW_ID",
+    "WT_SESSION",
+    "TMUX",
+    "TMUX_PANE",
+    "STY",
+    "ZELLIJ",
+    "ZELLIJ_SESSION_NAME",
+    "ZELLIJ_PANE_ID",
+    "CODEX_THREAD_ID",
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+];
+
 struct PtyWriter {
     io: Mutex<File>,
     canceled: AtomicBool,
@@ -187,12 +209,11 @@ impl PtyManager {
             cmd.args(&argv[1..]);
         }
         cmd.cwd(&req.cwd);
-        // Filtered environment: server env minus blocklist, plus
-        // allowlisted overrides, plus signaltty context.
-        for (k, v) in std::env::vars() {
-            if !ENV_BLOCK.contains(&k.as_str()) {
-                cmd.env(&k, &v);
-            }
+        // Filtered environment: `CommandBuilder` starts from the server env,
+        // so strip the blocklist and outer host handles, then apply
+        // allowlisted overrides, then signaltty context.
+        for k in ENV_BLOCK.iter().chain(HOST_ENV_DROP) {
+            cmd.env_remove(k);
         }
         for (k, v) in &req.env {
             if ENV_BLOCK.contains(&k.as_str()) {
@@ -206,6 +227,8 @@ impl PtyManager {
         if std::env::var("TERM").is_err() && !req.env.contains_key("TERM") {
             cmd.env("TERM", "xterm-256color");
         }
+        cmd.env("TERM_PROGRAM", "signaltty");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("SIGNALTTY_PANE", &req.pane_id);
         cmd.env("SIGNALTTY_SOCKET", &req.socket_path);
 

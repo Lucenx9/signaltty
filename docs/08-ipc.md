@@ -80,7 +80,7 @@ clients can `subscribe {from_seq}` to replay.
 | `decision.answer` | `{pane_id, decision_id, option_id}` | `{answered, lifecycle?, attention?}` (delivers through a live native permission waiter or the pane adapter's channel and consumes the id; stale/consumed ids → `NO_SUCH_DECISION`, unknown option or channelless adapter → `BAD_PARAMS`) |
 | `notify` | `{pane_id?, title, body?, severity?}` | `{notification}` |
 | `hook-event` | `{agent, event, pane_id?, client_pid?, payload?, message?, title?, severity?, decision?}` | `{accepted, agent, event, pane_id, lifecycle?, attention?}` (adapter classification; pane by explicit id or `client_pid` ancestry; `decision: {id, prompt, options[{id, label}]}` sets/supersedes the pane's pending decision, captured `answerable` iff the adapter has a channel) |
-| `report-session` | `{pane_id, agent_session_id, agent?}` | `{pane}` |
+| `report-session` | `{pane_id, agent_session_id, agent?, resume_argv?}` | `{pane}` (`resume_argv` replaces the adapter's resume command: ≤64 args, ≤8 KiB, no control characters, first arg a plain command name; else `BAD_PARAMS`) |
 | `subscribe` | `{events?: ["agent.*","attention.*",…], from_seq?}` | `{subscribed, seq, replay?}` then complete replay/live stream |
 | `wait` | `{pane_id, until: string\|string[], after?: wait_baseline, timeout_s?}` | `{satisfied, outcome, transition_seq, lifecycle, attention}` or `TIMEOUT` / `IDENTITY_CHANGED` |
 | `focus.next_unread` | — | `{pane_id?}` (severity→recency order) |

@@ -22,6 +22,33 @@ pub fn resolve_resume_argv(original_argv: &[String], resume_argv: &[String]) -> 
     resolved
 }
 
+/// Validate a resume argv an agent reported about itself (`report-session`).
+/// Bounded size, no control characters, and a plain command name first so a
+/// reported argv can never name an arbitrary path.
+pub fn validate_resume_argv(argv: &[String]) -> Result<(), String> {
+    let Some(program) = argv.first() else {
+        return Err("resume_argv must not be empty".into());
+    };
+    if argv.len() > 64 {
+        return Err("resume_argv allows at most 64 arguments".into());
+    }
+    if argv.iter().map(String::len).sum::<usize>() > 8192 {
+        return Err("resume_argv allows at most 8192 bytes".into());
+    }
+    if argv.iter().any(|arg| arg.chars().any(char::is_control)) {
+        return Err("resume_argv must not contain control characters".into());
+    }
+    let plain = !program.is_empty()
+        && !program.starts_with('-')
+        && program
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'));
+    if !plain {
+        return Err("resume_argv must start with a plain command name, not a path".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +211,34 @@ mod tests {
             ),
             to_vec(&["/opt/tools/codex", "resume", "session-xyz"])
         );
+    }
+
+    #[test]
+    fn validate_resume_argv_cases() {
+        for ok in [
+            to_vec(&["my-agent", "--resume", "sess-123"]),
+            to_vec(&["agent_1.0-alpha"]),
+            std::iter::repeat_n("a".to_string(), 64).collect(),
+            vec!["agent".into(), "a".repeat(8192 - 5)],
+        ] {
+            assert_eq!(validate_resume_argv(&ok), Ok(()), "{ok:?}");
+        }
+        for bad in [
+            vec![],
+            std::iter::repeat_n("a".to_string(), 65).collect(),
+            vec!["agent".into(), "a".repeat(8192 - 4)],
+            to_vec(&["agent", "resume\targ"]),
+            to_vec(&["agent", "resume\0"]),
+            to_vec(&["", "resume"]),
+            to_vec(&["-agent"]),
+            to_vec(&["/bin/agent"]),
+            to_vec(&["bin/agent"]),
+            to_vec(&["..\\agent"]),
+            to_vec(&["agent;rm"]),
+            to_vec(&["agent name"]),
+        ] {
+            assert!(validate_resume_argv(&bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

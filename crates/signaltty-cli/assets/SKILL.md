@@ -38,8 +38,10 @@ fields are ignored by the server; mistyped ones are `BAD_PARAMS`.
   answer a structured approval (`pending_decision` in `pane get`).
 - `signaltty hook-event --agent <kind> --event <Name> --payload-stdin` —
   report lifecycle (shims do this; read the hook JSON from stdin).
-- `signaltty report-session --pane ID --session SID` — pin a native
-  session id when hooks cannot (resumed sessions often fire no start hook).
+- `signaltty report-session --pane ID --session SID [-- <resume argv...>]` — pin a native
+  session id when hooks cannot (resumed sessions often fire no start hook). Argv after
+  `--` is the agent's own resume command (plain command name first, no path); it replaces
+  the built-in one and only runs when the user resumes the pane.
 
 ## Rules
 
