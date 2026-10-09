@@ -4,6 +4,7 @@
 //! See docs/07.
 
 pub mod adapters;
+pub mod bundled;
 pub mod manifest;
 pub mod permission;
 pub mod registry;

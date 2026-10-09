@@ -122,9 +122,9 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // Screen-detection rules (docs/07, spec 027): classify live, hook-less
-    // panes whose kind has `[[screen]]` rules from the visible screen + title.
-    if ctx.overlays.iter().any(|o| !o.screen_rules().is_empty()) {
+    // Screen-detection rules (docs/07, specs 027/028): classify live,
+    // hook-less panes whose kind has user or bundled `[[screen]]` rules.
+    {
         let ctx = ctx.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
