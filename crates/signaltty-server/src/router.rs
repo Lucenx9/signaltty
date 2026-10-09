@@ -1584,8 +1584,12 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         let resume = adapter.resume_capability(&sid).map(|r| r.argv);
         let mut s = ctx.store.write().unwrap();
         if let Some(p) = s.panes.get_mut(&pid) {
+            // Same agent and session keep the stored command, which may be
+            // self-reported.
+            let new_session =
+                p.agent.kind != kind || p.agent.agent_session_id.as_deref() != Some(sid.as_str());
             p.agent.kind = kind;
-            if resume.is_some() {
+            if resume.is_some() && (new_session || p.agent.resume_argv.is_none()) {
                 p.agent.resume_argv =
                     resume.map(|argv| signaltty_agent::resolve_resume_argv(&p.argv, &argv));
             }
@@ -1800,17 +1804,28 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
     let session_id = p.agent_session_id;
     let agent = p.agent.unwrap_or_else(|| "generic".to_string());
     let kind = AgentKind::parse(&agent).unwrap_or(AgentKind::Generic);
+    if let Some(ref argv) = p.resume_argv {
+        signaltty_agent::validate_resume_argv(argv)
+            .map_err(|e| (code::BAD_PARAMS.to_string(), e))?;
+    }
     let mut s = ctx.store.write().unwrap();
     let pane = s
         .panes
         .get_mut(&pane_id)
         .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), pane_id.clone()))?;
+    let new_session = pane.agent.kind != kind
+        || pane.agent.agent_session_id.as_deref() != Some(session_id.as_str());
     pane.agent.kind = kind;
-    // The adapter owns the official resume command for this id.
-    pane.agent.resume_argv = ctx
-        .adapter_for_kind(kind)
-        .resume_capability(&session_id)
-        .map(|r| signaltty_agent::resolve_resume_argv(&pane.argv, &r.argv));
+    if let Some(ref argv) = p.resume_argv {
+        pane.agent.resume_argv = Some(signaltty_agent::resolve_resume_argv(&pane.argv, argv));
+    } else if new_session || pane.agent.resume_argv.is_none() {
+        // The adapter owns the official resume command for a new agent or
+        // id; a repeated report keeps the stored (possibly self-reported) one.
+        pane.agent.resume_argv = ctx
+            .adapter_for_kind(kind)
+            .resume_capability(&session_id)
+            .map(|r| signaltty_agent::resolve_resume_argv(&pane.argv, &r.argv));
+    }
     let changed = s.set_agent_session(&pane_id, session_id).is_some();
     let pane = s.panes[&pane_id].clone();
     if !changed {

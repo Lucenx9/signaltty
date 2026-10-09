@@ -90,6 +90,8 @@ enum Command {
         session: String,
         #[arg(long)]
         agent: Option<String>,
+        #[arg(last = true)]
+        resume_argv: Vec<String>,
     },
     /// Deliver an agent hook event (used by installed shims).
     HookEvent {
@@ -774,11 +776,15 @@ async fn run(args: Args) -> Result<(), CliError> {
             pane,
             session,
             agent,
+            resume_argv,
         } => {
             let mut c = Client::connect(&socket).await?;
             let mut p = json!({"pane_id": pane, "agent_session_id": session});
             if let Some(a) = agent {
                 p["agent"] = json!(a);
+            }
+            if !resume_argv.is_empty() {
+                p["resume_argv"] = json!(resume_argv);
             }
             let r = c.call("report-session", p).await?;
             emit(json, &r, format!("session recorded for {pane}"));

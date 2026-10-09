@@ -1345,6 +1345,131 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
 }
 
 #[tokio::test]
+async fn report_session_custom_resume_argv_and_validation() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(&mut c, vec!["sh", "-c", "exit 0"]).await;
+    c.call(
+        "wait",
+        json!({"pane_id": pane, "until": "exited", "timeout_s": 15}),
+    )
+    .await
+    .unwrap();
+
+    // Invalid argv: path in argv[0] is rejected with BAD_PARAMS and leaves pane unchanged
+    let err = c
+        .call(
+            "report-session",
+            json!({
+                "pane_id": pane,
+                "agent_session_id": "sess-1",
+                "agent": "generic",
+                "resume_argv": ["/bin/sh", "-c", "echo invalid"]
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with("BAD_PARAMS"),
+        "expected BAD_PARAMS, got: {err}"
+    );
+
+    // Invalid argv: control char in argument is rejected with BAD_PARAMS
+    let err = c
+        .call(
+            "report-session",
+            json!({
+                "pane_id": pane,
+                "agent_session_id": "sess-1",
+                "agent": "generic",
+                "resume_argv": ["sh", "-c", "echo \x01"]
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with("BAD_PARAMS"),
+        "expected BAD_PARAMS, got: {err}"
+    );
+
+    // Verify pane is unchanged (resume_argv still null)
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert!(p["pane"]["agent"]["resume_argv"].is_null());
+
+    // Valid reported resume argv for a generic agent becomes pane.agent.resume_argv
+    let r = c
+        .call(
+            "report-session",
+            json!({
+                "pane_id": pane,
+                "agent_session_id": "sess-generic",
+                "agent": "generic",
+                "resume_argv": ["sh", "-c", "echo custom-resumed-ok; sleep 1"]
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        r["pane"]["agent"]["resume_argv"],
+        json!(["sh", "-c", "echo custom-resumed-ok; sleep 1"])
+    );
+
+    // pane.resume spawns it
+    let res = c
+        .call("pane.resume", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    assert_eq!(res["pane"]["live"]["state"], "live");
+    wait_for_text(&mut c, &pane, "custom-resumed-ok", Duration::from_secs(5)).await;
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn self_reported_resume_argv_survives_same_session_reports() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let mine = json!(["my-claude", "--resume", "s1"]);
+    c.call(
+        "report-session",
+        json!({"pane_id": pane, "agent_session_id": "s1", "agent": "claude", "resume_argv": mine}),
+    )
+    .await
+    .unwrap();
+    // A later hook and a bare report for the same session keep it.
+    c.call(
+        "hook-event",
+        json!({"agent": "claude", "event": "Stop", "pane_id": pane,
+               "payload": {"session_id": "s1"}}),
+    )
+    .await
+    .unwrap();
+    let r = c
+        .call(
+            "report-session",
+            json!({"pane_id": pane, "agent_session_id": "s1", "agent": "claude"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["pane"]["agent"]["resume_argv"], mine);
+    // A new session gets the adapter's official command again.
+    c.call(
+        "hook-event",
+        json!({"agent": "claude", "event": "Stop", "pane_id": pane,
+               "payload": {"session_id": "s2"}}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(
+        p["pane"]["agent"]["resume_argv"],
+        json!(["claude", "--resume", "s2"])
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn report_session_builds_resume_retains_selected_executable_without_manifest() {
     let srv = TestServer::start().await;
     let codex = codex_fixture(srv.socket.parent().unwrap());
