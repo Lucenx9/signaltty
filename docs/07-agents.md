@@ -194,8 +194,12 @@ likewise does not re-raise `unread` on a reviewed `done`/`failed` pane. See
 `$XDG_CONFIG_HOME/signaltty/agents/*.toml` (`SIGNALTTY_AGENTS_DIR`
 override, `--agents-dir` on the server) extend one existing adapter kind
 without recompiling — wrapper binaries, post-churn hook maps, custom
-session keys. Loaded once at startup; malformed files are logged and
-skipped, never fatal. `signaltty integration status` lists them.
+session keys. Loaded at startup and on `agents.reload` (`signaltty agents
+reload`), which swaps the whole set without touching live panes (the 10 s
+process refresh may later promote a generic pane, as always); malformed files
+are logged, listed by `agents.list` and skipped, never fatal. A directory that
+cannot be listed fails the reload with `IO_ERROR` and keeps the active set.
+`signaltty integration status` lists them too.
 
 ```toml
 [agent]
