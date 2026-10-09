@@ -79,9 +79,17 @@ async fn approval_prompt_on_screen_blocks_the_pane() {
 async fn working_then_prompt_finishes_the_turn() {
     let srv = server_with("generic").await;
     let mut c = srv.client().await;
-    let id = spawn(&mut c, "echo working...; sleep 2; echo 'ready>'; sleep 30").await;
-    wait(&mut c, &id, "working", 5).await.unwrap();
-    wait(&mut c, &id, "done", 5).await.unwrap();
+    // Released by the test, so the working phase cannot be missed under load.
+    let release = std::env::temp_dir().join(signaltty_core::ids::new_pane_id());
+    let script = format!(
+        "echo working...; while [ ! -e {} ]; do sleep 0.1; done; echo 'ready>'; sleep 30",
+        release.display()
+    );
+    let id = spawn(&mut c, &script).await;
+    wait(&mut c, &id, "working", 10).await.unwrap();
+    std::fs::write(&release, b"").unwrap();
+    wait(&mut c, &id, "done", 10).await.unwrap();
+    let _ = std::fs::remove_file(&release);
     assert_eq!(pane(&mut c, &id).await["attention"], "unread");
     srv.shutdown().await;
 }
@@ -166,15 +174,22 @@ async fn spawn_argv(c: &mut TestClient, argv: Value) -> String {
     p["pane"]["id"].as_str().unwrap().to_string()
 }
 
-const PI_TURN: &str = "echo Working...; sleep 2; printf '\\033[2J\\033[H> '; sleep 30";
-
 #[tokio::test]
 async fn bundled_pi_rules_finish_a_turn_without_manifests() {
     let srv = TestServer::start().await;
     let mut c = srv.client().await;
-    let id = spawn_argv(&mut c, json!([fake_pi(PI_TURN)])).await;
-    wait(&mut c, &id, "working", 5).await.unwrap();
-    wait(&mut c, &id, "done", 5).await.unwrap();
+    // The turn stays visibly "working" until the test releases it, so a
+    // loaded machine cannot miss the working state between two screen ticks.
+    let release = std::env::temp_dir().join(signaltty_core::ids::new_pane_id());
+    let turn = format!(
+        "echo Working...; while [ ! -e {} ]; do sleep 0.1; done; printf '\\033[2J\\033[H> '; sleep 30",
+        release.display()
+    );
+    let id = spawn_argv(&mut c, json!([fake_pi(&turn)])).await;
+    wait(&mut c, &id, "working", 10).await.unwrap();
+    std::fs::write(&release, b"").unwrap();
+    wait(&mut c, &id, "done", 10).await.unwrap();
+    let _ = std::fs::remove_file(&release);
     assert_eq!(pane(&mut c, &id).await["attention"], "unread");
     srv.shutdown().await;
 }
