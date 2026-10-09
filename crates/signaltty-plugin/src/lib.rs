@@ -104,8 +104,10 @@ impl Manifest {
             if h.command.is_empty() {
                 return Err(bad(format!("hook {i}: 'command' must not be empty")));
             }
-            if h.timeout_secs == 0 {
-                return Err(bad(format!("hook {i}: 'timeout_secs' must be >= 1")));
+            if !(1..=MAX_HOOK_TIMEOUT_SECS).contains(&h.timeout_secs) {
+                return Err(bad(format!(
+                    "hook {i}: 'timeout_secs' must be between 1 and {MAX_HOOK_TIMEOUT_SECS}"
+                )));
             }
         }
         let mut seen = std::collections::HashSet::new();
@@ -516,6 +518,21 @@ run = ["./fanout.sh"]
     }
 
     #[test]
+    fn rejects_timeout_above_documented_max() {
+        let err = parse_manifest(
+            "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\ntimeout_secs = 301\n",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("between 1 and 300"), "{err}");
+        // Boundary still loads; runtime no longer needs to silently clamp.
+        let m = parse_manifest(
+            "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\ntimeout_secs = 300\n",
+        )
+        .unwrap();
+        assert_eq!(m.hook[0].timeout_secs, MAX_HOOK_TIMEOUT_SECS);
+    }
+
+    #[test]
     fn defaults_apply() {
         let m = parse_manifest(
             "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\n",
@@ -533,6 +550,7 @@ run = ["./fanout.sh"]
             "[plugin]\nname = \"x\"\n[[hook]]\nevents = []\ncommand = [\"true\"]\n", // empty events
             "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = []\n", // empty command
             "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\ntimeout_secs = 0\n", // zero timeout
+            "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\ntimeout_secs = 301\n", // above max
             "[plugin]\nname = \"x\"\n[[command]]\nname = \"UP\"\nrun = [\"x\"]\n", // command name charset
             "[plugin]\nname = \"x\"\n[[command]]\nname = \"a\"\nrun = [\"x\"]\n[[command]]\nname = \"a\"\nrun = [\"y\"]\n", // dup command
             "not toml [[[\n",
