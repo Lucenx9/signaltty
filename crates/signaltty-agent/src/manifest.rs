@@ -228,9 +228,17 @@ impl AgentAdapter for OverlayAdapter {
 }
 
 /// Display overrides are rare and static-friendly: leak one copy per
-/// manifest so `metadata()` keeps its `&'static` shape.
+/// distinct name so `metadata()` keeps its `&'static` shape and repeated
+/// `agents.reload`s reuse it instead of leaking again.
 fn to_static_display(s: &str) -> &'static str {
-    Box::leak(s.to_string().into_boxed_str())
+    static NAMES: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(name) = names.iter().find(|n| **n == s) {
+        return name;
+    }
+    let name: &'static str = Box::leak(s.to_string().into_boxed_str());
+    names.push(name);
+    name
 }
 
 /// Spawn detection honoring overlays: extra binaries promote before the
@@ -318,6 +326,16 @@ message = "future says hi"
         assert!(parse_manifest(bad_screen)
             .unwrap_err()
             .contains("[[screen]] 'x'"));
+    }
+
+    #[test]
+    fn reloading_a_display_name_reuses_its_static_copy() {
+        let load = || OverlayAdapter::new(parse_manifest(WRAP).unwrap()).unwrap();
+        let first = load().metadata().display_name;
+        let again = load().metadata().display_name;
+        assert_eq!(first, "Codex (wrap)");
+        // Same text, same leaked copy: repeated reloads do not grow memory.
+        assert!(std::ptr::eq(first, again));
     }
 
     #[test]

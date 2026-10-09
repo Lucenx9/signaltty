@@ -59,7 +59,11 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let plugins = signaltty_plugin::PluginRegistry::load(config.plugin_dir.clone());
-    let overlays = crate::router::load_overlays(&config.agents_dir);
+    let overlays = crate::router::Overlays::load(&config.agents_dir).unwrap_or_else(|e| {
+        tracing::warn!("agent manifests: {e} (none loaded)");
+        crate::router::Overlays::default()
+    });
+    let overlays = std::sync::RwLock::new(Arc::new(overlays));
     let audit = crate::audit::AuditLog::open(&config.state_dir)?;
     let sequence = crate::audit::EventSequence::open(&config.state_dir, audit.max_seq())?;
     store
@@ -92,7 +96,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 interval.tick().await;
                 let events =
-                    crate::procscan::scan(&ctx.store, &ctx.ptys.child_pids(), &ctx.overlays);
+                    crate::procscan::scan(&ctx.store, &ctx.ptys.child_pids(), &ctx.overlays().list);
                 if !events.is_empty() {
                     ctx.mark_persist();
                 }
@@ -546,7 +550,7 @@ mod tests {
             approvals: crate::approvals::Approvals::default(),
             worktrees: crate::worktrees::Worktrees::default(),
             plugins: signaltty_plugin::PluginRegistry::load(config.plugin_dir),
-            overlays: Vec::new(),
+            overlays: Default::default(),
         });
         (ctx, base, id)
     }

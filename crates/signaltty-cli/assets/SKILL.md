@@ -28,6 +28,8 @@ fields are ignored by the server; mistyped ones are `BAD_PARAMS`.
 ## Things you can do
 
 - `signaltty pane read ID [--mode screen|tail]` — read scrollback.
+- `signaltty agents list|reload` — show or re-read the agent manifests
+  (screen rules, detection overlays) without restarting the server.
 - `signaltty pane explain ID` — which screen rules match a pane and whether
   they apply (`*` marks the winner; hooks switch them off).
 - `signaltty pane input ID (--data "…" | --stdin)` — type into a pane.

@@ -150,6 +150,11 @@ enum Command {
         #[command(subcommand)]
         op: FocusOp,
     },
+    /// Agent manifests (detection overlays and screen rules).
+    Agents {
+        #[command(subcommand)]
+        op: AgentsOp,
+    },
     /// Executable plugins (manifests + event hooks + commands).
     Plugin {
         #[command(subcommand)]
@@ -437,6 +442,14 @@ enum DecisionOp {
 enum FocusOp {
     /// Id of the next pane needing a human (severity → recency).
     NextUnread,
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentsOp {
+    /// List the loaded agent manifests and the files that failed to load.
+    List,
+    /// Re-read the agents dir without restarting the server.
+    Reload,
 }
 
 #[derive(Debug, Subcommand)]
@@ -988,6 +1001,16 @@ async fn run(args: Args) -> Result<(), CliError> {
                 }
             }
         }
+        Command::Agents { op } => {
+            let method = match op {
+                AgentsOp::List => "agents.list",
+                AgentsOp::Reload => "agents.reload",
+            };
+            let mut c = Client::connect(&socket).await?;
+            let r = c.call(method, json!({})).await?;
+            emit(json, &r, agents_text(&r));
+            Ok(())
+        }
         Command::Plugin { op } => plugin_cmd(socket, json, op).await,
         Command::Task { op } => task_cmd(socket, json, op).await,
         Command::Report {
@@ -1185,6 +1208,42 @@ async fn plugin_cmd(socket: PathBuf, json: bool, op: PluginOp) -> Result<(), Cli
             }
         }
     }
+}
+
+/// The agents dir, one line per loaded manifest, then `!` per failed file.
+fn agents_text(r: &Value) -> String {
+    let mut out = r["dir"].as_str().unwrap_or("?").to_string();
+    let manifests = r["manifests"].as_array().cloned().unwrap_or_default();
+    if manifests.is_empty() {
+        out.push_str("\n  (no manifests)");
+    }
+    for m in manifests {
+        let binaries: Vec<&str> = m["binaries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        out.push_str(&format!(
+            "\n  {} {}{} {} screen rules",
+            m["file"].as_str().unwrap_or("?"),
+            m["kind"].as_str().unwrap_or("?"),
+            if binaries.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", binaries.join(", "))
+            },
+            m["screen_rules"],
+        ));
+    }
+    for f in r["failures"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "\n  ! {}: {}",
+            f["file"].as_str().unwrap_or("?"),
+            f["error"].as_str().unwrap_or("?")
+        ));
+    }
+    out
 }
 
 /// One header line, then one line per rule; `*` marks the winning rule.
@@ -1827,6 +1886,24 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agents_text_lists_manifests_and_failures() {
+        let r = json!({
+            "dir": "/cfg/agents",
+            "manifests": [
+                {"file": "gemini.toml", "kind": "generic", "binaries": ["gemini"], "screen_rules": 3},
+                {"file": "wrap.toml", "kind": "codex", "binaries": [], "screen_rules": 0},
+            ],
+            "failures": [{"file": "bad.toml", "error": "unknown agent kind 'hal9000'"}],
+        });
+        assert_eq!(
+            agents_text(&r),
+            "/cfg/agents\n  gemini.toml generic [gemini] 3 screen rules\n  wrap.toml codex 0 screen rules\n  ! bad.toml: unknown agent kind 'hal9000'"
+        );
+        let empty = json!({"dir": "/x", "manifests": [], "failures": []});
+        assert_eq!(agents_text(&empty), "/x\n  (no manifests)");
+    }
 
     #[test]
     fn explain_marks_only_the_winning_position() {

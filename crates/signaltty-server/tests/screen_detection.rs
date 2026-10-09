@@ -419,3 +419,122 @@ async fn the_process_refresh_finds_a_program_started_from_a_shell() {
     assert_eq!(explain(&mut c, &id).await.unwrap()["process"], "gemini");
     srv.shutdown().await;
 }
+
+fn rule_file(id: &str, state: &str, re: &str) -> String {
+    format!("[agent]\nkind = \"generic\"\n[[screen]]\nid = \"{id}\"\nstate = \"{state}\"\nregex = ['{re}']\n")
+}
+
+#[tokio::test]
+async fn agents_reload_swaps_rules_for_a_live_pane() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-reload-{}",
+        signaltty_core::ids::new_pane_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let mut c = srv.client().await;
+    let list = c.call("agents.list", json!({})).await.unwrap();
+    assert_eq!(list["manifests"], json!([]));
+    assert_eq!(list["dir"], dir.to_string_lossy().as_ref());
+    let id = spawn(&mut c, "printf 'Allow? '; sleep 30").await;
+    // No manifest yet: the screen is not classified.
+    assert!(wait(&mut c, &id, "blocked", 2).await.is_err());
+
+    // Add a rule and reload: the live pane is classified without a restart.
+    std::fs::write(
+        dir.join("ask.toml"),
+        rule_file("ask", "blocked", r"Allow\?"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("broken.toml"), "[agent]\nkind = \"hal9000\"\n").unwrap();
+    let r = c.call("agents.reload", json!({})).await.unwrap();
+    assert_eq!(r["manifests"][0]["file"], "ask.toml");
+    assert_eq!(r["manifests"][0]["kind"], "generic");
+    assert_eq!(r["manifests"][0]["screen_rules"], 1);
+    assert_eq!(r["manifests"].as_array().unwrap().len(), 1);
+    assert_eq!(r["failures"][0]["file"], "broken.toml");
+    assert!(r["failures"][0]["error"]
+        .as_str()
+        .unwrap()
+        .contains("hal9000"));
+    wait(&mut c, &id, "blocked", 5).await.unwrap();
+    assert_eq!(explain(&mut c, &id).await.unwrap()["matched"]["id"], "ask");
+
+    // Change the rule: explain sees the new one at once.
+    std::fs::write(
+        dir.join("ask.toml"),
+        rule_file("ask2", "blocked", r"Allow\?"),
+    )
+    .unwrap();
+    c.call("agents.reload", json!({})).await.unwrap();
+    assert_eq!(explain(&mut c, &id).await.unwrap()["matched"]["id"], "ask2");
+
+    // Remove it: no rules apply any more; the pane keeps running.
+    std::fs::remove_file(dir.join("ask.toml")).unwrap();
+    let r = c.call("agents.reload", json!({})).await.unwrap();
+    assert_eq!(r["manifests"], json!([]));
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(
+        (e["source"].clone(), e["live"].clone()),
+        (json!("none"), json!(true))
+    );
+    assert_eq!(
+        c.call("agents.list", json!({})).await.unwrap()["failures"][0]["file"],
+        "broken.toml"
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn agents_reload_updates_spawn_detection() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-reload-detect-{}",
+        signaltty_core::ids::new_pane_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let mut c = srv.client().await;
+    let wrap = program_as("mywrap");
+    let before = spawn_program(&mut c, json!([wrap.clone(), "-c", "sleep 30"])).await;
+    assert_eq!(pane(&mut c, &before).await["agent"]["kind"], "generic");
+    std::fs::write(
+        dir.join("wrap.toml"),
+        "[agent]\nkind = \"codex\"\nbinaries = [\"mywrap\"]\n",
+    )
+    .unwrap();
+    c.call("agents.reload", json!({})).await.unwrap();
+    let after = spawn_program(&mut c, json!([wrap, "-c", "sleep 30"])).await;
+    assert_eq!(pane(&mut c, &after).await["agent"]["kind"], "codex");
+    // `before` is not asserted again: the 10 s process refresh may promote
+    // it like any generic pane running a known program (docs/07).
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_unreadable_agents_dir_keeps_the_active_manifests() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-reload-unreadable-{}",
+        signaltty_core::ids::new_pane_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("ask.toml"),
+        rule_file("ask", "blocked", r"Allow\?"),
+    )
+    .unwrap();
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let mut c = srv.client().await;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let err = c.call("agents.reload", json!({})).await.unwrap_err();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(err.starts_with("IO_ERROR"), "{err}");
+    // The previous set stays active.
+    let list = c.call("agents.list", json!({})).await.unwrap();
+    assert_eq!(list["manifests"][0]["file"], "ask.toml");
+    // A missing dir is just an empty set.
+    std::fs::remove_dir_all(&dir).unwrap();
+    let r = c.call("agents.reload", json!({})).await.unwrap();
+    assert_eq!(r["manifests"], json!([]));
+    srv.shutdown().await;
+}
