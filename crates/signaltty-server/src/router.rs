@@ -80,6 +80,13 @@ pub fn load_overlays(dir: &std::path::Path) -> Vec<signaltty_agent::OverlayAdapt
 }
 
 impl Ctx {
+    /// Wake every shutdown waiter and leave a permit if `serve` is between
+    /// accepts. `notify_waiters` alone drops the signal when nobody is parked.
+    pub(crate) fn request_shutdown(&self) {
+        self.shutdown.notify_waiters();
+        self.shutdown.notify_one();
+    }
+
     /// Overlay-first adapter routing (manifests are data, not code): the
     /// first overlay for the named kind wins, else the builtin. Unknown
     /// names stay `None` so callers keep reporting `BAD_PARAMS`.
@@ -309,7 +316,7 @@ fn h_server_shutdown(ctx: &Ctx, params: &Value) -> Handler {
         tracing::warn!("shutdown snapshot failed: {e}");
     }
     ctx.emit(event::SERVER_WILL_SHUTDOWN, json!({}));
-    ctx.shutdown.notify_waiters();
+    ctx.request_shutdown();
     Ok((json!({"stopped": true}), ConnEffect::default()))
 }
 

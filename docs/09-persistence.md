@@ -8,7 +8,8 @@ otherwise.
 
 Snapshot file (temporary write + rename; no fsync) at
 `$XDG_STATE_HOME/signaltty/snapshot.json`, debounced (≤1 write/2s)
-with structural changes marking a pending save, plus on shutdown/SIGTERM:
+with structural changes marking a pending save, plus on shutdown/SIGTERM
+and, on Linux, on logind's early shutdown notice (ADR-0028):
 
 - server: `version`, `saved_at`, `protocol`
 - workspaces: `id, name, cwd, tabs[], active_tab_id, git cache`
@@ -54,6 +55,20 @@ non-secret config; never tokens/keys).
    preserving id, title, and history tail.
 4. If the agent binary/session is gone, resume fails visibly with the
    adapter error; the tombstone remains with its tail.
+
+## Host shutdown
+
+On Linux the server watches `org.freedesktop.login1` without delaying startup.
+`PrepareForShutdown(true)`, or `PreparingForShutdown` already true, writes this
+same snapshot while a delay inhibitor is held, then releases the inhibitor and
+shuts down. A false notification does not stop the server. If the write fails,
+the inhibitor is still released and the server still stops. A missing bus, a
+denied inhibit or a logind restart retries with bounded backoff. Dropping the
+monitor on any server exit closes the inhibitor. The delay is logind's, not
+ours: power loss and SIGKILL remain outside this guarantee. `SIGNALTTY_LOGIND=0`
+turns the monitor off; the test harness sets that unless a test opts in and
+points the server at a private bus. See
+[ADR-0028](adr/0028-logind-shutdown-save.md).
 
 ## Crash safety
 

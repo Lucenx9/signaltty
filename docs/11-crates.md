@@ -17,7 +17,7 @@ crates/
   signaltty-integration/    # OS-facing hook configuration/transactions (ADR-0013)
     src/lib.rs
   signaltty-server/         # daemon: store, PTY mgr, router, persist, bus
-    src/{main,server,store,pty,router,events,persist,config,gitwatch}.rs
+    src/{main,server,store,pty,router,events,persist,config,gitwatch,logind}.rs
   signaltty-cli/            # clap client (human + automation + hooks entry)
     src/{main,client,daemon,attach,integration}.rs
   signaltty-plugin/         # Phase 4: plugin.toml manifests + hook dispatch
@@ -33,7 +33,7 @@ crates/
 - `core`: `serde, serde_json, uuid, chrono, thiserror` only. No async, no OS calls.
 - `proto` → `core`. `term` → `core` (+`vt100`, `vte`).
 - `server` → `core, proto, term, agent, integration` (+`tokio, portable-pty`,
-  `serde_json`, `nix`, `base64`).
+  `serde_json`, `nix`, `base64`, `zbus`).
 - `cli` → `core, proto, integration` (+`tokio, clap, serde_json`). Never `server`.
 - `gui` → `core, proto` (+`gtk4, libadwaita, vte4`,
   `notify-rust`). Never `server`, never PTY crates.

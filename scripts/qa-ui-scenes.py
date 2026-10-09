@@ -145,6 +145,7 @@ with tempfile.TemporaryDirectory(prefix="signaltty-ui-") as tmp:
                 ],
                 stdout=server_log,
                 stderr=server_log,
+                env={**os.environ, "SIGNALTTY_LOGIND": "0"},
             )
             until(lambda: call("server.status"))
             api, api_pane = workspace(

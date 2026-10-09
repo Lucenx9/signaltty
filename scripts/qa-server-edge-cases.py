@@ -56,6 +56,7 @@ def main():
                 [str(binary), "--socket", str(sock), "--state-dir", str(root / "state"),
                  "--plugin-dir", str(root / "plugins"), "--agents-dir", str(root / "agents")],
                 stdout=log, stderr=log, start_new_session=True,
+                env={**os.environ, "SIGNALTTY_LOGIND": "0"},
             )
             try:
                 deadline = time.monotonic() + 10

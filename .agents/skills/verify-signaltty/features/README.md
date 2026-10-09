@@ -5,6 +5,7 @@
 - [Workspace structure](structure.md): pane/tab ownership, split and close.
 - [Agent orchestration](orchestration.md): new-work waits, identity and event replay coverage.
 - [Connection and window state](connections.md): responsive GTK, reconnect, activation and restore.
+- [Host shutdown](host-shutdown.md): logind delay inhibitor saves resume metadata before the host stops.
 
 Clipboard, IME, folder chooser, divider dragging, desktop notification clicks and
 live paid agent sessions need separate coverage; these helpers do not certify them.

@@ -1768,6 +1768,7 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
+ "futures-util",
  "nix 0.29.0",
  "portable-pty",
  "serde",
@@ -1783,6 +1784,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zbus",
 ]
 
 [[package]]
@@ -2000,6 +2002,7 @@ dependencies = [
  "signal-hook-registry",
  "socket2",
  "tokio-macros",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -2613,6 +2616,7 @@ dependencies = [
  "rustix 1.1.5",
  "serde",
  "serde_repr",
+ "tokio",
  "tracing",
  "uds_windows",
  "uuid",

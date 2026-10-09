@@ -99,7 +99,9 @@ impl TestServer {
         cmd.env("SIGNALTTY_INTEGRATION_HOME", &integration_home)
             .env("XDG_CONFIG_HOME", integration_home.join(".config"))
             .env("XDG_DATA_HOME", integration_home.join(".local/share"))
-            .env("HOME", &integration_home);
+            .env("HOME", &integration_home)
+            // Later extra_envs can opt back in with SIGNALTTY_LOGIND=1.
+            .env("SIGNALTTY_LOGIND", "0");
         for (k, v) in extra_envs {
             cmd.env(k, v);
         }
@@ -193,6 +195,7 @@ impl TestServer {
             .env("XDG_CONFIG_HOME", self.integration_home.join(".config"))
             .env("XDG_DATA_HOME", self.integration_home.join(".local/share"))
             .env("HOME", &self.integration_home)
+            .env("SIGNALTTY_LOGIND", "0")
             .envs(self.extra_envs.iter().map(|(k, v)| (k, v)))
             .arg("--socket")
             .arg(&self.socket)

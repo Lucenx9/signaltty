@@ -7,6 +7,7 @@ mod codex;
 pub mod config;
 pub mod file_diff;
 pub mod git;
+mod logind;
 pub mod params;
 pub mod persist;
 pub mod procscan;
