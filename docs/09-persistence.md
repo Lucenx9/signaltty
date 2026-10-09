@@ -62,6 +62,9 @@ non-secret config; never tokens/keys).
 - `snapshot_version` field; unknown future versions refuse to load
   with a clear error rather than misinterpreting.
 - Optional periodic snapshots every 60s regardless of activity.
+- Rotating snapshot history in `snapshots/`: retains up to 48 historical
+  snapshots (at most one preserved every 15 minutes, never preserving an
+  empty session) for manual recovery.
 
 Official resume also restores the three allowlisted provider config-directory
 overrides in `agent.config_env`; missing fields in older snapshots default empty.
