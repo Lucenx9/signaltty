@@ -35,7 +35,7 @@ async fn run_case(action: &str) {
         .call("workspace.create", json!({"cwd":repo.path()}))
         .await
         .unwrap();
-    let child = "import os, sys, time, tty, select\ntty.setraw(0)\nopen(sys.argv[1], 'w').close()\nwhile not os.path.exists(sys.argv[2]): time.sleep(0.005)\ndata = bytearray()\nwhile select.select([0], [], [], 0.2)[0]: data.extend(os.read(0, 4096))\nopen(sys.argv[3], 'wb').write(data)\nwhile True: time.sleep(0.05)\n";
+    let child = "import os, sys, time, tty, select\ntty.setraw(0)\nopen(sys.argv[1], 'w').close()\nwhile not os.path.exists(sys.argv[2]): time.sleep(0.005)\ndata = bytearray()\nwhile select.select([0], [], [], 0.2)[0]: data.extend(os.read(0, 4096))\nopen(sys.argv[3] + '.tmp', 'wb').write(data)\nos.replace(sys.argv[3] + '.tmp', sys.argv[3])\nwhile True: time.sleep(0.05)\n";
     let pane = c
         .call(
             "pane.spawn",
