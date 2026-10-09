@@ -46,8 +46,10 @@ pub fn install(home: &Path, json: bool) -> Result<(), CliError> {
         if current == TEXT {
             continue;
         }
-        if !current.is_empty() {
-            continue; // foreign file: never clobber (status shows it)
+        // Foreign (unmarked) content must survive; outdated installs we
+        // previously wrote (marker line present) are refreshed to TEXT.
+        if !current.is_empty() && !marked(&current) {
+            continue;
         }
         std::fs::create_dir_all(&dir).map_err(|e| CliError::Io(e.to_string()))?;
         std::fs::write(&path, TEXT).map_err(|e| CliError::Io(e.to_string()))?;
@@ -143,5 +145,45 @@ mod tests {
         std::env::set_var("SIGNALTTY_PANE", "pane_x");
         assert_eq!(check().unwrap(), "pane_x");
         std::env::remove_var("SIGNALTTY_PANE");
+    }
+
+    fn temp_home(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "signaltty-skill-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn install_refreshes_outdated_marked_skill_and_spares_foreign() {
+        let home = temp_home("refresh");
+        let agents = home.join(".agents/skills/signaltty");
+        std::fs::create_dir_all(&agents).unwrap();
+        let skill = agents.join("SKILL.md");
+        // Previously installed, but not equal to the current embedded text.
+        std::fs::write(&skill, format!("{MARKER}\noutdated body\n")).unwrap();
+        assert!(marked(&std::fs::read_to_string(&skill).unwrap()));
+        assert_ne!(std::fs::read_to_string(&skill).unwrap(), TEXT);
+
+        install(&home, true).unwrap();
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), TEXT);
+
+        // Foreign content without our marker must not be overwritten.
+        let foreign_home = temp_home("foreign");
+        let foreign_dir = foreign_home.join(".agents/skills/signaltty");
+        std::fs::create_dir_all(&foreign_dir).unwrap();
+        let foreign = foreign_dir.join("SKILL.md");
+        std::fs::write(&foreign, "mine\n").unwrap();
+        install(&foreign_home, true).unwrap();
+        assert_eq!(std::fs::read_to_string(&foreign).unwrap(), "mine\n");
+
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::remove_dir_all(&foreign_home).ok();
     }
 }
