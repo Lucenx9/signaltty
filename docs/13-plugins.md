@@ -54,7 +54,8 @@ Protocol per firing:
   `{"protocol":"signaltty/1","type":"event","event":...,
   "seq":N,"payload":{...}}` (same shape as socket events).
 - env: `SIGNALTTY_SOCKET`, `SIGNALTTY_EVENT` (event name),
-  `SIGNALTTY_PLUGIN_DIR`, `SIGNALTTY_PLUGIN_NAME`, plus `hook.env`.
+  `SIGNALTTY_PLUGIN_DIR`, `SIGNALTTY_PLUGIN_NAME`, plus `hook.env`
+  (additive; reserved `SIGNALTTY_*` keys always win over `hook.env`).
 - exit code is advisory: nonzero/timeout is logged server-side and
   counted in `plugin.list` stats (`runs`, `errors`, `last_error`,
   `last_run`); it never affects the event bus.
