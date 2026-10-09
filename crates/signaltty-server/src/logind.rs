@@ -20,6 +20,11 @@ const MIN_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
 pub(crate) fn start(ctx: Arc<Ctx>) -> Monitor {
+    // Same shape as SIGNALTTY_NOTIFY=0: the test harness turns the monitor off
+    // so a suite cannot hold the host's shutdown delay lock.
+    if std::env::var("SIGNALTTY_LOGIND").as_deref() == Ok("0") {
+        return Monitor(tokio::spawn(async {}));
+    }
     Monitor(tokio::spawn(async move {
         let mut backoff = MIN_BACKOFF;
         loop {
@@ -33,7 +38,7 @@ pub(crate) fn start(ctx: Arc<Ctx>) -> Monitor {
                         tracing::warn!("host shutdown snapshot failed: {e}");
                     }
                     drop(inhibitor);
-                    ctx.shutdown.notify_waiters();
+                    ctx.request_shutdown();
                     break;
                 }
                 Err(e) => {

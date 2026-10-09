@@ -14,5 +14,6 @@
 `scripts/verify.sh full`: passed (`/tmp/signaltty-verify-032/summary.json`), including fmt, clippy warning policy, architecture, workspace tests, server QA, 28 ignored GTK tests and the refresh benchmark.
 `cargo +1.92.0 check --workspace --all-targets --locked`: passed.
 Spec review: pass, no acceptance gaps.
+Standards review: the suite was taking a host delay inhibitor. `SIGNALTTY_LOGIND=0` is now the harness default; only `--test logind` opts in, on a private bus. Shutdown also stores a notify permit so a request between accepts is kept.
 
 Proof limits: the tests use a private dbus-daemon and never shut down the host. Power loss and SIGKILL can still skip the save. No desktop AT-SPI run; this change has no GUI surface.

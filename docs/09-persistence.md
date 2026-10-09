@@ -65,7 +65,9 @@ shuts down. A false notification does not stop the server. If the write fails,
 the inhibitor is still released and the server still stops. A missing bus, a
 denied inhibit or a logind restart retries with bounded backoff. Dropping the
 monitor on any server exit closes the inhibitor. The delay is logind's, not
-ours: power loss and SIGKILL remain outside this guarantee. See
+ours: power loss and SIGKILL remain outside this guarantee. `SIGNALTTY_LOGIND=0`
+turns the monitor off; the test harness sets that unless a test opts in and
+points the server at a private bus. See
 [ADR-0028](adr/0028-logind-shutdown-save.md).
 
 ## Crash safety

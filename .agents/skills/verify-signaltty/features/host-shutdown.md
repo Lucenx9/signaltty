@@ -25,4 +25,6 @@ must close the inhibitor.
 ## Gotchas
 
 The GUI probes do not cover this. A green workspace test says nothing about
-the inhibitor. Power loss and SIGKILL can still skip the save.
+the inhibitor. Power loss and SIGKILL can still skip the save. The shared
+test server and the QA scripts set `SIGNALTTY_LOGIND=0`; only `--test logind`
+opts in, and only against its private bus.

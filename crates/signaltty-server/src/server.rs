@@ -214,7 +214,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = crate::persist::save(&ctx.store, &ctx.ptys.terms(), &ctx.config) {
                 tracing::warn!("shutdown snapshot failed: {e}");
             }
-            ctx.shutdown.notify_waiters();
+            ctx.request_shutdown();
         });
     }
 
@@ -575,7 +575,7 @@ mod tests {
             .unwrap();
             match cause {
                 "eof" => drop(client),
-                "shutdown" => ctx.shutdown.notify_waiters(),
+                "shutdown" => ctx.request_shutdown(),
                 _ => {
                     client.write_all(b"{}\n").await.unwrap();
                 }

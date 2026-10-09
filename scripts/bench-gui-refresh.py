@@ -78,7 +78,8 @@ def main():
             try:
                 server = subprocess.Popen([str(binary / "signaltty-server"),
                     "--socket", sock, "--state-dir", str(root / "state"),
-                    "--plugin-dir", str(root / "plugins")], stdout=server_log, stderr=server_log, start_new_session=True)
+                    "--plugin-dir", str(root / "plugins")], stdout=server_log, stderr=server_log, start_new_session=True,
+                    env={**os.environ, "SIGNALTTY_LOGIND": "0"})
                 processes.append(server)
                 deadline = time.monotonic() + 10
                 while not Path(sock).exists():

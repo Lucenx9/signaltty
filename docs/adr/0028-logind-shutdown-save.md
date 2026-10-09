@@ -29,4 +29,5 @@ gone. The server must still start when logind is missing or denies the lock.
 The delay lasts only as long as logind allows. Power loss and SIGKILL can still
 skip the save. There is no suspend handling, auto-resume, or stronger snapshot
 durability. Core and proto stay free of D-Bus. Tests use a private bus and a
-fake login manager; they never shut down the host.
+fake login manager; they never shut down the host. Every other automated
+server sets `SIGNALTTY_LOGIND=0` so it cannot hold the host delay lock.

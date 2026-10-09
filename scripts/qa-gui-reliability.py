@@ -112,7 +112,8 @@ def main():
         def start_server():
             return subprocess.Popen([str(binaries / "signaltty-server"), "--socket", str(sock),
                 "--state-dir", str(root / "state"), "--plugin-dir", str(root / "plugins"),
-                "--agents-dir", str(root / "agents")], stdout=log, stderr=log)
+                "--agents-dir", str(root / "agents")], stdout=log, stderr=log,
+                env={**os.environ, "SIGNALTTY_LOGIND": "0"})
 
         def call(method, **params):
             with socket.socket(socket.AF_UNIX) as connection:

@@ -61,7 +61,11 @@ impl PrivateBus {
     }
 
     async fn server(&self) -> TestServer {
-        TestServer::start_with_env(&[("DBUS_SYSTEM_BUS_ADDRESS", self.address.trim())]).await
+        TestServer::start_with_env(&[
+            ("DBUS_SYSTEM_BUS_ADDRESS", self.address.trim()),
+            ("SIGNALTTY_LOGIND", "1"),
+        ])
+        .await
     }
 }
 
@@ -195,6 +199,28 @@ async fn host_shutdown_saves_live_resume_metadata_before_releasing_inhibitor() {
         json!(["codex", "resume", "session-before-shutdown"])
     );
     assert!(server.wait_for_exit(DEADLINE).await, "server shut down");
+}
+
+#[tokio::test]
+async fn harness_default_does_not_inhibit_even_when_a_bus_is_reachable() {
+    let bus = PrivateBus::new();
+    let (_service, lock) = bus.manager(false).await;
+    let server =
+        TestServer::start_with_env(&[("DBUS_SYSTEM_BUS_ADDRESS", bus.address.trim())]).await;
+    let acquired = tokio::time::timeout(Duration::from_millis(400), async {
+        loop {
+            if lock.lock().unwrap().is_some() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        acquired.is_err(),
+        "SIGNALTTY_LOGIND=0 still took an inhibitor"
+    );
+    server.shutdown().await;
 }
 
 #[tokio::test]
