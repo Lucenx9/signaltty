@@ -28,6 +28,16 @@ pub fn decode<'de, T: Deserialize<'de>>(params: &'de Value) -> Result<T, ParamEr
     T::deserialize(params).map_err(|e| bad_params(e.to_string()))
 }
 
+/// Defaulted non-`Option` fields: explicit null means "absent" too,
+/// like every `Option<T>` field (docs/08), instead of `BAD_PARAMS`.
+fn de_null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
 // ---- shared shapes ----
 
 /// Methods taking exactly one workspace id.
@@ -192,7 +202,7 @@ pub struct PaneSpawn {
     pub tab_id: Option<String>,
     pub cwd: Option<String>,
     pub argv: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_null_default")]
     pub env: std::collections::HashMap<String, String>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
@@ -282,7 +292,7 @@ pub struct DecisionPayload {
 
 #[derive(Debug, Deserialize)]
 pub struct HookEvent {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_null_default")]
     pub wait_for_answer: bool,
     pub wait_timeout_s: Option<u64>,
     pub agent: String,
@@ -497,6 +507,24 @@ mod tests {
         // Missing and explicit null still mean absent.
         let p: WorkspaceCreate = decode(&json!({"cwd": Value::Null})).unwrap();
         assert_eq!(p.cwd, None);
+    }
+
+    #[test]
+    fn defaulted_fields_treat_null_as_absent() {
+        let p: PaneSpawn =
+            decode(&json!({"workspace_id": "w", "argv": ["sh"], "env": Value::Null})).unwrap();
+        assert!(p.env.is_empty());
+        let h: HookEvent = decode(&json!({
+            "agent": "codex", "event": "Stop", "wait_for_answer": Value::Null,
+        }))
+        .unwrap();
+        assert!(!h.wait_for_answer);
+        // Present-but-mistyped is still BAD_PARAMS.
+        assert!(decode::<PaneSpawn>(&json!({"workspace_id": "w", "argv": [], "env": 1})).is_err());
+        assert!(decode::<HookEvent>(
+            &json!({"agent": "codex", "event": "Stop", "wait_for_answer": "yes"})
+        )
+        .is_err());
     }
 
     #[test]
