@@ -34,6 +34,16 @@ pub enum ScreenState {
     Idle,
 }
 
+impl ScreenState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScreenState::Working => "working",
+            ScreenState::Blocked => "blocked",
+            ScreenState::Idle => "idle",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Region {
     Title,
@@ -94,7 +104,15 @@ impl ScreenRule {
         })
     }
 
-    fn matches(&self, title: &str, screen: &str) -> bool {
+    /// `title` or `bottom(<lines>)`, for `pane.explain`.
+    pub fn region_label(&self) -> String {
+        match self.region {
+            Region::Title => "title".into(),
+            Region::Bottom(n) => format!("bottom({n})"),
+        }
+    }
+
+    pub fn matches(&self, title: &str, screen: &str) -> bool {
         let bottom;
         let text = match self.region {
             Region::Title => title,

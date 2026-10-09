@@ -28,6 +28,8 @@ fields are ignored by the server; mistyped ones are `BAD_PARAMS`.
 ## Things you can do
 
 - `signaltty pane read ID [--mode screen|tail]` — read scrollback.
+- `signaltty pane explain ID` — which screen rules match a pane and whether
+  they apply (`*` marks the winner; hooks switch them off).
 - `signaltty pane input ID (--data "…" | --stdin)` — type into a pane.
 - `signaltty notify --pane ID --title T [--body B] [--severity info|warning|error]`
 - `signaltty wait --pane ID --until blocked|done|idle|failed|exited|seen --timeout 300`

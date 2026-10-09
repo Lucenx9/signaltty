@@ -99,20 +99,31 @@ impl Ctx {
     /// `[[screen]]` rules of every overlay for `kind`, in file then
     /// declaration order (several generic manifests may each add rules).
     /// Any user rule for a kind replaces its bundled rules (ADR-0025).
-    pub fn screen_rules(&self, kind: AgentKind) -> Vec<&signaltty_agent::screen::ScreenRule> {
+    /// Returns the source (`user`, `bundled` or `none`) with the rules.
+    pub fn screen_rules(
+        &self,
+        kind: AgentKind,
+    ) -> (&'static str, Vec<&signaltty_agent::screen::ScreenRule>) {
         let user: Vec<_> = self
             .overlays
             .iter()
             .filter(|o| o.kind() == kind)
             .flat_map(|o| o.screen_rules())
             .collect();
-        if user.is_empty() {
-            signaltty_agent::bundled::bundled_screen_rules(kind)
-                .iter()
-                .collect()
-        } else {
-            user
+        if !user.is_empty() {
+            return ("user", user);
         }
+        let bundled: Vec<_> = signaltty_agent::bundled::bundled_screen_rules(kind)
+            .iter()
+            .collect();
+        (
+            if bundled.is_empty() {
+                "none"
+            } else {
+                "bundled"
+            },
+            bundled,
+        )
     }
 
     pub fn detect_kind(&self, argv: &[String]) -> AgentKind {
@@ -200,6 +211,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::PANE_CLOSE => h_pane_close(ctx, &req.params),
         method::PANE_RESUME => h_pane_resume(ctx, &req.params),
         method::PANE_MARK_SEEN => h_pane_mark_seen(ctx, &req.params),
+        method::PANE_EXPLAIN => h_pane_explain(ctx, &req.params),
         method::DECISION_ANSWER => h_decision_answer(ctx, &req.params).await,
         method::NOTIFY => h_notify(ctx, &req.params),
         method::HOOK_EVENT => match decode::<params::HookEvent>(&req.params) {
@@ -937,6 +949,50 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
     drop(s);
     ctx.mark_persist();
     Ok((launch_result(&pane, integration), ConnEffect::default()))
+}
+
+/// Read-only screen-rule trace (spec 029): the same selection and match the
+/// classification tick uses, against the current title and visible screen.
+fn h_pane_explain(ctx: &Ctx, params: &Value) -> Handler {
+    let id = decode::<params::PaneId>(params)?.pane_id;
+    let (kind, live, hooked, title) = {
+        let s = ctx.store.read().unwrap();
+        let pane = s
+            .panes
+            .get(&id)
+            .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?;
+        (
+            pane.agent.kind,
+            matches!(pane.live, LiveState::Live),
+            s.is_hooked(&id),
+            pane.title.clone(),
+        )
+    };
+    let (source, rules) = ctx.screen_rules(kind);
+    let screen = ctx.ptys.terms().lock().unwrap().snapshot(&id);
+    let winner = signaltty_agent::screen::classify(rules.iter().copied(), &title, &screen);
+    let traced: Vec<Value> = rules
+        .iter()
+        .map(|r| {
+            json!({"id": r.id, "state": r.state.as_str(), "priority": r.priority,
+                   "region": r.region_label(), "matched": r.matches(&title, &screen)})
+        })
+        .collect();
+    Ok((
+        json!({
+            "pane_id": id,
+            "kind": kind.as_str(),
+            "live": live,
+            "hooked": hooked,
+            "source": source,
+            "classifies": live && !hooked && !rules.is_empty(),
+            // Rule ids may repeat across manifests: `index` names the entry.
+            "matched": winner.map(|w| json!({"id": w.id, "state": w.state.as_str(), "priority": w.priority,
+                "index": rules.iter().position(|r| std::ptr::eq(*r, w))})),
+            "rules": traced,
+        }),
+        ConnEffect::default(),
+    ))
 }
 
 fn h_pane_get(ctx: &Ctx, params: &Value) -> Handler {
@@ -1872,7 +1928,7 @@ pub fn classify_screens(ctx: &Ctx) -> bool {
     };
     let mut changed = false;
     for (id, kind, title) in candidates {
-        let rules = ctx.screen_rules(kind);
+        let (_, rules) = ctx.screen_rules(kind);
         if rules.is_empty() {
             continue;
         }
