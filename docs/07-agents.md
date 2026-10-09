@@ -252,8 +252,8 @@ after the last prompt line; the current prompt is the last prompt line with
 no `•`, `■`, `✗` or `✓` block line after it, `before_current_prompt` is
 everything above it and `without_current_prompt` is the whole screen only
 when there is no current prompt (otherwise empty); without a prompt both
-prompt regions read the whole screen. A winning `hold` rule leaves the pane's state unchanged (a
-transcript viewer or model picker is not a turn state).
+prompt regions read the whole screen. A winning `hold` rule leaves the pane's
+state unchanged (a transcript viewer or model picker is not a turn state).
 
 signaltty bundles rules for `pi`, `opencode`, `cursor`, `claude` and
 `codex`, ported from herdr (`crates/signaltty-agent/screen/`); each ends with
