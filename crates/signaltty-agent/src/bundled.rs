@@ -15,6 +15,7 @@ const BUNDLED: &[&str] = &[
     include_str!("../screen/opencode.toml"),
     include_str!("../screen/cursor.toml"),
     include_str!("../screen/claude.toml"),
+    include_str!("../screen/codex.toml"),
 ];
 
 /// Bundled `[[screen]]` rules for `kind`, in declaration order.
@@ -65,6 +66,7 @@ mod tests {
             AgentKind::Opencode,
             AgentKind::Cursor,
             AgentKind::Claude,
+            AgentKind::Codex,
         ] {
             let rules = bundled_screen_rules(kind);
             assert!(!rules.is_empty(), "{kind:?}");
@@ -375,6 +377,135 @@ mod tests {
         assert_eq!(
             claude_title("claude", "plain output\n"),
             Some((Idle, "idle_fallback".into()))
+        );
+    }
+
+    fn codex(title: &str, screen: &str) -> Option<(ScreenState, String)> {
+        classify(bundled_screen_rules(AgentKind::Codex), title, screen)
+            .map(|r| (r.state, r.id.clone()))
+    }
+
+    #[test]
+    fn codex_title_screens() {
+        use ScreenState::*;
+        let idle = "› \n";
+        assert_eq!(
+            codex("⚠ Action Required", idle),
+            Some((Blocked, "osc_title_blocked".into()))
+        );
+        assert_eq!(
+            codex("⠙ codex", idle),
+            Some((Working, "osc_title_working".into()))
+        );
+        assert_eq!(codex("codex", idle), Some((Idle, "osc_title_idle".into())));
+        assert_eq!(codex("", idle), Some((Idle, "idle_fallback".into())));
+        // The idle title rule itself vetoes spinners and Action Required, even
+        // though higher-priority title rules usually win first.
+        let rule = bundled_screen_rules(AgentKind::Codex)
+            .iter()
+            .find(|r| r.id == "osc_title_idle")
+            .unwrap();
+        assert!(rule.matches("codex", idle));
+        assert!(!rule.matches("⠙ codex", idle));
+        assert!(!rule.matches("Action Required", idle));
+    }
+
+    #[test]
+    fn codex_blocked_screens() {
+        use ScreenState::*;
+        let x = AgentKind::Codex;
+        assert_state(
+            x,
+            "> You are in /home/me/repo\n\nDo you trust the contents of this directory?\n› 1. Yes, continue\n",
+            Blocked,
+            "trust_directory",
+        );
+        // The trust prompt is read from the top, however long the screen.
+        let long = format!(
+            "> You are in /repo\nDo you trust the contents of this directory?\n{}",
+            (1..=25)
+                .map(|i| format!("  option {i}\n"))
+                .collect::<String>()
+        );
+        assert_state(x, &long, Blocked, "trust_directory");
+        assert_state(
+            x,
+            "Folder access\nTrust this folder?\nCodex can read, edit, and run files here\n  Trust and continue\n",
+            Blocked,
+            "trust_folder",
+        );
+        assert_state(
+            x,
+            "✨ Update available! 0.9 -> 1.0\n› 1. Update now\n  2. Skip\n  3. Skip until next version\n\nPress enter to continue\n",
+            Blocked,
+            "startup_update",
+        );
+        // The update screen only blocks while it ends in the continue hint.
+        assert_state(
+            x,
+            "Update available!\nUpdate now\nSkip until next version\nPress enter to continue\nupdating...\n",
+            Idle,
+            "idle_fallback",
+        );
+        assert_state(
+            x,
+            "› run tests\n  Allow command?\n  cargo test\n  Press enter to confirm or esc to cancel\n",
+            Blocked,
+            "live_strong_blocker",
+        );
+        assert_state(
+            x,
+            "› /mention\n  All Results  Filesystem Only  Plugins\n",
+            Blocked,
+            "live_strong_picker",
+        );
+        assert_state(
+            x,
+            "• Ran rm -rf build\nProceed? [y/n]\n",
+            Blocked,
+            "weak_blocker",
+        );
+        // A current prompt empties the weak-blocker region.
+        assert_state(x, "Proceed? [y/n]\n› \n", Idle, "idle_fallback");
+        // So does a sparkle prompt with no response after it.
+        assert_state(
+            x,
+            "• Do you want to retry? yes\n›⠂ typing\n",
+            Idle,
+            "idle_fallback",
+        );
+    }
+
+    #[test]
+    fn codex_working_and_hold_screens() {
+        use ScreenState::*;
+        let x = AgentKind::Codex;
+        assert_state(
+            x,
+            "› fix the tests\n• Working (12s • esc to interrupt)\n› \n",
+            Working,
+            "screen_working_fallback",
+        );
+        assert_state(
+            x,
+            "› fix\n• Thinking (1m 3s)\n• Queued follow-up inputs\n› \n",
+            Working,
+            "screen_working_fallback",
+        );
+        // A response after the timer means the turn is over.
+        assert_state(x, "• Working (12s)\n✓ Done\n› \n", Idle, "idle_fallback");
+        // A failed reconnect keeps its timer but is not working.
+        assert_state(
+            x,
+            "• Reconnect failed — check the endpoint, then relaunch (5s)\n› \n",
+            Idle,
+            "idle_fallback",
+        );
+        assert_state(
+            x,
+            "› q\n  ↑/↓ to scroll  pgup/pgdn to page  home/end to jump  q to quit  esc to edit prev\n",
+            Hold,
+            "transcript_viewer",
         );
     }
 }
