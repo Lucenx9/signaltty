@@ -53,9 +53,10 @@ build without them).
 This builds the GUI in release mode and installs `signaltty-gui` in
 `~/.local/bin`, the desktop entry in `~/.local/share/applications`, the
 AppStream metadata in `~/.local/share/metainfo`, and both icons in
-`~/.local/share/icons/hicolor/scalable/apps`. Make sure `~/.local/bin`
-is on the desktop session's `PATH`, then sign out and back in if the
-launcher does not refresh. The GUI connects to the signaltty server.
+`~/.local/share/icons/hicolor/scalable/apps`. The installed desktop entry
+launches the binary by its absolute path, so it works even when `~/.local/bin`
+is not on the desktop session's `PATH`. Sign out and back in if the launcher
+does not refresh. The GUI connects to the signaltty server.
 
 To remove these files:
 
