@@ -1,5 +1,6 @@
 //! Screen-detection rules (`[[screen]]` in a manifest): herdr-style
-//! regexes over the pane title or the bottom of the visible screen.
+//! regexes over the pane title or the bottom of the visible screen. A rule
+//! matches when any `regex`, every `all` and no `not` regex matches.
 //! ADR-0006's last-resort layer; the server only consults them for panes
 //! that have seen no hook. Pure: compiled once at manifest load. See
 //! docs/07, ADR-0024.
@@ -8,7 +9,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 /// One `[[screen]]` table as written. Unknown fields ignored.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ScreenRuleSpec {
     pub id: String,
     pub state: String,
@@ -16,7 +17,12 @@ pub struct ScreenRuleSpec {
     pub region: Option<String>,
     #[serde(default)]
     pub lines: Option<usize>,
+    #[serde(default)]
     pub regex: Vec<String>,
+    #[serde(default)]
+    pub all: Vec<String>,
+    #[serde(default)]
+    pub not: Vec<String>,
     #[serde(default)]
     pub priority: i32,
 }
@@ -41,6 +47,8 @@ pub struct ScreenRule {
     pub priority: i32,
     region: Region,
     regexes: Vec<Regex>,
+    all: Vec<Regex>,
+    not: Vec<Regex>,
 }
 
 const DEFAULT_LINES: usize = 12;
@@ -67,20 +75,22 @@ impl ScreenRule {
             }
             (other, _) => return Err(at(format!("bad region '{other}'"))),
         };
-        if spec.regex.is_empty() {
-            return Err(at("needs at least one regex".into()));
+        if spec.regex.is_empty() && spec.all.is_empty() {
+            return Err(at("needs at least one regex or all".into()));
         }
-        let regexes = spec
-            .regex
-            .iter()
-            .map(|r| Regex::new(r).map_err(|e| at(format!("bad regex: {e}"))))
-            .collect::<Result<_, _>>()?;
+        let compile = |list: &[String]| {
+            list.iter()
+                .map(|r| Regex::new(r).map_err(|e| at(format!("bad regex: {e}"))))
+                .collect::<Result<Vec<_>, _>>()
+        };
         Ok(ScreenRule {
             id: spec.id.clone(),
             state,
             priority: spec.priority,
             region,
-            regexes,
+            regexes: compile(&spec.regex)?,
+            all: compile(&spec.all)?,
+            not: compile(&spec.not)?,
         })
     }
 
@@ -98,7 +108,9 @@ impl ScreenRule {
                 &bottom
             }
         };
-        self.regexes.iter().any(|r| r.is_match(text))
+        (self.regexes.is_empty() || self.regexes.iter().any(|r| r.is_match(text)))
+            && self.all.iter().all(|r| r.is_match(text))
+            && !self.not.iter().any(|r| r.is_match(text))
     }
 }
 
@@ -136,6 +148,7 @@ mod tests {
             lines,
             regex: re.iter().map(|s| (*s).to_string()).collect(),
             priority,
+            ..Default::default()
         })
         .unwrap()
     }
@@ -148,6 +161,7 @@ mod tests {
             lines,
             regex: re.iter().map(|s| (*s).to_string()).collect(),
             priority: 0,
+            ..Default::default()
         })
         .unwrap_err()
     }
@@ -180,6 +194,36 @@ mod tests {
         let r = rule("spin", "working", Some("title"), None, &["^[⠋⠙⠹] "], 0);
         assert!(r.matches("⠙ thinking", "idle prompt"));
         assert!(!r.matches("claude", "⠙ thinking"));
+    }
+
+    fn from_toml(text: &str) -> Result<ScreenRule, String> {
+        ScreenRule::compile(&toml::from_str::<ScreenRuleSpec>(text).unwrap())
+    }
+
+    #[test]
+    fn all_and_not_gate_the_any_list() {
+        let r = from_toml(
+            "id = 'a'\nstate = 'blocked'\nall = ['esc dismiss', 'enter (?:confirm|submit)']\nnot = ['done']",
+        )
+        .unwrap();
+        assert!(r.matches("", "esc dismiss\nenter submit"));
+        assert!(!r.matches("", "esc dismiss"));
+        assert!(!r.matches("", "esc dismiss\nenter submit\ndone"));
+        let r = from_toml("id = 'b'\nstate = 'working'\nregex = ['x', 'y']\nall = ['z']").unwrap();
+        assert!(r.matches("", "y z"));
+        assert!(!r.matches("", "y"));
+        assert!(!r.matches("", "z"));
+        assert!(from_toml("id = 'c'\nstate = 'idle'\nnot = ['x']")
+            .unwrap_err()
+            .contains("regex"));
+        assert!(from_toml("id = 'd'\nstate = 'idle'\nall = ['(']")
+            .unwrap_err()
+            .contains("regex"));
+        assert!(
+            from_toml("id = 'e'\nstate = 'idle'\nregex = ['x']\nnot = ['(']")
+                .unwrap_err()
+                .contains("regex")
+        );
     }
 
     #[test]
