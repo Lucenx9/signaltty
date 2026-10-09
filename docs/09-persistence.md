@@ -43,6 +43,10 @@ non-secret config; never tokens/keys).
    allowed only for adapter-owned official resume argv *and* only with
    explicit user opt-in (per-workspace `auto_resume: true`, default
    false). Otherwise each resumable pane offers one-key resume.
+   Self-reported resume argv passed to `report-session` is only executed
+   on explicit user `pane.resume`, never automatically at server restart.
+   Later hooks or reports for the same agent and session keep it; a new
+   agent or session id replaces it with the adapter's command.
 3. Resume = adapter builds argv from persisted `agent_session_id`
    (e.g. `claude --resume <id>`, `codex resume <id>`,
    `opencode --session <id>`, `cursor-agent --resume <id>`) and the
@@ -58,6 +62,9 @@ non-secret config; never tokens/keys).
 - `snapshot_version` field; unknown future versions refuse to load
   with a clear error rather than misinterpreting.
 - Optional periodic snapshots every 60s regardless of activity.
+- Rotating snapshot history in `snapshots/`: retains up to 48 historical
+  snapshots (at most one preserved every 15 minutes, never preserving an
+  empty session) for manual recovery.
 
 Official resume also restores the three allowlisted provider config-directory
 overrides in `agent.config_env`; missing fields in older snapshots default empty.

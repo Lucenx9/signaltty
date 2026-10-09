@@ -2036,6 +2036,59 @@ async fn task_start_relative_path_is_bad_params() {
 }
 
 #[tokio::test]
+async fn task_start_relative_repo_is_bad_params() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let err = c
+        .call(
+            "task.start",
+            json!({
+                "repo": ".",
+                "contract": {"objective": "relative repo"},
+                "argv": ["sleep", "60"],
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("repo path must be absolute"), "{err}");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn task_exists_before_its_worker_runs() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let mut sub = srv.client().await;
+    sub.call(
+        "subscribe",
+        json!({"events": ["task.created", "pane.created"]}),
+    )
+    .await
+    .unwrap();
+
+    c.call(
+        "task.start",
+        json!({
+            "repo": repo.path().to_string_lossy(),
+            "contract": {"objective": "report right away"},
+            "argv": ["sh"],
+        }),
+    )
+    .await
+    .unwrap();
+
+    // A worker that reports at once must find its task.
+    let events = sub.read_events(2, Duration::from_secs(5)).await;
+    assert_eq!(events[0]["event"], "task.created", "{events:?}");
+    assert_eq!(events[1]["event"], "pane.created", "{events:?}");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn background_submit_outcome_reaches_the_snapshot() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;
@@ -2554,6 +2607,77 @@ async fn restart_keeps_the_extra_environment() {
     assert!(
         err.starts_with(signaltty_proto::code::RATE_LIMITED),
         "the restarted server lost its env (limit 4, not 1): {err}"
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn failed_worker_session_end_settles_task_without_rewriting_pane() {
+    let repo = TempGitRepo::new();
+    let agents = repo.path().join("agents");
+    std::fs::create_dir(&agents).unwrap();
+    std::fs::write(
+        agents.join("claude.toml"),
+        r#"
+[agent]
+kind = "claude"
+[lifecycle.TurnFailed]
+lifecycle = "failed"
+attention = "error"
+message = "build failed"
+"#,
+    )
+    .unwrap();
+    let srv = TestServer::start_with_dirs(None, Some(&agents)).await;
+    let mut c = srv.client().await;
+    let started = c
+        .call(
+            "task.start",
+            json!({
+                "repo":repo.path().to_string_lossy(),
+                "contract":{"objective":"failed worker settlement"},
+                "agent":"claude", "argv":["sh"]
+            }),
+        )
+        .await
+        .unwrap();
+    let task = started["task"]["id"].as_str().unwrap();
+    let pane = started["pane"]["id"].as_str().unwrap();
+    let worktree = PathBuf::from(started["task"]["worktree_path"].as_str().unwrap());
+    let driver = FakeAgentPane::new(pane, "claude");
+    driver.session_start(&mut c, &worktree).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
+    let working = c
+        .call(
+            "task.wait",
+            json!({"task_id":task,"until":"working","timeout_s":5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(working["satisfied"], true);
+    for hook in ["TurnFailed", "SessionEnd"] {
+        c.call(
+            "hook-event",
+            json!({"pane_id":pane,"agent":"claude","event":hook,
+            "payload":{"session_id":driver.session_id}}),
+        )
+        .await
+        .unwrap();
+    }
+    let snapshot = c.call("pane.get", json!({"pane_id":pane})).await.unwrap();
+    assert_eq!(snapshot["pane"]["lifecycle"], "failed");
+    assert_eq!(snapshot["pane"]["attention"], "error");
+    assert_eq!(snapshot["pane"]["last_message"], "build failed");
+    let snapshot = c.call("task.get", json!({"task_id":task})).await.unwrap();
+    assert_eq!(snapshot["task"]["state"], "input_required");
+    assert_eq!(
+        snapshot["task"]["status_reason"]["reason"],
+        "turn_ended_without_report"
+    );
+    assert_eq!(
+        snapshot["task"]["status_reason"]["last_message"],
+        "build failed"
     );
     srv.shutdown().await;
 }

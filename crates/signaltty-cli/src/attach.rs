@@ -9,13 +9,22 @@ use crate::client::{CliError, Client};
 
 const DETACH_KEY: u8 = 0x1d; // Ctrl+]
 
+/// Events that end the attach for their pane. A pane closed by another
+/// client (or with its tab/workspace) emits `pane.closed` and never
+/// `pane.exited`, so watching only the latter left attach hanging.
+const END_EVENTS: [&str; 2] = ["pane.exited", "pane.closed"];
+
+fn ends_attach(name: &str, payload: &Value, pane_id: &str) -> bool {
+    END_EVENTS.contains(&name) && payload["pane_id"] == pane_id
+}
+
 pub async fn run(socket: &std::path::Path, pane_id: &str) -> Result<(), CliError> {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut client = Client::connect(socket).await?;
-    // Attach streams only `pty.data`; subscribe first so an exit racing
-    // the attach still arrives.
+    // Attach streams only `pty.data`; subscribe first so an exit (or
+    // close) racing the attach still arrives.
     client
-        .call("subscribe", json!({"events": ["pane.exited"]}))
+        .call("subscribe", json!({ "events": END_EVENTS }))
         .await?;
     let attach = client
         .call(
@@ -95,9 +104,7 @@ async fn attach_loop(
                             }
                         }
                     }
-                    "pane.exited" if payload["pane_id"] == pane_id => {
-                        return Ok(());
-                    }
+                    _ if ends_attach(name, &payload, pane_id) => return Ok(()),
                     _ => {}
                 }
             }
@@ -122,4 +129,19 @@ async fn send_input(client: &mut Client, pane_id: &str, data: &[u8]) -> Result<(
         )
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_or_close_of_this_pane_ends_attach() {
+        let mine = json!({"pane_id": "pane_a"});
+        let other = json!({"pane_id": "pane_b"});
+        assert!(ends_attach("pane.exited", &mine, "pane_a"));
+        assert!(ends_attach("pane.closed", &mine, "pane_a"));
+        assert!(!ends_attach("pane.closed", &other, "pane_a"));
+        assert!(!ends_attach("pty.data", &mine, "pane_a"));
+    }
 }

@@ -1,0 +1,45 @@
+# Ported from herdr (https://github.com/herdrdev/herdr) src/detect/manifests/opencode.toml
+# at commit 2563803, Copyright herdr contributors, Apache-2.0
+# (https://www.apache.org/licenses/LICENSE-2.0). Changes: herdr `contains`
+# becomes a case-insensitive escaped regex, `whole_recent` becomes
+# `lines = 200`, nested any/all gates are flattened into separate rules or
+# alternations, and herdr's known-agent idle fallback is the explicit
+# lowest-priority `idle_fallback` rule.
+
+[agent]
+kind = "opencode"
+
+[[screen]]
+id = "permission_required"
+state = "blocked"
+lines = 200
+priority = 300
+regex = ['(?i)△ Permission required']
+
+# herdr permission_required, second branch: a dialog footer with navigation.
+[[screen]]
+id = "dialog_required"
+state = "blocked"
+lines = 200
+priority = 300
+all = ['(?i)esc dismiss', '(?i)enter (?:confirm|submit|toggle)', '(?i)↑↓ select|⇆ tab']
+
+[[screen]]
+id = "interrupt_hint_working"
+state = "working"
+lines = 200
+priority = 110
+regex = ['(?i)esc to interrupt', '(?i)ctrl\+c to interrupt', '(?im)^.*opencode.*esc (again to )?interrupt']
+
+[[screen]]
+id = "progress_bar_working"
+state = "working"
+lines = 200
+priority = 100
+regex = ['(■|⬝){4,}']
+
+[[screen]]
+id = "idle_fallback"
+state = "idle"
+priority = -1000
+regex = ['']

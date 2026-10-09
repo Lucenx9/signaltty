@@ -155,6 +155,175 @@ fn opencode_plugin_default_export_satisfies_v1_and_v2_loaders() {
     assert!(!source.contains("from '@opencode/plugin'"));
 }
 
+fn run_opencode_plugin(loader: &str, events: Value, managed: bool) -> Vec<Value> {
+    let f = Fixture::new();
+    let reporter = f.home.join("a space and ' quote/signaltty");
+    fs::write(
+        &reporter,
+        r#"#!/usr/bin/env node
+const fs = require('node:fs');
+fs.appendFileSync(process.env.HOOK_CAPTURE, JSON.stringify({
+  argv: process.argv.slice(2), payload: JSON.parse(fs.readFileSync(0, 'utf8'))
+}) + '\n');
+"#,
+    )
+    .unwrap();
+    let installed = f.hooks.install("opencode").unwrap();
+    let module = f.home.join("installed-plugin.mjs");
+    fs::copy(installed.file, &module).unwrap();
+    let capture = f.home.join("events.jsonl");
+    fs::write(&capture, "").unwrap();
+    let driver = r#"
+import assert from 'node:assert/strict';
+import { pathToFileURL } from 'node:url';
+const [path, loader, input] = process.argv.slice(1);
+const plugin = (await import(pathToFileURL(path))).default;
+const events = JSON.parse(input);
+if (loader === 'v1') {
+  const hooks = await plugin.server();
+  for (const event of events) await hooks.event({ event });
+} else {
+  let signal;
+  let complete;
+  const consumed = new Promise(resolve => { complete = resolve; });
+  const cleanup = plugin.setup({event: {subscribe(options) {
+    signal = options.signal;
+    return (async function* () {
+      for (const event of events) yield event;
+      complete();
+    })();
+  }}});
+  await consumed;
+  await cleanup();
+  assert.equal(signal.aborted, true, 'unload must abort subscription');
+}
+"#;
+    let mut command = std::process::Command::new("node");
+    command
+        .args(["--input-type=module", "-e", driver])
+        .arg(module)
+        .arg(loader)
+        .arg(events.to_string())
+        .env("HOOK_CAPTURE", &capture)
+        .env_remove("SIGNALTTY_PANE");
+    if managed {
+        command.env("SIGNALTTY_PANE", "isolated-test-pane");
+    }
+    let output = command
+        .output()
+        .expect("Node is required; run scripts/setup-dev.sh --system");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::read_to_string(capture)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[test]
+fn opencode_plugin_v2_failure_reports_error_instead_of_done() {
+    // OpenCode 2.0.25 SessionEvent.Execution.Failed schema.
+    let reports = run_opencode_plugin(
+        "v2",
+        json!([
+            {"type":"session.execution.failed", "data":{
+                "sessionID":"ses_failed", "error":{"type":"unknown", "message":"provider unavailable"}
+            }}
+        ]),
+        true,
+    );
+    assert_eq!(
+        reports,
+        vec![json!({
+            "argv":["hook-event", "--agent", "opencode", "--event", "session.error", "--payload-stdin"],
+            "payload":{"session_id":"ses_failed", "message":"provider unavailable"}
+        })]
+    );
+}
+
+#[test]
+fn opencode_plugin_v1_creation_reports_session_info_identity() {
+    let reports = run_opencode_plugin(
+        "v1",
+        json!([
+            {"type":"session.created", "properties":{"info":{"id":"ses_created"}}}
+        ]),
+        true,
+    );
+    assert_eq!(
+        reports,
+        vec![json!({
+            "argv":["hook-event", "--agent", "opencode", "--event", "session.created", "--payload-stdin"],
+            "payload":{"session_id":"ses_created"}
+        })]
+    );
+}
+
+#[test]
+fn opencode_plugin_v1_preserves_nested_and_legacy_errors() {
+    let reports = run_opencode_plugin(
+        "v1",
+        json!([
+            {"type":"session.error", "properties":{"sessionID":"s", "error":{"data":{"message":"nested failure"}}}},
+            {"type":"session.error", "properties":{"sessionID":"s", "message":"legacy failure"}},
+            {"type":"session.error", "properties":{"sessionID":"s", "error":{"message":"direct failure"}}},
+            {"type":"session.error", "properties":{"sessionID":"s"}}
+        ]),
+        true,
+    );
+    assert_eq!(
+        reports
+            .iter()
+            .map(|r| r["payload"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            json!({"session_id":"s", "message":"nested failure"}),
+            json!({"session_id":"s", "message":"legacy failure"}),
+            json!({"session_id":"s", "message":"direct failure"}),
+            json!({"session_id":"s", "message":"unknown"})
+        ]
+    );
+    assert!(reports.iter().all(|r| r["argv"][4] == "session.error"));
+}
+
+#[test]
+fn opencode_plugin_v2_retains_lifecycle_and_unmanaged_noop() {
+    let events = json!([
+        null,
+        {"type":"unrelated.event", "data":{}},
+        {"type":"session.created", "data":{"sessionID":"s"}},
+        {"type":"session.execution.started", "data":{"sessionID":"s"}},
+        {"type":"session.execution.succeeded", "data":{"sessionID":"s"}},
+        {"type":"session.execution.interrupted", "data":{"sessionID":"s", "reason":"user"}}
+    ]);
+    let reports = run_opencode_plugin("v2", events.clone(), true);
+    assert_eq!(
+        reports
+            .iter()
+            .map(|r| r["payload"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            json!({"session_id":"s"}),
+            json!({"session_id":"s", "status":"busy"}),
+            json!({"session_id":"s", "status":"idle"}),
+            json!({"session_id":"s", "status":"idle"})
+        ]
+    );
+    assert!(run_opencode_plugin("v2", events, false).is_empty());
+    assert!(run_opencode_plugin(
+        "v1",
+        json!([
+            {"type":"session.created", "properties":{"sessionID":"s"}}
+        ]),
+        false
+    )
+    .is_empty());
+}
+
 #[test]
 fn encoded_reporter_path_executes_without_shell_interpretation() {
     let f = Fixture::new();

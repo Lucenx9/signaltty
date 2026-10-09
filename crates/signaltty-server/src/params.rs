@@ -311,6 +311,7 @@ pub struct ReportSession {
     pub pane_id: String,
     pub agent_session_id: String,
     pub agent: Option<String>,
+    pub resume_argv: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

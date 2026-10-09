@@ -213,11 +213,11 @@ mod tests {
     use super::*;
 
     fn test_unique_dir() -> PathBuf {
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("signaltty-test-pref-{}-{}", std::process::id(), ts))
+        std::env::temp_dir().join(format!(
+            "signaltty-test-pref-{}-{}",
+            std::process::id(),
+            signaltty_core::ids::new_pane_id()
+        ))
     }
 
     /// The terminal background (`Theme::pane_bg`) must be the colour the

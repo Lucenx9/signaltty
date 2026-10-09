@@ -111,7 +111,7 @@ pub struct App {
     focused_pane: RefCell<Option<String>>,
     zoom: RefCell<Option<(String, String)>>,
     palette_dialog: RefCell<Option<adw::Dialog>>,
-    board_dialog: RefCell<Option<adw::Dialog>>,
+    board_dialog: RefCell<Option<board::Board>>,
     /// Divider state machine (ratios, drags, echo suppression);
     /// widgets live separately in `paned_widgets`.
     dividers: crate::dividers::Dividers,
@@ -223,6 +223,7 @@ impl App {
         let title_context = gtk4::Label::new(None);
         title_context.add_css_class("crumb-context");
         title_context.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        title_context.set_visible(false);
         let title_mark = sidebar::mark();
         title_mark.set_visible(false);
         let title_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
@@ -232,7 +233,7 @@ impl App {
         let crumb_sep = gtk4::Label::new(Some("/"));
         crumb_sep.add_css_class("crumb-sep");
         title_box.append(&crumb_sep);
-        title_mark
+        title_context
             .bind_property("visible", &crumb_sep, "visible")
             .sync_create()
             .build();
@@ -989,6 +990,7 @@ impl App {
                 self.title.set_text("signaltty");
                 self.title_mark.set_visible(false);
                 self.title_context.set_text("");
+                self.title_context.set_visible(false);
                 self.title_context.set_tooltip_text(None);
                 self.content.set_visible_child_name("no-workspace");
             }
@@ -1207,15 +1209,16 @@ impl App {
         self.title.set_text(&self.display_title(&ws));
         sidebar::set_mark(&self.title_mark, &ws.id, &ws.name);
         self.title_mark.set_visible(true);
-        // The permanent line is the workspace and its agents. The
-        // filesystem path (and branch) is a tooltip, not a second title.
+        // Agent workspaces show their agents; shells show their location.
         let agents = sidebar::summarize(&ws, &snapshot.panes).agents;
         let place = tilde(&ws.cwd);
         let tooltip = match ws.git.branch.as_deref().filter(|b| !b.trim().is_empty()) {
             Some(branch) => format!("{branch} · {place}"),
             None => place,
         };
-        self.title_context.set_text(&agents);
+        let context = if agents.is_empty() { &tooltip } else { &agents };
+        self.title_context.set_text(context);
+        self.title_context.set_visible(!context.is_empty());
         self.title_context.set_tooltip_text(Some(&tooltip));
         let has_tabs = !snapshot.tabs.is_empty();
         {
@@ -2001,10 +2004,15 @@ impl App {
     }
 
     fn refresh_open_board(&self) {
-        let previous = self.board_dialog.borrow_mut().take();
-        if let Some(dialog) = previous {
-            dialog.force_close();
-            self.present_board();
+        if let Some(board) = self.board_dialog.borrow().as_ref() {
+            let tasks = self
+                .model
+                .borrow()
+                .tasks
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            board.update(&tasks);
         }
     }
 
@@ -2014,7 +2022,13 @@ impl App {
         let dialog = crate::board::present(&self.window, &tasks, move |closed, chosen| {
             let Some(app) = weak.upgrade() else { return };
             // Closing a replaced dialog must not clear its successor or move focus.
-            if app.board_dialog.borrow().as_ref() != Some(closed) {
+            if app
+                .board_dialog
+                .borrow()
+                .as_ref()
+                .map(|board| &board.dialog)
+                != Some(closed)
+            {
                 return;
             }
             app.board_dialog.borrow_mut().take();

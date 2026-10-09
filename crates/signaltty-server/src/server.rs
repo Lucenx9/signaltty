@@ -122,6 +122,21 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Screen-detection rules (docs/07, specs 027/028): classify live,
+    // hook-less panes whose kind has user or bundled `[[screen]]` rules.
+    {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+            loop {
+                interval.tick().await;
+                if crate::router::classify_screens(&ctx) {
+                    ctx.mark_persist();
+                }
+            }
+        });
+    }
+
     // Silent-worker watchdog:
     // If a task stays `working` with no hook activity and no PTY output
     // for worker_silent_timeout_s, transition to `input_required` with
@@ -261,6 +276,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    ctx.ptys.cancel_inputs();
     Ok(())
 }
 

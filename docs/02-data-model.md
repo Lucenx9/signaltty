@@ -188,7 +188,7 @@ tasks). IDs are opaque `task_…` / `tctx_…` strings.
 | `pending → failed` | background failure with `{stage: ready_timeout\|submit_refused, …}` evidence (pane missing/exited/never idle, or submit write refused) |
 | `* → canceled` (non-terminal) | `task.cancel`, or `finish --discard` from a non-terminal state |
 | `working → input_required` | worker turn ended with no report (`turn_ended_without_report` + `last_message?`); silent-worker watchdog (`worker_silent` + `timeout_s`, default 600 s, `0` disables); pending decision on the worker pane (`decision_required` + `decision_id`) |
-| `input_required → working` | accepted follow-up `pane.submit` on the worker pane (also clears `status_reason`) |
+| `input_required → working` | accepted follow-up `pane.submit` on the worker pane when no decision remains pending (also clears `status_reason`); answering the pending decision |
 | `working/input_required/pending → completed/failed/rejected` | `task.report` status (report on a terminal task is refused) |
 | `working/input_required/pending → failed` | worker pane death or restart recovery, with evidence, exactly once |
 

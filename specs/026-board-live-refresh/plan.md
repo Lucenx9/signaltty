@@ -1,0 +1,4 @@
+# Plan
+Introduce a board view/controller owning the current dialog, permanent column lists, keyed row widgets, current card metadata and chosen destination. App stores it and calls update instead of force_close/present. Keep board::present wrapper for native standalone callers. Reconcile rows in place and move only when order/column changes. Snapshot focused task ID and per-column visible anchor before update; restore only after actual geometry updates, with a generation guard for coalesced updates. Clamp removed anchors. Focus follows moved task and chooses adjacent surviving row after removal. Preserve close guard and async-dismiss behavior.
+
+GTK4/libadwaita/Rust2021. Spec/test first, parent sole writer/builder, independent direct xAI Grok/Gemini review (Sonnet reached API limit). No ADR: this adopts existing widget reconciliation, not a new domain boundary. Full gate and native captures required.

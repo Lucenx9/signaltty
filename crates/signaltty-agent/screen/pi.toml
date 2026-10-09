@@ -1,0 +1,29 @@
+# Ported from herdr (https://github.com/herdrdev/herdr) src/detect/manifests/pi.toml
+# at commit 2563803, Copyright herdr contributors, Apache-2.0
+# (https://www.apache.org/licenses/LICENSE-2.0). Changes: herdr `contains`
+# becomes a case-insensitive escaped regex, `whole_recent` becomes
+# `lines = 200`, nested any/all gates are flattened into separate rules or
+# alternations, and herdr's known-agent idle fallback is the explicit
+# lowest-priority `idle_fallback` rule.
+
+[agent]
+kind = "pi"
+
+[[screen]]
+id = "working_literal"
+state = "working"
+lines = 200
+priority = 100
+regex = ['(?i)Working\.\.\.', '(?m)^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working$']
+
+[[screen]]
+id = "working_border"
+state = "working"
+priority = 100
+regex = ['(?m)^── [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working ─+$', '(?m)^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working$']
+
+[[screen]]
+id = "idle_fallback"
+state = "idle"
+priority = -1000
+regex = ['']
