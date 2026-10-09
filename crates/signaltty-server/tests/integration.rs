@@ -3516,3 +3516,43 @@ esac
     .await;
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn spawned_pane_sees_term_program_and_not_inherited_tmux() {
+    let srv =
+        TestServer::start_with_env(&[("TMUX", "/tmp/tmux-host/default,1,0"), ("CLAUDECODE", "1")])
+            .await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(
+        &mut c,
+        vec![
+            "sh",
+            "-c",
+            "echo tp=$TERM_PROGRAM; echo tpv=$TERM_PROGRAM_VERSION; echo cc=${CLAUDECODE:-absent}; echo tmux=${TMUX:-absent}; sleep 1",
+        ],
+    )
+    .await;
+    wait_for_text(&mut c, &pane, "tmux=absent", Duration::from_secs(5)).await;
+    let read = c
+        .call(
+            "pane.read",
+            json!({"pane_id": pane, "mode": "tail", "lines": 50}),
+        )
+        .await
+        .unwrap();
+    let text = read["text"].as_str().unwrap();
+    assert!(
+        text.contains("tp=signaltty"),
+        "expected tp=signaltty, got:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("tpv={}", env!("CARGO_PKG_VERSION"))),
+        "expected tpv={}, got:\n{text}",
+        env!("CARGO_PKG_VERSION")
+    );
+    assert!(
+        text.contains("cc=absent"),
+        "expected cc=absent, got:\n{text}"
+    );
+    srv.shutdown().await;
+}
