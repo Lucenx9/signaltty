@@ -251,6 +251,7 @@ pub fn resolve_argv(plugin_dir: &Path, argv: &[String]) -> Vec<String> {
 // ---- registry + dispatch ----
 
 struct RegistryState {
+    generation: u64,
     plugins: Vec<LoadedPlugin>,
     failures: Vec<PluginFailure>,
 }
@@ -276,7 +277,11 @@ impl PluginRegistry {
         PluginRegistry {
             inner: Arc::new(RegistryInner {
                 dir,
-                state: Mutex::new(RegistryState { plugins, failures }),
+                state: Mutex::new(RegistryState {
+                    generation: 0,
+                    plugins,
+                    failures,
+                }),
                 semaphore: tokio::sync::Semaphore::new(MAX_CONCURRENT_HOOKS),
             }),
         }
@@ -284,7 +289,10 @@ impl PluginRegistry {
 
     pub fn reload(&self) {
         let (plugins, failures) = load_dir(&self.inner.dir);
-        *self.inner.state.lock().unwrap() = RegistryState { plugins, failures };
+        let mut state = self.inner.state.lock().unwrap();
+        state.generation += 1;
+        state.plugins = plugins;
+        state.failures = failures;
     }
 
     /// Snapshot for `plugin.list`.
@@ -328,22 +336,22 @@ impl PluginRegistry {
     /// Fire matching hooks for an event. Never blocks the caller long:
     /// each hook runs in its own task under a concurrency cap.
     pub async fn dispatch(&self, name: &str, envelope: &serde_json::Value, socket: &Path) {
-        let targets: Vec<(LoadedPlugin, Hook)> = {
+        let (generation, targets) = {
             let s = self.inner.state.lock().unwrap();
             let mut out = Vec::new();
-            for p in s.plugins.iter() {
-                for h in p.manifest.hook.iter() {
+            for (pi, p) in s.plugins.iter().enumerate() {
+                for (hi, h) in p.manifest.hook.iter().enumerate() {
                     if h.events
                         .iter()
                         .any(|g| signaltty_proto::glob_matches(g, name))
                     {
-                        out.push((p.clone(), h.clone()));
+                        out.push((pi, hi, p.clone(), h.clone()));
                     }
                 }
             }
-            out
+            (s.generation, out)
         };
-        for (plugin, hook) in targets {
+        for (pi, hi, plugin, hook) in targets {
             let this = self.clone();
             let envelope = envelope.clone();
             let socket = socket.to_path_buf();
@@ -353,29 +361,18 @@ impl PluginRegistry {
                 let err = run_hook(&plugin, &hook, &name, &envelope, &socket)
                     .await
                     .err();
-                // Look up by plugin name + hook identity. Reload replaces the
-                // plugins vec (and resets stats); positional indices would
-                // attribute this run to a different package after reorder.
+                // Indices identify hooks only within the captured generation.
+                // Old completions must not repopulate stats reset by reload.
                 let mut s = this.inner.state.lock().unwrap();
-                let plugin_name = plugin.manifest.plugin.name.as_str();
-                if let Some(p) = s
-                    .plugins
-                    .iter_mut()
-                    .find(|p| p.manifest.plugin.name == plugin_name)
-                {
-                    if let Some(st) = p
-                        .manifest
-                        .hook
-                        .iter()
-                        .position(|h| h.events == hook.events && h.command == hook.command)
-                        .and_then(|hi| p.stats.get_mut(hi))
-                    {
-                        st.runs += 1;
-                        st.last_run = Some(Utc::now());
-                        if let Some(e) = err {
-                            st.errors += 1;
-                            st.last_error = Some(e);
-                        }
+                if s.generation != generation {
+                    return;
+                }
+                if let Some(st) = s.plugins.get_mut(pi).and_then(|p| p.stats.get_mut(hi)) {
+                    st.runs += 1;
+                    st.last_run = Some(Utc::now());
+                    if let Some(e) = err {
+                        st.errors += 1;
+                        st.last_error = Some(e);
                     }
                 }
             });
@@ -712,5 +709,98 @@ timeout_secs = 5
         );
         assert_eq!(final_status["plugins"][0]["name"], "bravo");
         std::fs::remove_dir_all(&base).ok();
+    }
+    #[tokio::test]
+    async fn duplicate_hooks_keep_separate_stats() {
+        let base = std::env::temp_dir().join(format!("plug-duplicates-{}", std::process::id()));
+        let dir = base.join("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(MANIFEST_FILE),
+            r#"[plugin]
+name = "alpha"
+[[hook]]
+events = ["agent.done"]
+command = ["true"]
+[[hook]]
+events = ["agent.done"]
+command = ["true"]
+"#,
+        )
+        .unwrap();
+        let registry = PluginRegistry::load(base.clone());
+        registry
+            .dispatch(
+                "agent.done",
+                &serde_json::json!({}),
+                Path::new("/unused.sock"),
+            )
+            .await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let status = registry.status();
+                let hooks = status["plugins"][0]["hooks"].as_array().unwrap();
+                if hooks
+                    .iter()
+                    .map(|h| h["runs"].as_u64().unwrap())
+                    .sum::<u64>()
+                    == 2
+                {
+                    assert_eq!(hooks[0]["runs"], 1);
+                    assert_eq!(hooks[1]["runs"], 1);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn reload_discards_old_generation_completions() {
+        let base = std::env::temp_dir().join(format!("plug-generation-{}", std::process::id()));
+        let dir = base.join("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(MANIFEST_FILE),
+            r#"[plugin]
+name = "alpha"
+[[hook]]
+events = ["agent.done"]
+command = ["true"]
+"#,
+        )
+        .unwrap();
+        let registry = PluginRegistry::load(base.clone());
+        let permits = registry
+            .inner
+            .semaphore
+            .acquire_many(MAX_CONCURRENT_HOOKS as u32)
+            .await
+            .unwrap();
+        registry
+            .dispatch(
+                "agent.done",
+                &serde_json::json!({}),
+                Path::new("/unused.sock"),
+            )
+            .await;
+        tokio::task::yield_now().await;
+        registry.reload();
+        drop(permits);
+        let _finished = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            registry
+                .inner
+                .semaphore
+                .acquire_many(MAX_CONCURRENT_HOOKS as u32),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(registry.status()["plugins"][0]["hooks"][0]["runs"], 0);
+        std::fs::remove_dir_all(base).unwrap();
     }
 }
