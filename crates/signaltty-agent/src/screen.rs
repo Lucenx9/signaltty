@@ -53,13 +53,17 @@ enum Base {
     PromptBox,
     AbovePromptBox,
     AfterLastRule,
+    AfterLastPrompt,
+    BeforeCurrentPrompt,
+    WithoutCurrentPrompt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Region {
     Title,
-    /// A slice of the screen, then its last `lines` non-empty lines.
-    Lines(Base, Option<usize>),
+    /// A slice of the screen, then its last (or, for `top`, first) `lines`
+    /// non-empty lines.
+    Lines(Base, Option<usize>, bool),
 }
 
 #[derive(Debug, Clone)]
@@ -102,12 +106,19 @@ impl ScreenRule {
             "prompt_box" => (Some(Base::PromptBox), spec.lines),
             "above_prompt_box" => (Some(Base::AbovePromptBox), spec.lines),
             "after_last_rule" => (Some(Base::AfterLastRule), spec.lines),
+            "top" => (
+                Some(Base::Screen),
+                Some(spec.lines.unwrap_or(DEFAULT_LINES)),
+            ),
+            "after_last_prompt" => (Some(Base::AfterLastPrompt), spec.lines),
+            "before_current_prompt" => (Some(Base::BeforeCurrentPrompt), spec.lines),
+            "without_current_prompt" => (Some(Base::WithoutCurrentPrompt), spec.lines),
             other => return Err(at(format!("bad region '{other}'"))),
         };
         if lines.is_some_and(|n| !(1..=MAX_LINES).contains(&n)) {
             return Err(at(format!("lines must be 1..={MAX_LINES}")));
         }
-        let region = base.map_or(Region::Title, |b| Region::Lines(b, lines));
+        let region = base.map_or(Region::Title, |b| Region::Lines(b, lines, name == "top"));
         if spec.regex.is_empty() && spec.all.is_empty() {
             return Err(at("needs at least one regex or all".into()));
         }
@@ -138,15 +149,20 @@ impl ScreenRule {
         let sliced;
         let text = match self.region {
             Region::Title => title,
-            Region::Lines(base, limit) => {
+            Region::Lines(base, limit, from_top) => {
                 let raw: Vec<&str> = screen.lines().collect();
                 let lines: Vec<&str> = slice(base, &raw)
                     .iter()
                     .map(|l| l.trim_end())
                     .filter(|l| !l.is_empty())
                     .collect();
-                let n = limit.unwrap_or(lines.len());
-                sliced = lines[lines.len().saturating_sub(n)..].join("\n");
+                let n = limit.unwrap_or(lines.len()).min(lines.len());
+                let kept = if from_top {
+                    &lines[..n]
+                } else {
+                    &lines[lines.len() - n..]
+                };
+                sliced = kept.join("\n");
                 &sliced
             }
         };
@@ -182,7 +198,29 @@ fn slice<'a>(base: Base, lines: &'a [&'a str]) -> &'a [&'a str] {
         }),
         Base::AbovePromptBox => top.map_or(lines, |t| &lines[..t]),
         Base::AfterLastRule => rules.last().map_or(lines, |&last| &lines[last + 1..]),
+        Base::AfterLastPrompt => match lines.iter().rposition(|l| is_prompt(l)) {
+            Some(i) => &lines[i + 1..],
+            None => lines,
+        },
+        Base::BeforeCurrentPrompt => current_prompt(lines).map_or(lines, |i| &lines[..i]),
+        Base::WithoutCurrentPrompt => match current_prompt(lines) {
+            Some(_) => &[],
+            None => lines,
+        },
     }
+}
+
+/// herdr's Codex prompt line: `›` alone or `› ` followed by input.
+fn is_prompt(line: &str) -> bool {
+    line == "›" || line.starts_with("› ")
+}
+
+/// The last prompt line, unless a Codex block line (`•`, `■`, `✗`, `✓`)
+/// follows it, which means that prompt was already answered.
+fn current_prompt(lines: &[&str]) -> Option<usize> {
+    let i = lines.iter().rposition(|l| is_prompt(l))?;
+    let block = |l: &&str| l.starts_with(['•', '■', '✗', '✓']);
+    (!lines[i + 1..].iter().any(block)).then_some(i)
 }
 
 /// Highest-priority matching rule; ties keep the first in iteration order.
@@ -240,7 +278,7 @@ mod tests {
     #[test]
     fn invalid_rules_are_rejected() {
         assert!(compile_err("busy", None, None, &["x"]).contains("state"));
-        assert!(compile_err("working", Some("top"), None, &["x"]).contains("region"));
+        assert!(compile_err("working", Some("middle"), None, &["x"]).contains("region"));
         assert!(compile_err("working", None, Some(0), &["x"]).contains("lines"));
         assert!(compile_err("working", None, Some(201), &["x"]).contains("lines"));
         assert!(compile_err("working", Some("title"), Some(3), &["x"]).contains("lines"));
@@ -348,6 +386,58 @@ mod tests {
         assert!(super::is_rule("───── suffix"));
         assert!(super::is_rule("  ──  "));
         assert!(!super::is_rule("x───"));
+    }
+
+    fn hits(region: &str, lines: Option<usize>, re: &str, screen: &str) -> bool {
+        let mut text = format!("id = 'r'\nstate = 'idle'\nregion = '{region}'\nregex = ['{re}']");
+        if let Some(n) = lines {
+            text.push_str(&format!("\nlines = {n}"));
+        }
+        from_toml(&text).unwrap().matches("", screen)
+    }
+
+    #[test]
+    fn codex_prompt_regions_follow_herdr() {
+        // An answered prompt (a block after it) and a current prompt at the end.
+        let s = "› first ask\n• answer\nhint above\n› \n";
+        assert!(hits("after_last_prompt", None, "^$|^", s));
+        assert!(!hits("after_last_prompt", None, "hint|answer", s));
+        assert!(hits("before_current_prompt", None, "hint above", s));
+        assert!(!hits("before_current_prompt", None, "^›[ ]?$", s));
+        assert!(!hits("without_current_prompt", None, "answer", s));
+        // A block after the last prompt: no current prompt.
+        let s = "› ask\n• Working (3s • esc to interrupt)\n";
+        assert!(hits("after_last_prompt", None, "Working", s));
+        assert!(hits("before_current_prompt", None, "› ask", s));
+        assert!(hits("without_current_prompt", None, "Working", s));
+        // No prompt at all: whole screen everywhere.
+        let s = "Allow command? [y/n]\n";
+        for region in [
+            "after_last_prompt",
+            "before_current_prompt",
+            "without_current_prompt",
+        ] {
+            assert!(hits(region, None, "Allow command", s), "{region}");
+        }
+        // "›x" is not a prompt line; "›" alone is.
+        assert!(super::is_prompt("›"));
+        assert!(super::is_prompt("› fix it"));
+        assert!(!super::is_prompt("›x"));
+        assert!(!super::is_prompt(" › fix"));
+    }
+
+    #[test]
+    fn top_region_keeps_the_first_lines() {
+        let s = "\nfirst\nsecond\nthird\n";
+        assert!(hits("top", Some(2), "second", s));
+        assert!(!hits("top", Some(2), "third", s));
+        assert!(hits("top", Some(1), r"\Afirst\z", s));
+        let r = from_toml("id = 't'\nstate = 'idle'\nregion = 'top'\nregex = ['x']").unwrap();
+        assert_eq!(r.region_label(), "top(12)");
+        let r =
+            from_toml("id = 'p'\nstate = 'idle'\nregion = 'before_current_prompt'\nregex = ['x']")
+                .unwrap();
+        assert_eq!(r.region_label(), "before_current_prompt");
     }
 
     #[test]
