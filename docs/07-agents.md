@@ -221,26 +221,36 @@ agent still needs a Rust adapter. See ADR-0009.
 
 `[[screen]]` tables classify panes whose current process has sent no hook
 (hooks always win, ADR-0006). Every 500 ms the server matches the rules of the
-pane's kind, from every manifest of that kind, against the pane title or the
-last non-empty lines of the visible screen (trailing spaces trimmed):
+pane's kind, from every manifest of that kind, against the pane title or a
+region of the visible screen (lines trimmed, empty lines dropped):
 
 ```toml
 [[screen]]
 id = "approval"             # shown in load errors
-state = "blocked"           # working | blocked | idle
-region = "bottom"           # bottom (default) | title
-lines = 12                  # bottom only: 1..=200, default 12
+state = "blocked"           # working | blocked | idle | hold
+region = "bottom"           # bottom (default) | title | screen | prompt_box
+                            # | above_prompt_box | after_last_rule
+lines = 12                  # last non-empty lines, 1..=200; bottom defaults to 12
 regex = ['Allow\? \[y/n\]'] # any match; (?m) for per-line anchors
 # all = ['…']               # every regex must also match
 # not = ['…']               # no regex may match
 priority = 10               # highest match wins; ties keep file/declaration order
 ```
 
-A rule needs `regex` or `all`. signaltty bundles rules for `pi`, `opencode`
-and `cursor`, ported from herdr (`crates/signaltty-agent/screen/`); each ends
-with an `idle_fallback` rule (priority -1000, empty regex) so a known agent with
-no working or blocked sign reads as idle. Any user `[[screen]]` rule for a
-kind replaces that kind's bundled rules; copy the bundled file to adjust it.
+A rule needs `regex` or `all`. Regions follow herdr: a horizontal rule is a
+line starting with `─` (three or more, or nothing after them); `prompt_box`
+is the text between the second-last rule and the next one (empty without
+two rules), `above_prompt_box` everything before it (the whole screen
+without a box), `after_last_rule` everything below the last rule (the whole
+screen without one), `screen` the whole visible screen, `bottom` = `screen`
++ `lines = 12`. A winning `hold` rule leaves the pane's state unchanged (a
+transcript viewer or model picker is not a turn state).
+
+signaltty bundles rules for `pi`, `opencode`, `cursor` and `claude`, ported
+from herdr (`crates/signaltty-agent/screen/`); each ends with an
+`idle_fallback` rule (priority -1000, empty regex) so a known agent with no
+working or blocked sign reads as idle. Any user `[[screen]]` rule for a kind
+replaces that kind's bundled rules; copy the bundled file to adjust it.
 
 `working` → `working`; `blocked` → `blocked` + `input_required`; `idle` after
 `working` → `done` + `unread`, after `blocked` → `idle`, otherwise nothing.
