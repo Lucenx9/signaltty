@@ -255,11 +255,21 @@ when there is no current prompt (otherwise empty); without a prompt both
 prompt regions read the whole screen. A winning `hold` rule leaves the pane's
 state unchanged (a transcript viewer or model picker is not a turn state).
 
-signaltty bundles rules for `pi`, `opencode`, `cursor`, `claude` and
-`codex`, ported from herdr (`crates/signaltty-agent/screen/`); each ends with
-an `idle_fallback` rule (priority -1000, empty regex) so a known agent with no
-working or blocked sign reads as idle. Any user `[[screen]]` rule for a kind
-replaces that kind's bundled rules; copy the bundled file to adjust it.
+Agents without their own kind run as `generic` panes. A `generic` manifest
+that lists `binaries` applies its `[[screen]]` rules only to generic panes
+running one of those programs; without `binaries` it applies to every generic
+pane. The program is the spawn argv's basename, refreshed every 10 s from the
+deepest non-shell descendant; a `node` (`nodejs`), `bun`, `deno` or `python` runtime is
+named after the script it runs (`pane.explain` shows it as `process`).
+
+signaltty bundles rules for `pi`, `opencode`, `cursor`, `claude` and `codex`,
+and for the generic programs `gemini`, `copilot` (also `github-copilot`,
+`ghcs`), `droid`, `kilo` (`kilo-code`) and `qodercli` (`qoderclicn`, `qoder`,
+`qodercn`), ported from herdr (`crates/signaltty-agent/screen/`); each ends
+with an `idle_fallback` rule (priority -1000, empty regex) so a known agent
+with no working or blocked sign reads as idle. User `[[screen]]` rules replace
+the bundled ones for the panes they apply to (a kind, or for generic panes a
+program); copy the bundled file to adjust it.
 
 `working` → `working`; `blocked` → `blocked` + `input_required`; `idle` after
 `working` → `done` + `unread`, after `blocked` → `idle`, otherwise nothing.
