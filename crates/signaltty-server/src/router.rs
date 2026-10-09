@@ -98,12 +98,21 @@ impl Ctx {
 
     /// `[[screen]]` rules of every overlay for `kind`, in file then
     /// declaration order (several generic manifests may each add rules).
+    /// Any user rule for a kind replaces its bundled rules (ADR-0025).
     pub fn screen_rules(&self, kind: AgentKind) -> Vec<&signaltty_agent::screen::ScreenRule> {
-        self.overlays
+        let user: Vec<_> = self
+            .overlays
             .iter()
             .filter(|o| o.kind() == kind)
             .flat_map(|o| o.screen_rules())
-            .collect()
+            .collect();
+        if user.is_empty() {
+            signaltty_agent::bundled::bundled_screen_rules(kind)
+                .iter()
+                .collect()
+        } else {
+            user
+        }
     }
 
     pub fn detect_kind(&self, argv: &[String]) -> AgentKind {

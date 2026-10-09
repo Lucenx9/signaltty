@@ -135,3 +135,56 @@ async fn a_hook_takes_over_a_screen_blocked_pane() {
     );
     srv.shutdown().await;
 }
+
+/// A fake `pi` executable: shows a working line, then clears to a prompt.
+fn fake_pi(script: &str) -> String {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-fake-pi-{}",
+        signaltty_core::ids::new_pane_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pi = dir.join("pi");
+    std::fs::write(&pi, format!("#!/bin/sh\n{script}\n")).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o755)).unwrap();
+    pi.to_string_lossy().to_string()
+}
+
+async fn spawn_argv(c: &mut TestClient, argv: Value) -> String {
+    let w = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let p = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": w["workspace"]["id"], "argv": argv}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(p["pane"]["agent"]["kind"], "pi");
+    p["pane"]["id"].as_str().unwrap().to_string()
+}
+
+const PI_TURN: &str = "echo Working...; sleep 2; printf '\\033[2J\\033[H> '; sleep 30";
+
+#[tokio::test]
+async fn bundled_pi_rules_finish_a_turn_without_manifests() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let id = spawn_argv(&mut c, json!([fake_pi(PI_TURN)])).await;
+    wait(&mut c, &id, "working", 5).await.unwrap();
+    wait(&mut c, &id, "done", 5).await.unwrap();
+    assert_eq!(pane(&mut c, &id).await["attention"], "unread");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn user_screen_rules_replace_the_bundled_ones() {
+    let srv = server_with("pi").await;
+    let mut c = srv.client().await;
+    let id = spawn_argv(&mut c, json!([fake_pi("echo Working...; sleep 30")])).await;
+    // The bundled pi rule would call this working; the user's rules do not.
+    assert!(wait(&mut c, &id, "working", 2).await.is_err());
+    srv.shutdown().await;
+}
