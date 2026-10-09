@@ -12,6 +12,7 @@ use signaltty_core::model::AgentKind;
 use signaltty_core::state::{Attention, Lifecycle};
 
 use crate::registry::adapter_for_kind;
+use crate::screen::{ScreenRule, ScreenRuleSpec};
 use crate::types::{
     AdapterEvent, AdapterMetadata, AgentAdapter, AnswerChannel, LifecycleDecision,
     NotificationDraft, ProcessInfo, ResumeCommand,
@@ -26,6 +27,8 @@ pub struct Manifest {
     pub session: SessionSection,
     #[serde(default)]
     pub lifecycle: HashMap<String, HookOverride>,
+    #[serde(default)]
+    pub screen: Vec<ScreenRuleSpec>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -84,6 +87,9 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
             Attention::parse(a).ok_or_else(|| format!("[lifecycle.{hook}] bad attention '{a}'"))?;
         }
     }
+    for rule in &manifest.screen {
+        ScreenRule::compile(rule)?;
+    }
     let _ = kind;
     Ok(manifest)
 }
@@ -93,12 +99,23 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
 #[derive(Debug, Clone)]
 pub struct OverlayAdapter {
     manifest: Manifest,
+    screen: Vec<ScreenRule>,
 }
 
 impl OverlayAdapter {
     pub fn new(manifest: Manifest) -> Result<OverlayAdapter, String> {
         manifest.kind()?; // validate taxonomy now
-        Ok(OverlayAdapter { manifest })
+        let screen = manifest
+            .screen
+            .iter()
+            .map(ScreenRule::compile)
+            .collect::<Result<_, _>>()?;
+        Ok(OverlayAdapter { manifest, screen })
+    }
+
+    /// Compiled `[[screen]]` rules, in declaration order.
+    pub fn screen_rules(&self) -> &[ScreenRule] {
+        &self.screen
     }
 
     pub fn kind(&self) -> AgentKind {
@@ -279,6 +296,39 @@ message = "future says hi"
                 .is_err()
         );
         assert!(parse_manifest("[agent]\nkind = \"codex\"\nbinaries = [\"\"]").is_err());
+        let bad_screen = "[agent]\nkind = \"generic\"\n[[screen]]\nid = \"x\"\nstate = \"working\"\nregex = [\"(\"]";
+        assert!(parse_manifest(bad_screen)
+            .unwrap_err()
+            .contains("[[screen]] 'x'"));
+    }
+
+    #[test]
+    fn screen_rules_compile_into_the_overlay() {
+        let text = r#"
+[agent]
+kind = "generic"
+
+[[screen]]
+id = "ask"
+state = "blocked"
+regex = ['Allow\? \[y/n\]']
+priority = 3
+
+[[screen]]
+id = "spin"
+state = "working"
+region = "title"
+regex = ['^\* ']
+"#;
+        let overlay = OverlayAdapter::new(parse_manifest(text).unwrap()).unwrap();
+        let rules = overlay.screen_rules();
+        assert_eq!(rules.len(), 2);
+        let hit = crate::screen::classify(rules, "* busy", "Allow? [y/n]").unwrap();
+        assert_eq!(
+            (hit.id.as_str(), hit.state),
+            ("ask", crate::screen::ScreenState::Blocked)
+        );
+        assert!(wrap().screen_rules().is_empty());
     }
 
     #[test]
