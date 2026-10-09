@@ -34,6 +34,12 @@ pub struct Ctx {
     pub ptys: PtyManager,
     pub config: Config,
     pub shutdown: Arc<tokio::sync::Notify>,
+    /// Set once shutdown begins: the shutdown snapshot is final, so the
+    /// debounced flusher must not overwrite it with teardown changes.
+    pub stopping: std::sync::atomic::AtomicBool,
+    /// Serializes snapshot writes, so an in-flight flush cannot land after
+    /// the final save.
+    pub save_lock: std::sync::Mutex<()>,
     pub plugins: signaltty_plugin::PluginRegistry,
     /// Manifest detection overlays (data, not code — see ADR-0009).
     /// Swapped whole by `agents.reload`; read through [`Ctx::overlays`].
@@ -173,7 +179,25 @@ impl Overlays {
 impl Ctx {
     /// Wake every shutdown waiter and leave a permit if `serve` is between
     /// accepts. `notify_waiters` alone drops the signal when nobody is parked.
+    /// The shutdown snapshot. Only the first shutdown trigger saves (logind,
+    /// a signal or `server.shutdown`; a later SIGTERM sees torn-down state),
+    /// and no debounced flush runs after it.
+    pub fn save_final(&self) {
+        let _writes = self.save_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if self
+            .stopping
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        if let Err(e) = crate::persist::save(&self.store, &self.ptys.terms(), &self.config) {
+            tracing::warn!("shutdown snapshot failed: {e}");
+        }
+    }
+
     pub(crate) fn request_shutdown(&self) {
+        self.stopping
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.shutdown.notify_waiters();
         self.shutdown.notify_one();
     }
@@ -365,9 +389,7 @@ fn h_server_shutdown(ctx: &Ctx, params: &Value) -> Handler {
             ));
         }
     }
-    if let Err(e) = crate::persist::save(&ctx.store, &ctx.ptys.terms(), &ctx.config) {
-        tracing::warn!("shutdown snapshot failed: {e}");
-    }
+    ctx.save_final();
     ctx.emit(event::SERVER_WILL_SHUTDOWN, json!({}));
     ctx.request_shutdown();
     Ok((json!({"stopped": true}), ConnEffect::default()))
