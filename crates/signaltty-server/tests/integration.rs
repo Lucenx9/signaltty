@@ -632,10 +632,7 @@ async fn manifest_overlay_detects_and_classifies() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-agents-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     write_manifest(
         &dir,
@@ -688,10 +685,7 @@ async fn procscan_promotes_through_shell_and_follows_cwd() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-agents-proc-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     write_manifest(
         &dir,
@@ -910,10 +904,7 @@ async fn workspace_diff_reports_numstat_and_rejects_non_repo() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-intdiff-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     // The temp root is the git ceiling so a TMPDIR inside a checkout is never
@@ -1973,10 +1964,7 @@ fn plugin_test_dir(tag: &str) -> std::path::PathBuf {
         "signaltty-plugtest-{}-{}-{}",
         std::process::id(),
         tag,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -3319,10 +3307,7 @@ async fn session_end_never_rewrites_a_failed_outcome() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-agents-failed-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     write_manifest(
         &dir,

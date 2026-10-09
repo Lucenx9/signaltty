@@ -640,10 +640,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "signaltty-diff-{tag}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            signaltty_core::ids::new_pane_id()
         ));
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         let run = |args: &[&str]| {
@@ -907,10 +904,7 @@ mod tests {
         let outside = std::env::temp_dir().join(format!(
             "signaltty-norepo-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            signaltty_core::ids::new_pane_id()
         ));
         std::fs::create_dir_all(&outside).unwrap();
         // A `.git` pointer to nowhere fails status even when this directory
