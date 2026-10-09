@@ -77,6 +77,17 @@ pub fn proc_argv0(pid: u32) -> Option<String> {
     Some(text.rsplit('/').next().unwrap_or(&text).to_string())
 }
 
+/// All of `/proc/<pid>/cmdline`'s fields.
+pub fn proc_argv(pid: u32) -> Option<Vec<String>> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let argv: Vec<String> = raw
+        .split(|b| *b == 0)
+        .filter(|f| !f.is_empty())
+        .map(|f| String::from_utf8_lossy(f).to_string())
+        .collect();
+    (!argv.is_empty()).then_some(argv)
+}
+
 /// Target of `/proc/<pid>/cwd` (None when unreadable or gone).
 pub fn proc_cwd(pid: u32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/cwd"))
@@ -101,11 +112,18 @@ pub fn scan(
             .collect()
     };
     let mut changed: Vec<(String, Option<AgentKind>, Option<String>)> = Vec::new();
+    let mut names: Vec<(String, String)> = Vec::new();
     for (pane_id, kind, cwd) in live {
         let Some(child) = child_pids.get(&pane_id).copied() else {
             continue;
         };
         let target = deepest_descendant(child);
+        if let Some(argv) = proc_argv(target) {
+            names.push((
+                pane_id.clone(),
+                signaltty_agent::process::process_name(&argv),
+            ));
+        }
         let bin = proc_argv0(target).unwrap_or_default();
         let new_kind = if matches!(kind, AgentKind::Generic | AgentKind::None) && !bin.is_empty() {
             let proc = ProcessInfo {
@@ -139,10 +157,14 @@ pub fn scan(
             changed.push((pane_id, new_kind, new_cwd));
         }
     }
+    let mut s = store.write().unwrap();
+    // Screen-rule scoping state (spec 033): no event, no persist.
+    for (pane_id, name) in names {
+        s.set_process_name(&pane_id, name);
+    }
     if changed.is_empty() {
         return Vec::new();
     }
-    let mut s = store.write().unwrap();
     let mut outbound = Vec::new();
     for (pane_id, kind, cwd) in changed {
         let Some(pane) = s.panes.get_mut(&pane_id) else {

@@ -57,6 +57,8 @@ struct PaneProgress {
     hooked: bool,
     /// The current `input_required` was raised by a screen rule.
     screen_attention: bool,
+    /// The program this process runs (spec 033): spawn argv, then procscan.
+    process_name: String,
 }
 
 pub struct Store {
@@ -139,6 +141,7 @@ impl Store {
                 ]),
                 hooked: false,
                 screen_attention: false,
+                process_name: signaltty_agent::process::process_name(&self.panes[pane_id].argv),
             },
         );
     }
@@ -499,6 +502,20 @@ impl Store {
 
     /// The first hook takes the pane over from screen rules and withdraws
     /// the `input_required` they raised; other attention stays.
+    /// The program a live pane runs, for screen-rule scoping (no event).
+    pub fn process_name(&self, pane_id: &str) -> String {
+        self.progress
+            .get(pane_id)
+            .map(|p| p.process_name.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_process_name(&mut self, pane_id: &str, name: String) {
+        if let Some(progress) = self.progress.get_mut(pane_id) {
+            progress.process_name = name;
+        }
+    }
+
     pub fn mark_hooked(&mut self, pane_id: &str) -> Option<StoredEvent> {
         let progress = self.progress.get_mut(pane_id)?;
         progress.hooked = true;

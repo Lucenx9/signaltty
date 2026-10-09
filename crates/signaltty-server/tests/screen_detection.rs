@@ -298,3 +298,109 @@ async fn explain_identifies_the_winner_among_duplicate_ids() {
     assert_eq!(e["rules"][0]["matched"], false);
     srv.shutdown().await;
 }
+
+/// `/bin/sh` reachable as `name`, so `/proc/<pid>/cmdline` names `name`.
+fn program_as(name: &str) -> String {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-program-{}",
+        signaltty_core::ids::new_pane_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let link = dir.join(name);
+    std::os::unix::fs::symlink("/bin/sh", &link).unwrap();
+    link.to_string_lossy().to_string()
+}
+
+const GEMINI_APPLY: &str = "printf '│ Apply this change?\\n'; sleep 30";
+
+async fn spawn_program(c: &mut TestClient, argv: Value) -> String {
+    let w = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let p = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": w["workspace"]["id"], "argv": argv}),
+        )
+        .await
+        .unwrap();
+    p["pane"]["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn bundled_generic_rules_follow_the_program() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let gemini = spawn_program(&mut c, json!([program_as("gemini"), "-c", GEMINI_APPLY])).await;
+    let other = spawn_program(&mut c, json!([program_as("notgemini"), "-c", GEMINI_APPLY])).await;
+    // An alias reaches its agent's rules too (copilot as `ghcs`).
+    let ghcs = spawn_program(
+        &mut c,
+        json!([
+            program_as("ghcs"),
+            "-c",
+            "printf 'Run it? Enter to confirm · Esc to cancel\\n'; sleep 30"
+        ]),
+    )
+    .await;
+    wait(&mut c, &ghcs, "blocked", 5).await.unwrap();
+    wait(&mut c, &gemini, "blocked", 5).await.unwrap();
+    assert_eq!(pane(&mut c, &gemini).await["agent"]["kind"], "generic");
+    // The same screen in another generic program stays unclassified.
+    assert!(wait(&mut c, &other, "blocked", 2).await.is_err());
+    let e = explain(&mut c, &gemini).await.unwrap();
+    assert_eq!(
+        (e["process"].clone(), e["source"].clone()),
+        (json!("gemini"), json!("bundled"))
+    );
+    let e = explain(&mut c, &other).await.unwrap();
+    assert_eq!(
+        (e["process"].clone(), e["source"].clone()),
+        (json!("notgemini"), json!("none"))
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn user_generic_rules_are_scoped_by_binaries() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-screen-scoped-{}",
+        signaltty_core::ids::new_pane_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("mytool.toml"),
+        "[agent]\nkind = \"generic\"\nbinaries = [\"mytool\"]\n[[screen]]\nid = \"ask\"\nstate = \"blocked\"\nregex = ['Allow\\?']\n",
+    )
+    .unwrap();
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let mut c = srv.client().await;
+    let script = "printf 'Allow? '; sleep 30";
+    let tool = spawn_program(&mut c, json!([program_as("mytool"), "-c", script])).await;
+    let shell = spawn_program(&mut c, json!(["sh", "-c", script])).await;
+    wait(&mut c, &tool, "blocked", 5).await.unwrap();
+    assert!(wait(&mut c, &shell, "blocked", 2).await.is_err());
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_process_refresh_finds_a_program_started_from_a_shell() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let gemini = program_as("gemini");
+    let id = spawn_program(
+        &mut c,
+        json!([
+            "sh",
+            "-c",
+            format!("sleep 1; exec {gemini} -c \"{GEMINI_APPLY}\"")
+        ]),
+    )
+    .await;
+    // Spawned as `sh`: no rules until the process refresh sees `gemini`.
+    assert_eq!(explain(&mut c, &id).await.unwrap()["process"], "sh");
+    wait(&mut c, &id, "blocked", 25).await.unwrap();
+    assert_eq!(explain(&mut c, &id).await.unwrap()["process"], "gemini");
+    srv.shutdown().await;
+}

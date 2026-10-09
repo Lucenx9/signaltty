@@ -107,22 +107,22 @@ impl Ctx {
     /// declaration order (several generic manifests may each add rules).
     /// Any user rule for a kind replaces its bundled rules (ADR-0025).
     /// Returns the source (`user`, `bundled` or `none`) with the rules.
+    /// Generic rules are scoped to the pane's `process` (spec 033).
     pub fn screen_rules(
         &self,
         kind: AgentKind,
+        process: &str,
     ) -> (&'static str, Vec<&signaltty_agent::screen::ScreenRule>) {
         let user: Vec<_> = self
             .overlays
             .iter()
             .filter(|o| o.kind() == kind)
-            .flat_map(|o| o.screen_rules())
+            .flat_map(|o| o.screen_rules_for(process))
             .collect();
         if !user.is_empty() {
             return ("user", user);
         }
-        let bundled: Vec<_> = signaltty_agent::bundled::bundled_screen_rules(kind)
-            .iter()
-            .collect();
+        let bundled = signaltty_agent::bundled::bundled_screen_rules(kind, process);
         (
             if bundled.is_empty() {
                 "none"
@@ -962,7 +962,7 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
 /// classification tick uses, against the current title and visible screen.
 fn h_pane_explain(ctx: &Ctx, params: &Value) -> Handler {
     let id = decode::<params::PaneId>(params)?.pane_id;
-    let (kind, live, hooked, title) = {
+    let (kind, live, hooked, title, process) = {
         let s = ctx.store.read().unwrap();
         let pane = s
             .panes
@@ -973,9 +973,10 @@ fn h_pane_explain(ctx: &Ctx, params: &Value) -> Handler {
             matches!(pane.live, LiveState::Live),
             s.is_hooked(&id),
             pane.title.clone(),
+            s.process_name(&id),
         )
     };
-    let (source, rules) = ctx.screen_rules(kind);
+    let (source, rules) = ctx.screen_rules(kind, &process);
     let screen = ctx.ptys.terms().lock().unwrap().snapshot(&id);
     let winner = signaltty_agent::screen::classify(rules.iter().copied(), &title, &screen);
     let traced: Vec<Value> = rules
@@ -989,6 +990,7 @@ fn h_pane_explain(ctx: &Ctx, params: &Value) -> Handler {
         json!({
             "pane_id": id,
             "kind": kind.as_str(),
+            "process": process,
             "live": live,
             "hooked": hooked,
             "source": source,
@@ -1925,17 +1927,20 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
 /// One screen-rule pass over live, hook-less panes (spec 027). True when
 /// any pane changed state.
 pub fn classify_screens(ctx: &Ctx) -> bool {
-    let candidates: Vec<(String, AgentKind, String)> = {
+    let candidates: Vec<(String, AgentKind, String, String)> = {
         let s = ctx.store.read().unwrap();
         s.panes
             .values()
             .filter(|p| matches!(p.live, LiveState::Live) && !s.is_hooked(&p.id))
-            .map(|p| (p.id.clone(), p.agent.kind, p.title.clone()))
+            .map(|p| {
+                let process = s.process_name(&p.id);
+                (p.id.clone(), p.agent.kind, p.title.clone(), process)
+            })
             .collect()
     };
     let mut changed = false;
-    for (id, kind, title) in candidates {
-        let (_, rules) = ctx.screen_rules(kind);
+    for (id, kind, title, process) in candidates {
+        let (_, rules) = ctx.screen_rules(kind, &process);
         if rules.is_empty() {
             continue;
         }
