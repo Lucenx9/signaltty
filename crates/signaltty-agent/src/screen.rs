@@ -32,6 +32,8 @@ pub enum ScreenState {
     Working,
     Blocked,
     Idle,
+    /// Wins but changes nothing (herdr `skip_state_update`).
+    Hold,
 }
 
 impl ScreenState {
@@ -40,14 +42,24 @@ impl ScreenState {
             ScreenState::Working => "working",
             ScreenState::Blocked => "blocked",
             ScreenState::Idle => "idle",
+            ScreenState::Hold => "hold",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Base {
+    Screen,
+    PromptBox,
+    AbovePromptBox,
+    AfterLastRule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Region {
     Title,
-    Bottom(usize),
+    /// A slice of the screen, then its last `lines` non-empty lines.
+    Lines(Base, Option<usize>),
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +68,8 @@ pub struct ScreenRule {
     pub state: ScreenState,
     pub priority: i32,
     region: Region,
+    /// The region as written (`bottom(12)`, `screen(5)`, `title`, …).
+    label: String,
     regexes: Vec<Regex>,
     all: Vec<Regex>,
     not: Vec<Regex>,
@@ -71,20 +85,29 @@ impl ScreenRule {
             "working" => ScreenState::Working,
             "blocked" => ScreenState::Blocked,
             "idle" => ScreenState::Idle,
+            "hold" => ScreenState::Hold,
             other => return Err(at(format!("bad state '{other}'"))),
         };
-        let region = match (spec.region.as_deref().unwrap_or("bottom"), spec.lines) {
-            ("title", None) => Region::Title,
-            ("title", Some(_)) => return Err(at("lines only applies to region bottom".into())),
-            ("bottom", lines) => {
-                let n = lines.unwrap_or(DEFAULT_LINES);
-                if !(1..=MAX_LINES).contains(&n) {
-                    return Err(at(format!("lines must be 1..={MAX_LINES}")));
-                }
-                Region::Bottom(n)
+        let name = spec.region.as_deref().unwrap_or("bottom");
+        let (base, lines) = match name {
+            "title" if spec.lines.is_some() => {
+                return Err(at("lines does not apply to region title".into()))
             }
-            (other, _) => return Err(at(format!("bad region '{other}'"))),
+            "title" => (None, None),
+            "bottom" => (
+                Some(Base::Screen),
+                Some(spec.lines.unwrap_or(DEFAULT_LINES)),
+            ),
+            "screen" => (Some(Base::Screen), spec.lines),
+            "prompt_box" => (Some(Base::PromptBox), spec.lines),
+            "above_prompt_box" => (Some(Base::AbovePromptBox), spec.lines),
+            "after_last_rule" => (Some(Base::AfterLastRule), spec.lines),
+            other => return Err(at(format!("bad region '{other}'"))),
         };
+        if lines.is_some_and(|n| !(1..=MAX_LINES).contains(&n)) {
+            return Err(at(format!("lines must be 1..={MAX_LINES}")));
+        }
+        let region = base.map_or(Region::Title, |b| Region::Lines(b, lines));
         if spec.regex.is_empty() && spec.all.is_empty() {
             return Err(at("needs at least one regex or all".into()));
         }
@@ -98,37 +121,67 @@ impl ScreenRule {
             state,
             priority: spec.priority,
             region,
+            label: lines.map_or(name.to_string(), |n| format!("{name}({n})")),
             regexes: compile(&spec.regex)?,
             all: compile(&spec.all)?,
             not: compile(&spec.not)?,
         })
     }
 
-    /// `title` or `bottom(<lines>)`, for `pane.explain`.
-    pub fn region_label(&self) -> String {
-        match self.region {
-            Region::Title => "title".into(),
-            Region::Bottom(n) => format!("bottom({n})"),
-        }
+    /// The region as written in the manifest, with its line limit, for
+    /// `pane.explain`.
+    pub fn region_label(&self) -> &str {
+        &self.label
     }
 
     pub fn matches(&self, title: &str, screen: &str) -> bool {
-        let bottom;
+        let sliced;
         let text = match self.region {
             Region::Title => title,
-            Region::Bottom(n) => {
-                let lines: Vec<&str> = screen
-                    .lines()
-                    .map(str::trim_end)
+            Region::Lines(base, limit) => {
+                let raw: Vec<&str> = screen.lines().collect();
+                let lines: Vec<&str> = slice(base, &raw)
+                    .iter()
+                    .map(|l| l.trim_end())
                     .filter(|l| !l.is_empty())
                     .collect();
-                bottom = lines[lines.len().saturating_sub(n)..].join("\n");
-                &bottom
+                let n = limit.unwrap_or(lines.len());
+                sliced = lines[lines.len().saturating_sub(n)..].join("\n");
+                &sliced
             }
         };
         (self.regexes.is_empty() || self.regexes.iter().any(|r| r.is_match(text)))
             && self.all.iter().all(|r| r.is_match(text))
             && !self.not.iter().any(|r| r.is_match(text))
+    }
+}
+
+/// herdr's horizontal rule: starts with `─`, and either is only dashes or
+/// has at least three before any trailing text.
+fn is_rule(line: &str) -> bool {
+    let trimmed = line.trim();
+    let dashes = trimmed.chars().take_while(|&c| c == '─').count();
+    dashes > 0 && (dashes >= 3 || trimmed.trim_start_matches('─').trim().is_empty())
+}
+
+/// The raw screen lines a region reads (herdr semantics: the prompt box
+/// opens at the second-last rule and ends at the next one; no box means an
+/// empty box and a whole-screen "above").
+fn slice<'a>(base: Base, lines: &'a [&'a str]) -> &'a [&'a str] {
+    let rules: Vec<usize> = (0..lines.len()).filter(|&i| is_rule(lines[i])).collect();
+    let top = rules.len().checked_sub(2).map(|i| rules[i]);
+    match base {
+        Base::Screen => lines,
+        Base::PromptBox => top.map_or(&[], |t| {
+            let end = rules
+                .iter()
+                .copied()
+                .find(|&i| i > t)
+                .unwrap_or(lines.len());
+            &lines[t + 1..end]
+        }),
+        Base::AbovePromptBox => top.map_or(lines, |t| &lines[..t]),
+        Base::AfterLastRule => rules.last().map_or(lines, |&last| &lines[last + 1..]),
     }
 }
 
@@ -241,6 +294,86 @@ mod tests {
             from_toml("id = 'e'\nstate = 'idle'\nregex = ['x']\nnot = ['(']")
                 .unwrap_err()
                 .contains("regex")
+        );
+    }
+
+    const BOXED: &str = "old output\n────────\nDo you want to proceed?\n✻ Waiting for 2 background agents to finish\n────────────\n❯ fix it\n────────────\n  ? for shortcuts\n";
+
+    fn region_hits(region: &str, lines: Option<usize>, re: &str) -> bool {
+        let mut text = format!("id = 'r'\nstate = 'idle'\nregion = '{region}'\nregex = ['{re}']");
+        if let Some(n) = lines {
+            text.push_str(&format!("\nlines = {n}"));
+        }
+        from_toml(&text).unwrap().matches("", BOXED)
+    }
+
+    #[test]
+    fn prompt_aware_regions_follow_herdr() {
+        // prompt_box: between the second-last rule and the next one.
+        assert!(region_hits("prompt_box", None, "^❯ fix it$"));
+        assert!(!region_hits("prompt_box", None, "shortcuts|proceed"));
+        // above_prompt_box: everything above the box's top border.
+        assert!(region_hits("above_prompt_box", None, "old output"));
+        assert!(!region_hits("above_prompt_box", None, "fix it"));
+        assert!(region_hits(
+            "above_prompt_box",
+            Some(1),
+            "^✻ Waiting for 2 background agents to finish$"
+        ));
+        assert!(!region_hits("above_prompt_box", Some(1), "proceed"));
+        // after_last_rule: below the last horizontal rule only.
+        assert!(region_hits("after_last_rule", None, "shortcuts"));
+        assert!(!region_hits("after_last_rule", None, "fix it"));
+        // screen: everything; lines keeps the last non-empty lines.
+        assert!(region_hits("screen", None, "old output"));
+        assert!(!region_hits("screen", Some(2), "fix it"));
+        assert!(region_hits("screen", Some(3), "fix it"));
+    }
+
+    #[test]
+    fn regions_without_rules_fall_back_like_herdr() {
+        let plain = "no rules here\n❯ hi\n";
+        let hit = |region: &str, re: &str| {
+            from_toml(&format!(
+                "id = 'r'\nstate = 'idle'\nregion = '{region}'\nregex = ['{re}']"
+            ))
+            .unwrap()
+            .matches("", plain)
+        };
+        assert!(!hit("prompt_box", "hi"));
+        assert!(hit("above_prompt_box", "no rules"));
+        assert!(hit("after_last_rule", "no rules"));
+        // "──x" is not a rule (fewer than three dashes before text).
+        assert!(!super::is_rule("──x"));
+        assert!(super::is_rule("───── suffix"));
+        assert!(super::is_rule("  ──  "));
+        assert!(!super::is_rule("x───"));
+    }
+
+    #[test]
+    fn hold_state_and_region_labels() {
+        let r =
+            from_toml("id = 'h'\nstate = 'hold'\nregion = 'prompt_box'\nregex = ['x']").unwrap();
+        assert_eq!((r.state, r.state.as_str()), (ScreenState::Hold, "hold"));
+        assert_eq!(r.region_label(), "prompt_box");
+        let r = from_toml(
+            "id = 'a'\nstate = 'idle'\nregion = 'above_prompt_box'\nlines = 1\nregex = ['x']",
+        )
+        .unwrap();
+        assert_eq!(r.region_label(), "above_prompt_box(1)");
+        let r = from_toml("id = 'b'\nstate = 'idle'\nregex = ['x']").unwrap();
+        assert_eq!(r.region_label(), "bottom(12)");
+        // Labels keep the region name written in the manifest.
+        let r = from_toml("id = 's'\nstate = 'idle'\nregion = 'screen'\nlines = 12\nregex = ['x']")
+            .unwrap();
+        assert_eq!(r.region_label(), "screen(12)");
+        let r = from_toml("id = 't'\nstate = 'idle'\nregion = 'screen'\nregex = ['x']").unwrap();
+        assert_eq!(r.region_label(), "screen");
+        let r = from_toml("id = 'u'\nstate = 'idle'\nregion = 'title'\nregex = ['x']").unwrap();
+        assert_eq!(r.region_label(), "title");
+        assert!(
+            from_toml("id = 'c'\nstate = 'idle'\nregion = 'screen'\nlines = 0\nregex = ['x']")
+                .is_err()
         );
     }
 
