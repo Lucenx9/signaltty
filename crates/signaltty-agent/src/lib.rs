@@ -8,6 +8,7 @@ pub mod manifest;
 pub mod permission;
 pub mod registry;
 pub mod resume;
+pub mod screen;
 pub mod types;
 
 pub use adapters::{claude, codex, cursor, generic, opencode, pi};
