@@ -33,10 +33,7 @@ pub(crate) fn start(ctx: Arc<Ctx>) -> Monitor {
                     tracing::info!(
                         "host shutdown requested; writing snapshot before pane termination"
                     );
-                    if let Err(e) = crate::persist::save(&ctx.store, &ctx.ptys.terms(), &ctx.config)
-                    {
-                        tracing::warn!("host shutdown snapshot failed: {e}");
-                    }
+                    ctx.save_final();
                     drop(inhibitor);
                     ctx.request_shutdown();
                     break;

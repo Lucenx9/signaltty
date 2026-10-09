@@ -16,6 +16,22 @@ use crate::pty::PtyManager;
 use crate::router::{dispatch, Ctx};
 use crate::store::{SharedStore, Store, StoredEvent};
 
+/// The debounced flusher's step: save once if something changed, unless
+/// shutdown began (its snapshot is final). True when a snapshot was written.
+fn flush_pending_snapshot(ctx: &Ctx, pending: &AtomicBool) -> bool {
+    if !pending.swap(false, Ordering::Relaxed) {
+        return false;
+    }
+    let _writes = ctx.save_lock.lock().unwrap_or_else(|e| e.into_inner());
+    if ctx.stopping.load(Ordering::SeqCst) {
+        return false;
+    }
+    if let Err(e) = crate::persist::save(&ctx.store, &ctx.ptys.terms(), &ctx.config) {
+        tracing::warn!("snapshot failed: {e}");
+    }
+    true
+}
+
 pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let runtime_dir = config
         .socket_path
@@ -79,6 +95,8 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         ptys: ptys.clone(),
         config: config.clone(),
         shutdown: shutdown.clone(),
+        stopping: Default::default(),
+        save_lock: Default::default(),
         plugins,
         overlays,
     });
@@ -185,12 +203,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
             loop {
                 interval.tick().await;
-                if pending.swap(false, Ordering::Relaxed) {
-                    if let Err(e) = crate::persist::save(&ctx.store, &ctx.ptys.terms(), &ctx.config)
-                    {
-                        tracing::warn!("snapshot failed: {e}");
-                    }
-                }
+                flush_pending_snapshot(&ctx, &pending);
             }
         });
     }
@@ -215,9 +228,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             tracing::info!("shutting down; writing snapshot");
-            if let Err(e) = crate::persist::save(&ctx.store, &ctx.ptys.terms(), &ctx.config) {
-                tracing::warn!("shutdown snapshot failed: {e}");
-            }
+            ctx.save_final();
             ctx.request_shutdown();
         });
     }
@@ -547,12 +558,48 @@ mod tests {
             ptys,
             config: config.clone(),
             shutdown: Arc::new(tokio::sync::Notify::new()),
+            stopping: Default::default(),
+            save_lock: Default::default(),
             approvals: crate::approvals::Approvals::default(),
             worktrees: crate::worktrees::Worktrees::default(),
             plugins: signaltty_plugin::PluginRegistry::load(config.plugin_dir),
             overlays: Default::default(),
         });
         (ctx, base, id)
+    }
+
+    #[test]
+    fn the_final_snapshot_is_written_once_and_stops_the_flusher() {
+        let (ctx, base, _) = test_context();
+        let snapshot = base.join("state").join("snapshot.json");
+        ctx.save_final();
+        assert!(snapshot.exists());
+        std::fs::remove_file(&snapshot).unwrap();
+        // A second trigger (SIGTERM after logind or server.shutdown) must not
+        // save the torn-down state over the first.
+        ctx.save_final();
+        assert!(!snapshot.exists());
+        let pending = AtomicBool::new(true);
+        assert!(!flush_pending_snapshot(&ctx, &pending));
+        assert!(!snapshot.exists());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn no_debounced_snapshot_after_shutdown_is_requested() {
+        let (ctx, base, _) = test_context();
+        let snapshot = base.join("state").join("snapshot.json");
+        let pending = AtomicBool::new(true);
+        assert!(flush_pending_snapshot(&ctx, &pending));
+        assert!(snapshot.exists());
+        std::fs::remove_file(&snapshot).unwrap();
+        // The shutdown snapshot is final: a teardown change (e.g. a native
+        // permission waiter clearing its decision) must not overwrite it.
+        ctx.request_shutdown();
+        pending.store(true, Ordering::Relaxed);
+        assert!(!flush_pending_snapshot(&ctx, &pending));
+        assert!(!snapshot.exists());
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[tokio::test]
