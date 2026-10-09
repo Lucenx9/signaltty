@@ -162,6 +162,8 @@ pub mod method {
     pub const FOCUS_NEXT_UNREAD: &str = "focus.next_unread";
     pub const PLUGIN_LIST: &str = "plugin.list";
     pub const PLUGIN_RELOAD: &str = "plugin.reload";
+    pub const AGENTS_LIST: &str = "agents.list";
+    pub const AGENTS_RELOAD: &str = "agents.reload";
     pub const TASK_START: &str = "task.start";
     pub const TASK_GET: &str = "task.get";
     pub const TASK_LIST: &str = "task.list";
@@ -221,6 +223,8 @@ pub mod method {
         FOCUS_NEXT_UNREAD,
         PLUGIN_LIST,
         PLUGIN_RELOAD,
+        AGENTS_LIST,
+        AGENTS_RELOAD,
         TASK_START,
         TASK_GET,
         TASK_LIST,

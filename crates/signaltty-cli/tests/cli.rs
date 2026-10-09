@@ -327,6 +327,35 @@ async fn cli_workspace_diff_reports_counts() {
 }
 
 #[tokio::test]
+async fn cli_agents_list_and_reload() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-cli-reload-{}",
+        signaltty_core::ids::new_pane_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let (ok, text) = cli(&srv.socket, &["agents", "list"]);
+    assert!(ok && text.contains("(no manifests)"), "{text}");
+    std::fs::write(
+        dir.join("tool.toml"),
+        "[agent]\nkind = \"generic\"\nbinaries = [\"tool\"]\n[[screen]]\nid = \"r\"\nstate = \"idle\"\nregex = ['x']\n",
+    )
+    .unwrap();
+    let (ok, text) = cli(&srv.socket, &["agents", "reload"]);
+    assert!(
+        ok && text.contains("tool.toml generic [tool] 1 screen rules"),
+        "{text}"
+    );
+    let list = cli_json(&srv.socket, &["agents", "list"]);
+    assert_eq!(list["manifests"][0]["file"], "tool.toml");
+    assert_eq!(
+        list["manifests"][0]["binaries"],
+        serde_json::json!(["tool"])
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn cli_integration_status_lists_manifests() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-cli-agents-{}-{}",

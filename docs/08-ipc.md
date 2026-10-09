@@ -99,6 +99,8 @@ clients can `subscribe {from_seq}` to replay.
 | `attention.pending` | `{limit?}` (default 50, max 500) | `{panes: [{pane_id, workspace_id, tab_id, label?, task_id?, lifecycle, attention, last_message?, attention_since?}]}` ranked by severity then recency; panes with `attention: none` excluded |
 | `plugin.list` | — | `{dir, plugins[], failures[]}` (hooks with runs/errors/last_error; see 13) |
 | `plugin.reload` | — | same as `plugin.list` after re-scan (stats reset) |
+| `agents.list` | — | `{dir, manifests: [{file, kind, binaries, screen_rules}], failures: [{file, error}]}` (loaded agent manifests; malformed files are skipped and listed) |
+| `agents.reload` | — | same as `agents.list` after re-reading the dir; the whole set is swapped atomically and live panes are not touched; a dir that cannot be listed is `IO_ERROR` and keeps the active set (a missing dir is an empty set) |
 
 `until` accepts any lifecycle or attention state, plus `seen` and
 `attention_cleared`; a nonempty array matches any alternative in caller order.

@@ -36,55 +36,71 @@ pub struct Ctx {
     pub shutdown: Arc<tokio::sync::Notify>,
     pub plugins: signaltty_plugin::PluginRegistry,
     /// Manifest detection overlays (data, not code — see ADR-0009).
-    /// Consulted before builtins by [`Ctx::adapter`] and spawn detection.
-    pub overlays: Vec<signaltty_agent::OverlayAdapter>,
+    /// Swapped whole by `agents.reload`; read through [`Ctx::overlays`].
+    pub overlays: std::sync::RwLock<Arc<Overlays>>,
 }
 
-/// Load detection overlays from `<dir>/*.toml`. Per-file failure
-/// isolation: malformed files are logged and skipped, never fatal.
-pub fn load_overlays(dir: &std::path::Path) -> Vec<signaltty_agent::OverlayAdapter> {
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return out;
-    };
-    let mut files: Vec<_> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "toml"))
-        .collect();
-    files.sort();
-    for path in files {
-        let name = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        match std::fs::read_to_string(&path) {
-            Ok(text) => match signaltty_agent::parse_manifest(&text) {
-                Ok(manifest) => match signaltty_agent::OverlayAdapter::new(manifest) {
-                    Ok(overlay) => {
-                        tracing::info!(
-                            "agent overlay '{name}' ({}): {}",
-                            overlay.kind().as_str(),
-                            path.display()
-                        );
-                        out.push(overlay);
-                    }
-                    Err(e) => tracing::warn!("agent manifest {}: {e} (skipped)", path.display()),
-                },
-                Err(e) => tracing::warn!("agent manifest {}: {e} (skipped)", path.display()),
-            },
-            Err(e) => tracing::warn!("agent manifest {}: {e} (skipped)", path.display()),
+/// One loaded set of agent manifests. Callers take an [`Arc`] snapshot so a
+/// reload never changes the set under a request in flight (spec 034).
+#[derive(Default)]
+pub struct Overlays {
+    pub dir: std::path::PathBuf,
+    /// Loaded overlays in file-name order, and their file names.
+    pub list: Vec<signaltty_agent::OverlayAdapter>,
+    pub files: Vec<String>,
+    /// `(file name, error)` for skipped files.
+    pub failures: Vec<(String, String)>,
+}
+
+impl Overlays {
+    /// Load `<dir>/*.toml`. Per-file failure isolation: malformed files are
+    /// logged, reported in `failures` and skipped, never fatal. A missing dir
+    /// is an empty set; a dir that cannot be listed is an error, so a reload
+    /// keeps the active set instead of publishing an incomplete one.
+    pub fn load(dir: &std::path::Path) -> Result<Overlays, String> {
+        let mut out = Overlays {
+            dir: dir.to_path_buf(),
+            ..Overlays::default()
+        };
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => return Err(format!("{}: {e}", dir.display())),
+        };
+        let mut files = Vec::new();
+        for entry in entries {
+            let path = entry.map_err(|e| format!("{}: {e}", dir.display()))?.path();
+            if path.extension().is_some_and(|e| e == "toml") {
+                files.push(path);
+            }
         }
-    }
-    out
-}
-
-impl Ctx {
-    /// Wake every shutdown waiter and leave a permit if `serve` is between
-    /// accepts. `notify_waiters` alone drops the signal when nobody is parked.
-    pub(crate) fn request_shutdown(&self) {
-        self.shutdown.notify_waiters();
-        self.shutdown.notify_one();
+        files.sort();
+        for path in files {
+            let file = path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let loaded = std::fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|text| signaltty_agent::parse_manifest(&text))
+                .and_then(signaltty_agent::OverlayAdapter::new);
+            match loaded {
+                Ok(overlay) => {
+                    tracing::info!(
+                        "agent overlay '{file}' ({}): {}",
+                        overlay.kind().as_str(),
+                        path.display()
+                    );
+                    out.files.push(file);
+                    out.list.push(overlay);
+                }
+                Err(e) => {
+                    tracing::warn!("agent manifest {}: {e} (skipped)", path.display());
+                    out.failures.push((file, e));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Overlay-first adapter routing (manifests are data, not code): the
@@ -96,7 +112,7 @@ impl Ctx {
     }
 
     pub fn adapter_for_kind(&self, kind: AgentKind) -> &dyn signaltty_agent::AgentAdapter {
-        self.overlays
+        self.list
             .iter()
             .find(|o| o.kind() == kind)
             .map(|o| o as &dyn signaltty_agent::AgentAdapter)
@@ -114,7 +130,7 @@ impl Ctx {
         process: &str,
     ) -> (&'static str, Vec<&signaltty_agent::screen::ScreenRule>) {
         let user: Vec<_> = self
-            .overlays
+            .list
             .iter()
             .filter(|o| o.kind() == kind)
             .flat_map(|o| o.screen_rules_for(process))
@@ -134,7 +150,42 @@ impl Ctx {
     }
 
     pub fn detect_kind(&self, argv: &[String]) -> AgentKind {
-        signaltty_agent::detect_kind_with_overlays(argv, &self.overlays)
+        signaltty_agent::detect_kind_with_overlays(argv, &self.list)
+    }
+
+    /// `agents.list` / `agents.reload` payload.
+    pub fn status(&self) -> Value {
+        json!({
+            "dir": self.dir,
+            "manifests": self.files.iter().zip(&self.list).map(|(file, o)| json!({
+                "file": file,
+                "kind": o.kind().as_str(),
+                "binaries": o.manifest().agent.binaries,
+                "screen_rules": o.screen_rules().len(),
+            })).collect::<Vec<_>>(),
+            "failures": self.failures.iter().map(|(file, error)| json!({
+                "file": file, "error": error,
+            })).collect::<Vec<_>>(),
+        })
+    }
+}
+
+impl Ctx {
+    /// Wake every shutdown waiter and leave a permit if `serve` is between
+    /// accepts. `notify_waiters` alone drops the signal when nobody is parked.
+    pub(crate) fn request_shutdown(&self) {
+        self.shutdown.notify_waiters();
+        self.shutdown.notify_one();
+    }
+
+    /// The current manifest set. Take one snapshot per request so a reload
+    /// cannot change it mid-request (spec 034).
+    pub fn overlays(&self) -> Arc<Overlays> {
+        self.overlays.read().unwrap().clone()
+    }
+
+    pub fn detect_kind(&self, argv: &[String]) -> AgentKind {
+        self.overlays().detect_kind(argv)
     }
 
     pub fn mark_persist(&self) {
@@ -232,6 +283,8 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::FOCUS_NEXT_UNREAD => h_next_unread(ctx),
         method::PLUGIN_LIST => h_plugin_list(ctx),
         method::PLUGIN_RELOAD => h_plugin_reload(ctx),
+        method::AGENTS_LIST => Ok((ctx.overlays().status(), ConnEffect::default())),
+        method::AGENTS_RELOAD => h_agents_reload(ctx),
         method::TASK_START => return crate::tasks::h_task_start(ctx, req, &req.params).await,
         method::TASK_GET => return crate::tasks::h_task_get(ctx, req, &req.params),
         method::TASK_LIST => return crate::tasks::h_task_list(ctx, req, &req.params),
@@ -976,7 +1029,8 @@ fn h_pane_explain(ctx: &Ctx, params: &Value) -> Handler {
             s.process_name(&id),
         )
     };
-    let (source, rules) = ctx.screen_rules(kind, &process);
+    let overlays = ctx.overlays();
+    let (source, rules) = overlays.screen_rules(kind, &process);
     let screen = ctx.ptys.terms().lock().unwrap().snapshot(&id);
     let winner = signaltty_agent::screen::classify(rules.iter().copied(), &title, &screen);
     let traced: Vec<Value> = rules
@@ -1357,7 +1411,8 @@ async fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
     if !pending.options.iter().any(|o| o.id == p.option_id) {
         return Err(bad_params(format!("unknown option '{}'", p.option_id)));
     }
-    let adapter = ctx.adapter_for_kind(kind);
+    let overlays = ctx.overlays();
+    let adapter = overlays.adapter_for_kind(kind);
     let Some(channel) = adapter.answer_channel() else {
         return Err(bad_params(format!(
             "adapter '{}' has no answer channel (answer in the terminal)",
@@ -1592,7 +1647,8 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
     }
     let agent = p.agent;
     let hook = p.hook;
-    let adapter = ctx
+    let overlays = ctx.overlays();
+    let adapter = overlays
         .adapter(&agent)
         .ok_or_else(|| bad_params(format!("unknown agent '{agent}'")))?;
     let mut pane_id = p.pane_id;
@@ -1909,6 +1965,7 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
         // The adapter owns the official resume command for a new agent or
         // id; a repeated report keeps the stored (possibly self-reported) one.
         pane.agent.resume_argv = ctx
+            .overlays()
             .adapter_for_kind(kind)
             .resume_capability(&session_id)
             .map(|r| signaltty_agent::resolve_resume_argv(&pane.argv, &r.argv));
@@ -1939,8 +1996,10 @@ pub fn classify_screens(ctx: &Ctx) -> bool {
             .collect()
     };
     let mut changed = false;
+    // One manifest set for the whole tick, even if a reload lands mid-way.
+    let overlays = ctx.overlays();
     for (id, kind, title, process) in candidates {
-        let (_, rules) = ctx.screen_rules(kind, &process);
+        let (_, rules) = overlays.screen_rules(kind, &process);
         if rules.is_empty() {
             continue;
         }
@@ -2103,6 +2162,17 @@ fn h_next_unread(ctx: &Ctx) -> Handler {
 
 fn h_plugin_list(ctx: &Ctx) -> Handler {
     Ok((ctx.plugins.status(), ConnEffect::default()))
+}
+
+/// Re-read the agents dir and swap the whole manifest set (spec 034). Live
+/// panes keep their process and kind; later requests see the new rules.
+fn h_agents_reload(ctx: &Ctx) -> Handler {
+    let fresh = Arc::new(
+        Overlays::load(&ctx.config.agents_dir).map_err(|e| (code::IO_ERROR.to_string(), e))?,
+    );
+    let status = fresh.status();
+    *ctx.overlays.write().unwrap() = fresh;
+    Ok((status, ConnEffect::default()))
 }
 
 fn h_plugin_reload(ctx: &Ctx) -> Handler {
