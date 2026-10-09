@@ -81,29 +81,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 
     // Plugin event hooks: every broadcast event (except high-volume
     // pty.data) is offered to matching hooks as JSON on stdin.
-    {
-        let ctx = ctx.clone();
-        tokio::spawn(async move {
-            let mut rx = ctx.bcast.subscribe();
-            loop {
-                match rx.recv().await {
-                    Ok(ev) => {
-                        if ev.name == signaltty_proto::event::PTY_DATA {
-                            continue;
-                        }
-                        let envelope =
-                            serde_json::to_value(EventMsg::new(&ev.name, ev.seq, ev.payload))
-                                .unwrap_or(serde_json::Value::Null);
-                        ctx.plugins
-                            .dispatch(&ev.name, &envelope, &ctx.config.socket_path)
-                            .await;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(_) => break,
-                }
-            }
-        });
-    }
+    spawn_plugin_event_hooks(ctx.clone());
 
     // Live /proc refresh (docs/07 layer 4): promote agent kinds and follow
     // cwds every 10s. Broadcasts + persists only when something changed.
@@ -116,6 +94,21 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 let events =
                     crate::procscan::scan(&ctx.store, &ctx.ptys.child_pids(), &ctx.overlays);
                 if !events.is_empty() {
+                    ctx.mark_persist();
+                }
+            }
+        });
+    }
+
+    // Screen-detection rules (docs/07, specs 027/028): classify live,
+    // hook-less panes whose kind has user or bundled `[[screen]]` rules.
+    {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+            loop {
+                interval.tick().await;
+                if crate::router::classify_screens(&ctx) {
                     ctx.mark_persist();
                 }
             }
@@ -261,6 +254,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    ctx.ptys.cancel_inputs();
     Ok(())
 }
 
@@ -418,6 +412,88 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
     }
 
     Ok(())
+}
+
+/// Dispatch one retained event to plugin hooks (skips high-volume pty.data).
+async fn dispatch_plugin_event(ctx: &Ctx, ev: &StoredEvent) {
+    if ev.name == signaltty_proto::event::PTY_DATA {
+        return;
+    }
+    let envelope = serde_json::to_value(EventMsg::new(&ev.name, ev.seq, ev.payload.clone()))
+        .unwrap_or(serde_json::Value::Null);
+    ctx.plugins
+        .dispatch(&ev.name, &envelope, &ctx.config.socket_path)
+        .await;
+}
+
+/// After broadcast `Lagged`, recover hook-worthy events still in the store
+/// ring. Returns the advanced cursor and events to dispatch (pty.data
+/// already excluded). Silent `continue` on lag would drop hooks indefinitely.
+fn plugin_catch_up_after_lag(store: &Store, last_seq: u64) -> (u64, Vec<StoredEvent>) {
+    let missed = store.events_since(last_seq);
+    let mut cursor = last_seq;
+    let mut deliver = Vec::new();
+    for ev in missed {
+        cursor = ev.seq;
+        if ev.name != signaltty_proto::event::PTY_DATA {
+            deliver.push(ev);
+        }
+    }
+    (cursor, deliver)
+}
+
+fn spawn_plugin_event_hooks(ctx: Arc<Ctx>) -> tokio::task::JoinHandle<()> {
+    // Store emits under its write lock. Capture receiver and cursor together,
+    // before spawning, so startup events cannot fall between them or the first poll.
+    let (rx, last_seq) = {
+        let store = ctx.store.read().unwrap();
+        (ctx.bcast.subscribe(), store.seq)
+    };
+    tokio::spawn(run_plugin_event_hooks(ctx, rx, last_seq))
+}
+
+async fn run_plugin_event_hooks(
+    ctx: Arc<Ctx>,
+    mut rx: broadcast::Receiver<StoredEvent>,
+    mut last_seq: u64,
+) {
+    loop {
+        match rx.recv().await {
+            Ok(ev) => {
+                if ev.seq <= last_seq {
+                    continue;
+                }
+                last_seq = ev.seq;
+                dispatch_plugin_event(&ctx, &ev).await;
+            }
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                let (cursor, pending) = {
+                    let store = ctx.store.read().unwrap();
+                    plugin_catch_up_after_lag(&store, last_seq)
+                };
+                if cursor <= last_seq {
+                    tracing::warn!(
+                        skipped,
+                        last_seq,
+                        "plugin subscriber lagged; retained history cannot recover skipped events"
+                    );
+                } else {
+                    tracing::warn!(
+                        skipped,
+                        last_seq,
+                        cursor,
+                        recovered = pending.len(),
+                        "plugin subscriber lagged; replaying retained events"
+                    );
+                    last_seq = cursor;
+                    for ev in pending {
+                        dispatch_plugin_event(&ctx, &ev).await;
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -731,5 +807,112 @@ mod tests {
             };
         }
         assert_eq!(ptys.viewer_count("pane"), 1);
+    }
+
+    #[test]
+    fn plugin_catch_up_replays_non_pty_events_and_skips_pty_data() {
+        let (ctx, base, _) = test_context();
+        {
+            let mut store = ctx.store.write().unwrap();
+            store.emit("agent.done", serde_json::json!({"pane_id": "p"}));
+            store.emit(
+                signaltty_proto::event::PTY_DATA,
+                serde_json::json!({"pane_id": "p", "data": "x"}),
+            );
+            store.emit("attention.raised", serde_json::json!({"pane_id": "p"}));
+        }
+        let store = ctx.store.read().unwrap();
+        let (cursor, pending) = plugin_catch_up_after_lag(&store, 0);
+        assert_eq!(cursor, 3);
+        assert_eq!(
+            pending.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["agent.done", "attention.raised"]
+        );
+        drop(store);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plugin_subscriber_recovers_lagged_events_from_store() {
+        let (ctx, base, _) = test_context();
+        // Channel capacity is 8 in test_context. Hold a lagging receiver so a
+        // burst overflows; catch-up must still recover retained state events.
+        let mut lagged = ctx.bcast.subscribe();
+        for i in 0..32 {
+            let name = if i % 4 == 0 {
+                signaltty_proto::event::PTY_DATA
+            } else {
+                "hook.worthy"
+            };
+            ctx.store
+                .write()
+                .unwrap()
+                .emit(name, serde_json::json!({"i": i}));
+        }
+        match lagged.recv().await {
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                assert!(skipped > 0, "burst must overflow the capacity-8 channel");
+            }
+            other => panic!("expected Lagged, got {other:?}"),
+        }
+        let (cursor, pending) = {
+            let store = ctx.store.read().unwrap();
+            plugin_catch_up_after_lag(&store, 0)
+        };
+        assert!(
+            cursor >= 24,
+            "cursor advanced through retained ring, got {cursor}"
+        );
+        assert!(
+            pending.iter().any(|e| e.name == "hook.worthy"),
+            "catch-up must recover non-pty events that silent continue would drop"
+        );
+        assert!(pending
+            .iter()
+            .all(|e| e.name != signaltty_proto::event::PTY_DATA));
+        std::fs::remove_dir_all(base).unwrap();
+    }
+    #[tokio::test]
+    async fn plugin_subscriber_captures_events_before_task_is_polled() {
+        let (ctx, base, _) = test_context();
+        let dir = ctx.config.plugin_dir.join("counter");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.toml"),
+            r#"[plugin]
+name = "counter"
+[[hook]]
+events = ["hook.worthy"]
+command = ["true"]
+"#,
+        )
+        .unwrap();
+        ctx.plugins.reload();
+        ctx.store
+            .write()
+            .unwrap()
+            .emit("hook.worthy", serde_json::json!({"old": true}));
+        let task = spawn_plugin_event_hooks(ctx.clone());
+        // The current-thread runtime cannot poll the spawned task until we await.
+        // Overflow the live channel before that first poll.
+        for i in 0..32 {
+            ctx.store
+                .write()
+                .unwrap()
+                .emit("hook.worthy", serde_json::json!({"i": i}));
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if ctx.plugins.status()["plugins"][0]["hooks"][0]["runs"] == 32 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        task.abort();
+        let _ = task.await;
+        std::fs::remove_dir_all(base).unwrap();
     }
 }

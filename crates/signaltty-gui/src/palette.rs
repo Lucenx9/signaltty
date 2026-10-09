@@ -18,6 +18,7 @@ enum Target {
 struct Choice {
     label: String,
     detail: String,
+    accelerator: Option<&'static str>,
     target: Target,
 }
 
@@ -49,7 +50,26 @@ pub fn present(
     scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
     scroll.set_vexpand(true);
     scroll.set_child(Some(&list));
+    let viewport = scroll.downgrade();
+    list.connect_row_selected(move |list, row| {
+        let (Some(row), Some(scroll)) = (row, viewport.upgrade()) else {
+            return;
+        };
+        let Some(bounds) = row.compute_bounds(list) else {
+            return;
+        };
+        let adjustment = scroll.vadjustment();
+        let top = f64::from(bounds.y());
+        adjustment.clamp_page(top, top + f64::from(bounds.height()));
+    });
     body.append(&scroll);
+    let empty = adw::StatusPage::new();
+    empty.set_icon_name(Some("system-search-symbolic"));
+    empty.set_title("No matches");
+    empty.set_description(Some("Try another command or workspace name."));
+    empty.set_vexpand(true);
+    empty.set_visible(false);
+    body.append(&empty);
     dialog.set_child(Some(&body));
 
     let choices: Vec<Choice> = workspaces
@@ -57,12 +77,14 @@ pub fn present(
         .map(|ws| Choice {
             label: ws.name.clone(),
             detail: format!("Workspace · {}", ws.cwd),
+            accelerator: None,
             target: Target::Workspace(ws.id.clone()),
         })
         .chain(ACTIONS.iter().filter_map(|action| {
             action.label.map(|label| Choice {
                 label: label.into(),
                 detail: "Command".into(),
+                accelerator: action.accel,
                 target: Target::Action(format!("win.{}", action.name)),
             })
         }))
@@ -85,9 +107,19 @@ pub fn present(
         let row = adw::ActionRow::new();
         row.set_use_markup(false);
         row.set_title(&choice.label);
-        row.set_subtitle(&choice.detail);
+        let shortcut = choice
+            .accelerator
+            .and_then(gtk4::accelerator_parse)
+            .map(|(key, modifiers)| gtk4::accelerator_get_label(key, modifiers));
+        row.set_subtitle(shortcut.as_deref().unwrap_or(&choice.detail));
         row.set_title_lines(2);
         row.set_subtitle_lines(2);
+        row.set_tooltip_text(Some(&format!("{}\n{}", choice.label, choice.detail)));
+        if let Some(shortcut) = shortcut {
+            row.upcast_ref::<gtk4::ListBoxRow>().update_property(&[
+                gtk4::accessible::Property::Description(&format!("Command · {shortcut}")),
+            ]);
+        }
         row.set_activatable(true);
         list.append(&row);
     }
@@ -102,6 +134,9 @@ pub fn present(
             .filter_map(|i| filtered.row_at_index(i as i32))
             .find(|r| r.is_child_visible());
         filtered.select_row(first.as_ref());
+        scroll.vadjustment().set_value(0.0);
+        scroll.set_visible(first.is_some());
+        empty.set_visible(first.is_none());
     });
     let weak_window = window.downgrade();
     let pending = Rc::new(RefCell::new(None));

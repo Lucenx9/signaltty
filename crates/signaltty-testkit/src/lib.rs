@@ -103,28 +103,14 @@ impl TestServer {
         for (k, v) in extra_envs {
             cmd.env(k, v);
         }
-        let mut child = cmd
+        let child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn signaltty-server");
-        // Wait for readiness.
-        let mut ready = false;
-        for _ in 0..100 {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            if let Ok(mut c) = TestClient::connect(&socket).await {
-                if c.call("server.status", json!({})).await.is_ok() {
-                    ready = true;
-                    break;
-                }
-            }
-            if let Ok(Some(_)) = child.try_wait() {
-                panic!("server exited during startup");
-            }
-        }
-        assert!(ready, "server did not become ready");
-        TestServer {
+        // Owned before the readiness wait: a startup panic drops (and reaps) it.
+        let mut srv = TestServer {
             socket,
             state_dir,
             integration_home,
@@ -133,31 +119,57 @@ impl TestServer {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             child,
+        };
+        let mut ready = false;
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if let Ok(mut c) = TestClient::connect(&srv.socket).await {
+                if c.call("server.status", json!({})).await.is_ok() {
+                    ready = true;
+                    break;
+                }
+            }
+            if let Ok(Some(_)) = srv.child.try_wait() {
+                panic!("server exited during startup");
+            }
         }
+        assert!(ready, "server did not become ready");
+        srv
     }
 
     pub async fn client(&self) -> TestClient {
         TestClient::connect(&self.socket).await.expect("connect")
     }
 
-    /// Ask the server to shut down (force), then reap.
-    pub async fn shutdown(mut self) {
+    /// Ask the server to shut down (force), then reap (see `Drop`).
+    pub async fn shutdown(self) {
         if let Ok(mut c) = TestClient::connect(&self.socket).await {
             let _ = c.call("server.shutdown", json!({"force": true})).await;
         }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        if let Ok(None) = self.child.try_wait() {
-            let _ = self.child.kill();
-        }
-        let _ = self.child.wait();
-        std::fs::remove_dir_all(self.socket.parent().unwrap()).ok();
+    }
+
+    /// Observe actual process exit without terminating it.
+    pub async fn wait_for_exit(&mut self, timeout: std::time::Duration) -> bool {
+        tokio::time::timeout(timeout, async {
+            loop {
+                if self
+                    .child
+                    .try_wait()
+                    .expect("inspect owned server")
+                    .is_some()
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
     }
 
     /// Kill -9 without graceful shutdown (crash simulation).
-    pub async fn kill(mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
+    pub async fn kill(self) {}
 
     /// Graceful shutdown + respawn on the SAME socket/state paths,
     /// exercising snapshot restore.
@@ -202,6 +214,20 @@ impl TestServer {
             }
         }
         assert!(ready, "respawned server did not become ready");
+    }
+}
+
+/// A failed or early-returning test must not leak its server: std's `Child`
+/// does not kill on drop, so reap here.
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        if let Ok(None) = self.child.try_wait() {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+        if let Some(base) = self.socket.parent() {
+            let _ = std::fs::remove_dir_all(base);
+        }
     }
 }
 
@@ -380,15 +406,18 @@ impl FakeAgentPane {
     }
 }
 
-fn unique() -> u64 {
+fn unique_key(pid: u32, nanos: u128, sequence: u64) -> String {
+    format!("{pid}-{nanos}-{sequence}")
+}
+
+fn unique() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
-    // Mix in nanos for cross-process uniqueness.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .subsec_nanos() as u64;
-    N.fetch_add(1, Ordering::Relaxed) ^ nanos ^ (std::process::id() as u64) << 32
+        .as_nanos();
+    unique_key(std::process::id(), nanos, N.fetch_add(1, Ordering::Relaxed))
 }
 
 pub struct TestClient {
@@ -508,5 +537,15 @@ impl TestClient {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::unique_key;
+
+    #[test]
+    fn advancing_clock_cannot_cancel_the_sequence() {
+        assert_ne!(unique_key(7, 100, 0), unique_key(7, 101, 1));
     }
 }

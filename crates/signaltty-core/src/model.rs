@@ -380,6 +380,7 @@ pub enum AgentKind {
     Claude,
     Opencode,
     Cursor,
+    Pi,
     Generic,
     #[default]
     None,
@@ -392,6 +393,7 @@ impl AgentKind {
             AgentKind::Claude => "claude",
             AgentKind::Opencode => "opencode",
             AgentKind::Cursor => "cursor",
+            AgentKind::Pi => "pi",
             AgentKind::Generic => "generic",
             AgentKind::None => "none",
         }
@@ -403,6 +405,7 @@ impl AgentKind {
             "claude" => AgentKind::Claude,
             "opencode" => AgentKind::Opencode,
             "cursor" => AgentKind::Cursor,
+            "pi" => AgentKind::Pi,
             "generic" => AgentKind::Generic,
             "none" => AgentKind::None,
             _ => return None,

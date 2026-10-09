@@ -1,0 +1,141 @@
+# Ported from herdr (https://github.com/herdrdev/herdr) src/detect/manifests/codex.toml
+# at commit 2563803, Copyright herdr contributors, Apache-2.0
+# (https://www.apache.org/licenses/LICENSE-2.0). Changes: herdr `contains`
+# lists (all must appear) become case-insensitive escaped regexes in `all`;
+# `line_regex` becomes a `(?m)` regex; nested any/all gates become
+# alternations or split rules (`trust_folder`, `live_strong_picker`);
+# `unknown` + `skip_state_update` becomes `state = "hold"`; regions map to
+# `title`, `bottom`, `top`, `after_last_prompt`, `before_current_prompt` and
+# `without_current_prompt`; herdr's known-agent idle fallback is the explicit
+# `idle_fallback` rule.
+
+[agent]
+kind = "codex"
+
+[[screen]]
+id = "osc_title_blocked"
+state = "blocked"
+priority = 1100
+region = "title"
+regex = ['(?i)action required']
+
+[[screen]]
+id = "osc_title_working"
+state = "working"
+priority = 1050
+region = "title"
+regex = ['(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)']
+
+[[screen]]
+id = "transcript_viewer"
+state = "hold"
+priority = 1000
+region = "after_last_prompt"
+all = [
+  '(?i)↑/↓ to scroll',
+  '(?i)pgup/pgdn to',
+  '(?i)home/end to jump',
+  '(?i)q to quit',
+  '(?i)esc to edit prev|esc/← to edit prev',
+]
+
+# herdr trust_directory, legacy "Do you trust the contents" prompt.
+[[screen]]
+id = "trust_directory"
+state = "blocked"
+priority = 950
+region = "top"
+lines = 20
+all = [
+  '\A> You are in [^\n]+|(?i:folder access)',
+  '(?s)Do\s+you\s+trust\s+the\s+contents\s+of\s+this\s+directory\?',
+]
+
+# herdr trust_directory, "Trust this folder?" prompt.
+[[screen]]
+id = "trust_folder"
+state = "blocked"
+priority = 950
+region = "top"
+lines = 20
+all = [
+  '\A> You are in [^\n]+|(?i:folder access)',
+  '(?i)trust this folder\?',
+  '(?i)codex can read, edit, and run files here',
+  '(?i)trust and continue|enter continue',
+]
+
+[[screen]]
+id = "startup_update"
+state = "blocked"
+priority = 950
+lines = 20
+all = [
+  '(?i)update available!',
+  '(?i)update now',
+  'Skip\s+until\s+next\s+version',
+  'Press enter to continue\s*\z',
+]
+
+[[screen]]
+id = "live_strong_blocker"
+state = "blocked"
+priority = 900
+region = "after_last_prompt"
+regex = [
+  '(?i)press enter to confirm or esc to cancel',
+  '(?i)enter to submit answer',
+  '(?i)enter to submit all',
+  '(?i)allow command\?',
+]
+
+# herdr live_strong_blocker, mention-picker branch.
+[[screen]]
+id = "live_strong_picker"
+state = "blocked"
+priority = 900
+region = "after_last_prompt"
+all = ['(?i)all results', '(?i)filesystem only', '(?i)plugins']
+
+[[screen]]
+id = "weak_blocker"
+state = "blocked"
+priority = 600
+region = "without_current_prompt"
+regex = [
+  '(?i)\[y/n\]',
+  '(?i)yes \(y\)',
+  '(?is)do you want to.*(?:yes|❯)|(?:yes|❯).*do you want to',
+  '(?is)would you like to.*(?:yes|❯)|(?:yes|❯).*would you like to',
+]
+# Sparkles can replace the space after ›. A later response marker makes that prompt stale.
+not = ['(?m)^›[⠁⠂⠄⠈⠐⠠⡀⢀][^\n]*(?:\n(?:[^•■✗✓\n][^\n]*)?)*\z']
+
+[[screen]]
+id = "screen_working_fallback"
+state = "working"
+priority = 500
+region = "before_current_prompt"
+# Animated and reduced-motion status, with dynamic activity labels. The
+# interrupt hint can be remapped, unbound or hidden, and queued inputs can sit
+# below the status. Require the live timer suffix with no later response.
+all = [
+  '(?i) to interrupt\)|s\)',
+  '(?m)^(?:[•◦][ \t]+)?[^\s›•◦■✗✓─][^\r\n]* \((?:[0-9]+[hm] )*[0-9]+s(?: • [^\r\n]+? to interrupt)?\)(?: · [^\r\n]*)?(?:\r?\n(?:[^•◦›■✗✓─\r\n][^\r\n]*|•[ \t]+(?:Queued\s+follow-up\s+inputs|Messages\s+to\s+be\s+submitted\s+after\s+next\s+tool\s+call(?:\s+\(press\s+[^\r\n]+?\s+to\s+interrupt\s+and\s+send\s+immediately\))?|Messages\s+to\s+be\s+submitted\s+at\s+end\s+of\s+turn)|›[⠁⠂⠄⠈⠐⠠⡀⢀][^\r\n]*)?)*\s*\z',
+]
+# A failed reconnect keeps its final elapsed timer but is no longer working.
+not = ['(?m)^(?:[•◦][ \t]+)?Reconnect failed — check the endpoint, then relaunch \([0-9hms ]+\)$']
+
+[[screen]]
+id = "osc_title_idle"
+state = "idle"
+priority = 100
+region = "title"
+regex = ['\S']
+not = ['(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)', '(?i)action required']
+
+[[screen]]
+id = "idle_fallback"
+state = "idle"
+priority = -1000
+regex = ['']

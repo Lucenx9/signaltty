@@ -12,6 +12,7 @@ use signaltty_core::model::AgentKind;
 use signaltty_core::state::{Attention, Lifecycle};
 
 use crate::registry::adapter_for_kind;
+use crate::screen::{ScreenRule, ScreenRuleSpec};
 use crate::types::{
     AdapterEvent, AdapterMetadata, AgentAdapter, AnswerChannel, LifecycleDecision,
     NotificationDraft, ProcessInfo, ResumeCommand,
@@ -26,6 +27,8 @@ pub struct Manifest {
     pub session: SessionSection,
     #[serde(default)]
     pub lifecycle: HashMap<String, HookOverride>,
+    #[serde(default)]
+    pub screen: Vec<ScreenRuleSpec>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -84,6 +87,9 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
             Attention::parse(a).ok_or_else(|| format!("[lifecycle.{hook}] bad attention '{a}'"))?;
         }
     }
+    for rule in &manifest.screen {
+        ScreenRule::compile(rule)?;
+    }
     let _ = kind;
     Ok(manifest)
 }
@@ -93,12 +99,35 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
 #[derive(Debug, Clone)]
 pub struct OverlayAdapter {
     manifest: Manifest,
+    screen: Vec<ScreenRule>,
+    /// Display override, leaked once here so `metadata()` (called on
+    /// every hook) does not leak a fresh copy each time.
+    display_name: Option<&'static str>,
 }
 
 impl OverlayAdapter {
     pub fn new(manifest: Manifest) -> Result<OverlayAdapter, String> {
         manifest.kind()?; // validate taxonomy now
-        Ok(OverlayAdapter { manifest })
+        let screen = manifest
+            .screen
+            .iter()
+            .map(ScreenRule::compile)
+            .collect::<Result<_, _>>()?;
+        let display_name = manifest
+            .agent
+            .display_name
+            .as_deref()
+            .map(to_static_display);
+        Ok(OverlayAdapter {
+            manifest,
+            screen,
+            display_name,
+        })
+    }
+
+    /// Compiled `[[screen]]` rules, in declaration order.
+    pub fn screen_rules(&self) -> &[ScreenRule] {
+        &self.screen
     }
 
     pub fn kind(&self) -> AgentKind {
@@ -180,13 +209,7 @@ impl AgentAdapter for OverlayAdapter {
         // leaking them here would need an owned slice, so keep builtins'.
         AdapterMetadata {
             kind: base.kind,
-            display_name: self
-                .manifest
-                .agent
-                .display_name
-                .as_deref()
-                .map(to_static_display)
-                .unwrap_or(base.display_name),
+            display_name: self.display_name.unwrap_or(base.display_name),
             binaries: base.binaries,
         }
     }
@@ -279,6 +302,39 @@ message = "future says hi"
                 .is_err()
         );
         assert!(parse_manifest("[agent]\nkind = \"codex\"\nbinaries = [\"\"]").is_err());
+        let bad_screen = "[agent]\nkind = \"generic\"\n[[screen]]\nid = \"x\"\nstate = \"working\"\nregex = [\"(\"]";
+        assert!(parse_manifest(bad_screen)
+            .unwrap_err()
+            .contains("[[screen]] 'x'"));
+    }
+
+    #[test]
+    fn screen_rules_compile_into_the_overlay() {
+        let text = r#"
+[agent]
+kind = "generic"
+
+[[screen]]
+id = "ask"
+state = "blocked"
+regex = ['Allow\? \[y/n\]']
+priority = 3
+
+[[screen]]
+id = "spin"
+state = "working"
+region = "title"
+regex = ['^\* ']
+"#;
+        let overlay = OverlayAdapter::new(parse_manifest(text).unwrap()).unwrap();
+        let rules = overlay.screen_rules();
+        assert_eq!(rules.len(), 2);
+        let hit = crate::screen::classify(rules, "* busy", "Allow? [y/n]").unwrap();
+        assert_eq!(
+            (hit.id.as_str(), hit.state),
+            ("ask", crate::screen::ScreenState::Blocked)
+        );
+        assert!(wrap().screen_rules().is_empty());
     }
 
     #[test]
@@ -326,6 +382,11 @@ message = "future says hi"
         let r = o.resume_capability("abc").unwrap();
         assert_eq!(r.argv, vec!["codex", "resume", "abc", "--wrap"]);
         assert_eq!(o.metadata().display_name, "Codex (wrap)");
+        // The override is leaked once per overlay, not once per call.
+        assert!(std::ptr::eq(
+            o.metadata().display_name,
+            o.metadata().display_name
+        ));
         assert_eq!(o.metadata().kind, AgentKind::Codex);
         // Channel passes through to the builtin (codex: typed text).
         assert_eq!(o.answer_channel(), Some(AnswerChannel::TypeText));

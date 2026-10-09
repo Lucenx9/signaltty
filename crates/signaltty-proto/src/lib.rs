@@ -152,6 +152,7 @@ pub mod method {
     pub const PANE_CLOSE: &str = "pane.close";
     pub const PANE_RESUME: &str = "pane.resume";
     pub const PANE_MARK_SEEN: &str = "pane.mark_seen";
+    pub const PANE_EXPLAIN: &str = "pane.explain";
     pub const DECISION_ANSWER: &str = "decision.answer";
     pub const NOTIFY: &str = "notify";
     pub const HOOK_EVENT: &str = "hook-event";
@@ -210,6 +211,7 @@ pub mod method {
         PANE_CLOSE,
         PANE_RESUME,
         PANE_MARK_SEEN,
+        PANE_EXPLAIN,
         DECISION_ANSWER,
         NOTIFY,
         HOOK_EVENT,

@@ -3,8 +3,18 @@
 
 use std::path::PathBuf;
 
+/// An XDG variable's value; set-but-empty counts as unset (XDG Base
+/// Directory spec), so `XDG_STATE_HOME=` never yields a relative path.
+fn env_dir(name: &str) -> Option<String> {
+    non_empty(std::env::var(name).ok())
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|v| !v.is_empty())
+}
+
 pub fn runtime_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+    if let Some(dir) = env_dir("XDG_RUNTIME_DIR") {
         PathBuf::from(dir).join("signaltty")
     } else {
         // Fallback for environments without XDG_RUNTIME_DIR.
@@ -38,9 +48,9 @@ fn socket_path_from(socket: Option<String>, runtime: PathBuf) -> PathBuf {
 }
 
 pub fn state_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_STATE_HOME") {
+    if let Some(dir) = env_dir("XDG_STATE_HOME") {
         PathBuf::from(dir).join("signaltty")
-    } else if let Ok(home) = std::env::var("HOME") {
+    } else if let Some(home) = env_dir("HOME") {
         PathBuf::from(home).join(".local/state/signaltty")
     } else {
         PathBuf::from("/tmp/signaltty-state")
@@ -56,9 +66,9 @@ pub fn history_dir() -> PathBuf {
 }
 
 pub fn config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+    if let Some(dir) = env_dir("XDG_CONFIG_HOME") {
         PathBuf::from(dir).join("signaltty")
-    } else if let Ok(home) = std::env::var("HOME") {
+    } else if let Some(home) = env_dir("HOME") {
         PathBuf::from(home).join(".config/signaltty")
     } else {
         PathBuf::from("/tmp/signaltty-config")
@@ -73,9 +83,9 @@ pub fn data_dir() -> PathBuf {
 }
 
 fn data_dir_from(xdg: Option<String>, home: Option<String>) -> PathBuf {
-    if let Some(dir) = xdg {
+    if let Some(dir) = non_empty(xdg) {
         PathBuf::from(dir).join("signaltty")
-    } else if let Some(home) = home {
+    } else if let Some(home) = non_empty(home) {
         PathBuf::from(home).join(".local/share/signaltty")
     } else {
         PathBuf::from("/tmp/signaltty-data")
@@ -115,6 +125,19 @@ mod tests {
         );
         assert_eq!(
             data_dir_from(None, None),
+            PathBuf::from("/tmp/signaltty-data")
+        );
+    }
+
+    #[test]
+    fn empty_xdg_values_count_as_unset() {
+        // `XDG_DATA_HOME=` used to resolve to the relative `signaltty`.
+        assert_eq!(
+            data_dir_from(Some(String::new()), Some("/home/u".into())),
+            PathBuf::from("/home/u/.local/share/signaltty")
+        );
+        assert_eq!(
+            data_dir_from(Some(String::new()), Some(String::new())),
             PathBuf::from("/tmp/signaltty-data")
         );
     }

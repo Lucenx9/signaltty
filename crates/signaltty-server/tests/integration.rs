@@ -462,15 +462,15 @@ async fn decision_answer_delivers_bytes_and_consumes() {
         .await
         .unwrap();
     assert_eq!(r["answered"], true);
+    assert_eq!(r["lifecycle"], "working");
     assert_eq!(r["attention"], "none");
-    assert_eq!(r["lifecycle"], "blocked");
     wait_for_text(&mut c, &pane, "1", Duration::from_secs(5)).await;
 
     // Consumed: the bar is gone and a repeat never redelivers.
     let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
     assert!(p["pane"].get("pending_decision").is_none());
     assert_eq!(p["pane"]["attention"], "none");
-    assert_eq!(p["pane"]["lifecycle"], "blocked");
+    assert_eq!(p["pane"]["lifecycle"], "working");
     let err = c
         .call(
             "decision.answer",
@@ -632,10 +632,7 @@ async fn manifest_overlay_detects_and_classifies() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-agents-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     write_manifest(
         &dir,
@@ -688,10 +685,7 @@ async fn procscan_promotes_through_shell_and_follows_cwd() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-agents-proc-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     write_manifest(
         &dir,
@@ -910,10 +904,7 @@ async fn workspace_diff_reports_numstat_and_rejects_non_repo() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-intdiff-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     // The temp root is the git ceiling so a TMPDIR inside a checkout is never
@@ -1133,6 +1124,54 @@ async fn hook_event_claude_notification_and_cursor_stop() {
     srv.shutdown().await;
 }
 
+#[tokio::test]
+async fn hook_event_opencode_failure_keeps_error_attention_and_resume_identity() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    for (event, payload, lifecycle, attention) in [
+        (
+            "session.created",
+            json!({"session_id":"oc-session"}),
+            "idle",
+            "none",
+        ),
+        (
+            "session.status",
+            json!({"session_id":"oc-session", "status":"busy"}),
+            "working",
+            "none",
+        ),
+        (
+            "session.error",
+            json!({"session_id":"oc-session", "message":"provider unavailable"}),
+            "failed",
+            "error",
+        ),
+    ] {
+        let r = c
+            .call(
+                "hook-event",
+                json!({
+                    "agent":"opencode", "event":event, "pane_id":pane, "payload":payload
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["lifecycle"], lifecycle);
+        assert_eq!(r["attention"], attention);
+    }
+    let p = c.call("pane.get", json!({"pane_id":pane})).await.unwrap();
+    assert_eq!(p["pane"]["lifecycle"], "failed");
+    assert_eq!(p["pane"]["attention"], "error");
+    assert_eq!(p["pane"]["agent"]["agent_session_id"], "oc-session");
+    assert_eq!(
+        p["pane"]["agent"]["resume_argv"],
+        json!(["opencode", "--session", "oc-session"])
+    );
+    srv.shutdown().await;
+}
+
 fn codex_fixture(dir: &std::path::Path) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(dir).unwrap();
@@ -1294,6 +1333,349 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
     assert!(err.contains("already live"), "{err}");
     srv.shutdown().await;
     std::fs::remove_dir_all(agents).unwrap();
+}
+
+#[tokio::test]
+async fn report_session_custom_resume_argv_and_validation() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(&mut c, vec!["sh", "-c", "exit 0"]).await;
+    c.call(
+        "wait",
+        json!({"pane_id": pane, "until": "exited", "timeout_s": 15}),
+    )
+    .await
+    .unwrap();
+
+    // Invalid argv: path in argv[0] is rejected with BAD_PARAMS and leaves pane unchanged
+    let err = c
+        .call(
+            "report-session",
+            json!({
+                "pane_id": pane,
+                "agent_session_id": "sess-1",
+                "agent": "generic",
+                "resume_argv": ["/bin/sh", "-c", "echo invalid"]
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with("BAD_PARAMS"),
+        "expected BAD_PARAMS, got: {err}"
+    );
+
+    // Invalid argv: control char in argument is rejected with BAD_PARAMS
+    let err = c
+        .call(
+            "report-session",
+            json!({
+                "pane_id": pane,
+                "agent_session_id": "sess-1",
+                "agent": "generic",
+                "resume_argv": ["sh", "-c", "echo \x01"]
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with("BAD_PARAMS"),
+        "expected BAD_PARAMS, got: {err}"
+    );
+
+    // Verify pane is unchanged (resume_argv still null)
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert!(p["pane"]["agent"]["resume_argv"].is_null());
+
+    // Valid reported resume argv for a generic agent becomes pane.agent.resume_argv
+    let r = c
+        .call(
+            "report-session",
+            json!({
+                "pane_id": pane,
+                "agent_session_id": "sess-generic",
+                "agent": "generic",
+                "resume_argv": ["sh", "-c", "echo custom-resumed-ok; sleep 1"]
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        r["pane"]["agent"]["resume_argv"],
+        json!(["sh", "-c", "echo custom-resumed-ok; sleep 1"])
+    );
+
+    // pane.resume spawns it
+    let res = c
+        .call("pane.resume", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    assert_eq!(res["pane"]["live"]["state"], "live");
+    wait_for_text(&mut c, &pane, "custom-resumed-ok", Duration::from_secs(5)).await;
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn self_reported_resume_argv_survives_same_session_reports() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let mine = json!(["my-claude", "--resume", "s1"]);
+    c.call(
+        "report-session",
+        json!({"pane_id": pane, "agent_session_id": "s1", "agent": "claude", "resume_argv": mine}),
+    )
+    .await
+    .unwrap();
+    // A later hook and a bare report for the same session keep it.
+    c.call(
+        "hook-event",
+        json!({"agent": "claude", "event": "Stop", "pane_id": pane,
+               "payload": {"session_id": "s1"}}),
+    )
+    .await
+    .unwrap();
+    let r = c
+        .call(
+            "report-session",
+            json!({"pane_id": pane, "agent_session_id": "s1", "agent": "claude"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["pane"]["agent"]["resume_argv"], mine);
+    // A new session gets the adapter's official command again.
+    c.call(
+        "hook-event",
+        json!({"agent": "claude", "event": "Stop", "pane_id": pane,
+               "payload": {"session_id": "s2"}}),
+    )
+    .await
+    .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(
+        p["pane"]["agent"]["resume_argv"],
+        json!(["claude", "--resume", "s2"])
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn report_session_builds_resume_retains_selected_executable_without_manifest() {
+    let srv = TestServer::start().await;
+    let codex = codex_fixture(srv.socket.parent().unwrap());
+    let mut c = srv.client().await;
+    let ws = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let launch = c
+        .call(
+            "pane.spawn",
+            json!({
+                "workspace_id": ws["workspace"]["id"],
+                "argv": [codex.to_str().unwrap(), "--version"]
+            }),
+        )
+        .await
+        .unwrap();
+    let pane = launch["pane"]["id"].as_str().unwrap().to_string();
+    c.call(
+        "wait",
+        json!({"pane_id": pane, "until": "exited", "timeout_s": 15}),
+    )
+    .await
+    .unwrap();
+    let r = c
+        .call(
+            "report-session",
+            json!({"pane_id": pane, "agent_session_id": "direct-id", "agent": "codex"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        r["pane"]["agent"]["resume_argv"],
+        json!([codex.to_str().unwrap(), "resume", "direct-id"])
+    );
+    let r = c
+        .call("pane.resume", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    assert_eq!(r["pane"]["live"]["state"], "live");
+    wait_for_text(
+        &mut c,
+        &pane,
+        "fixture-resume:direct-id",
+        Duration::from_secs(5),
+    )
+    .await;
+    wait_for_text(
+        &mut c,
+        &pane,
+        "fixture-local-runtime",
+        Duration::from_secs(5),
+    )
+    .await;
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn hook_event_session_retains_selected_executable() {
+    let srv = TestServer::start().await;
+    let codex = codex_fixture(srv.socket.parent().unwrap());
+    let mut c = srv.client().await;
+    let ws = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let launch = c
+        .call(
+            "pane.spawn",
+            json!({
+                "workspace_id": ws["workspace"]["id"],
+                "argv": [codex.to_str().unwrap(), "--version"]
+            }),
+        )
+        .await
+        .unwrap();
+    let pane = launch["pane"]["id"].as_str().unwrap().to_string();
+    c.call(
+        "wait",
+        json!({"pane_id": pane, "until": "exited", "timeout_s": 15}),
+    )
+    .await
+    .unwrap();
+    let r = c
+        .call(
+            "hook-event",
+            json!({
+                "pane_id": pane,
+                "agent": "codex",
+                "event": "SessionStart",
+                "payload": {"session_id": "hook-sid-1"}
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["accepted"], true);
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(
+        p["pane"]["agent"]["resume_argv"],
+        json!([codex.to_str().unwrap(), "resume", "hook-sid-1"])
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn pane_resume_repairs_stale_bare_resume_argv() {
+    restored_resume_fixture(false).await;
+}
+
+#[tokio::test]
+async fn legacy_relative_launch_keeps_bare_session_command_after_restore() {
+    restored_resume_fixture(true).await;
+}
+
+async fn restored_resume_fixture(legacy_relative: bool) {
+    let mut srv = TestServer::start().await;
+    let codex = codex_fixture(srv.socket.parent().unwrap());
+    let mut c = srv.client().await;
+    let ws = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let launch = c
+        .call(
+            "pane.spawn",
+            json!({
+                "workspace_id": ws["workspace"]["id"],
+                "argv": [codex.to_str().unwrap(), "--version"]
+            }),
+        )
+        .await
+        .unwrap();
+    let pane = launch["pane"]["id"].as_str().unwrap().to_string();
+    c.call(
+        "wait",
+        json!({"pane_id": pane, "until": "exited", "timeout_s": 15}),
+    )
+    .await
+    .unwrap();
+    c.call(
+        "report-session",
+        json!({"pane_id": pane, "agent_session_id": "stale-sid", "agent": "codex"}),
+    )
+    .await
+    .unwrap();
+    c.call("server.shutdown", json!({"force": true}))
+        .await
+        .unwrap();
+    assert!(
+        srv.wait_for_exit(Duration::from_secs(5)).await,
+        "owned server did not shut down before snapshot edit"
+    );
+    let snap_path = srv.state_dir.join("snapshot.json");
+    let raw = std::fs::read_to_string(&snap_path).unwrap();
+    let mut snap: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    for p in snap["panes"].as_array_mut().unwrap() {
+        if p["id"] == pane {
+            p["agent"]["resume_argv"] = json!(["codex", "resume", "stale-sid"]);
+            if legacy_relative {
+                p["argv"] = json!(["./bin/codex", "--version"]);
+                // Legacy cwd may have been refreshed; initial launch cwd is absent.
+                p["cwd"] = json!(srv.integration_home);
+            }
+        }
+    }
+    std::fs::write(&snap_path, serde_json::to_string(&snap).unwrap()).unwrap();
+    srv.restart().await;
+    c = srv.client().await;
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(
+        p["pane"]["agent"]["resume_argv"],
+        json!(["codex", "resume", "stale-sid"])
+    );
+    if legacy_relative {
+        let report = c
+            .call(
+                "report-session",
+                json!({"pane_id":pane,
+            "agent":"codex", "agent_session_id":"legacy-sid"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            report["pane"]["agent"]["resume_argv"],
+            json!(["codex", "resume", "legacy-sid"])
+        );
+        srv.shutdown().await;
+        return;
+    }
+    let r = c
+        .call("pane.resume", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    assert_eq!(r["pane"]["live"]["state"], "live");
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert_eq!(
+        p["pane"]["agent"]["resume_argv"],
+        json!([codex.to_str().unwrap(), "resume", "stale-sid"])
+    );
+    wait_for_text(
+        &mut c,
+        &pane,
+        "fixture-resume:stale-sid",
+        Duration::from_secs(5),
+    )
+    .await;
+    wait_for_text(
+        &mut c,
+        &pane,
+        "fixture-local-runtime",
+        Duration::from_secs(5),
+    )
+    .await;
+    srv.shutdown().await;
 }
 
 #[tokio::test]
@@ -1582,10 +1964,7 @@ fn plugin_test_dir(tag: &str) -> std::path::PathBuf {
         "signaltty-plugtest-{}-{}-{}",
         std::process::id(),
         tag,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -2766,5 +3145,524 @@ async fn tool_hooks_start_work_but_never_clear_blocked() {
         assert_eq!(p["pane"]["lifecycle"], "blocked", "{event} kept blocked");
         assert_eq!(p["pane"]["attention"], "permission_required");
     }
+    srv.shutdown().await;
+}
+
+/// A server whose test never calls `shutdown` (panic, early return) must
+/// still be reaped when it drops.
+#[tokio::test]
+async fn dropped_test_server_is_reaped() {
+    let srv = TestServer::start().await;
+    let socket = srv.socket.to_string_lossy().to_string();
+    let running = || {
+        std::fs::read_dir("/proc").unwrap().flatten().any(|e| {
+            std::fs::read(e.path().join("cmdline"))
+                .is_ok_and(|c| String::from_utf8_lossy(&c).contains(&socket))
+        })
+    };
+    assert!(running(), "server should be running");
+    drop(srv);
+    assert!(!running(), "dropped server is still running");
+}
+
+// ---- reviewed terminal attention (specs/024-reviewed-terminal-attention) ----
+
+/// (agent, SessionStart, UserPromptSubmit, Stop, SessionEnd, Stop summary)
+const TURN_HOOKS: [(&str, &str, &str, &str, &str, &str); 3] = [
+    (
+        "claude",
+        "SessionStart",
+        "UserPromptSubmit",
+        "Stop",
+        "SessionEnd",
+        "All tests pass",
+    ),
+    (
+        "codex",
+        "SessionStart",
+        "UserPromptSubmit",
+        "Stop",
+        "SessionEnd",
+        "All tests pass",
+    ),
+    (
+        "cursor",
+        "sessionStart",
+        "beforeSubmitPrompt",
+        "stop",
+        "sessionEnd",
+        "turn complete",
+    ),
+];
+
+async fn send_hook(
+    c: &mut TestClient,
+    agent: &str,
+    event: &str,
+    pane: &str,
+    payload: serde_json::Value,
+) -> serde_json::Value {
+    c.call(
+        "hook-event",
+        json!({"agent": agent, "event": event, "pane_id": pane, "payload": payload}),
+    )
+    .await
+    .unwrap()
+}
+
+async fn pane_snapshot(c: &mut TestClient, pane: &str) -> serde_json::Value {
+    c.call("pane.get", json!({"pane_id": pane})).await.unwrap()["pane"].clone()
+}
+
+/// Drive a full turn: session start, prompt, Stop, then the user reads it.
+async fn reviewed_turn(
+    c: &mut TestClient,
+    (agent, start, prompt, stop, _end, summary): (&str, &str, &str, &str, &str, &str),
+    pane: &str,
+) {
+    send_hook(c, agent, start, pane, json!({"session_id": "s1"})).await;
+    send_hook(c, agent, prompt, pane, json!({"session_id": "s1"})).await;
+    let r = send_hook(
+        c,
+        agent,
+        stop,
+        pane,
+        json!({"session_id": "s1", "last_assistant_message": "All tests pass"}),
+    )
+    .await;
+    assert_eq!(
+        (r["lifecycle"].as_str(), r["attention"].as_str()),
+        (Some("done"), Some("unread"))
+    );
+    c.call("pane.mark_seen", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    let p = pane_snapshot(c, pane).await;
+    assert_eq!(
+        (p["lifecycle"].as_str(), p["attention"].as_str()),
+        (Some("done"), Some("none"))
+    );
+    assert_eq!(p["last_message"], summary);
+}
+
+#[tokio::test]
+async fn reviewed_terminal_session_end_stays_done_none_and_keeps_identity() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for hooks in TURN_HOOKS {
+        let (agent, _, _, _, end, summary) = hooks;
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        reviewed_turn(&mut c, hooks, &pane).await;
+
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s2"})).await;
+        assert_eq!(r["lifecycle"], "done", "{agent}");
+        assert_eq!(
+            r["attention"], "none",
+            "{agent} session end re-raised unread"
+        );
+        let p = pane_snapshot(&mut c, &pane).await;
+        assert_eq!(p["last_message"], summary, "{agent} lost its last message");
+        // Identity and resume still follow the trailing event.
+        assert_eq!(p["agent"]["agent_session_id"], "s2", "{agent}");
+        assert_eq!(p["agent"]["resume_argv"][2], "s2", "{agent}");
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn reviewed_terminal_pty_exit_after_session_end_stays_none() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for hooks in TURN_HOOKS {
+        let (agent, _, _, _, end, summary) = hooks;
+        let (_ws, pane) = new_pane(&mut c, vec!["sh", "-c", "read line"]).await;
+        reviewed_turn(&mut c, hooks, &pane).await;
+        send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+
+        c.call(
+            "pane.input",
+            json!({"pane_id": pane, "data_b64": base64_encode("\n")}),
+        )
+        .await
+        .unwrap();
+        let w = c
+            .call(
+                "wait",
+                json!({"pane_id": pane, "until": "exited", "timeout_s": 5}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(w["satisfied"], true, "{agent}");
+        let p = pane_snapshot(&mut c, &pane).await;
+        assert_eq!(p["live"]["state"], "exited", "{agent}");
+        assert_eq!(p["lifecycle"], "done", "{agent}");
+        assert_eq!(p["attention"], "none", "{agent} exit re-raised unread");
+        assert_eq!(p["last_message"], summary, "{agent}");
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn session_end_never_rewrites_a_failed_outcome() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-agents-failed-{}-{}",
+        std::process::id(),
+        signaltty_core::ids::new_pane_id()
+    ));
+    write_manifest(
+        &dir,
+        "claude.toml",
+        r#"
+[agent]
+kind = "claude"
+
+[lifecycle.TurnFailed]
+lifecycle = "failed"
+attention = "error"
+message = "build failed"
+"#,
+    );
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let mut c = srv.client().await;
+    for reviewed in [false, true] {
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(
+            &mut c,
+            "claude",
+            "UserPromptSubmit",
+            &pane,
+            json!({"session_id": "s1"}),
+        )
+        .await;
+        let r = send_hook(
+            &mut c,
+            "claude",
+            "TurnFailed",
+            &pane,
+            json!({"session_id": "s1"}),
+        )
+        .await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("failed"), Some("error"))
+        );
+        if reviewed {
+            c.call("pane.mark_seen", json!({"pane_id": pane}))
+                .await
+                .unwrap();
+        }
+        let expected = if reviewed { "none" } else { "error" };
+
+        let r = send_hook(
+            &mut c,
+            "claude",
+            "SessionEnd",
+            &pane,
+            json!({"session_id": "s1"}),
+        )
+        .await;
+        assert_eq!(r["lifecycle"], "failed", "reviewed={reviewed}");
+        assert_eq!(r["attention"], expected, "reviewed={reviewed}");
+        let p = pane_snapshot(&mut c, &pane).await;
+        assert_eq!(p["last_message"], "build failed", "reviewed={reviewed}");
+    }
+    srv.shutdown().await;
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn session_end_and_exit_still_alert_when_nothing_was_reviewed() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for hooks in TURN_HOOKS {
+        let (agent, start, prompt, stop, end, summary) = hooks;
+
+        // First completion: working → session end.
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("done"), Some("unread")),
+            "{agent} working"
+        );
+        assert_eq!(
+            pane_snapshot(&mut c, &pane).await["last_message"],
+            "session ended"
+        );
+
+        // An idle session that ends is a completion too.
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(&mut c, agent, start, &pane, json!({"session_id": "s1"})).await;
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("done"), Some("unread")),
+            "{agent} idle"
+        );
+
+        // Unreviewed Stop then session end stays unread, summary kept.
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        send_hook(
+            &mut c,
+            agent,
+            stop,
+            &pane,
+            json!({"session_id": "s1", "last_assistant_message": "All tests pass"}),
+        )
+        .await;
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("done"), Some("unread")),
+            "{agent} unreviewed"
+        );
+        assert_eq!(pane_snapshot(&mut c, &pane).await["last_message"], summary);
+
+        // Working exit raises unread.
+        let (_ws, pane) = new_pane(&mut c, vec!["sh", "-c", "read line"]).await;
+        send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        c.call(
+            "pane.input",
+            json!({"pane_id": pane, "data_b64": base64_encode("\n")}),
+        )
+        .await
+        .unwrap();
+        c.call(
+            "wait",
+            json!({"pane_id": pane, "until": "exited", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            pane_snapshot(&mut c, &pane).await["attention"],
+            "unread",
+            "{agent} exit"
+        );
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn fresh_turn_after_review_raises_attention_again() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for hooks in TURN_HOOKS {
+        let (agent, _, prompt, stop, end, _) = hooks;
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        reviewed_turn(&mut c, hooks, &pane).await;
+
+        let r = send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("working"), Some("none")),
+            "{agent}"
+        );
+        let r = send_hook(
+            &mut c,
+            agent,
+            stop,
+            &pane,
+            json!({"session_id": "s1", "last_assistant_message": "Second answer"}),
+        )
+        .await;
+        assert_eq!(
+            (r["lifecycle"].as_str(), r["attention"].as_str()),
+            (Some("done"), Some("unread")),
+            "{agent} second turn"
+        );
+
+        // …and the trailing session end after the new, unread turn keeps it.
+        let r = send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        assert_eq!(r["attention"], "unread", "{agent}");
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn session_end_keeps_unanswered_permission_gate() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for (agent, prompt, end) in [
+        ("claude", "UserPromptSubmit", "SessionEnd"),
+        ("codex", "UserPromptSubmit", "SessionEnd"),
+    ] {
+        let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+        send_hook(&mut c, agent, prompt, &pane, json!({"session_id": "s1"})).await;
+        c.call(
+            "hook-event",
+            json!({"agent": agent, "event": "PermissionRequest", "pane_id": pane,
+                   "decision": decision_payload("gate1")}),
+        )
+        .await
+        .unwrap();
+        c.call("pane.mark_seen", json!({"pane_id": pane}))
+            .await
+            .unwrap();
+        send_hook(&mut c, agent, end, &pane, json!({"session_id": "s1"})).await;
+        let p = pane_snapshot(&mut c, &pane).await;
+        assert_eq!(p["attention"], "permission_required", "{agent}");
+        assert_eq!(p["pending_decision"]["id"], "gate1", "{agent}");
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn relative_selected_executable_survives_live_cwd_change() {
+    relative_launch_survives_chdir(false).await;
+}
+
+#[tokio::test]
+async fn split_relative_selected_executable_survives_live_cwd_change() {
+    relative_launch_survives_chdir(true).await;
+}
+
+async fn relative_launch_survives_chdir(split: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let srv = TestServer::start().await;
+    let root = srv.socket.parent().unwrap().join("launch");
+    let bin = root.join("bin");
+    let other = root.join("other");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    let program = bin.join("codex");
+    std::fs::write(
+        &program,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = --no-daemon ]; then shift; fi
+case "$1" in
+--version) echo fixture-codex ;;
+resume) echo original-binary-resumed; read line ;;
+*) cd '{}'; echo cwd-moved; read line ;;
+esac
+"#,
+            other.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut c = srv.client().await;
+    let ws = c
+        .call("workspace.create", json!({"cwd":root}))
+        .await
+        .unwrap();
+    let started = if split {
+        let parent = c
+            .call(
+                "pane.spawn",
+                json!({
+                    "workspace_id":ws["workspace"]["id"], "argv":["sh", "-c", "read line"]
+                }),
+            )
+            .await
+            .unwrap();
+        c.call(
+            "pane.split",
+            json!({"pane_id":parent["pane"]["id"],
+            "argv":["./bin/codex"], "cwd":root}),
+        )
+        .await
+        .unwrap()
+    } else {
+        c.call(
+            "pane.spawn",
+            json!({"workspace_id":ws["workspace"]["id"],
+            "argv":["./bin/codex"]}),
+        )
+        .await
+        .unwrap()
+    };
+    let pane = started["pane"]["id"].as_str().unwrap();
+    wait_for_text(&mut c, pane, "cwd-moved", Duration::from_secs(5)).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let snapshot = c.call("pane.get", json!({"pane_id":pane})).await.unwrap();
+        if snapshot["pane"]["cwd"] == other.to_string_lossy().as_ref() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "cwd scanner did not observe chdir"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let reported = c
+        .call(
+            "report-session",
+            json!({"pane_id":pane,"agent":"codex",
+        "agent_session_id":"relative-session"}),
+        )
+        .await
+        .unwrap();
+    assert!(std::path::Path::new(
+        reported["pane"]["agent"]["resume_argv"][0]
+            .as_str()
+            .unwrap()
+    )
+    .is_absolute());
+    c.call(
+        "pane.input",
+        json!({"pane_id":pane,"data_b64":base64_encode("\n")}),
+    )
+    .await
+    .unwrap();
+    c.call(
+        "wait",
+        json!({"pane_id":pane,"until":"exited","timeout_s":5}),
+    )
+    .await
+    .unwrap();
+    c.call("pane.resume", json!({"pane_id":pane}))
+        .await
+        .unwrap();
+    wait_for_text(
+        &mut c,
+        pane,
+        "original-binary-resumed",
+        Duration::from_secs(5),
+    )
+    .await;
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn spawned_pane_sees_term_program_and_not_inherited_tmux() {
+    let srv =
+        TestServer::start_with_env(&[("TMUX", "/tmp/tmux-host/default,1,0"), ("CLAUDECODE", "1")])
+            .await;
+    let mut c = srv.client().await;
+    let (_, pane) = new_pane(
+        &mut c,
+        vec![
+            "sh",
+            "-c",
+            "echo tp=$TERM_PROGRAM; echo tpv=$TERM_PROGRAM_VERSION; echo cc=${CLAUDECODE:-absent}; echo tmux=${TMUX:-absent}; sleep 1",
+        ],
+    )
+    .await;
+    wait_for_text(&mut c, &pane, "tmux=absent", Duration::from_secs(5)).await;
+    let read = c
+        .call(
+            "pane.read",
+            json!({"pane_id": pane, "mode": "tail", "lines": 50}),
+        )
+        .await
+        .unwrap();
+    let text = read["text"].as_str().unwrap();
+    assert!(
+        text.contains("tp=signaltty"),
+        "expected tp=signaltty, got:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("tpv={}", env!("CARGO_PKG_VERSION"))),
+        "expected tpv={}, got:\n{text}",
+        env!("CARGO_PKG_VERSION")
+    );
+    assert!(
+        text.contains("cc=absent"),
+        "expected cc=absent, got:\n{text}"
+    );
     srv.shutdown().await;
 }

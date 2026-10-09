@@ -1,9 +1,10 @@
 //! Task board: multi-column view of orchestrated tasks grouped by what they need.
 //!
-//! Tasks are derived into four columns:
+//! Tasks are derived into five columns:
 //! - Working: active tasks still running or pending.
 //! - Needs you: tasks requiring input, failed, or rejected.
 //! - In review: completed tasks waiting for diff review and merge/discard.
+//! - Ready to merge: tasks with passing checks and review ready to merge.
 //! - Done: archived tasks that were merged, discarded, or canceled.
 
 use std::cell::RefCell;
@@ -16,7 +17,7 @@ use signaltty_core::{DispositionOutcome, PrChecks, PrReview, PrState, Task, Task
 
 use crate::task_chip::{state_class, state_word};
 
-/// The four kanban columns representing a task's lifecycle stage.
+/// The five kanban columns representing a task's lifecycle stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BoardColumn {
     Working,
@@ -190,7 +191,7 @@ pub struct BoardColumnView {
     pub cards: Vec<TaskCardView>,
 }
 
-/// Build the 4 columns for a slice of tasks, sorting cards by `updated_at` descending.
+/// Build the 5 columns for a slice of tasks, sorting cards by `updated_at` descending.
 /// The Done column shows at most 20 latest cards while retaining the total count.
 pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
     let mut working = Vec::new();
@@ -255,140 +256,603 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
     ]
 }
 
-/// Present the Task Board dialog.
-///
-/// If tasks is empty, displays an `adw::StatusPage`. Otherwise displays 4 columns
-/// side by side. Activating a card with a `pane_id` closes the dialog.
-/// `on_closed` runs once the dialog is gone, with the chosen pane if any, so
-/// focusing that pane is not undone by the close restoring the old focus.
+struct CardWidgets {
+    row: gtk4::ListBoxRow,
+    title: gtk4::Label,
+    pill: gtk4::Label,
+    meta: gtk4::Label,
+}
+
+impl CardWidgets {
+    fn new(card: &TaskCardView) -> Self {
+        let row = gtk4::ListBoxRow::new();
+        row.add_css_class("board-card");
+        row.set_widget_name(&card.id);
+        row.set_selectable(false);
+        let body = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+        let top = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        let title = gtk4::Label::new(None);
+        title.add_css_class("board-card-title");
+        title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        title.set_hexpand(true);
+        title.set_halign(gtk4::Align::Start);
+        let pill = gtk4::Label::new(None);
+        pill.add_css_class("task-chip");
+        pill.add_css_class("board-card-pill");
+        pill.set_halign(gtk4::Align::End);
+        top.append(&title);
+        top.append(&pill);
+        body.append(&top);
+        let meta = gtk4::Label::new(None);
+        meta.add_css_class("board-card-meta");
+        meta.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        meta.set_halign(gtk4::Align::Start);
+        body.append(&meta);
+        row.set_child(Some(&body));
+        let widgets = Self {
+            row,
+            title,
+            pill,
+            meta,
+        };
+        widgets.update(card);
+        widgets
+    }
+
+    fn update(&self, card: &TaskCardView) {
+        self.row.set_activatable(card.pane_id.is_some());
+        self.title.set_text(&card.label);
+        self.pill.set_text(card.state_word);
+        for class in crate::task_chip::TASK_CHIP_CLASSES {
+            self.pill.remove_css_class(class);
+        }
+        self.pill.add_css_class(card.css_class);
+        let subtitle = card.subtitle();
+        self.meta.set_text(&subtitle);
+        self.row.set_tooltip_text(Some(&format!(
+            "{}: {}\n{}",
+            card.label, card.state_word, subtitle
+        )));
+    }
+}
+
+struct ColumnWidgets {
+    header: gtk4::Label,
+    notice: gtk4::Label,
+    scroll: gtk4::ScrolledWindow,
+    list: gtk4::ListBox,
+    scroll_epoch: Rc<std::cell::Cell<u64>>,
+}
+
+#[derive(Clone)]
+struct ColumnPosition {
+    value: f64,
+    anchor: Option<(String, f64)>,
+    scroll_epoch: u64,
+}
+
+fn track_adjustment(
+    adjustment: &gtk4::Adjustment,
+    reconciling: &Rc<std::cell::Cell<bool>>,
+) -> Rc<std::cell::Cell<u64>> {
+    let epoch = Rc::new(std::cell::Cell::new(0_u64));
+    let value = Rc::new(std::cell::Cell::new(adjustment.value()));
+    let configured = Rc::new(std::cell::Cell::new(None::<f64>));
+    let geometry = Rc::new(std::cell::Cell::new((
+        adjustment.lower(),
+        adjustment.upper(),
+        adjustment.page_size(),
+    )));
+    let configuration_geometry = geometry.clone();
+    let previous = value.clone();
+    let configuration = configured.clone();
+    adjustment.connect_changed(move |adjustment| {
+        // configure emits changed with its new value before value-changed.
+        // A layout clamp therefore does not represent new user navigation.
+        configuration_geometry.set((
+            adjustment.lower(),
+            adjustment.upper(),
+            adjustment.page_size(),
+        ));
+        configuration.set((adjustment.value() != previous.get()).then_some(adjustment.value()));
+    });
+    let changed = epoch.clone();
+    let updating = reconciling.clone();
+    adjustment.connect_value_changed(move |adjustment| {
+        let bounds = (
+            adjustment.lower(),
+            adjustment.upper(),
+            adjustment.page_size(),
+        );
+        // A scrollbar handler may clamp reentrantly before our changed handler.
+        let layout_change =
+            geometry.replace(bounds) != bounds || configured.take() == Some(adjustment.value());
+        value.set(adjustment.value());
+        if !updating.get() && !layout_change {
+            changed.set(changed.get().wrapping_add(1));
+        }
+    });
+    epoch
+}
+
+#[derive(Clone)]
+struct RestorePoint {
+    focus_epoch: u64,
+    focused: Option<String>,
+    neighbors: Option<(gtk4::ListBox, Option<String>, Option<String>)>,
+    positions: Vec<ColumnPosition>,
+    horizontal_epoch: u64,
+    x: f64,
+}
+
+fn focus_target(
+    rows: &std::collections::HashMap<String, CardWidgets>,
+    point: &RestorePoint,
+) -> Option<gtk4::ListBoxRow> {
+    point
+        .focused
+        .as_ref()
+        .and_then(|id| rows.get(id))
+        .or_else(|| {
+            let (list, next, previous) = point.neighbors.as_ref()?;
+            [next, previous]
+                .into_iter()
+                .filter_map(|id| id.as_ref().and_then(|id| rows.get(id)))
+                .find(|widgets| widgets.row.parent().as_ref() == Some(list.upcast_ref()))
+        })
+        .map(|widgets| widgets.row.clone())
+}
+
+/// A live board keeps its dialog and keyed task rows through server updates.
+pub struct Board {
+    pub dialog: libadwaita::Dialog,
+    stack: gtk4::Stack,
+    scroll: gtk4::ScrolledWindow,
+    content: gtk4::Box,
+    horizontal_epoch: Rc<std::cell::Cell<u64>>,
+    columns: Vec<ColumnWidgets>,
+    rows: Rc<RefCell<std::collections::HashMap<String, CardWidgets>>>,
+    pending: Rc<RefCell<Option<RestorePoint>>>,
+    cards: Rc<RefCell<std::collections::HashMap<String, TaskCardView>>>,
+    revision: Rc<std::cell::Cell<u64>>,
+    focus_epoch: Rc<std::cell::Cell<u64>>,
+    reconciling: Rc<std::cell::Cell<bool>>,
+    closing: Rc<std::cell::Cell<bool>>,
+}
+
+impl Board {
+    pub fn update(&self, tasks: &[Task]) {
+        if self.closing.get() {
+            return;
+        }
+        let focus = self.dialog.focus();
+        let focused = self.rows.borrow().iter().find_map(|(id, widgets)| {
+            focus
+                .as_ref()
+                .filter(|f| {
+                    *f == widgets.row.upcast_ref::<gtk4::Widget>() || f.is_ancestor(&widgets.row)
+                })
+                .map(|_| id.clone())
+        });
+        let focused_neighbors = focused.as_ref().and_then(|id| {
+            let rows = self.rows.borrow();
+            let row = &rows.get(id)?.row;
+            let list = row.parent()?.downcast::<gtk4::ListBox>().ok()?;
+            Some((
+                list.clone(),
+                list.row_at_index(row.index() + 1)
+                    .map(|r| r.widget_name().to_string()),
+                list.row_at_index(row.index() - 1)
+                    .map(|r| r.widget_name().to_string()),
+            ))
+        });
+        let positions = self
+            .columns
+            .iter()
+            .map(|col| {
+                let y = col.scroll.vadjustment().value();
+                let mut anchor = None;
+                let mut index = 0;
+                while let Some(row) = col.list.row_at_index(index) {
+                    if let Some(bounds) = row.compute_bounds(&col.list) {
+                        if f64::from(bounds.y() + bounds.height()) > y {
+                            anchor =
+                                Some((row.widget_name().to_string(), f64::from(bounds.y()) - y));
+                            break;
+                        }
+                    }
+                    index += 1;
+                }
+                ColumnPosition {
+                    value: y,
+                    anchor,
+                    scroll_epoch: col.scroll_epoch.get(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let snapshot = self
+            .pending
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| RestorePoint {
+                focus_epoch: self.focus_epoch.get(),
+                focused: focused.clone(),
+                neighbors: focused_neighbors.clone(),
+                positions: positions.clone(),
+                x: self.scroll.hadjustment().value(),
+                horizontal_epoch: self.horizontal_epoch.get(),
+            });
+        let mut snapshot = snapshot;
+        if snapshot.focus_epoch != self.focus_epoch.get() {
+            snapshot.focus_epoch = self.focus_epoch.get();
+            snapshot.x = self.scroll.hadjustment().value();
+            snapshot.horizontal_epoch = self.horizontal_epoch.get();
+            if let Some((list, _, _)) = focused_neighbors.as_ref() {
+                if let Some(index) = self.columns.iter().position(|column| &column.list == list) {
+                    snapshot.positions[index] = positions[index].clone();
+                }
+            }
+            snapshot.focused = focused;
+            snapshot.neighbors = focused_neighbors;
+        }
+        *self.pending.borrow_mut() = Some(snapshot.clone());
+        let board = build_board(tasks, Utc::now());
+        let current = board
+            .iter()
+            .flat_map(|col| col.cards.iter().map(|card| (card.id.clone(), card.clone())))
+            .collect::<std::collections::HashMap<_, _>>();
+        self.reconciling.set(true);
+        let mut rows = self.rows.borrow_mut();
+        rows.retain(|id, widgets| {
+            if current.contains_key(id) {
+                return true;
+            }
+            if let Some(parent) = widgets.row.parent().and_downcast::<gtk4::ListBox>() {
+                parent.remove(&widgets.row);
+            }
+            false
+        });
+        for (col, view) in self.columns.iter().zip(board) {
+            col.header
+                .set_text(&format!("{} · {}", view.column.title(), view.total_count));
+            col.notice.set_visible(view.cards.len() < view.total_count);
+            col.notice.set_text(&format!(
+                "Showing latest {} of {}",
+                view.cards.len(),
+                view.total_count
+            ));
+            for (index, card) in view.cards.iter().enumerate() {
+                let widgets = rows
+                    .entry(card.id.clone())
+                    .or_insert_with(|| CardWidgets::new(card));
+                widgets.update(card);
+                if widgets.row.parent().as_ref() != Some(col.list.upcast_ref())
+                    || widgets.row.index() != index as i32
+                {
+                    if let Some(parent) = widgets.row.parent().and_downcast::<gtk4::ListBox>() {
+                        parent.remove(&widgets.row);
+                    }
+                    col.list.insert(&widgets.row, index as i32);
+                }
+            }
+        }
+        *self.cards.borrow_mut() = current;
+        self.stack
+            .set_visible_child_name(if tasks.is_empty() { "empty" } else { "board" });
+        // Restore identity immediately so GTK does not choose its first row
+        // while another event arrives before the next allocation.
+        if snapshot.focused.is_some() {
+            if let Some(row) = focus_target(&rows, &snapshot) {
+                if !row.has_focus() {
+                    row.grab_focus();
+                    // Stop the focus animation initiated by reconciliation;
+                    // restore against the allocated geometry on the next tick.
+                    let horizontal = self.scroll.hadjustment();
+                    horizontal.set_value(horizontal.value());
+                    for column in &self.columns {
+                        let vertical = column.scroll.vadjustment();
+                        vertical.set_value(vertical.value());
+                    }
+                }
+            }
+        }
+        drop(rows);
+        self.reconciling.set(false);
+        if !self.dialog.is_mapped() {
+            self.pending.borrow_mut().take();
+            return;
+        }
+        let focus_epoch = self.focus_epoch.clone();
+        let focus_ticket = focus_epoch.get();
+        let revision = self.revision.get().wrapping_add(1);
+        self.revision.set(revision);
+        let generation = self.revision.clone();
+        let dialog = self.dialog.downgrade();
+        let content = self.content.clone();
+        let rows = self.rows.clone();
+        let pending = self.pending.clone();
+        let closing = self.closing.clone();
+        let updating = self.reconciling.clone();
+        let horizontal_epoch = self.horizontal_epoch.clone();
+        let horizontal = self.scroll.hadjustment();
+        let columns = self
+            .columns
+            .iter()
+            .map(|col| {
+                (
+                    col.list.clone(),
+                    col.scroll.vadjustment(),
+                    col.scroll_epoch.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        // Tick twice: the first frame allocates changed rows, the next reads them.
+        let allocated = std::cell::Cell::new(false);
+        self.stack.add_tick_callback(move |_, _| {
+            if generation.get() != revision || closing.get() {
+                return gtk4::glib::ControlFlow::Break;
+            }
+            if !allocated.replace(true) {
+                return gtk4::glib::ControlFlow::Continue;
+            }
+            let Some(dialog) = dialog.upgrade().filter(|dialog| dialog.is_mapped()) else {
+                pending.borrow_mut().take();
+                return gtk4::glib::ControlFlow::Break;
+            };
+            pending.borrow_mut().take();
+            let user_focus = focus_epoch.get() != focus_ticket
+                && dialog
+                    .focus()
+                    .is_some_and(|widget| !widget.is::<gtk4::ListBox>());
+            let current_focus = dialog.focus();
+            let rows = rows.borrow();
+            let focused_row = focus_target(&rows, &snapshot);
+            let RestorePoint {
+                x,
+                positions,
+                focused,
+                ..
+            } = &snapshot;
+            updating.set(true);
+            let restore_horizontal =
+                !user_focus && horizontal_epoch.get() == snapshot.horizontal_epoch;
+            if restore_horizontal {
+                horizontal.set_value(*x);
+            }
+            for ((list, adjustment, epoch), position) in columns.iter().zip(positions.iter()) {
+                if epoch.get() != position.scroll_epoch {
+                    continue;
+                }
+                let ColumnPosition {
+                    value: old, anchor, ..
+                } = position;
+                // New navigation owns its column; unrelated columns retain anchors.
+                if user_focus
+                    && current_focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_ancestor(list))
+                {
+                    continue;
+                }
+                let value = if *old <= 0.0 {
+                    0.0
+                } else {
+                    anchor
+                        .as_ref()
+                        .and_then(|(id, offset)| {
+                            let mut index = 0;
+                            while let Some(row) = list.row_at_index(index) {
+                                if row.widget_name().as_str() == id {
+                                    return row
+                                        .compute_bounds(list)
+                                        .map(|bounds| f64::from(bounds.y()) - *offset);
+                                }
+                                index += 1;
+                            }
+                            None
+                        })
+                        .unwrap_or(*old)
+                };
+                adjustment.set_value(
+                    value.clamp(0.0, (adjustment.upper() - adjustment.page_size()).max(0.0)),
+                );
+            }
+            if user_focus {
+                updating.set(false);
+                return gtk4::glib::ControlFlow::Break;
+            }
+            if let Some(row) = focused_row {
+                if row.parent().is_some() {
+                    let reveal = snapshot.neighbors.as_ref().is_some_and(|(list, _, _)| {
+                        row.parent().as_ref() != Some(list.upcast_ref())
+                    }) || focused
+                        .as_ref()
+                        .is_some_and(|id| row.widget_name().as_str() != id);
+                    if !row.has_focus() {
+                        row.grab_focus();
+                        horizontal.set_value(horizontal.value());
+                        for (_, adjustment, _) in &columns {
+                            adjustment.set_value(adjustment.value());
+                        }
+                    }
+                    if reveal {
+                        if restore_horizontal {
+                            if let (Some(bounds), Some(content_bounds)) = (
+                                row.compute_bounds(&content),
+                                content.compute_bounds(&content),
+                            ) {
+                                // CSS padding places the content origin inside its border box.
+                                let left = f64::from(bounds.x() - content_bounds.x());
+                                horizontal.clamp_page(left, left + f64::from(bounds.width()));
+                            }
+                        }
+                        if let Some(list) = row.parent().and_downcast::<gtk4::ListBox>() {
+                            let restore_vertical = columns.iter().zip(positions).any(
+                                |((old_list, _, epoch), position)| {
+                                    old_list == &list && epoch.get() == position.scroll_epoch
+                                },
+                            );
+                            if restore_vertical {
+                                if let Some(vertical) = list
+                                    .ancestor(gtk4::ScrolledWindow::static_type())
+                                    .and_downcast::<gtk4::ScrolledWindow>()
+                                {
+                                    if let Some(bounds) = row.compute_bounds(&list) {
+                                        vertical.vadjustment().clamp_page(
+                                            f64::from(bounds.y()),
+                                            f64::from(bounds.y() + bounds.height()),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if focused.is_some() {
+                dialog.set_focus(None::<&gtk4::Widget>);
+                if let Some(body) = dialog.child() {
+                    body.child_focus(gtk4::DirectionType::TabForward);
+                }
+            }
+            updating.set(false);
+            gtk4::glib::ControlFlow::Break
+        });
+    }
+}
+
+impl Drop for Board {
+    fn drop(&mut self) {
+        self.revision.set(self.revision.get().wrapping_add(1));
+        self.pending.borrow_mut().take();
+    }
+}
+
+/// Present a board. Activation resolves the current pane target by task id.
 pub fn present(
     window: &libadwaita::ApplicationWindow,
     tasks: &[Task],
     on_closed: impl FnOnce(&libadwaita::Dialog, Option<String>) + 'static,
-) -> libadwaita::Dialog {
+) -> Board {
     let dialog = libadwaita::Dialog::new();
     dialog.set_title("Task Board");
     dialog.set_content_width(1200);
     dialog.set_content_height(600);
-
     let body = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    let header = libadwaita::HeaderBar::new();
-    body.append(&header);
-
+    body.append(&libadwaita::HeaderBar::new());
+    let stack = gtk4::Stack::new();
+    stack.set_vexpand(true);
+    let empty = libadwaita::StatusPage::new();
+    empty.set_icon_name(Some("utilities-terminal-symbolic"));
+    empty.set_title("No tasks yet");
+    empty.set_description(Some("Tasks run by agents will appear here."));
+    stack.add_named(&empty, Some("empty"));
+    let container = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+    container.add_css_class("board-container");
+    container.set_vexpand(true);
+    container.set_hexpand(true);
+    let scroll = gtk4::ScrolledWindow::new();
+    scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
+    scroll.set_child(Some(&container));
+    stack.add_named(&scroll, Some("board"));
+    body.append(&stack);
+    let cards: Rc<RefCell<std::collections::HashMap<String, TaskCardView>>> = Rc::default();
     let chosen: Rc<RefCell<Option<String>>> = Rc::default();
-
-    if tasks.is_empty() {
-        let status_page = libadwaita::StatusPage::new();
-        status_page.set_icon_name(Some("utilities-terminal-symbolic"));
-        status_page.set_title("No tasks yet");
-        status_page.set_description(Some("Tasks run by agents will appear here."));
-        status_page.set_vexpand(true);
-        status_page.set_hexpand(true);
-        body.append(&status_page);
-    } else {
-        let board = build_board(tasks, Utc::now());
-        let cols_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
-        cols_box.add_css_class("board-container");
-        cols_box.set_vexpand(true);
-        cols_box.set_hexpand(true);
-
-        for col_view in board {
-            let col_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
-            col_box.add_css_class("board-column");
-            if col_view.column == BoardColumn::Done {
-                col_box.add_css_class("board-column-done");
-            }
-            col_box.set_hexpand(true);
-            col_box.set_vexpand(true);
-
-            let header_text = format!("{} · {}", col_view.column.title(), col_view.total_count);
-            let header_label = gtk4::Label::new(Some(&header_text));
-            header_label.add_css_class("board-column-header");
-            header_label.set_halign(gtk4::Align::Start);
-            col_box.append(&header_label);
-
-            let scroll = gtk4::ScrolledWindow::new();
-            scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
-            scroll.set_vexpand(true);
-            scroll.set_hexpand(true);
-
-            let list = gtk4::ListBox::new();
-            list.set_selection_mode(gtk4::SelectionMode::None);
-            list.add_css_class("board-column-list");
-            let mut pane_ids = Vec::new();
-
-            for card in col_view.cards {
-                let row = gtk4::ListBoxRow::new();
-                row.add_css_class("board-card");
-                row.set_activatable(card.pane_id.is_some());
-                row.set_selectable(false);
-
-                let card_box = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-
-                let top_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-                let title = gtk4::Label::new(Some(&card.label));
-                title.add_css_class("board-card-title");
-                title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-                title.set_hexpand(true);
-                title.set_halign(gtk4::Align::Start);
-                top_row.append(&title);
-
-                let pill = gtk4::Label::new(Some(card.state_word));
-                pill.add_css_class("task-chip");
-                pill.add_css_class(card.css_class);
-                pill.add_css_class("board-card-pill");
-                pill.set_halign(gtk4::Align::End);
-                top_row.append(&pill);
-
-                card_box.append(&top_row);
-
-                let subtitle = card.subtitle();
-                let meta = gtk4::Label::new(Some(&subtitle));
-                meta.add_css_class("board-card-meta");
-                meta.add_css_class("dim-label");
-                meta.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-                meta.set_halign(gtk4::Align::Start);
-                card_box.append(&meta);
-
-                row.set_child(Some(&card_box));
-
-                let tooltip = format!("{}: {}\n{}", card.label, card.state_word, subtitle);
-                row.set_tooltip_text(Some(&tooltip));
-
-                pane_ids.push(card.pane_id);
-                list.append(&row);
-            }
-
-            // Mouse and keyboard both land in `row-activated`.
-            let dlg = dialog.downgrade();
-            let chosen = chosen.clone();
-            list.connect_row_activated(move |_, row| {
-                let Some(Some(pane_id)) = pane_ids.get(row.index() as usize) else {
-                    return;
-                };
-                chosen.replace(Some(pane_id.clone()));
-                if let Some(d) = dlg.upgrade() {
-                    d.close();
-                }
-            });
-
-            scroll.set_child(Some(&list));
-            col_box.append(&scroll);
-            cols_box.append(&col_box);
+    let reconciling = Rc::new(std::cell::Cell::new(false));
+    let horizontal_epoch = track_adjustment(&scroll.hadjustment(), &reconciling);
+    let mut columns = Vec::new();
+    for column in [
+        BoardColumn::Working,
+        BoardColumn::NeedsYou,
+        BoardColumn::InReview,
+        BoardColumn::ReadyToMerge,
+        BoardColumn::Done,
+    ] {
+        let col = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+        col.add_css_class("board-column");
+        if column == BoardColumn::Done {
+            col.add_css_class("board-column-done");
         }
-        body.append(&cols_box);
+        col.set_hexpand(true);
+        col.set_vexpand(true);
+        let header = gtk4::Label::new(None);
+        header.add_css_class("board-column-header");
+        header.set_halign(gtk4::Align::Start);
+        col.append(&header);
+        let notice = gtk4::Label::new(None);
+        notice.add_css_class("board-card-meta");
+        notice.set_wrap(true);
+        notice.set_xalign(0.0);
+        col.append(&notice);
+        let vertical = gtk4::ScrolledWindow::new();
+        vertical.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+        vertical.set_vexpand(true);
+        vertical.set_hexpand(true);
+        let list = gtk4::ListBox::new();
+        list.set_selection_mode(gtk4::SelectionMode::None);
+        list.add_css_class("board-column-list");
+        let current = cards.clone();
+        let chosen = chosen.clone();
+        let weak = dialog.downgrade();
+        list.connect_row_activated(move |_, row| {
+            let pane = current
+                .borrow()
+                .get(row.widget_name().as_str())
+                .and_then(|card| card.pane_id.clone());
+            if let Some(pane) = pane {
+                chosen.replace(Some(pane));
+                if let Some(dialog) = weak.upgrade() {
+                    dialog.close();
+                }
+            }
+        });
+        vertical.set_child(Some(&list));
+        col.append(&vertical);
+        container.append(&col);
+        let scroll_epoch = track_adjustment(&vertical.vadjustment(), &reconciling);
+        columns.push(ColumnWidgets {
+            header,
+            notice,
+            scroll: vertical,
+            list,
+            scroll_epoch,
+        });
     }
-
     dialog.set_child(Some(&body));
+    let closing = Rc::new(std::cell::Cell::new(false));
+    let closed = closing.clone();
     let on_closed = RefCell::new(Some(on_closed));
     dialog.connect_closed(move |dialog| {
+        closed.set(true);
         if let Some(cb) = on_closed.borrow_mut().take() {
             cb(dialog, chosen.take());
         }
     });
-
-    dialog.present(Some(window));
-    dialog
+    let focus_epoch = Rc::new(std::cell::Cell::new(0_u64));
+    let epoch = focus_epoch.clone();
+    let updating = reconciling.clone();
+    dialog.connect_focus_widget_notify(move |_| {
+        if !updating.get() {
+            epoch.set(epoch.get().wrapping_add(1));
+        }
+    });
+    let board = Board {
+        dialog,
+        stack,
+        scroll,
+        content: container,
+        horizontal_epoch,
+        columns,
+        rows: Rc::default(),
+        pending: Rc::default(),
+        cards,
+        revision: Rc::default(),
+        focus_epoch,
+        reconciling,
+        closing,
+    };
+    board.update(tasks);
+    board.dialog.present(Some(window));
+    board
 }
 
 #[cfg(test)]

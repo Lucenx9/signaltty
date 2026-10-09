@@ -933,6 +933,8 @@ fn theme_and_appearance_swapping_updates_window_classes() {
     assert_eq!(app.split_view.sidebar_width_unit(), adw::LengthUnit::Px);
     let handle = try_descendant(app.sidebar_overlay.upcast_ref(), "sidebar-handle").unwrap();
     assert!(handle.is_focusable());
+    app.split_view.set_show_sidebar(true);
+    wait_ui(|| handle.is_mapped());
     assert!(handle.grab_focus());
     let keys = handle
         .observe_controllers()
@@ -1084,6 +1086,435 @@ fn capture_workflow(window: &adw::ApplicationWindow, name: &str) {
     texture
         .save_to_png(directory.join(format!("{name}.png")))
         .unwrap();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&gtk4::gdk::Display::default().unwrap())
+        .add_resource_path("/dev/signaltty/gui/icons");
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call { method, reply, .. } = request {
+                let value = match method.as_str() {
+                    "workspace.list" => json!({"workspaces": []}),
+                    "task.list" => json!({"tasks": []}),
+                    "test.stop" => {
+                        let _ = reply.send(Ok(Value::Null));
+                        break;
+                    }
+                    _ => Value::Null,
+                };
+                let _ = reply.send(Ok(value));
+            }
+        }
+    });
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let style = adw::StyleManager::default();
+    let original_scheme = style.color_scheme();
+    let app = App::new(&application, actor.clone(), ui);
+    app.apply_preference(signaltty_core::theme::GuiPreference::default());
+    app.window.set_default_size(720, 600);
+    app.window.present();
+    let separator = try_descendant(app.window.upcast_ref(), "crumb-sep").unwrap();
+    assert!(!separator.is_visible(), "startup has no context separator");
+    let mut shell = fixture("shell");
+    shell["workspace"]["name"] = json!("Signaltty");
+    shell["workspace"]["cwd"] = json!("/tmp/signaltty <literal>&");
+    shell["workspace"]["git"] = json!({"branch": "feature/header"});
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    wait_ui(|| app.title.is_mapped());
+    style.set_color_scheme(adw::ColorScheme::ForceLight);
+    capture_workflow(&app.window, "header-shell-light");
+    style.set_color_scheme(adw::ColorScheme::ForceDark);
+    capture_workflow(&app.window, "header-shell-dark");
+    assert_eq!(
+        app.title_context.text(),
+        "feature/header · /tmp/signaltty <literal>&"
+    );
+    assert!(app.title_context.is_visible() && separator.is_visible());
+    assert_eq!(
+        app.title_context.tooltip_text().as_deref(),
+        Some("feature/header · /tmp/signaltty <literal>&")
+    );
+    shell["workspace"]["git"]["branch"] = json!("   ");
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert_eq!(app.title_context.text(), "/tmp/signaltty <literal>&");
+    shell["workspace"]["git"]["branch"] = Value::Null;
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert_eq!(app.title_context.text(), "/tmp/signaltty <literal>&");
+    shell["panes"][0]["agent"] = json!({"kind": "claude"});
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert_eq!(app.title_context.text(), "Claude");
+    assert_eq!(
+        app.title_context.tooltip_text().as_deref(),
+        Some("/tmp/signaltty <literal>&")
+    );
+    shell["workspace"]["git"]["branch"] = json!("feature/header");
+    let home_path = format!("{}/signaltty", std::env::var("HOME").unwrap());
+    shell["workspace"]["cwd"] = json!(home_path);
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert_eq!(app.title_context.text(), "Claude");
+    assert_eq!(
+        app.title_context.tooltip_text().as_deref(),
+        Some("feature/header · ~/signaltty")
+    );
+    capture_workflow(&app.window, "header-agent-dark");
+    shell["panes"][0]["agent"] = json!({"kind": "none"});
+    shell["workspace"]["cwd"] = json!("");
+    shell["workspace"]["git"]["branch"] = Value::Null;
+    app.model.borrow_mut().cache.snapshots.insert(
+        "shell".into(),
+        serde_json::from_value(shell.clone()).unwrap(),
+    );
+    app.show_workspace("shell");
+    assert!(!app.title_context.is_visible() && !separator.is_visible());
+
+    let settings = gtk4::Settings::default().unwrap();
+    let original_font = settings.gtk_font_name();
+    shell["workspace"]["name"] =
+        json!("A workspace with a very long literal <name>& that must shrink");
+    shell["workspace"]["cwd"] =
+        json!("/tmp/an/extremely/long/path/that/must/ellipsize/inside/the/header");
+    shell["workspace"]["git"]["branch"] = json!("feature/a-very-long-branch-name");
+    app.model
+        .borrow_mut()
+        .cache
+        .snapshots
+        .insert("shell".into(), serde_json::from_value(shell).unwrap());
+    app.show_workspace("shell");
+    app.window.set_default_size(360, 600);
+    app.split_view.set_show_sidebar(false);
+    for (scheme, name, font) in [
+        (
+            adw::ColorScheme::ForceLight,
+            "header-narrow-light",
+            "Sans 11",
+        ),
+        (
+            adw::ColorScheme::ForceDark,
+            "header-narrow-dark-large",
+            "Sans 18",
+        ),
+    ] {
+        style.set_color_scheme(scheme);
+        settings.set_gtk_font_name(Some(font));
+        wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
+        let width = f64::from(app.window.width());
+        capture_workflow(&app.window, name);
+        for widget in [
+            app.title.clone().upcast::<gtk4::Widget>(),
+            app.title_context.clone().upcast(),
+            button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)")
+                .unwrap()
+                .upcast(),
+            try_descendant(app.window.upcast_ref(), "crumb-sep").unwrap(),
+        ] {
+            let bounds = widget_bounds(&widget, app.window.upcast_ref());
+            assert!(
+                bounds.w > 0.0 && bounds.x >= 0.0 && bounds.x + bounds.w <= width,
+                "header child outside narrow window"
+            );
+        }
+        let context = widget_bounds(app.title_context.upcast_ref(), app.window.upcast_ref());
+        let new_tab =
+            button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
+        let new_tab_bounds = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
+        assert!(
+            context.x + context.w <= new_tab_bounds.x,
+            "context overlaps New Tab"
+        );
+        assert!(app.title.layout().is_ellipsized() || app.title_context.layout().is_ellipsized());
+        assert_eq!(app.title_context.tooltip_text().as_deref(), Some("feature/a-very-long-branch-name · /tmp/an/extremely/long/path/that/must/ellipsize/inside/the/header"));
+        let sidebar_toggle =
+            find_matching_widget::<gtk4::ToggleButton>(app.window.upcast_ref(), &|button| {
+                button.tooltip_text().as_deref() == Some("Toggle Sidebar (F9)")
+            })
+            .unwrap();
+        let sidebar_bounds = widget_bounds(sidebar_toggle.upcast_ref(), app.window.upcast_ref());
+        assert!(
+            sidebar_toggle.is_mapped()
+                && sidebar_bounds.x >= 0.0
+                && sidebar_bounds.x + sidebar_bounds.w <= width
+        );
+        let menu = find_widget::<gtk4::MenuButton>(app.window.upcast_ref()).unwrap();
+        let bounds = widget_bounds(menu.upcast_ref(), app.window.upcast_ref());
+        assert!(menu.is_mapped() && bounds.x + bounds.w <= width);
+    }
+    settings.set_gtk_font_name(original_font.as_deref());
+    style.set_color_scheme(original_scheme);
+    glib::MainContext::default().block_on(app.refresh_async());
+    assert_eq!(app.title.text(), "signaltty");
+    assert!(!app.title_mark.is_visible());
+    assert!(!app.title_context.is_visible() && !separator.is_visible());
+    assert!(app.title_context.text().is_empty() && app.title_context.tooltip_text().is_none());
+    glib::MainContext::default()
+        .block_on(actor.call("test.stop", json!({})))
+        .unwrap();
+    worker.join().unwrap();
+    app.window.destroy();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn palette_keyboard_selection_stays_visible_while_search_keeps_focus() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(720, 600);
+    window.present();
+    gtk4::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
+    let workspaces = (0..40)
+        .map(|i| {
+            let mut value = fixture(&format!("workspace-{i:02}"))["workspace"].clone();
+            value["name"] = json!(format!("Workspace {i:02}"));
+            serde_json::from_value(value).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let activated = Rc::new(RefCell::new(None));
+    let chosen = activated.clone();
+    let dialog = crate::palette::present(
+        &window,
+        &workspaces,
+        move |id| *chosen.borrow_mut() = Some(id.to_string()),
+        || {},
+    );
+    let body = dialog.child().unwrap();
+    let entry = find_widget::<gtk4::SearchEntry>(&body).unwrap();
+    let list = find_widget::<gtk4::ListBox>(&body).unwrap();
+    let scroll = find_widget::<gtk4::ScrolledWindow>(&body).unwrap();
+    wait_ui(|| scroll.height() > 0 && list.height() > scroll.height());
+    let search_focus = gtk4::prelude::GtkWindowExt::focus(&window).unwrap();
+    assert!(search_focus.is_ancestor(&entry));
+    let keys = entry
+        .observe_controllers()
+        .iter::<glib::Object>()
+        .filter_map(Result::ok)
+        .find_map(|controller| controller.downcast::<gtk4::EventControllerKey>().ok())
+        .unwrap();
+    let press = |key: gtk4::gdk::Key| {
+        keys.emit_by_name::<bool>(
+            "key-pressed",
+            &[&key, &0u32, &gtk4::gdk::ModifierType::empty()],
+        )
+    };
+    for _ in 0..30 {
+        assert!(press(gtk4::gdk::Key::Down));
+        while glib::MainContext::default().iteration(false) {}
+    }
+    assert_eq!(list.selected_row().unwrap().index(), 30);
+    wait_ui(|| {
+        list.selected_row()
+            .unwrap()
+            .compute_bounds(&scroll)
+            .is_some_and(|bounds| {
+                bounds.y() >= -1.0 && bounds.y() + bounds.height() <= scroll.height() as f32 + 1.0
+            })
+    });
+    capture_workflow(&window, "palette-keyboard-selection");
+    let selected = list.selected_row().unwrap();
+    let bounds = selected.compute_bounds(&scroll).unwrap();
+    assert!(
+        bounds.y() >= -1.0 && bounds.y() + bounds.height() <= scroll.height() as f32 + 1.0,
+        "selected result must be visible: y={}, height={}, viewport={}",
+        bounds.y(),
+        bounds.height(),
+        scroll.height()
+    );
+    assert_eq!(
+        gtk4::prelude::GtkWindowExt::focus(&window),
+        Some(search_focus)
+    );
+    for _ in 0..100 {
+        press(gtk4::gdk::Key::Down);
+    }
+    let last = list.selected_row().unwrap().index();
+    assert!(list.row_at_index(last + 1).is_none());
+    press(gtk4::gdk::Key::Down);
+    assert_eq!(list.selected_row().unwrap().index(), last);
+    for _ in 0..100 {
+        press(gtk4::gdk::Key::Up);
+    }
+    assert_eq!(list.selected_row().unwrap().index(), 0);
+    press(gtk4::gdk::Key::Up);
+    assert_eq!(list.selected_row().unwrap().index(), 0);
+    for _ in 0..30 {
+        press(gtk4::gdk::Key::Down);
+    }
+    entry.set_text("Workspace 3");
+    wait_ui(|| list.height() < 1000);
+    let bounds = list
+        .selected_row()
+        .unwrap()
+        .compute_bounds(&scroll)
+        .unwrap();
+    assert!(
+        bounds.y() >= -1.0,
+        "first filtered result must stay visible: y={}",
+        bounds.y()
+    );
+    entry.set_text("Workspace 00");
+    wait_ui(|| list.selected_row().is_some_and(|row| row.index() == 0));
+    wait_ui(|| {
+        list.selected_row()
+            .unwrap()
+            .compute_bounds(&scroll)
+            .is_some_and(|bounds| bounds.y() >= -1.0)
+    });
+    entry.set_text("Workspace 3");
+    entry.emit_activate();
+    wait_ui(|| activated.borrow().as_deref() == Some("workspace-30"));
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(360, 640);
+    window.present();
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let old_motion = settings.is_gtk_enable_animations();
+    let old_scheme = adw::StyleManager::default().color_scheme();
+    settings.set_gtk_enable_animations(false);
+    let activated = Rc::new(RefCell::new(None));
+    let mut value = fixture("long")["workspace"].clone();
+    value["name"] = json!("Workspace <literal> & a very long name for parallel coding agents");
+    value["cwd"] = json!(format!("/tmp/{}", "long-unbroken-directory".repeat(8)));
+    let workspaces = [serde_json::from_value(value).unwrap()];
+    for (name, scheme, large) in [
+        ("light", adw::ColorScheme::ForceLight, false),
+        ("dark", adw::ColorScheme::ForceDark, false),
+        ("large-high-contrast", adw::ColorScheme::ForceLight, true),
+    ] {
+        adw::StyleManager::default().set_color_scheme(scheme);
+        if scheme == adw::ColorScheme::ForceDark {
+            window.add_css_class("dark");
+        } else {
+            window.remove_css_class("dark");
+        }
+        if large {
+            settings.set_gtk_font_name(Some("Sans 18"));
+            window.add_css_class("high-contrast");
+        }
+        let chosen = activated.clone();
+        let dialog = crate::palette::present(
+            &window,
+            &workspaces,
+            move |id| *chosen.borrow_mut() = Some(id.to_string()),
+            || {},
+        );
+        let body = dialog.child().unwrap();
+        let entry = find_widget::<gtk4::SearchEntry>(&body).unwrap();
+        let list = find_widget::<gtk4::ListBox>(&body).unwrap();
+        wait_ui(|| dialog.width() > 0);
+        entry.set_text("no-such-command-or-workspace");
+        capture_workflow(&window, &format!("palette-empty-narrow-{name}"));
+        assert!(
+            has_label(&body, "No matches"),
+            "empty search needs explicit feedback"
+        );
+        let empty = find_widget::<adw::StatusPage>(&body).unwrap();
+        let scroll = find_widget::<gtk4::ScrolledWindow>(&body).unwrap();
+        assert!(empty.is_mapped() && !scroll.is_visible());
+        assert!(has_label(&body, "Try another command or workspace name."));
+        assert!(list.selected_row().is_none());
+        entry.emit_activate();
+        assert!(window.visible_dialog().is_some());
+        assert!(activated.borrow().is_none());
+        entry.set_text("New Workspace");
+        wait_ui(|| list.selected_row().is_some());
+        wait_ui(|| scroll.is_mapped() && !empty.is_visible());
+        let row = list.selected_row().unwrap();
+        let hint = find_matching_widget::<gtk4::Label>(row.upcast_ref(), &|label| {
+            label.text().contains("Ctrl") && label.text().contains('N')
+        })
+        .expect("command result should teach its existing shortcut");
+        capture_workflow(&window, &format!("palette-shortcut-narrow-{name}"));
+        let title = find_matching_widget::<gtk4::Label>(row.upcast_ref(), &|label| {
+            label.text() == "New Workspace"
+        })
+        .unwrap();
+        assert!(
+            !title.layout().is_ellipsized(),
+            "shortcut must not truncate a short command name"
+        );
+        assert!(window.width() <= 360);
+        assert!(dialog.width() <= window.width());
+        let bounds = hint.compute_bounds(&window).unwrap();
+        assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= window.width() as f32);
+        entry.set_text("");
+        wait_ui(|| list.selected_row().is_some_and(|row| row.index() == 0));
+        capture_workflow(&window, &format!("palette-results-narrow-{name}"));
+        assert!(window.width() <= 360);
+        assert!(has_label(&body, workspaces[0].name.as_str()));
+        entry.emit_activate();
+        wait_ui(|| activated.borrow().as_deref() == Some("long"));
+        activated.replace(None);
+        wait_ui(|| window.visible_dialog().is_none());
+    }
+    settings.set_gtk_font_name(old_font.as_deref());
+    settings.set_gtk_enable_animations(old_motion);
+    adw::StyleManager::default().set_color_scheme(old_scheme);
+    window.close();
 }
 
 #[test]
@@ -2160,7 +2591,13 @@ fn task_board_shows_columns_and_navigates_to_pane() {
         })
     });
     let dialog = app.window.visible_dialog().unwrap();
-    assert_eq!(app.board_dialog.borrow().as_ref(), Some(&dialog));
+    assert_eq!(
+        app.board_dialog
+            .borrow()
+            .as_ref()
+            .map(|board| &board.dialog),
+        Some(&dialog)
+    );
     app.window.visible_dialog().unwrap().close();
     wait_ui(|| app.window.visible_dialog().is_none());
     app.refresh_open_board();
@@ -2247,6 +2684,109 @@ fn task_board_shows_columns_and_navigates_to_pane() {
         Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
         None => std::env::remove_var("XDG_CONFIG_HOME"),
     }
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn task_board_fits_narrow_windows_and_reveals_last_column() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let settings = gtk4::Settings::default().unwrap();
+    settings.set_gtk_enable_animations(false);
+    let old_font = settings.gtk_font_name();
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(360, 600);
+    window.present();
+    let mut task = chip_scene_task("A long task title with <literal> symbols & branch context");
+    task["pane_id"] = json!("pane_done");
+    task["state"] = json!("completed");
+    task["disposition"] = json!({"outcome": "merged"});
+    task["agent"] = json!("codex");
+    task["branch"] = json!("fix/a-long-branch-name-with-review-context");
+    let task: signaltty_core::Task = serde_json::from_value(task).unwrap();
+    let mut working = task.clone();
+    working.id = "task_working".into();
+    working.pane_id = Some("pane_working".into());
+    working.state = signaltty_core::TaskState::Working;
+    working.disposition.outcome = signaltty_core::DispositionOutcome::None;
+    let tasks = [working, task];
+    let chosen = Rc::new(RefCell::new(None));
+    for (name, scheme, high_contrast) in [
+        ("light", adw::ColorScheme::ForceLight, false),
+        ("dark", adw::ColorScheme::ForceDark, false),
+        ("large-high-contrast", adw::ColorScheme::ForceLight, true),
+    ] {
+        adw::StyleManager::default().set_color_scheme(scheme);
+        if scheme == adw::ColorScheme::ForceDark {
+            window.add_css_class("dark");
+        } else {
+            window.remove_css_class("dark");
+        }
+        if high_contrast {
+            window.add_css_class("high-contrast");
+            settings.set_gtk_font_name(Some("Sans 18"));
+        }
+        let result = chosen.clone();
+        let board = crate::board::present(&window, &tasks, move |_, pane| {
+            result.replace(pane);
+        });
+        let dialog = &board.dialog;
+        wait_ui(|| dialog.width() > 0);
+        capture_workflow(&window, &format!("board-narrow-{name}-start"));
+        assert!(window.width() <= 360, "board must not widen its parent");
+        assert!(
+            dialog.width() <= window.width(),
+            "dialog width {} exceeds parent",
+            dialog.width()
+        );
+        let root = dialog.child().unwrap();
+        let mut horizontal = None;
+        walk_widgets(&root, &mut |widget| {
+            if let Some(scroll) = widget.downcast_ref::<gtk4::ScrolledWindow>() {
+                if scroll.hadjustment().upper() > scroll.hadjustment().page_size() {
+                    horizontal = Some(scroll.clone());
+                    return true;
+                }
+            }
+            false
+        });
+        let scroll = horizontal.expect("overflowing columns must be scrollable");
+        let adjustment = scroll.hadjustment();
+        adjustment.set_value(adjustment.upper() - adjustment.page_size());
+        let done = try_descendant(&root, "board-column-done").unwrap();
+        let row = find_widget::<gtk4::ListBoxRow>(&done).unwrap();
+        wait_ui(|| {
+            row.compute_bounds(&scroll).is_some_and(|bounds| {
+                bounds.x() >= 0.0 && bounds.x() + bounds.width() <= scroll.width() as f32
+            })
+        });
+        capture_workflow(&window, &format!("board-narrow-{name}-done"));
+        adjustment.set_value(0.0);
+        wait_ui(|| {
+            row.compute_bounds(&scroll)
+                .is_some_and(|bounds| bounds.x() > scroll.width() as f32)
+        });
+        gtk4::prelude::GtkWindowExt::set_focus(&window, None::<&gtk4::Widget>);
+        assert!(row.grab_focus());
+        wait_ui(|| adjustment.value() > 0.0);
+        row.activate();
+        wait_ui(|| window.visible_dialog().is_none());
+        assert_eq!(chosen.borrow().as_deref(), Some("pane_done"));
+        chosen.replace(None);
+    }
+    settings.set_gtk_font_name(old_font.as_deref());
+    window.destroy();
 }
 
 fn chip_scene_snapshot() -> crate::refresh::Snapshot {
@@ -2510,6 +3050,521 @@ fn find_disclosure_button(row: &gtk4::ListBoxRow) -> Option<gtk4::Button> {
     find_matching_widget::<gtk4::Button>(row.upcast_ref(), &|b| {
         b.has_css_class("workspace-disclosure")
     })
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn task_board_explains_truncated_done_history() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(360, 680);
+    window.present();
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let style = adw::StyleManager::default();
+    let old_scheme = style.color_scheme();
+    let tasks = (0..25)
+        .map(|i| {
+            let mut value = chip_scene_task(&format!("Finished task {i:02}"));
+            value["id"] = json!(format!("finished-{i}"));
+            value["state"] = json!("completed");
+            value["disposition"] = json!({"outcome": "merged"});
+            value["updated_at"] =
+                json!((chrono::Utc::now() - chrono::Duration::minutes(i)).to_rfc3339());
+            serde_json::from_value::<signaltty_core::Task>(value).unwrap()
+        })
+        .collect::<Vec<_>>();
+    for (count, scheme, name) in [
+        (25, adw::ColorScheme::ForceLight, "light"),
+        (25, adw::ColorScheme::ForceDark, "dark-large"),
+        (20, adw::ColorScheme::ForceLight, "untruncated"),
+    ] {
+        style.set_color_scheme(scheme);
+        if scheme == adw::ColorScheme::ForceDark {
+            window.add_css_class("dark");
+            settings.set_gtk_font_name(Some("Sans 18"));
+        } else {
+            window.remove_css_class("dark");
+            settings.set_gtk_font_name(old_font.as_deref());
+        }
+        let board = crate::board::present(&window, &tasks[..count], |_, _| {});
+        let dialog = &board.dialog;
+        let root = dialog.child().unwrap();
+        wait_ui(|| dialog.width() > 0);
+        let done = try_descendant(&root, "board-column-done").unwrap();
+        let scroll = find_matching_widget::<gtk4::ScrolledWindow>(&root, &|scroll| {
+            scroll.hscrollbar_policy() == gtk4::PolicyType::Automatic
+                && scroll.vscrollbar_policy() == gtk4::PolicyType::Never
+        })
+        .unwrap();
+        scroll
+            .hadjustment()
+            .set_value(scroll.hadjustment().upper() - scroll.hadjustment().page_size());
+        capture_workflow(&window, &format!("board-history-{name}"));
+        assert!(has_label(&done, &format!("Done · {count}")));
+        let list = find_widget::<gtk4::ListBox>(&done).unwrap();
+        assert!(list.row_at_index(19).is_some() && list.row_at_index(20).is_none());
+        assert!(has_label(
+            list.row_at_index(0).unwrap().upcast_ref(),
+            "Finished task 00"
+        ));
+        assert!(has_label(
+            list.row_at_index(19).unwrap().upcast_ref(),
+            "Finished task 19"
+        ));
+        assert_eq!(
+            has_label(&done, "Showing latest 20 of 25"),
+            count > 20,
+            "truncated history needs explicit feedback"
+        );
+        if count > 20 {
+            let notice = find_matching_widget::<gtk4::Label>(&done, &|label| {
+                label.text() == "Showing latest 20 of 25"
+            })
+            .unwrap();
+            let bounds = notice.compute_bounds(&done).unwrap();
+            assert!(
+                notice.is_mapped()
+                    && bounds.x() >= 0.0
+                    && bounds.x() + bounds.width() <= done.width() as f32
+            );
+        }
+        dialog.force_close();
+        wait_ui(|| window.visible_dialog().is_none());
+    }
+    settings.set_gtk_font_name(old_font.as_deref());
+    style.set_color_scheme(old_scheme);
+    window.destroy();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn open_task_board_preserves_identity_scroll_and_focus_on_updates() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.window.set_default_size(720, 600);
+    app.window.present();
+    let settle = || {
+        let deadline = Instant::now() + Duration::from_millis(120);
+        while Instant::now() < deadline {
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let mut tasks = (0..35)
+        .map(|i| {
+            let mut value = chip_scene_task(&format!("Review task {i:02}"));
+            value["id"] = json!(format!("review-{i:02}"));
+            value["pane_id"] = json!(format!("pane-{i:02}"));
+            value["state"] = json!("completed");
+            value["updated_at"] =
+                json!((chrono::Utc::now() - chrono::Duration::minutes(i)).to_rfc3339());
+            value
+        })
+        .collect::<Vec<_>>();
+    for task in &tasks {
+        assert!(app
+            .model
+            .borrow_mut()
+            .tasks
+            .apply_event(signaltty_proto::event::TASK_CREATED, &json!({"task": task})));
+    }
+    app.present_board();
+    let dialog = app.board_dialog.borrow().as_ref().unwrap().dialog.clone();
+    wait_ui(|| dialog.width() > 0);
+    settle();
+    let root = dialog.child().unwrap();
+    let list =
+        find_matching_widget::<gtk4::ListBox>(&root, &|list| list.row_at_index(30).is_some())
+            .unwrap();
+    let row = list.row_at_index(20).unwrap();
+    assert!(row.grab_focus());
+    let vertical = list
+        .ancestor(gtk4::ScrolledWindow::static_type())
+        .unwrap()
+        .downcast::<gtk4::ScrolledWindow>()
+        .unwrap();
+    wait_ui(|| vertical.vadjustment().value() > 0.0);
+    // Let native focus scrolling finish before recording a stable viewport.
+    settle();
+    settle();
+    settle();
+    let horizontal = find_matching_widget::<gtk4::ScrolledWindow>(&root, &|scroll| {
+        scroll.hscrollbar_policy() == gtk4::PolicyType::Automatic
+            && scroll.vscrollbar_policy() == gtk4::PolicyType::Never
+    })
+    .unwrap();
+    let x = horizontal.hadjustment().value();
+    let y = vertical.vadjustment().value();
+    tasks[20]["label"] = json!("Updated focused task");
+    app.model.borrow_mut().tasks.apply_event(
+        signaltty_proto::event::TASK_UPDATED,
+        &json!({"task": tasks[20]}),
+    );
+    app.refresh_open_board();
+    assert_eq!(
+        app.board_dialog
+            .borrow()
+            .as_ref()
+            .map(|board| &board.dialog),
+        Some(&dialog),
+        "task update replaced the board dialog"
+    );
+    wait_ui(|| has_label(row.upcast_ref(), "Updated focused task"));
+    settle();
+    assert_eq!(list.row_at_index(20).as_ref(), Some(&row));
+    assert!(row.has_focus());
+    assert!((vertical.vadjustment().value() - y).abs() <= 1.0);
+    assert!((horizontal.hadjustment().value() - x).abs() <= 1.0);
+    settle();
+    capture_workflow(&app.window, "board-live-update");
+    // A fresh navigation after the update must beat deferred focus restoration.
+    app.refresh_open_board();
+    let other = list.row_at_index(21).unwrap();
+    assert!(other.grab_focus());
+    horizontal.hadjustment().set_value(140.0);
+    app.refresh_open_board();
+    settle();
+    assert!(
+        (horizontal.hadjustment().value() - 140.0).abs() <= 1.0,
+        "second update used stale navigation position"
+    );
+    assert!(
+        other.has_focus(),
+        "deferred refresh stole a newer focus choice"
+    );
+    app.refresh_open_board();
+    horizontal.hadjustment().set_value(200.0);
+    let user_y = vertical.vadjustment().value() + 20.0;
+    vertical.vadjustment().set_value(user_y);
+    settle();
+    assert!(
+        (horizontal.hadjustment().value() - 200.0).abs() <= 1.0,
+        "pending update overwrote manual horizontal scrolling"
+    );
+    assert!(
+        (vertical.vadjustment().value() - user_y).abs() <= 1.0,
+        "pending update overwrote manual vertical scrolling"
+    );
+    assert!(row.grab_focus());
+    settle();
+    let anchor = (0..35)
+        .filter_map(|i| list.row_at_index(i))
+        .find(|row| {
+            row.compute_bounds(&list)
+                .is_some_and(|b| f64::from(b.y() + b.height()) > vertical.vadjustment().value())
+        })
+        .unwrap();
+    let offset =
+        f64::from(anchor.compute_bounds(&list).unwrap().y()) - vertical.vadjustment().value();
+    dialog.set_focus(None::<&gtk4::Widget>);
+    let mut inserted = tasks[0].clone();
+    inserted["id"] = json!("newest-review");
+    inserted["updated_at"] = json!(chrono::Utc::now().to_rfc3339());
+    app.model.borrow_mut().tasks.apply_event(
+        signaltty_proto::event::TASK_CREATED,
+        &json!({"task": inserted}),
+    );
+    app.refresh_open_board();
+    settle();
+    assert!(
+        (f64::from(anchor.compute_bounds(&list).unwrap().y())
+            - vertical.vadjustment().value()
+            - offset)
+            .abs()
+            <= 1.0,
+        "insertion above viewport moved its anchor"
+    );
+    let x = horizontal.hadjustment().value();
+    tasks[0]["disposition"] = json!({"outcome": "merged"});
+    app.model.borrow_mut().tasks.apply_event(
+        signaltty_proto::event::TASK_UPDATED,
+        &json!({"task": tasks[0]}),
+    );
+    app.refresh_open_board();
+    settle();
+    assert!(
+        (horizontal.hadjustment().value() - x).abs() <= 1.0,
+        "unfocused movement changed horizontal position"
+    );
+    app.window.set_default_size(360, 600);
+    settle();
+    assert!(row.grab_focus());
+    tasks[20]["pr"] = json!({"number": 12, "url": "https://github.com/example/repo/pull/12", "state": "open", "checks": "failing"});
+    app.model.borrow_mut().tasks.apply_event(
+        signaltty_proto::event::TASK_UPDATED,
+        &json!({"task": tasks[20]}),
+    );
+    app.refresh_open_board();
+    settle();
+    assert!(row.has_focus(), "focus must follow the task to Needs you");
+    tasks[20]["pr"]["checks"] = json!("passing");
+    app.model.borrow_mut().tasks.apply_event(
+        signaltty_proto::event::TASK_UPDATED,
+        &json!({"task": tasks[20]}),
+    );
+    app.refresh_open_board();
+    app.refresh_open_board();
+    settle();
+    assert!(row.has_focus(), "a burst of updates lost the focused task");
+    wait_ui(|| {
+        row.compute_bounds(&horizontal).is_some_and(|bounds| {
+            bounds.x() >= -1.0 && bounds.x() + bounds.width() <= horizontal.width() as f32 + 1.0
+        })
+    });
+    let bounds = row.compute_bounds(&horizontal).unwrap();
+    assert!(
+        bounds.x() >= -1.0 && bounds.x() + bounds.width() <= horizontal.width() as f32 + 1.0,
+        "focused task x={} width={} viewport={} adjustment={}",
+        bounds.x(),
+        bounds.width(),
+        horizontal.width(),
+        horizontal.hadjustment().value()
+    );
+    let pill = find_matching_widget::<gtk4::Label>(row.upcast_ref(), &|label| {
+        label.has_css_class("task-chip")
+    })
+    .unwrap();
+    assert!(pill.has_css_class("task-completed"));
+    tasks.retain(|task| task["id"] != "review-20");
+    {
+        let mut model = app.model.borrow_mut();
+        let ticket = model.tasks.seed_ticket();
+        model.tasks.complete_seed(
+            ticket,
+            tasks
+                .iter()
+                .cloned()
+                .map(|task| serde_json::from_value(task).unwrap())
+                .collect(),
+        );
+    }
+    app.refresh_open_board();
+    settle();
+    assert!(row.parent().is_none());
+    assert_eq!(
+        app.board_dialog
+            .borrow()
+            .as_ref()
+            .map(|board| &board.dialog),
+        Some(&dialog)
+    );
+    assert!(
+        dialog.focus().is_some(),
+        "removed focused card leaves native dialog focus"
+    );
+    {
+        let mut model = app.model.borrow_mut();
+        let ticket = model.tasks.seed_ticket();
+        model.tasks.complete_seed(ticket, Vec::new());
+    }
+    app.refresh_open_board();
+    settle();
+    assert!(has_label(&dialog.child().unwrap(), "No tasks yet"));
+    app.model.borrow_mut().tasks.apply_event(
+        signaltty_proto::event::TASK_CREATED,
+        &json!({"task": tasks[1]}),
+    );
+    app.refresh_open_board();
+    settle();
+    assert_eq!(
+        app.board_dialog
+            .borrow()
+            .as_ref()
+            .map(|board| &board.dialog),
+        Some(&dialog)
+    );
+    assert!(has_label(
+        &dialog.child().unwrap(),
+        tasks[1]["label"].as_str().unwrap()
+    ));
+    for scheme in [adw::ColorScheme::ForceLight, adw::ColorScheme::ForceDark] {
+        adw::StyleManager::default().set_color_scheme(scheme);
+        settle();
+        capture_workflow(
+            &app.window,
+            if scheme == adw::ColorScheme::ForceLight {
+                "board-live-light"
+            } else {
+                "board-live-dark"
+            },
+        );
+    }
+
+    app.refresh_open_board();
+    dialog.force_close();
+    wait_ui(|| app.board_dialog.borrow().is_none());
+    settle();
+    assert!(app.board_dialog.borrow().is_none());
+    app.window.destroy();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn task_board_live_activation_and_neighbor_fallback_use_current_rows() {
+    adw::init().unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(1200, 680);
+    window.present();
+    let settle = || {
+        let deadline = Instant::now() + Duration::from_millis(150);
+        while Instant::now() < deadline {
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let mut tasks = (0..35)
+        .map(|i| {
+            let mut value = chip_scene_task(&format!("Task {i:02}"));
+            value["id"] = json!(format!("task-{i:02}"));
+            value["state"] = json!("completed");
+            value["updated_at"] =
+                json!((chrono::Utc::now() - chrono::Duration::minutes(i)).to_rfc3339());
+            serde_json::from_value::<signaltty_core::Task>(value).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let chosen = Rc::new(RefCell::new(None));
+    let target = chosen.clone();
+    let board = crate::board::present(&window, &tasks, move |_, pane| {
+        *target.borrow_mut() = pane;
+    });
+    wait_ui(|| board.dialog.width() > 0);
+    settle();
+    let root = board.dialog.child().unwrap();
+    let list =
+        find_matching_widget::<gtk4::ListBox>(&root, &|list| list.row_at_index(30).is_some())
+            .unwrap();
+    let focused = list.row_at_index(20).unwrap();
+    let next = list.row_at_index(21).unwrap();
+    let previous = list.row_at_index(19).unwrap();
+    assert!(focused.grab_focus());
+    settle();
+    settle();
+    // Removing the focused row while its next neighbor changes columns must
+    // choose the previous row in the original column.
+    tasks[21].pr = serde_json::from_value(json!({"number": 12, "url": "https://github.com/example/repo/pull/12", "state": "open", "checks": "failing"})).ok();
+    assert!(tasks[21].pr.is_some());
+    tasks.remove(20);
+    board.update(&tasks);
+    board.update(&tasks);
+    settle();
+    assert!(previous.has_focus());
+    assert_ne!(previous.parent(), next.parent());
+    assert!(focused.parent().is_none());
+    settle();
+    let vertical = list
+        .ancestor(gtk4::ScrolledWindow::static_type())
+        .and_downcast::<gtk4::ScrolledWindow>()
+        .unwrap();
+    let anchor = (0..35)
+        .filter_map(|i| list.row_at_index(i))
+        .find(|row| {
+            row.compute_bounds(&list)
+                .is_some_and(|b| f64::from(b.y() + b.height()) > vertical.vadjustment().value())
+        })
+        .unwrap();
+    let offset =
+        f64::from(anchor.compute_bounds(&list).unwrap().y()) - vertical.vadjustment().value();
+    let mut inserted = tasks[0].clone();
+    inserted.id = "newest".into();
+    inserted.updated_at = chrono::Utc::now();
+    tasks.push(inserted);
+    board.update(&tasks);
+    // A new choice in another column owns focus, but does not abandon this anchor.
+    assert!(next.grab_focus());
+    board.update(&tasks);
+    settle();
+    settle();
+    assert!(next.has_focus());
+    assert!(
+        (f64::from(anchor.compute_bounds(&list).unwrap().y())
+            - vertical.vadjustment().value()
+            - offset)
+            .abs()
+            <= 1.0
+    );
+    // Shrinking a nearly-bottom viewport makes GTK clamp its adjustment.
+    // That automatic change must not be mistaken for new user scrolling.
+    board.dialog.set_focus(None::<&gtk4::Widget>);
+    vertical
+        .vadjustment()
+        .set_value(vertical.vadjustment().upper() - vertical.vadjustment().page_size() - 32.0);
+    settle();
+    let anchor = (0..35)
+        .filter_map(|i| list.row_at_index(i))
+        .find(|row| {
+            row.compute_bounds(&list)
+                .is_some_and(|b| f64::from(b.y() + b.height()) > vertical.vadjustment().value())
+        })
+        .unwrap();
+    let offset =
+        f64::from(anchor.compute_bounds(&list).unwrap().y()) - vertical.vadjustment().value();
+    let removed = (0..10)
+        .map(|i| list.row_at_index(i).unwrap().widget_name())
+        .collect::<Vec<_>>();
+    tasks.retain(|task| !removed.iter().any(|id| id.as_str() == task.id));
+    board.update(&tasks);
+    board.update(&tasks);
+    settle();
+    settle();
+    assert!(
+        (f64::from(anchor.compute_bounds(&list).unwrap().y())
+            - vertical.vadjustment().value()
+            - offset)
+            .abs()
+            <= 1.0,
+        "GTK clamp after removals lost the surviving viewport anchor: y={} value={} old_offset={}",
+        anchor.compute_bounds(&list).unwrap().y(),
+        vertical.vadjustment().value(),
+        offset
+    );
+    let id = previous.widget_name();
+    let task = tasks
+        .iter_mut()
+        .find(|task| task.id == id.as_str())
+        .unwrap();
+    task.pane_id = None;
+    board.update(&tasks);
+    settle();
+    assert!(!previous.is_activatable());
+    let task = tasks
+        .iter_mut()
+        .find(|task| task.id == id.as_str())
+        .unwrap();
+    task.pane_id = Some("new-current-pane".into());
+    board.update(&tasks);
+    settle();
+    assert!(previous.is_activatable());
+    assert!(previous.activate());
+    wait_ui(|| chosen.borrow().is_some());
+    assert_eq!(chosen.borrow().as_deref(), Some("new-current-pane"));
+    wait_ui(|| window.visible_dialog().is_none());
+    window.destroy();
 }
 
 #[test]

@@ -105,8 +105,10 @@ impl Manifest {
             if h.command.is_empty() {
                 return Err(bad(format!("hook {i}: 'command' must not be empty")));
             }
-            if h.timeout_secs == 0 {
-                return Err(bad(format!("hook {i}: 'timeout_secs' must be >= 1")));
+            if !(1..=MAX_HOOK_TIMEOUT_SECS).contains(&h.timeout_secs) {
+                return Err(bad(format!(
+                    "hook {i}: 'timeout_secs' must be between 1 and {MAX_HOOK_TIMEOUT_SECS}"
+                )));
             }
         }
         let mut seen = std::collections::HashSet::new();
@@ -252,6 +254,7 @@ pub fn resolve_argv(plugin_dir: &Path, argv: &[String]) -> Vec<String> {
 // ---- registry + dispatch ----
 
 struct RegistryState {
+    generation: u64,
     plugins: Vec<LoadedPlugin>,
     failures: Vec<PluginFailure>,
 }
@@ -277,7 +280,11 @@ impl PluginRegistry {
         PluginRegistry {
             inner: Arc::new(RegistryInner {
                 dir,
-                state: Mutex::new(RegistryState { plugins, failures }),
+                state: Mutex::new(RegistryState {
+                    generation: 0,
+                    plugins,
+                    failures,
+                }),
                 semaphore: tokio::sync::Semaphore::new(MAX_CONCURRENT_HOOKS),
             }),
         }
@@ -285,7 +292,10 @@ impl PluginRegistry {
 
     pub fn reload(&self) {
         let (plugins, failures) = load_dir(&self.inner.dir);
-        *self.inner.state.lock().unwrap() = RegistryState { plugins, failures };
+        let mut state = self.inner.state.lock().unwrap();
+        state.generation += 1;
+        state.plugins = plugins;
+        state.failures = failures;
     }
 
     /// Snapshot for `plugin.list`.
@@ -329,7 +339,7 @@ impl PluginRegistry {
     /// Fire matching hooks for an event. Never blocks the caller long:
     /// each hook runs in its own task under a concurrency cap.
     pub async fn dispatch(&self, name: &str, envelope: &serde_json::Value, socket: &Path) {
-        let targets: Vec<(usize, usize, LoadedPlugin, Hook)> = {
+        let (generation, targets) = {
             let s = self.inner.state.lock().unwrap();
             let mut out = Vec::new();
             for (pi, p) in s.plugins.iter().enumerate() {
@@ -342,7 +352,7 @@ impl PluginRegistry {
                     }
                 }
             }
-            out
+            (s.generation, out)
         };
         for (pi, hi, plugin, hook) in targets {
             let this = self.clone();
@@ -354,7 +364,12 @@ impl PluginRegistry {
                 let err = run_hook(&plugin, &hook, &name, &envelope, &socket)
                     .await
                     .err();
+                // Indices identify hooks only within the captured generation.
+                // Old completions must not repopulate stats reset by reload.
                 let mut s = this.inner.state.lock().unwrap();
+                if s.generation != generation {
+                    return;
+                }
                 if let Some(st) = s.plugins.get_mut(pi).and_then(|p| p.stats.get_mut(hi)) {
                     st.runs += 1;
                     st.last_run = Some(Utc::now());
@@ -507,6 +522,21 @@ run = ["./fanout.sh"]
     }
 
     #[test]
+    fn rejects_timeout_above_documented_max() {
+        let err = parse_manifest(
+            "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\ntimeout_secs = 301\n",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("between 1 and 300"), "{err}");
+        // Boundary still loads; runtime no longer needs to silently clamp.
+        let m = parse_manifest(
+            "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\ntimeout_secs = 300\n",
+        )
+        .unwrap();
+        assert_eq!(m.hook[0].timeout_secs, MAX_HOOK_TIMEOUT_SECS);
+    }
+
+    #[test]
     fn defaults_apply() {
         let m = parse_manifest(
             "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\n",
@@ -524,6 +554,7 @@ run = ["./fanout.sh"]
             "[plugin]\nname = \"x\"\n[[hook]]\nevents = []\ncommand = [\"true\"]\n", // empty events
             "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = []\n", // empty command
             "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\ntimeout_secs = 0\n", // zero timeout
+            "[plugin]\nname = \"x\"\n[[hook]]\nevents = [\"*\"]\ncommand = [\"true\"]\ntimeout_secs = 301\n", // above max
             "[plugin]\nname = \"x\"\n[[command]]\nname = \"UP\"\nrun = [\"x\"]\n", // command name charset
             "[plugin]\nname = \"x\"\n[[command]]\nname = \"a\"\nrun = [\"x\"]\n[[command]]\nname = \"a\"\nrun = [\"y\"]\n", // dup command
             "not toml [[[\n",
@@ -630,6 +661,169 @@ run = ["./fanout.sh"]
         .await
         .unwrap_err();
         assert!(err.contains("boom"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn reload_does_not_attribute_in_flight_stats_by_index() {
+        let base = std::env::temp_dir().join(format!(
+            "plug-reload-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let alpha = base.join("alpha");
+        let bravo = base.join("bravo");
+        std::fs::create_dir_all(&alpha).unwrap();
+        std::fs::create_dir_all(&bravo).unwrap();
+        std::fs::write(
+            alpha.join(MANIFEST_FILE),
+            r#"[plugin]
+name = "alpha"
+version = "0.1.0"
+[[hook]]
+events = ["agent.done"]
+command = ["sh", "-c", "sleep 0.4; exit 0"]
+timeout_secs = 5
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            bravo.join(MANIFEST_FILE),
+            r#"[plugin]
+name = "bravo"
+version = "0.1.0"
+[[hook]]
+events = ["other.event"]
+command = ["true"]
+timeout_secs = 5
+"#,
+        )
+        .unwrap();
+
+        let registry = PluginRegistry::load(base.clone());
+        let status = registry.status();
+        assert_eq!(status["plugins"][0]["name"], "alpha");
+        assert_eq!(status["plugins"][1]["name"], "bravo");
+
+        registry
+            .dispatch(
+                "agent.done",
+                &serde_json::json!({"protocol": "signaltty/1"}),
+                Path::new("/nonexistent.sock"),
+            )
+            .await;
+
+        // Remove alpha so reload puts bravo at index 0. An index-based
+        // stats write from the in-flight alpha hook would land on bravo.
+        std::fs::remove_dir_all(&alpha).unwrap();
+        registry.reload();
+        let after = registry.status();
+        assert_eq!(after["plugins"].as_array().unwrap().len(), 1);
+        assert_eq!(after["plugins"][0]["name"], "bravo");
+        assert_eq!(after["plugins"][0]["hooks"][0]["runs"], 0);
+
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        let final_status = registry.status();
+        assert_eq!(
+            final_status["plugins"][0]["hooks"][0]["runs"], 0,
+            "in-flight alpha hook must not credit bravo after reload"
+        );
+        assert_eq!(final_status["plugins"][0]["name"], "bravo");
+        std::fs::remove_dir_all(&base).ok();
+    }
+    #[tokio::test]
+    async fn duplicate_hooks_keep_separate_stats() {
+        let base = std::env::temp_dir().join(format!("plug-duplicates-{}", std::process::id()));
+        let dir = base.join("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(MANIFEST_FILE),
+            r#"[plugin]
+name = "alpha"
+[[hook]]
+events = ["agent.done"]
+command = ["true"]
+[[hook]]
+events = ["agent.done"]
+command = ["true"]
+"#,
+        )
+        .unwrap();
+        let registry = PluginRegistry::load(base.clone());
+        registry
+            .dispatch(
+                "agent.done",
+                &serde_json::json!({}),
+                Path::new("/unused.sock"),
+            )
+            .await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let status = registry.status();
+                let hooks = status["plugins"][0]["hooks"].as_array().unwrap();
+                if hooks
+                    .iter()
+                    .map(|h| h["runs"].as_u64().unwrap())
+                    .sum::<u64>()
+                    == 2
+                {
+                    assert_eq!(hooks[0]["runs"], 1);
+                    assert_eq!(hooks[1]["runs"], 1);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn reload_discards_old_generation_completions() {
+        let base = std::env::temp_dir().join(format!("plug-generation-{}", std::process::id()));
+        let dir = base.join("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(MANIFEST_FILE),
+            r#"[plugin]
+name = "alpha"
+[[hook]]
+events = ["agent.done"]
+command = ["true"]
+"#,
+        )
+        .unwrap();
+        let registry = PluginRegistry::load(base.clone());
+        let permits = registry
+            .inner
+            .semaphore
+            .acquire_many(MAX_CONCURRENT_HOOKS as u32)
+            .await
+            .unwrap();
+        registry
+            .dispatch(
+                "agent.done",
+                &serde_json::json!({}),
+                Path::new("/unused.sock"),
+            )
+            .await;
+        tokio::task::yield_now().await;
+        registry.reload();
+        drop(permits);
+        let _finished = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            registry
+                .inner
+                .semaphore
+                .acquire_many(MAX_CONCURRENT_HOOKS as u32),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(registry.status()["plugins"][0]["hooks"][0]["runs"], 0);
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[tokio::test]

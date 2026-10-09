@@ -20,7 +20,10 @@ resize, signals, exit reaping, scrollback, and client attach/detach.
 
 Environment: pane inherits a sanitized copy of the server environment
 plus per-request overrides. `TERM` defaults to `xterm-256color` unless
-the client overrides.
+the client overrides. The server advertises `TERM_PROGRAM=signaltty` and
+`TERM_PROGRAM_VERSION`, injects `SIGNALTTY_PANE` and `SIGNALTTY_SOCKET`,
+and drops outer host terminal handles (such as `TMUX`, `WEZTERM_PANE`,
+`KITTY_WINDOW_ID`, `ZELLIJ*`, and outer agent tokens).
 
 ## I/O paths
 
@@ -33,6 +36,20 @@ the client overrides.
 - **Input**: client `pane.input {pane_id, data}` → server validates
   (pane exists, live) → writes to PTY master. No PTY input echo
   synthesis; the kernel/child echoes.
+
+Input serialization belongs to the bound PTY writer, not the global handle
+registry. Raw input, prompt paste and terminal decision replies run in the
+blocking pool so a stalled child leaves the async executor and other pane
+lookups available. Queued input stays bound to the original PTY across a
+respawn. Delayed/retried Enter still uses the Store guard to preserve decision
+checks. The writer uses nonblocking native descriptors and a five-second budget
+covering queue, mutex and write waits. Close, reaping and shutdown cancel the
+bound writer; accepted bytes remain delivered. Output reads wait for readiness
+and drain available data before EOF. Descriptor destruction performs no EOF
+write. The blocking pool still has finite capacity, so heavy scheduling load can
+delay a response beyond its I/O budget. See
+[ADR-0022](adr/0022-pane-input-isolation.md) and
+[ADR-0023](adr/0023-bounded-pty-input.md).
 
 ## Resize arbitration
 
