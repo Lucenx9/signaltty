@@ -531,6 +531,7 @@ impl Store {
             return Vec::new();
         }
         let (lifecycle, attention) = match (state, pane.lifecycle) {
+            (ScreenState::Hold, _) => return Vec::new(),
             (ScreenState::Working, _) => (Lifecycle::Working, None),
             (ScreenState::Blocked, _) => (Lifecycle::Blocked, Some(Attention::InputRequired)),
             (ScreenState::Idle, Lifecycle::Working) => (Lifecycle::Done, Some(Attention::Unread)),
@@ -1274,6 +1275,29 @@ mod tests {
         store.raise_attention(&id, Attention::InputRequired);
         assert!(store.mark_hooked(&id).is_none());
         assert_eq!(store.panes[&id].attention, Attention::InputRequired);
+    }
+
+    #[test]
+    fn a_hold_rule_changes_nothing() {
+        use signaltty_agent::screen::ScreenState::{Blocked, Hold};
+        for from in [Lifecycle::Working, Lifecycle::Blocked, Lifecycle::Unknown] {
+            let mut store = Store::new();
+            let mut pane = pane_with(Attention::None, 0);
+            pane.lifecycle = from;
+            let id = pane.id.clone();
+            store.panes.insert(id.clone(), pane.clone());
+            store.publish_pane(&pane, false);
+            if from == Lifecycle::Blocked {
+                store.panes.get_mut(&id).unwrap().lifecycle = Lifecycle::Unknown;
+                store.apply_screen_state(&id, Blocked);
+            }
+            let before = (store.panes[&id].lifecycle, store.panes[&id].attention);
+            assert!(store.apply_screen_state(&id, Hold).is_empty(), "{from:?}");
+            assert_eq!(
+                (store.panes[&id].lifecycle, store.panes[&id].attention),
+                before
+            );
+        }
     }
 
     #[test]
