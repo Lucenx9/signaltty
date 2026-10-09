@@ -352,6 +352,7 @@ pub fn agent_name(kind: AgentKind) -> Option<&'static str> {
         AgentKind::Codex => Some("Codex"),
         AgentKind::Opencode => Some("opencode"),
         AgentKind::Cursor => Some("Cursor"),
+        AgentKind::Pi => Some("Pi"),
         AgentKind::Generic | AgentKind::None => None,
     }
 }

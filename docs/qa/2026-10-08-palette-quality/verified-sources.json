@@ -1,0 +1,5 @@
+{
+  "crates/signaltty-gui/src/palette.rs": "ed64d0bfb30afc0eac9475fcf41df773353f2ff75bfcfb3223c2c054b97f43a9",
+  "crates/signaltty-gui/src/app_tests.rs": "4a91d69dafe83579d1a73157b591f798ecb09bbcea55137cb8228086b8b0f5c5",
+  "scripts/verify.py": "789f020c2b10de0d4c5300ca53691b9228b73d47096d3b5e19b18c165792e044"
+}

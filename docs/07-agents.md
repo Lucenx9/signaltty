@@ -21,8 +21,9 @@ override heuristics. Unknown apps remain fully working terminals.
 5. **Terminal state** — title (`OSC 0/1/2`), BEL, cursor, alt-screen.
    Cheap, no parsing of natural language.
 6. **Output heuristics** — last resort only (spinners, prompt shapes).
-   Never the architecture's foundation; gated behind "no semantic
-   signal for N seconds".
+   Never the architecture's foundation: declarative `[[screen]]` manifest
+   rules, applied only to panes whose current process has sent no hook
+   (see [Screen rules](#screen-rules-layer-6)).
 
 ## Adapter interface
 
@@ -44,7 +45,8 @@ trait AgentAdapter: Send + Sync {
 ```
 
 Adapters: `CodexAdapter`, `ClaudeCodeAdapter`, `OpenCodeAdapter`,
-`CursorAdapter`, `GenericTerminalAdapter` (process + title + BEL only).
+`CursorAdapter`, `PiAdapter`, `GenericTerminalAdapter` (process + title +
+BEL only).
 
 ## Per-agent integration (verified Sept 2026, local CLIs)
 
@@ -114,6 +116,12 @@ Adapters: `CodexAdapter`, `ClaudeCodeAdapter`, `OpenCodeAdapter`,
 - Shim: a small plugin file calling `signaltty hook-event --agent
   opencode`. `session.status busy/idle` → working/done; idle →
   done+unread. `serve` API is the future native-integration path.
+  V1 creation identity also comes from `properties.info.id`; nested provider
+  error messages are preserved. V2 `session.execution.failed` normalizes to
+  `session.error` (failed + error attention), while success and interruption
+  retain idle completion behavior. Installed-plugin tests execute both loaders
+  rather than only checking the generated source shape. Event contracts:
+  [OpenCode 2.0.25](https://github.com/anomalyco/opencode/blob/v2.0.25/packages/schema/src/session-event.ts).
 
 ### Cursor Agent (`cursor-agent`)
 
@@ -125,6 +133,18 @@ Adapters: `CodexAdapter`, `ClaudeCodeAdapter`, `OpenCodeAdapter`,
   events via process ancestry check).
 - Shim: `hooks.json` entry + reporter script. Screen/title fallback
   aligned with Codex (session-only pattern, no output regex).
+
+### Pi (`pi`)
+
+- Resume: `pi --session <path|id>` (partial UUID ok), `-c/--continue`,
+  `-r/--resume` picker; `--no-session` for ephemeral runs.
+- Detection: a Node script that sets `process.title`, so
+  `/proc/<pid>/cmdline` reads `pi` and shell-launched sessions are
+  promoted too.
+- Hooks: none yet. Bundled screen rules report `working` and `done`
+  (see [Screen rules](#screen-rules-layer-6)); title/BEL/exit work as for a
+  plain terminal. With no reported session id, resume is never offered.
+  Integration path: a pi extension calling `signaltty hook-event`.
 
 ## Session identity & resume (see also [09](09-persistence.md))
 
@@ -158,6 +178,17 @@ fallback survives sandboxed agents that strip hook env, and safely
 ignores foreign hooks (Cursor Desktop shares `hooks.json` but its
 processes are never our descendants → accepted, classified nothing).
 
+## Session end after review
+
+Claude/Codex `SessionEnd` and Cursor `sessionEnd` map to `done` + `unread`
+("session ended") for a session that ends mid-turn or before any turn. When the
+pane is already `done` or `failed` the hook only restates the outcome: lifecycle,
+attention and the useful last message are left as they are, so a read pane stays
+`done`/`none` and `failed` is never overwritten with `done`. Session identity and
+resume argv from the payload are still recorded. The pane's later PTY exit
+likewise does not re-raise `unread` on a reviewed `done`/`failed` pane. See
+[03](03-lifecycle-attention.md#clearing-rules).
+
 ## Detection overlays: manifests (data, not code)
 
 `$XDG_CONFIG_HOME/signaltty/agents/*.toml` (`SIGNALTTY_AGENTS_DIR`
@@ -185,6 +216,56 @@ kind = "codex"              # required: an existing AgentKind
 Each field falls through to the builtin adapter independently when
 absent. `kind` must stay inside the typed taxonomy — a genuinely new
 agent still needs a Rust adapter. See ADR-0009.
+
+### Screen rules (layer 6)
+
+`[[screen]]` tables classify panes whose current process has sent no hook
+(hooks always win, ADR-0006). Every 500 ms the server matches the rules of the
+pane's kind, from every manifest of that kind, against the pane title or a
+region of the visible screen (lines trimmed, empty lines dropped):
+
+```toml
+[[screen]]
+id = "approval"             # shown in load errors
+state = "blocked"           # working | blocked | idle | hold
+region = "bottom"           # bottom (default) | title | screen | top | prompt_box
+                            # | above_prompt_box | after_last_rule
+                            # | after_last_prompt | before_current_prompt
+                            # | without_current_prompt
+lines = 12                  # last (top: first) non-empty lines, 1..=200;
+                            # bottom and top default to 12
+regex = ['Allow\? \[y/n\]'] # any match; (?m) for per-line anchors
+# all = ['…']               # every regex must also match
+# not = ['…']               # no regex may match
+priority = 10               # highest match wins; ties keep file/declaration order
+```
+
+A rule needs `regex` or `all`. Regions follow herdr: a horizontal rule is a
+line starting with `─` (three or more, or nothing after them); `prompt_box`
+is the text between the second-last rule and the next one (empty without
+two rules), `above_prompt_box` everything before it (the whole screen
+without a box), `after_last_rule` everything below the last rule (the whole
+screen without one), `screen` the whole visible screen, `bottom` = `screen`
++ `lines = 12`, `top` the first `lines` (default 12). For Codex's `›` prompt
+(a line that is `›` or starts with `› `): `after_last_prompt` is everything
+after the last prompt line; the current prompt is the last prompt line with
+no `•`, `■`, `✗` or `✓` block line after it, `before_current_prompt` is
+everything above it and `without_current_prompt` is the whole screen only
+when there is no current prompt (otherwise empty); without a prompt both
+prompt regions read the whole screen. A winning `hold` rule leaves the pane's
+state unchanged (a transcript viewer or model picker is not a turn state).
+
+signaltty bundles rules for `pi`, `opencode`, `cursor`, `claude` and
+`codex`, ported from herdr (`crates/signaltty-agent/screen/`); each ends with
+an `idle_fallback` rule (priority -1000, empty regex) so a known agent with no
+working or blocked sign reads as idle. Any user `[[screen]]` rule for a kind
+replaces that kind's bundled rules; copy the bundled file to adjust it.
+
+`working` → `working`; `blocked` → `blocked` + `input_required`; `idle` after
+`working` → `done` + `unread`, after `blocked` → `idle`, otherwise nothing.
+Leaving `blocked`, or the first hook taking the pane over, withdraws the
+`input_required` a screen rule raised. No match changes nothing. A bad state, region, line count or regex rejects the
+manifest at load. See ADR-0024.
 
 ## Live process refresh (layer 4)
 
@@ -257,3 +338,21 @@ and disabled settings as before.
 Sources: [Claude PermissionRequest reference](https://code.claude.com/docs/en/hooks#permissionrequest-decision-control),
 [Codex 0.159.1 permission execution](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/events/permission_request.rs),
 [Codex output parser](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/hooks/src/engine/output_parser.rs).
+
+After successful delivery of an answer to a pending decision, the shared Store transition
+returns a blocked pane to working for both native permission replies and the
+terminal answer channel. Stale answers and non-answer clears do not resume it;
+ordinary tool traffic still cannot clear an unanswered blocked state.
+
+When an agent was launched directly through a path-qualified executable,
+matching bare resume commands retain that selected path. Explicit manifest
+resume paths remain authoritative; promoted shell panes keep the adapter
+command. Resume arguments come from the adapter rather than the initial launch
+options. Existing bare snapshot commands are repaired when resumed.
+
+Relative executable paths supplied to `pane.spawn` or `pane.split` are anchored
+to their launch directory before spawning and stored as absolute paths. Later
+process directory changes therefore cannot redirect a session resume.
+
+Legacy snapshots with a relative original executable keep the adapter command:
+they do not persist a reliable initial directory to anchor that relative path.

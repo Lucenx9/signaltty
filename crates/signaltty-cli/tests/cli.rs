@@ -244,10 +244,7 @@ async fn cli_skill_cat_check_install() {
     let home = std::env::temp_dir().join(format!(
         "signaltty-skill-home-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     let home_s = home.display().to_string();
     // A foreign file where our skill would go must survive uninstall.
@@ -293,10 +290,7 @@ async fn cli_workspace_diff_reports_counts() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-clidiff-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let run = |args: &[&str]| {
@@ -337,10 +331,7 @@ async fn cli_integration_status_lists_manifests() {
     let dir = std::env::temp_dir().join(format!(
         "signaltty-cli-agents-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -375,10 +366,7 @@ async fn cli_integration_install_uninstall() {
     let home = std::env::temp_dir().join(format!(
         "signaltty-home-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     std::fs::create_dir_all(&home).unwrap();
     let home_s = home.to_string_lossy().to_string();
@@ -480,10 +468,7 @@ async fn cli_plugin_list_run_json() {
     let base = std::env::temp_dir().join(format!(
         "signaltty-plugcli-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     let plugdir = base.join("plugins");
     let sub = plugdir.join("greeter");

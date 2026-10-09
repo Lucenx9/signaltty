@@ -483,6 +483,21 @@ pub fn sanitize_branch_for_path(branch: &str) -> String {
         .collect()
 }
 
+/// Default task branch `signaltty/<label>-<short_id>`. The label is free
+/// text, so on top of the path-safe characters a leading dot and `..` are
+/// dropped: `git check-ref-format` rejects both, and a label like
+/// `.github: fix CI` would otherwise fail `task.start` with no branch given.
+pub fn default_task_branch(label: &str, short_id: &str) -> String {
+    let mut component = String::new();
+    for c in sanitize_branch_for_path(label).chars() {
+        if c == '.' && (component.is_empty() || component.ends_with('.')) {
+            continue;
+        }
+        component.push(c);
+    }
+    format!("signaltty/{component}-{short_id}")
+}
+
 /// Compute default worktree path under $XDG_DATA_HOME/signaltty/worktrees/<repo-name>-<short-hash>/<sanitized-branch>.
 pub fn default_worktree_path(repo: &str, branch: &str) -> PathBuf {
     let repo_path = Path::new(repo);
@@ -625,10 +640,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "signaltty-diff-{tag}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            signaltty_core::ids::new_pane_id()
         ));
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         let run = |args: &[&str]| {
@@ -892,10 +904,7 @@ mod tests {
         let outside = std::env::temp_dir().join(format!(
             "signaltty-norepo-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            signaltty_core::ids::new_pane_id()
         ));
         std::fs::create_dir_all(&outside).unwrap();
         // A `.git` pointer to nowhere fails status even when this directory
@@ -966,6 +975,35 @@ mod tests {
             sanitize_branch_for_path("feature/my-task:v1"),
             "feature-my-task-v1"
         );
+
+        // default_task_branch: free-text labels always give a valid branch
+        assert_eq!(
+            default_task_branch("task", "1a2b3c4d"),
+            "signaltty/task-1a2b3c4d"
+        );
+        assert_eq!(
+            default_task_branch(".github: fix CI", "1a2b3c4d"),
+            "signaltty/github--fix-CI-1a2b3c4d"
+        );
+        assert_eq!(
+            default_task_branch("v1..v2", "1a2b3c4d"),
+            "signaltty/v1.v2-1a2b3c4d"
+        );
+        for label in [
+            ".github: fix CI",
+            "v1..v2",
+            "...",
+            ".",
+            "a/../b",
+            "x.lock",
+            "",
+        ] {
+            let branch = default_task_branch(label, "1a2b3c4d");
+            assert!(
+                validate_branch_name(&branch).is_ok(),
+                "label {label:?} gave invalid branch {branch:?}"
+            );
+        }
 
         // default_worktree_path
         let wt = default_worktree_path(dir_str, "feature/foo");

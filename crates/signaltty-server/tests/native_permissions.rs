@@ -110,6 +110,9 @@ async fn installed_reporters_return_once_and_deny_without_typing_terminal_input(
             .await
             .unwrap();
         assert_eq!(answered["answered"], true);
+        assert_eq!(answered["lifecycle"], "working", "{agent}: {answered}");
+        let after = c.call("pane.get", json!({"pane_id":pane})).await.unwrap();
+        assert_eq!(after["pane"]["lifecycle"], "working", "{agent}: {after}");
         let output = text(&mut c, pane, "native-finished").await;
         let raw = output
             .lines()

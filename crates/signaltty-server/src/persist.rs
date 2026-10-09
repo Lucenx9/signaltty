@@ -89,6 +89,10 @@ pub fn save(
         }
     }
 
+    if let Err(e) = rotate_snapshot_history(&config.state_dir) {
+        tracing::warn!("snapshot history rotation failed: {e}");
+    }
+
     let data = serde_json::to_vec_pretty(&snap).map_err(|e| e.to_string())?;
     atomic_write(&config.state_dir.join("snapshot.json"), &data)?;
     Ok(())
@@ -236,4 +240,214 @@ fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
     fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+const HISTORY_KEEP: usize = 48;
+const HISTORY_INTERVAL_SECS: i64 = 15 * 60;
+
+fn history_stamp(name: &str) -> Option<chrono::DateTime<Utc>> {
+    chrono::NaiveDateTime::parse_from_str(name, "snapshot-%Y%m%dT%H%M%SZ.json")
+        .ok()
+        .map(|t| t.and_utc())
+}
+
+/// Copy the current `snapshot.json` into `snapshots/` before it is replaced:
+/// at most one copy per 15 minutes, never an empty session, newest 48 kept.
+fn rotate_snapshot_history(state_dir: &Path) -> Result<(), String> {
+    let current = state_dir.join("snapshot.json");
+    let dir = state_dir.join("snapshots");
+    let mut names: Vec<String> = match fs::read_dir(&dir) {
+        Ok(entries) => entries
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| history_stamp(n).is_some())
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+    };
+    names.sort();
+    // Names are `snapshot-<UTC %Y%m%dT%H%M%SZ>.json`, so they sort by time.
+    // A future stamp (clock moved back, copied state dir) is not recent.
+    let recent = names
+        .last()
+        .and_then(|newest| history_stamp(newest))
+        .is_some_and(|t| (0..HISTORY_INTERVAL_SECS).contains(&(Utc::now() - t).num_seconds()));
+    if recent {
+        return Ok(());
+    }
+    let data = match fs::read(&current) {
+        Ok(data) => data,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{}: {e}", current.display())),
+    };
+    if !serde_json::from_slice::<Snapshot>(&data).is_ok_and(|s| !s.workspaces.is_empty()) {
+        return Ok(());
+    }
+    ensure_dir(&dir)?;
+    let name = format!("snapshot-{}.json", Utc::now().format("%Y%m%dT%H%M%SZ"));
+    atomic_write(&dir.join(&name), &data)?;
+    names.push(name);
+    for old in &names[..names.len().saturating_sub(HISTORY_KEEP)] {
+        let _ = fs::remove_file(dir.join(old));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_state_dir() -> std::path::PathBuf {
+        std::env::temp_dir()
+            .join(signaltty_core::ids::new_pane_id())
+            .join("state")
+    }
+
+    fn make_snapshot_json(workspaces: &[&str]) -> String {
+        let ws_objs: Vec<serde_json::Value> = workspaces
+            .iter()
+            .map(|id| {
+                serde_json::json!({
+                    "id": id,
+                    "name": id,
+                    "cwd": "/tmp",
+                    "tabs": [],
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "version": 1,
+            "saved_at": "2026-01-01T00:00:00Z",
+            "workspaces": ws_objs,
+            "tabs": [],
+            "panes": [],
+            "notifications": [],
+            "tasks": [],
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn preserves_on_first_save() {
+        let state_dir = test_state_dir();
+        fs::create_dir_all(&state_dir).unwrap();
+        let snap_path = state_dir.join("snapshot.json");
+        fs::write(&snap_path, make_snapshot_json(&["ws-1"])).unwrap();
+
+        rotate_snapshot_history(&state_dir).unwrap();
+
+        let snapshots_dir = state_dir.join("snapshots");
+        let entries: Vec<_> = fs::read_dir(&snapshots_dir).unwrap().flatten().collect();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        let name = entry.file_name().to_string_lossy().to_string();
+        assert!(name.starts_with("snapshot-") && name.ends_with(".json"));
+        let perms = entry.metadata().unwrap().permissions();
+        assert_eq!(perms.mode() & 0o777, 0o600);
+        let content = fs::read_to_string(entry.path()).unwrap();
+        assert!(content.contains("ws-1"));
+    }
+
+    #[test]
+    fn skips_within_15_minutes() {
+        let state_dir = test_state_dir();
+        let snapshots_dir = state_dir.join("snapshots");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        fs::write(
+            state_dir.join("snapshot.json"),
+            make_snapshot_json(&["ws-1"]),
+        )
+        .unwrap();
+        let stamp = |mins: i64| {
+            let t = Utc::now() - chrono::Duration::minutes(mins);
+            format!("snapshot-{}.json", t.format("%Y%m%dT%H%M%SZ"))
+        };
+
+        fs::write(snapshots_dir.join(stamp(10)), "{}").unwrap();
+        rotate_snapshot_history(&state_dir).unwrap();
+        assert_eq!(fs::read_dir(&snapshots_dir).unwrap().count(), 1);
+
+        fs::remove_dir_all(&snapshots_dir).unwrap();
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        fs::write(snapshots_dir.join(stamp(20)), "{}").unwrap();
+        rotate_snapshot_history(&state_dir).unwrap();
+        assert_eq!(fs::read_dir(&snapshots_dir).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn future_and_stray_names_do_not_block_history() {
+        let state_dir = test_state_dir();
+        let snapshots_dir = state_dir.join("snapshots");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        fs::write(
+            state_dir.join("snapshot.json"),
+            make_snapshot_json(&["ws-1"]),
+        )
+        .unwrap();
+        let future = Utc::now() + chrono::Duration::hours(1);
+        let future = format!("snapshot-{}.json", future.format("%Y%m%dT%H%M%SZ"));
+        fs::write(snapshots_dir.join(&future), "{}").unwrap();
+        fs::write(snapshots_dir.join("snapshot-zzz.json"), "{}").unwrap();
+
+        rotate_snapshot_history(&state_dir).unwrap();
+
+        assert_eq!(fs::read_dir(&snapshots_dir).unwrap().count(), 3);
+
+        // A stray name sorting after a recent copy must not defeat the gate.
+        fs::remove_dir_all(&snapshots_dir).unwrap();
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        let recent = Utc::now() - chrono::Duration::minutes(5);
+        let recent = format!("snapshot-{}.json", recent.format("%Y%m%dT%H%M%SZ"));
+        fs::write(snapshots_dir.join(recent), "{}").unwrap();
+        fs::write(snapshots_dir.join("snapshot-zzz.json"), "{}").unwrap();
+        rotate_snapshot_history(&state_dir).unwrap();
+        assert_eq!(fs::read_dir(&snapshots_dir).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn skips_empty_snapshots() {
+        let state_dir = test_state_dir();
+        fs::create_dir_all(&state_dir).unwrap();
+        let snap_path = state_dir.join("snapshot.json");
+        fs::write(&snap_path, make_snapshot_json(&[])).unwrap();
+
+        rotate_snapshot_history(&state_dir).unwrap();
+
+        assert!(!state_dir.join("snapshots").exists());
+    }
+
+    #[test]
+    fn prunes_to_48() {
+        let state_dir = test_state_dir();
+        let snapshots_dir = state_dir.join("snapshots");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+
+        // Populate with 48 older files
+        for i in 0..48 {
+            let name = format!("snapshot-20200101T00{:02}00Z.json", i);
+            fs::write(snapshots_dir.join(name), "{}").unwrap();
+        }
+
+        let snap_path = state_dir.join("snapshot.json");
+        fs::write(&snap_path, make_snapshot_json(&["ws-1"])).unwrap();
+
+        rotate_snapshot_history(&state_dir).unwrap();
+
+        let mut remaining: Vec<String> = fs::read_dir(&snapshots_dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        remaining.sort();
+
+        assert_eq!(remaining.len(), 48);
+        // Oldest file pruned
+        assert!(!remaining.contains(&"snapshot-20200101T000000Z.json".to_string()));
+        // Second oldest is kept
+        assert!(remaining.contains(&"snapshot-20200101T000100Z.json".to_string()));
+        // Newest file added
+        assert!(remaining.last().unwrap().starts_with("snapshot-"));
+    }
 }

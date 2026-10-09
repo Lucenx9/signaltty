@@ -53,6 +53,12 @@ pub fn strip_ansi(s: &str) -> String {
                 b'(' | b')' | b'#' => i += 3,
                 _ => i += 2,
             }
+            // A fixed-width skip can stop inside a multi-byte char
+            // (`ESC é`, `ESC ( é`); drop the rest of it so the slice
+            // below never starts off a char boundary.
+            while i < b.len() && !s.is_char_boundary(i) {
+                i += 1;
+            }
         } else {
             // Copy one UTF-8 char (or replacement char).
             let rest = &s[i..];
@@ -77,6 +83,17 @@ mod tests {
         assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
         assert_eq!(strip_ansi("\x1b]0;title\x07text"), "text");
         assert_eq!(strip_ansi("a\x1b]99;x\x1b\\b"), "ab");
+    }
+
+    #[test]
+    fn escape_before_multibyte_char_does_not_panic() {
+        // Fixed-width escape skips used to land mid-char and panic on the
+        // slice, killing the PTY reader (OSC 9 body) or a handler.
+        assert_eq!(strip_ansi("a\x1bé b"), "a b");
+        assert_eq!(strip_ansi("a\x1b(é b"), "a b");
+        assert_eq!(strip_ansi("\x1b#😀x"), "x");
+        assert_eq!(strip_ansi("\x1b\u{20ac}"), "");
+        assert_eq!(sanitize_notification_text("\x1bé ok", 100), "ok");
     }
 
     #[test]

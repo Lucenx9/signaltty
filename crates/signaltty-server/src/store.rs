@@ -53,6 +53,10 @@ struct PaneProgress {
     lifecycle_seq: u64,
     attention_seq: u64,
     transitions: HashMap<&'static str, u64>,
+    /// A hook reached this process: screen rules stay silent (ADR-0006).
+    hooked: bool,
+    /// The current `input_required` was raised by a screen rule.
+    screen_attention: bool,
 }
 
 pub struct Store {
@@ -75,6 +79,15 @@ pub struct Store {
 /// `status_reason.reason` of a task whose prompt was written but never
 /// confirmed by agent activity.
 pub const SUBMIT_UNCONFIRMED: &str = "submit_unconfirmed";
+
+/// `done`/`failed` outcome the user already read: nothing left to look at and
+/// no open decision (docs/03 "turn finished, user reviewed"). Trailing exit
+/// signals must leave such a pane quiet.
+pub(crate) fn is_reviewed_terminal(pane: &Pane) -> bool {
+    matches!(pane.lifecycle, Lifecycle::Done | Lifecycle::Failed)
+        && pane.attention == Attention::None
+        && pane.pending_decision.is_none()
+}
 
 impl Store {
     pub fn new() -> Store {
@@ -124,6 +137,8 @@ impl Store {
                     (self.panes[pane_id].lifecycle.as_str(), self.seq),
                     (self.panes[pane_id].attention.as_str(), self.seq),
                 ]),
+                hooked: false,
+                screen_attention: false,
             },
         );
     }
@@ -169,6 +184,7 @@ impl Store {
         if !matches!(pane.live, signaltty_core::model::LiveState::Live) {
             return;
         }
+        let reviewed = is_reviewed_terminal(pane);
         pane.live = signaltty_core::model::LiveState::Exited { code };
         pane.restore_state = signaltty_core::model::RestoreState::Exited;
         pane.last_activity_at = Utc::now();
@@ -202,7 +218,11 @@ impl Store {
         ) {
             self.clear_attention(pane_id, "pane_exited");
         }
-        self.raise_attention(pane_id, Attention::Unread);
+        // Exiting after the outcome was read is not news (the process was
+        // expected to end); first completions and working exits still alert.
+        if !reviewed {
+            self.raise_attention(pane_id, Attention::Unread);
+        }
         self.clear_decision(pane_id, "pane_exited");
 
         let task_id = self
@@ -477,6 +497,69 @@ impl Store {
         Some(ev)
     }
 
+    /// The first hook takes the pane over from screen rules and withdraws
+    /// the `input_required` they raised; other attention stays.
+    pub fn mark_hooked(&mut self, pane_id: &str) -> Option<StoredEvent> {
+        let progress = self.progress.get_mut(pane_id)?;
+        progress.hooked = true;
+        if !std::mem::take(&mut progress.screen_attention)
+            || self.panes.get(pane_id)?.attention != Attention::InputRequired
+        {
+            return None;
+        }
+        self.clear_attention(pane_id, "hook")
+    }
+
+    pub fn is_hooked(&self, pane_id: &str) -> bool {
+        self.progress.get(pane_id).is_some_and(|p| p.hooked)
+    }
+
+    /// Screen-rule classification (docs/07): only for a live pane whose
+    /// current process has seen no hook. `idle` closes a `working` turn as
+    /// `done`, settles a `blocked` pane as `idle`, and is otherwise a no-op.
+    /// Leaving `blocked` withdraws its `input_required`.
+    pub fn apply_screen_state(
+        &mut self,
+        pane_id: &str,
+        state: signaltty_agent::screen::ScreenState,
+    ) -> Vec<StoredEvent> {
+        use signaltty_agent::screen::ScreenState;
+        let Some(pane) = self.panes.get(pane_id) else {
+            return Vec::new();
+        };
+        if !matches!(pane.live, signaltty_core::model::LiveState::Live) || self.is_hooked(pane_id) {
+            return Vec::new();
+        }
+        let (lifecycle, attention) = match (state, pane.lifecycle) {
+            (ScreenState::Hold, _) => return Vec::new(),
+            (ScreenState::Working, _) => (Lifecycle::Working, None),
+            (ScreenState::Blocked, _) => (Lifecycle::Blocked, Some(Attention::InputRequired)),
+            (ScreenState::Idle, Lifecycle::Working) => (Lifecycle::Done, Some(Attention::Unread)),
+            (ScreenState::Idle, Lifecycle::Blocked) => (Lifecycle::Idle, None),
+            (ScreenState::Idle, _) => return Vec::new(),
+        };
+        // Leaving `blocked` withdraws the input_required raised for it, so a
+        // later `done` can still raise `unread`; other attention stays.
+        let withdraw = pane.lifecycle == Lifecycle::Blocked
+            && lifecycle != Lifecycle::Blocked
+            && pane.attention == Attention::InputRequired;
+        let Some(ev) = self.set_lifecycle(pane_id, lifecycle) else {
+            return Vec::new();
+        };
+        let mut events = vec![ev];
+        if withdraw {
+            events.extend(self.clear_attention(pane_id, "screen"));
+        }
+        let raised = attention.and_then(|a| self.raise_attention(pane_id, a));
+        if let Some(progress) = self.progress.get_mut(pane_id) {
+            if withdraw || raised.is_some() {
+                progress.screen_attention = attention == Some(Attention::InputRequired);
+            }
+        }
+        events.extend(raised);
+        events
+    }
+
     /// Raise attention and publish its paired event only when more severe.
     pub fn raise_attention(&mut self, pane_id: &str, next: Attention) -> Option<StoredEvent> {
         let pane = self.panes.get_mut(pane_id)?;
@@ -527,7 +610,10 @@ impl Store {
         let task_id = self
             .tasks
             .values()
-            .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::Working)
+            .find(|t| {
+                t.pane_id.as_deref() == Some(pane_id)
+                    && matches!(t.state, TaskState::Working | TaskState::InputRequired)
+            })
             .map(|t| t.id.clone());
         if let Some(tid) = task_id {
             self.task_input_required_on_decision(&tid, &decision.id);
@@ -538,7 +624,8 @@ impl Store {
 
     /// Consume the pending decision on answer. `None` when absent or the
     /// id is stale (superseded / already answered): the caller reports
-    /// `{answered: false}`, never an error.
+    /// `{answered: false}`, never an error. Consuming does not resume the
+    /// pane or task: call `resume_after_answer` once delivery succeeded.
     pub fn answer_decision(
         &mut self,
         pane_id: &str,
@@ -561,22 +648,38 @@ impl Store {
             }),
         );
 
+        Some(ev)
+    }
+
+    /// The consumed answer demonstrably reached the agent (PTY write or
+    /// native reply succeeded): resume the interrupted task and the blocked
+    /// pane. Later tool hooks never clear Blocked, so delivery is the one
+    /// place a blocked pane resumes. Any other lifecycle is left alone, and a
+    /// newer decision that arrived during delivery keeps its own gate.
+    pub fn resume_after_answer(&mut self, pane_id: &str) -> Option<StoredEvent> {
+        let pane = self.panes.get(pane_id)?;
+        if pane.pending_decision.is_some() {
+            return None;
+        }
+        let blocked = pane.lifecycle == Lifecycle::Blocked;
+
         let task_id = self
             .tasks
             .values()
             .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::InputRequired)
             .map(|t| t.id.clone());
-        if let Some(tid) = task_id {
-            self.task_resume_working(&tid);
-        }
+        let mut ev = task_id.and_then(|tid| self.task_resume_working(&tid));
 
-        Some(ev)
+        if blocked {
+            ev = self.set_lifecycle(pane_id, Lifecycle::Working).or(ev);
+        }
+        ev
     }
 
     /// Drop the pending decision without answering. `None` when absent.
     ///
     /// Never resumes a worker task: only an explicit answer (via
-    /// `answer_decision`) or an accepted follow-up submit moves an
+    /// `answer_decision` + `resume_after_answer`) or an accepted follow-up submit moves an
     /// `input_required` task back to `working`. Timeout, disconnect
     /// (`native_cancelled`) and turn-end (`moved_on`) drops park the task
     /// in `input_required` so the stall is visible instead of silently
@@ -652,6 +755,16 @@ impl Store {
         self.emit(event::TASK_CREATED, payload)
     }
 
+    /// Record the worker pane of a task created before its pane spawned.
+    pub fn task_attach_pane(&mut self, task_id: &str, pane_id: &str) -> Option<Task> {
+        let task = self.tasks.get_mut(task_id)?;
+        task.pane_id = Some(pane_id.to_string());
+        task.updated_at = Utc::now();
+        let task = task.clone();
+        self.emit_task_updated(&task, None);
+        Some(task)
+    }
+
     fn emit_task_updated(&mut self, task: &Task, prev_state: Option<TaskState>) -> StoredEvent {
         let mut payload = json!({
             "task_id": task.id,
@@ -677,7 +790,10 @@ impl Store {
             // lifecycle done with no report: park in input_required here, in
             // the same write, instead of a working state nobody will end.
             // Idle is not turn end.
-            if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
+            if let Some(evidence) = Self::decision_evidence(&self.panes, task) {
+                task.transition_to(TaskState::InputRequired, now).ok()?;
+                task.status_reason = Some(evidence);
+            } else if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
                 task.state = TaskState::InputRequired;
                 task.status_reason = Some(evidence);
                 task.updated_at = now;
@@ -686,6 +802,16 @@ impl Store {
         };
         let ev = self.emit_task_updated(&task_clone, Some(prev_state));
         Some(ev)
+    }
+
+    fn decision_evidence(panes: &HashMap<String, Pane>, task: &Task) -> Option<Value> {
+        let decision = task
+            .pane_id
+            .as_deref()
+            .and_then(|pid| panes.get(pid))?
+            .pending_decision
+            .as_ref()?;
+        Some(json!({"reason": "decision_required", "decision_id": decision.id}))
     }
 
     /// Evidence for a turn that ended with no report: the worker pane
@@ -785,7 +911,11 @@ impl Store {
                 .as_deref()
                 .and_then(|pid| self.panes.get(pid))
                 .is_some_and(|p| matches!(p.lifecycle, Lifecycle::Working | Lifecycle::Blocked));
-            if started {
+            if let Some(evidence) = Self::decision_evidence(&self.panes, task) {
+                task.transition_to(TaskState::InputRequired, now).ok()?;
+                task.status_reason = Some(evidence);
+                (task.clone(), prev_state)
+            } else if started {
                 (task.clone(), prev_state)
             } else {
                 task.transition_to(TaskState::InputRequired, now).ok()?;
@@ -924,6 +1054,9 @@ impl Store {
             if task.state != TaskState::InputRequired {
                 return None;
             }
+            if Self::decision_evidence(&self.panes, task).is_some() {
+                return None;
+            }
             let now = Utc::now();
             // A follow-up whose Stop arrives before the resume commits must
             // land: refresh the turn-end evidence instead of going working.
@@ -944,8 +1077,9 @@ impl Store {
     }
 
     /// A pending decision blocks the worker: `working` → `input_required`
-    /// with the decision as evidence. Only fires from `working` (a `pending`
-    /// task's first submit is still in flight; terminal tasks never move).
+    /// with the decision as evidence, or refreshes an existing interrupt's
+    /// evidence. A `pending` task's first submit is still in flight; terminal
+    /// tasks never move.
     pub fn task_input_required_on_decision(
         &mut self,
         task_id: &str,
@@ -953,7 +1087,7 @@ impl Store {
     ) -> Option<StoredEvent> {
         let (task_clone, prev_state) = {
             let task = self.tasks.get_mut(task_id)?;
-            if task.state != TaskState::Working {
+            if !matches!(task.state, TaskState::Working | TaskState::InputRequired) {
                 return None;
             }
             let prev_state = task.state;
@@ -1041,6 +1175,152 @@ mod tests {
         assert_eq!(coverage["returned"], 2);
         assert_eq!(events.len(), 2);
         std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn screen_states_map_to_lifecycle_and_attention() {
+        use signaltty_agent::screen::ScreenState::{Blocked, Idle, Working};
+        use Attention::{Error, InputRequired, Unread};
+        let none = Attention::None;
+        // (from lifecycle, from attention, screen state, lifecycle, attention)
+        let cases = [
+            (Lifecycle::Unknown, none, Working, Lifecycle::Working, none),
+            (
+                Lifecycle::Unknown,
+                none,
+                Blocked,
+                Lifecycle::Blocked,
+                InputRequired,
+            ),
+            (Lifecycle::Working, none, Idle, Lifecycle::Done, Unread),
+            // Leaving blocked withdraws the input_required it raised...
+            (
+                Lifecycle::Blocked,
+                InputRequired,
+                Idle,
+                Lifecycle::Idle,
+                none,
+            ),
+            (
+                Lifecycle::Blocked,
+                InputRequired,
+                Working,
+                Lifecycle::Working,
+                none,
+            ),
+            // ...but never another signal's attention.
+            (
+                Lifecycle::Blocked,
+                Error,
+                Working,
+                Lifecycle::Working,
+                Error,
+            ),
+            (Lifecycle::Unknown, none, Idle, Lifecycle::Unknown, none),
+            (Lifecycle::Done, none, Idle, Lifecycle::Done, none),
+        ];
+        for (from, from_attention, state, lifecycle, attention) in cases {
+            let mut store = Store::new();
+            let mut pane = pane_with(from_attention, 0);
+            pane.lifecycle = from;
+            let id = pane.id.clone();
+            store.panes.insert(id.clone(), pane.clone());
+            store.publish_pane(&pane, false);
+            let events = store.apply_screen_state(&id, state);
+            let p = &store.panes[&id];
+            assert_eq!(
+                (p.lifecycle, p.attention),
+                (lifecycle, attention),
+                "{from:?} + {state:?}"
+            );
+            assert_eq!(events.is_empty(), from == lifecycle, "{from:?} + {state:?}");
+        }
+    }
+
+    #[test]
+    fn an_answered_screen_prompt_still_ends_the_turn_unread() {
+        use signaltty_agent::screen::ScreenState::{Blocked, Idle, Working};
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Unknown;
+        let id = pane.id.clone();
+        store.panes.insert(id.clone(), pane.clone());
+        store.publish_pane(&pane, false);
+        for state in [Blocked, Working, Idle] {
+            store.apply_screen_state(&id, state);
+        }
+        let p = &store.panes[&id];
+        assert_eq!(
+            (p.lifecycle, p.attention),
+            (Lifecycle::Done, Attention::Unread)
+        );
+    }
+
+    #[test]
+    fn a_hook_withdraws_only_screen_raised_attention() {
+        use signaltty_agent::screen::ScreenState::Blocked;
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Unknown;
+        let id = pane.id.clone();
+        store.panes.insert(id.clone(), pane.clone());
+        store.publish_pane(&pane, false);
+        store.apply_screen_state(&id, Blocked);
+        assert!(store.mark_hooked(&id).is_some());
+        assert_eq!(store.panes[&id].attention, Attention::None);
+        assert!(store.mark_hooked(&id).is_none());
+
+        // input_required raised by anything else survives the takeover.
+        store.publish_pane(&pane, true);
+        store.raise_attention(&id, Attention::InputRequired);
+        assert!(store.mark_hooked(&id).is_none());
+        assert_eq!(store.panes[&id].attention, Attention::InputRequired);
+    }
+
+    #[test]
+    fn a_hold_rule_changes_nothing() {
+        use signaltty_agent::screen::ScreenState::{Blocked, Hold};
+        for from in [Lifecycle::Working, Lifecycle::Blocked, Lifecycle::Unknown] {
+            let mut store = Store::new();
+            let mut pane = pane_with(Attention::None, 0);
+            pane.lifecycle = from;
+            let id = pane.id.clone();
+            store.panes.insert(id.clone(), pane.clone());
+            store.publish_pane(&pane, false);
+            if from == Lifecycle::Blocked {
+                store.panes.get_mut(&id).unwrap().lifecycle = Lifecycle::Unknown;
+                store.apply_screen_state(&id, Blocked);
+            }
+            let before = (store.panes[&id].lifecycle, store.panes[&id].attention);
+            assert!(store.apply_screen_state(&id, Hold).is_empty(), "{from:?}");
+            assert_eq!(
+                (store.panes[&id].lifecycle, store.panes[&id].attention),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn hooks_and_exit_stop_screen_states_until_a_new_process() {
+        use signaltty_agent::screen::ScreenState::Working;
+        let mut store = Store::new();
+        let mut pane = pane_with(Attention::None, 0);
+        pane.lifecycle = Lifecycle::Idle;
+        let id = pane.id.clone();
+        store.panes.insert(id.clone(), pane.clone());
+        store.publish_pane(&pane, false);
+        assert!(!store.is_hooked(&id));
+        store.mark_hooked(&id);
+        assert!(store.is_hooked(&id));
+        assert!(store.apply_screen_state(&id, Working).is_empty());
+        // A new process (spawn/resume) starts unhooked.
+        store.publish_pane(&pane, true);
+        assert!(!store.is_hooked(&id));
+        assert!(!store.apply_screen_state(&id, Working).is_empty());
+        store.set_exited(&id, Some(0));
+        let exited = store.panes[&id].lifecycle;
+        assert!(store.apply_screen_state(&id, Working).is_empty());
+        assert_eq!(store.panes[&id].lifecycle, exited);
     }
 
     #[test]
@@ -1147,6 +1427,52 @@ mod tests {
     }
 
     #[test]
+    fn answered_decision_resumes_only_a_blocked_pane() {
+        use signaltty_core::model::{Decision, DecisionOption};
+        let decision = |did: &str| Decision {
+            id: did.to_string(),
+            prompt: "Allow?".to_string(),
+            options: vec![DecisionOption {
+                id: "once".into(),
+                label: "Once".into(),
+            }],
+            answerable: true,
+            received_at: Utc::now(),
+        };
+        let mut store = Store::new();
+        let p = pane_with(Attention::None, 0);
+        let id = p.id.clone();
+        store.panes.insert(id.clone(), p);
+        store.set_lifecycle(&id, Lifecycle::Blocked);
+        store.set_decision(&id, decision("d1")).unwrap();
+        // Stale answers and non-answer clears leave the pane blocked.
+        assert!(store.answer_decision(&id, "stale", "once").is_none());
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
+        store.clear_decision(&id, "native_cancelled").unwrap();
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
+        // Consuming the answer is not delivery: the pane stays blocked until
+        // the answer demonstrably landed.
+        store.set_decision(&id, decision("d2")).unwrap();
+        store.answer_decision(&id, "d2", "once").unwrap();
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
+        // Delivery success returns Blocked to Working.
+        store.resume_after_answer(&id).unwrap();
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Working);
+        // A newer decision that arrived during delivery keeps its own gate.
+        store.set_lifecycle(&id, Lifecycle::Blocked);
+        store.set_decision(&id, decision("d2b")).unwrap();
+        assert!(store.resume_after_answer(&id).is_none());
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Blocked);
+        store.clear_decision(&id, "moved_on").unwrap();
+        // An unrelated lifecycle is never overwritten.
+        store.set_lifecycle(&id, Lifecycle::Done);
+        store.set_decision(&id, decision("d3")).unwrap();
+        store.answer_decision(&id, "d3", "once").unwrap();
+        assert!(store.resume_after_answer(&id).is_none());
+        assert_eq!(store.panes[&id].lifecycle, Lifecycle::Done);
+    }
+
+    #[test]
     fn clear_attention_emits_only_when_set() {
         let mut store = Store::new();
         let p = pane_with(Attention::Unread, 0);
@@ -1214,6 +1540,93 @@ mod tests {
         store.panes.insert(done_id.clone(), done);
         store.set_exited(&done_id, Some(0));
         assert_eq!(store.panes[&done_id].lifecycle, Lifecycle::Done);
+    }
+
+    fn exit_after(
+        kind: AgentKind,
+        lifecycle: Lifecycle,
+        attention: Attention,
+        decision: bool,
+    ) -> (Store, String) {
+        let mut store = Store::new();
+        let mut pane = pane_with(attention, 0);
+        pane.agent.kind = kind;
+        pane.lifecycle = lifecycle;
+        if decision {
+            pane.pending_decision = Some(signaltty_core::model::Decision {
+                id: "d1".into(),
+                prompt: "Allow?".into(),
+                options: vec![signaltty_core::model::DecisionOption {
+                    id: "once".into(),
+                    label: "Once".into(),
+                }],
+                answerable: true,
+                received_at: Utc::now(),
+            });
+        }
+        let id = pane.id.clone();
+        store.panes.insert(id.clone(), pane);
+        store.set_exited(&id, Some(0));
+        (store, id)
+    }
+
+    #[test]
+    fn reviewed_terminal_exit_stays_reviewed() {
+        for (kind, lifecycle) in [
+            (AgentKind::Claude, Lifecycle::Done),
+            (AgentKind::Codex, Lifecycle::Failed),
+            (AgentKind::Generic, Lifecycle::Done),
+        ] {
+            let (store, id) = exit_after(kind, lifecycle, Attention::None, false);
+            let pane = &store.panes[&id];
+            assert_eq!(pane.attention, Attention::None, "{kind:?} {lifecycle:?}");
+            assert_eq!(pane.lifecycle, lifecycle);
+            assert!(matches!(
+                pane.live,
+                signaltty_core::model::LiveState::Exited { code: Some(0) }
+            ));
+            assert!(!store
+                .events
+                .iter()
+                .any(|e| e.name == signaltty_proto::event::ATTENTION_CREATED));
+        }
+    }
+
+    #[test]
+    fn exit_still_alerts_when_nothing_was_reviewed() {
+        // First completion of a one-shot, a working agent, an idle session,
+        // an unreviewed outcome and a dropped decision all stay unread.
+        for (kind, lifecycle, attention, decision) in [
+            (
+                AgentKind::Generic,
+                Lifecycle::Unknown,
+                Attention::None,
+                false,
+            ),
+            (
+                AgentKind::Claude,
+                Lifecycle::Working,
+                Attention::None,
+                false,
+            ),
+            (AgentKind::Claude, Lifecycle::Idle, Attention::None, false),
+            (AgentKind::Claude, Lifecycle::Done, Attention::Unread, false),
+            (
+                AgentKind::Claude,
+                Lifecycle::Failed,
+                Attention::Error,
+                false,
+            ),
+            (AgentKind::Claude, Lifecycle::Done, Attention::None, true),
+        ] {
+            let (store, id) = exit_after(kind, lifecycle, attention, decision);
+            let expected = attention.raise(Attention::Unread);
+            assert_eq!(
+                store.panes[&id].attention, expected,
+                "{kind:?} {lifecycle:?} {attention:?} decision={decision}"
+            );
+            assert!(store.panes[&id].pending_decision.is_none());
+        }
     }
 
     #[test]
@@ -1405,8 +1818,6 @@ mod tests {
             "attention_cleared",
         ] {
             store.set_decision(&pane_id, decision());
-            // set_decision only moves working -> input_required; force it here.
-            store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
             store.clear_decision(&pane_id, reason);
             assert_eq!(
                 store.tasks[&task_id].state,
@@ -1414,10 +1825,27 @@ mod tests {
                 "clear_decision({reason}) must not resume the task"
             );
         }
-        // The answer path still resumes.
+        // The answer path resumes once delivery succeeded, not on consume.
         store.set_decision(&pane_id, decision());
-        store.tasks.get_mut(&task_id).unwrap().state = TaskState::InputRequired;
         store.answer_decision(&pane_id, "d1", "once");
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        store.resume_after_answer(&pane_id);
+        assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+        // A fast permission hook can settle a follow-up before its submit
+        // activity gate resumes the task. That gate must preserve the decision.
+        store.task_input_required_on_turn_end(
+            &task_id,
+            Some(json!({"reason": "turn_ended_without_report"})),
+        );
+        store.set_decision(&pane_id, decision());
+        store.task_resume_working(&task_id);
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(json!({"reason": "decision_required", "decision_id": "d1"}))
+        );
+        store.answer_decision(&pane_id, "d1", "once");
+        store.resume_after_answer(&pane_id);
         assert_eq!(store.tasks[&task_id].state, TaskState::Working);
     }
 
@@ -1534,6 +1962,31 @@ mod tests {
         });
         store.task_background_ready(&task_id).unwrap();
         assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+        // Replay a first submit whose permission arrives before the background
+        // commit: set_decision cannot yet transition the pending task.
+        let pending = Task {
+            state: TaskState::Pending,
+            ..store.tasks[&task_id].clone()
+        };
+        store.task_create(pending);
+        let pane_id = store.tasks[&task_id].pane_id.clone().unwrap();
+        store.set_lifecycle(&pane_id, Lifecycle::Blocked);
+        store.set_decision(
+            &pane_id,
+            signaltty_core::model::Decision {
+                id: "first-decision".into(),
+                prompt: "Allow?".into(),
+                options: vec![],
+                answerable: false,
+                received_at: Utc::now(),
+            },
+        );
+        store.task_background_ready(&task_id).unwrap();
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        assert_eq!(
+            store.tasks[&task_id].status_reason,
+            Some(json!({"reason": "decision_required", "decision_id": "first-decision"}))
+        );
     }
 
     #[test]

@@ -1,0 +1,9 @@
+{
+  "revision": "d93cddac59709853c89ed5d1249e96c533b12d8f",
+  "sha256": {
+    "crates/signaltty-gui/src/board.rs": "2353b78ffc041d4b4fcbe30acec69fdd4317e4c6f0609ae23c039ceaea2dad29",
+    "crates/signaltty-gui/src/app.rs": "bc2650fd42691a9e2b42990155d09281a857ef8337f2c72d22a31da7c8e66675",
+    "crates/signaltty-gui/src/app_tests.rs": "f05e695d6e596ff23bbfee512865ce4d23d2322e83af2eb25339a91c3c178b97"
+  },
+  "note": "Application and native test source remained unchanged throughout full-19dmlviu. Subsequent evidence/documentation commits do not change these sources."
+}

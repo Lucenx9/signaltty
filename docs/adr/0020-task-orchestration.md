@@ -101,6 +101,11 @@ VERIFIED https://www.anthropic.com/engineering/multi-agent-research-system/).
 What the code does where it diverges from the proposal above — docs
 (`docs/02`, `docs/08`, skill, quickstart) describe this behavior:
 
+- Branch cleanup supersedes the retention proposal above: merge deletes a
+  task-created branch by default, with `delete_branch: false` (CLI
+  `--keep-branch`) to retain it. Discard retains the branch unless
+  `delete_branch: true` (CLI `--delete-branch`) is set. Pre-existing branches
+  are never deleted.
 - `client_request_id` (optional) makes `task.start` idempotent: the same key
   returns the existing task and pane, also across a restart. Without it,
   retries create new tasks; callers can still de-duplicate via
