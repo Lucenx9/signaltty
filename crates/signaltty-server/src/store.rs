@@ -500,8 +500,6 @@ impl Store {
         Some(ev)
     }
 
-    /// The first hook takes the pane over from screen rules and withdraws
-    /// the `input_required` they raised; other attention stays.
     /// The program a live pane runs, for screen-rule scoping (no event).
     pub fn process_name(&self, pane_id: &str) -> String {
         self.progress
@@ -516,6 +514,8 @@ impl Store {
         }
     }
 
+    /// The first hook takes the pane over from screen rules and withdraws
+    /// the `input_required` they raised; other attention stays.
     pub fn mark_hooked(&mut self, pane_id: &str) -> Option<StoredEvent> {
         let progress = self.progress.get_mut(pane_id)?;
         progress.hooked = true;
