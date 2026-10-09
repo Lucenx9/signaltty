@@ -218,6 +218,8 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Owned by serve: every exit path drops the monitor and its delay inhibitor.
+    let _logind = crate::logind::start(ctx.clone());
     let my_uid = nix::unistd::getuid().as_raw();
     loop {
         tokio::select! {
