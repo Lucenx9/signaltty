@@ -410,6 +410,10 @@ enum PaneOp {
     MarkSeen {
         id: String,
     },
+    /// Show which screen rules match a pane and whether they apply.
+    Explain {
+        id: String,
+    },
     /// Resume a restored pane via its adapter's official resume command.
     Resume {
         id: String,
@@ -1183,6 +1187,36 @@ async fn plugin_cmd(socket: PathBuf, json: bool, op: PluginOp) -> Result<(), Cli
     }
 }
 
+/// One header line, then one line per rule; `*` marks the winning rule.
+fn explain_text(r: &Value) -> String {
+    let mut out = format!(
+        "{} kind={} source={} live={} hooked={} classifies={}",
+        r["pane_id"].as_str().unwrap_or("?"),
+        r["kind"].as_str().unwrap_or("?"),
+        r["source"].as_str().unwrap_or("?"),
+        r["live"],
+        r["hooked"],
+        r["classifies"],
+    );
+    let winner = r["matched"]["index"].as_u64();
+    for (i, rule) in r["rules"].as_array().into_iter().flatten().enumerate() {
+        out.push_str(&format!(
+            "\n{} {} {} p={} {} {}",
+            if winner == Some(i as u64) { "*" } else { " " },
+            rule["id"].as_str().unwrap_or("?"),
+            rule["state"].as_str().unwrap_or("?"),
+            rule["priority"],
+            rule["region"].as_str().unwrap_or("?"),
+            if rule["matched"] == true {
+                "match"
+            } else {
+                "-"
+            },
+        ));
+    }
+    out
+}
+
 async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliError> {
     match op {
         PaneOp::Attach { id } => attach::run(&socket, &id).await,
@@ -1389,6 +1423,11 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                 PaneOp::MarkSeen { id } => {
                     let r = c.call("pane.mark_seen", json!({"pane_id": id})).await?;
                     emit(json, &r, format!("marked seen {id}"));
+                    Ok(())
+                }
+                PaneOp::Explain { id } => {
+                    let r = c.call("pane.explain", json!({"pane_id": id})).await?;
+                    emit(json, &r, explain_text(&r));
                     Ok(())
                 }
                 PaneOp::Resume { id } => {
@@ -1788,6 +1827,22 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explain_marks_only_the_winning_position() {
+        let r = json!({
+            "pane_id": "p", "kind": "generic", "source": "user",
+            "live": true, "hooked": false, "classifies": true,
+            "matched": {"id": "ask", "state": "blocked", "priority": 5, "index": 1},
+            "rules": [
+                {"id": "ask", "state": "blocked", "priority": 0, "region": "bottom(12)", "matched": false},
+                {"id": "ask", "state": "blocked", "priority": 5, "region": "bottom(12)", "matched": true},
+            ],
+        });
+        let text = explain_text(&r);
+        let starred: Vec<_> = text.lines().filter(|l| l.starts_with('*')).collect();
+        assert_eq!(starred, ["* ask blocked p=5 bottom(12) match"]);
+    }
 
     #[test]
     fn null_baseline_is_a_usage_error_not_a_current_state_wait() {

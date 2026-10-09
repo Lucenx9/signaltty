@@ -188,3 +188,113 @@ async fn user_screen_rules_replace_the_bundled_ones() {
     assert!(wait(&mut c, &id, "working", 2).await.is_err());
     srv.shutdown().await;
 }
+
+async fn explain(c: &mut TestClient, pane: &str) -> Result<Value, String> {
+    c.call("pane.explain", json!({"pane_id": pane})).await
+}
+
+#[tokio::test]
+async fn explain_reports_the_bundled_rule_that_matches() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let id = spawn_argv(&mut c, json!([fake_pi("echo Working...; sleep 30")])).await;
+    wait(&mut c, &id, "working", 5).await.unwrap();
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["kind"], "pi");
+    assert_eq!(e["source"], "bundled");
+    assert_eq!(
+        (e["live"].clone(), e["hooked"].clone()),
+        (json!(true), json!(false))
+    );
+    assert_eq!(e["classifies"], true);
+    assert_eq!(e["matched"]["id"], "working_literal");
+    assert_eq!(e["matched"]["state"], "working");
+    let rules = e["rules"].as_array().unwrap();
+    let fallback = rules.iter().find(|r| r["id"] == "idle_fallback").unwrap();
+    assert_eq!(fallback["matched"], true);
+    assert_eq!(fallback["region"], "bottom(12)");
+    let border = rules.iter().find(|r| r["id"] == "working_border").unwrap();
+    assert_eq!(border["matched"], false);
+    let literal = rules.iter().find(|r| r["id"] == "working_literal").unwrap();
+    assert_eq!(
+        (literal["matched"].clone(), literal["region"].clone()),
+        (json!(true), json!("bottom(200)"))
+    );
+    // Read-only: explaining twice changes nothing.
+    let before = pane(&mut c, &id).await;
+    explain(&mut c, &id).await.unwrap();
+    let after = pane(&mut c, &id).await;
+    for field in ["lifecycle", "attention", "pending_decision"] {
+        assert_eq!(after[field], before[field], "{field}");
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn explain_shows_user_rules_and_hooked_panes() {
+    let srv = server_with("generic").await;
+    let mut c = srv.client().await;
+    let id = spawn(&mut c, "printf 'Allow? [y/n] '; sleep 30").await;
+    wait(&mut c, &id, "blocked", 5).await.unwrap();
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(
+        (e["source"].clone(), e["matched"]["id"].clone()),
+        (json!("user"), json!("ask"))
+    );
+    assert_eq!(e["rules"].as_array().unwrap().len(), 3);
+    c.call(
+        "hook-event",
+        json!({"agent": "claude", "event": "Stop", "pane_id": id}),
+    )
+    .await
+    .unwrap();
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(
+        (e["hooked"].clone(), e["classifies"].clone()),
+        (json!(true), json!(false))
+    );
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn explain_without_rules_or_pane() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let id = spawn(&mut c, "sleep 30").await;
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["source"], "none");
+    assert_eq!(e["classifies"], false);
+    assert!(e["matched"].is_null());
+    assert!(e["rules"].as_array().unwrap().is_empty());
+    let err = explain(&mut c, "pane_nope").await.unwrap_err();
+    assert!(err.starts_with("NO_SUCH_PANE"), "{err}");
+    let err = c.call("pane.explain", json!({})).await.unwrap_err();
+    assert!(err.starts_with("BAD_PARAMS"), "{err}");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn explain_identifies_the_winner_among_duplicate_ids() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-screen-dup-{}",
+        signaltty_core::ids::new_pane_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = |priority: i32, re: &str| {
+        format!(
+            "[agent]\nkind = \"generic\"\n[[screen]]\nid = \"ask\"\nstate = \"blocked\"\npriority = {priority}\nregex = ['{re}']\n"
+        )
+    };
+    std::fs::write(dir.join("a.toml"), rule(0, "never-shown")).unwrap();
+    std::fs::write(dir.join("b.toml"), rule(5, r"Allow\?")).unwrap();
+    let srv = TestServer::start_with_dirs(None, Some(&dir)).await;
+    let mut c = srv.client().await;
+    let id = spawn(&mut c, "printf 'Allow? '; sleep 30").await;
+    wait(&mut c, &id, "blocked", 5).await.unwrap();
+    let e = explain(&mut c, &id).await.unwrap();
+    let index = e["matched"]["index"].as_u64().unwrap() as usize;
+    assert_eq!(index, 1);
+    assert_eq!(e["rules"][index]["matched"], true);
+    assert_eq!(e["rules"][0]["matched"], false);
+    srv.shutdown().await;
+}
