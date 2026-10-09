@@ -100,6 +100,9 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
 pub struct OverlayAdapter {
     manifest: Manifest,
     screen: Vec<ScreenRule>,
+    /// Display override, leaked once here so `metadata()` (called on
+    /// every hook) does not leak a fresh copy each time.
+    display_name: Option<&'static str>,
 }
 
 impl OverlayAdapter {
@@ -110,7 +113,16 @@ impl OverlayAdapter {
             .iter()
             .map(ScreenRule::compile)
             .collect::<Result<_, _>>()?;
-        Ok(OverlayAdapter { manifest, screen })
+        let display_name = manifest
+            .agent
+            .display_name
+            .as_deref()
+            .map(to_static_display);
+        Ok(OverlayAdapter {
+            manifest,
+            screen,
+            display_name,
+        })
     }
 
     /// Compiled `[[screen]]` rules, in declaration order.
@@ -197,13 +209,7 @@ impl AgentAdapter for OverlayAdapter {
         // leaking them here would need an owned slice, so keep builtins'.
         AdapterMetadata {
             kind: base.kind,
-            display_name: self
-                .manifest
-                .agent
-                .display_name
-                .as_deref()
-                .map(to_static_display)
-                .unwrap_or(base.display_name),
+            display_name: self.display_name.unwrap_or(base.display_name),
             binaries: base.binaries,
         }
     }
@@ -376,6 +382,11 @@ regex = ['^\* ']
         let r = o.resume_capability("abc").unwrap();
         assert_eq!(r.argv, vec!["codex", "resume", "abc", "--wrap"]);
         assert_eq!(o.metadata().display_name, "Codex (wrap)");
+        // The override is leaked once per overlay, not once per call.
+        assert!(std::ptr::eq(
+            o.metadata().display_name,
+            o.metadata().display_name
+        ));
         assert_eq!(o.metadata().kind, AgentKind::Codex);
         // Channel passes through to the builtin (codex: typed text).
         assert_eq!(o.answer_channel(), Some(AnswerChannel::TypeText));
