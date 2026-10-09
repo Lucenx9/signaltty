@@ -14,6 +14,7 @@ const BUNDLED: &[&str] = &[
     include_str!("../screen/pi.toml"),
     include_str!("../screen/opencode.toml"),
     include_str!("../screen/cursor.toml"),
+    include_str!("../screen/claude.toml"),
 ];
 
 /// Bundled `[[screen]]` rules for `kind`, in declaration order.
@@ -59,7 +60,12 @@ mod tests {
 
     #[test]
     fn every_bundled_kind_has_rules_ending_in_an_idle_fallback() {
-        for kind in [AgentKind::Pi, AgentKind::Opencode, AgentKind::Cursor] {
+        for kind in [
+            AgentKind::Pi,
+            AgentKind::Opencode,
+            AgentKind::Cursor,
+            AgentKind::Claude,
+        ] {
             let rules = bundled_screen_rules(kind);
             assert!(!rules.is_empty(), "{kind:?}");
             let lowest = rules.iter().min_by_key(|r| r.priority).unwrap();
@@ -68,7 +74,6 @@ mod tests {
                 ("idle_fallback", ScreenState::Idle)
             );
         }
-        assert!(bundled_screen_rules(AgentKind::Claude).is_empty());
         assert!(bundled_screen_rules(AgentKind::Generic).is_empty());
     }
 
@@ -190,6 +195,186 @@ mod tests {
             "error count: 1\nbackground tasks panel\n",
             Idle,
             "idle_fallback",
+        );
+    }
+
+    const RULE: &str = "────────────────────────────────";
+
+    /// A Claude screen: `above` the prompt box, the box body, then the footer.
+    fn claude(above: &str, body: &str, footer: &str) -> String {
+        format!("{above}\n{RULE}\n{body}\n{RULE}\n{footer}\n")
+    }
+
+    fn claude_title(title: &str, screen: &str) -> Option<(ScreenState, String)> {
+        classify(bundled_screen_rules(AgentKind::Claude), title, screen)
+            .map(|r| (r.state, r.id.clone()))
+    }
+
+    #[test]
+    fn claude_working_screens() {
+        use ScreenState::*;
+        let c = AgentKind::Claude;
+        let idle_box = |above: &str| claude(above, "❯ ", "  ? for shortcuts");
+        assert_state(
+            c,
+            &idle_box("✻ Cogitating… (12s · ↓ 1.2k tokens · esc to interrupt)"),
+            Working,
+            "live_turn_working",
+        );
+        assert_state(
+            c,
+            &claude(
+                "> fix",
+                "❯ ",
+                "  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt",
+            ),
+            Working,
+            "live_turn_working",
+        );
+        // Background agents above the box outrank the idle prompt box.
+        assert_state(
+            c,
+            &idle_box("> fix\n✻ Waiting for 2 background agents to finish"),
+            Working,
+            "background_agents_working",
+        );
+        assert_state(
+            c,
+            &idle_box("✢ Syncing · 1 MCP task still running"),
+            Working,
+            "background_mcp_task_working",
+        );
+        // ...but not while a permission prompt is on screen.
+        assert_state(
+            c,
+            &idle_box("✢ Syncing · 1 MCP task still running\nDo you want to proceed?"),
+            Idle,
+            "live_prompt_box",
+        );
+        assert_state(
+            c,
+            &claude("> hi", "  /btw what changed?", "  Esc to close"),
+            Working,
+            "btw_overlay_working",
+        );
+        assert_eq!(
+            claude_title("⠙ Fixing tests", &idle_box("> hi")),
+            Some((Working, "osc_title_working".into()))
+        );
+    }
+
+    #[test]
+    fn claude_blocked_screens() {
+        use ScreenState::*;
+        let c = AgentKind::Claude;
+        assert_state(
+            c,
+            &format!(
+                "{RULE}\n Bash command\n   rm -rf build\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for: rm\n   3. No\n Esc to cancel · Tab to amend · ctrl+e to explain\n"
+            ),
+            Blocked,
+            "bash_permission_prompt",
+        );
+        assert_state(
+            c,
+            &format!(
+                "{RULE}\n Edit file src/a.rs\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel\n"
+            ),
+            Blocked,
+            "generic_permission_prompt",
+        );
+        assert_state(
+            c,
+            &format!("{RULE}\n Pick a branch\n ❯ main\n   dev\n Enter to select · ↑/↓ to navigate · Esc to cancel\n"),
+            Blocked,
+            "live_blocked_form_select",
+        );
+        assert_state(
+            c,
+            &format!("{RULE}\n Commit message\n Enter to confirm · Esc to cancel\n"),
+            Blocked,
+            "live_blocked_form",
+        );
+        // A form footer or permission prompt that scrolled above the last
+        // rule no longer counts for the after-last-rule rules.
+        assert_state(
+            c,
+            &format!(
+                " Commit message\n Enter to confirm · Esc to cancel\n{RULE}\n  ? for shortcuts\n"
+            ),
+            Idle,
+            "idle_fallback",
+        );
+        assert_state(
+            c,
+            &format!(" Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel\n{RULE}\n  ? for shortcuts\n"),
+            Blocked,
+            "legacy_no_prompt_blocker",
+        );
+        assert_state(
+            c,
+            "Run a dynamic workflow?\n ❯ Yes\n Esc to cancel\n",
+            Blocked,
+            "dynamic_workflow_prompt",
+        );
+        assert_state(
+            c,
+            "MCP server \"github\" requests your input\n ❯ Accept\n   Decline\n Esc to cancel\n",
+            Blocked,
+            "mcp_elicitation_prompt",
+        );
+        assert_state(
+            c,
+            "Would you like to continue? Yes / No\n",
+            Blocked,
+            "legacy_no_prompt_blocker",
+        );
+        // A bare prompt marker line vetoes the legacy blocker.
+        assert_state(
+            c,
+            "Would you like to continue? Yes\n❯ \n",
+            Idle,
+            "idle_fallback",
+        );
+    }
+
+    #[test]
+    fn claude_hold_and_idle_screens() {
+        use ScreenState::*;
+        let c = AgentKind::Claude;
+        // The transcript viewer wins over a working line and changes nothing.
+        assert_state(
+            c,
+            "✻ Cogitating… (3s · esc to interrupt)\nShowing detailed transcript · ctrl+o to toggle\n",
+            Hold,
+            "transcript_viewer",
+        );
+        assert_state(
+            c,
+            "Select model\n ❯ 1. Opus\n   2. Sonnet\n Enter to set as default · Esc to cancel\n",
+            Hold,
+            "model_picker_menu",
+        );
+        assert_state(
+            c,
+            &claude("> done", "❯ ", "  ? for shortcuts"),
+            Idle,
+            "live_prompt_box",
+        );
+        // A form inside the box is not an idle prompt.
+        assert_state(
+            c,
+            &claude("> pick", "❯ a\n  Enter to select", "  Esc to cancel"),
+            Idle,
+            "idle_fallback",
+        );
+        assert_eq!(
+            claude_title("✳ Claude Code", "plain output\n"),
+            Some((Idle, "osc_title_idle".into()))
+        );
+        assert_eq!(
+            claude_title("claude", "plain output\n"),
+            Some((Idle, "idle_fallback".into()))
         );
     }
 }
