@@ -141,9 +141,9 @@ BEL only).
 - Detection: a Node script that sets `process.title`, so
   `/proc/<pid>/cmdline` reads `pi` and shell-launched sessions are
   promoted too.
-- Hooks: none yet. Status comes from title/BEL like a plain terminal
-  (exit → `exited`, as for other agents); with no reported session id,
-  resume is never offered.
+- Hooks: none yet. Bundled screen rules report `working` and `done`
+  (see [Screen rules](#screen-rules-layer-6)); title/BEL/exit work as for a
+  plain terminal. With no reported session id, resume is never offered.
   Integration path: a pi extension calling `signaltty hook-event`.
 
 ## Session identity & resume (see also [09](09-persistence.md))
@@ -231,8 +231,16 @@ state = "blocked"           # working | blocked | idle
 region = "bottom"           # bottom (default) | title
 lines = 12                  # bottom only: 1..=200, default 12
 regex = ['Allow\? \[y/n\]'] # any match; (?m) for per-line anchors
+# all = ['…']               # every regex must also match
+# not = ['…']               # no regex may match
 priority = 10               # highest match wins; ties keep file/declaration order
 ```
+
+A rule needs `regex` or `all`. signaltty bundles rules for `pi`, `opencode`
+and `cursor`, ported from herdr (`crates/signaltty-agent/screen/`); each ends
+with an `idle_fallback` rule (priority -1000, empty regex) so a known agent with
+no working or blocked sign reads as idle. Any user `[[screen]]` rule for a
+kind replaces that kind's bundled rules; copy the bundled file to adjust it.
 
 `working` → `working`; `blocked` → `blocked` + `input_required`; `idle` after
 `working` → `done` + `unread`, after `blocked` → `idle`, otherwise nothing.
