@@ -21,8 +21,9 @@ override heuristics. Unknown apps remain fully working terminals.
 5. **Terminal state** — title (`OSC 0/1/2`), BEL, cursor, alt-screen.
    Cheap, no parsing of natural language.
 6. **Output heuristics** — last resort only (spinners, prompt shapes).
-   Never the architecture's foundation; gated behind "no semantic
-   signal for N seconds".
+   Never the architecture's foundation: declarative `[[screen]]` manifest
+   rules, applied only to panes whose current process has sent no hook
+   (see [Screen rules](#screen-rules-layer-6)).
 
 ## Adapter interface
 
@@ -215,6 +216,29 @@ kind = "codex"              # required: an existing AgentKind
 Each field falls through to the builtin adapter independently when
 absent. `kind` must stay inside the typed taxonomy — a genuinely new
 agent still needs a Rust adapter. See ADR-0009.
+
+### Screen rules (layer 6)
+
+`[[screen]]` tables classify panes whose current process has sent no hook
+(hooks always win, ADR-0006). Every 500 ms the server matches the rules of the
+pane's kind, from every manifest of that kind, against the pane title or the
+last non-empty lines of the visible screen (trailing spaces trimmed):
+
+```toml
+[[screen]]
+id = "approval"             # shown in load errors
+state = "blocked"           # working | blocked | idle
+region = "bottom"           # bottom (default) | title
+lines = 12                  # bottom only: 1..=200, default 12
+regex = ['Allow\? \[y/n\]'] # any match; (?m) for per-line anchors
+priority = 10               # highest match wins; ties keep file/declaration order
+```
+
+`working` → `working`; `blocked` → `blocked` + `input_required`; `idle` after
+`working` → `done` + `unread`, after `blocked` → `idle`, otherwise nothing.
+Leaving `blocked`, or the first hook taking the pane over, withdraws the
+`input_required` a screen rule raised. No match changes nothing. A bad state, region, line count or regex rejects the
+manifest at load. See ADR-0024.
 
 ## Live process refresh (layer 4)
 
