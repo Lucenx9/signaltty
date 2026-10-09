@@ -32,7 +32,7 @@ Tasks are purely mapped into four columns based on their state and disposition o
 ## UI Presentation
 
 - **Dialog**: Presented via `adw::Dialog` with content width 960 and content height 600.
-- **Empty State**: Displays an `adw::StatusPage` with "No tasks yet" when no tasks exist.
+- **Empty State**: Displays an `adw::StatusPage` with "No Tasks Yet" when no tasks exist.
 - **Columns**: 4 side-by-side columns, each with a header (`"<Column> · <N>"`) and a scrolled list of task cards.
 - **Cards**:
   - Title: Bold task label (falls back to short id tail if empty).
