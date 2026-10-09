@@ -67,7 +67,7 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?, parent_pane_id?, label?, relationship?, task_id?}` | `{pane, integration?}` |
 | `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane, integration?}` (new sibling) |
 | `pane.get` | `{pane_id}` | `{pane, wait_baseline}` |
-| `pane.input` | `{pane_id, data_b64}` | `{written}` |
+| `pane.input` | `{pane_id, data_b64}` | `{written}`; five-second input budget, stalled input → `TIMEOUT`, closed bound PTY → `PANE_EXITED`; write failures carry `details.written_bytes` (kernel-accepted prefix, `null` if a worker failure makes it unknown); no automatic retry |
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
 | `pane.signal` | `{pane_id, signal, group?}` | `{sent}` (`INT TERM KILL HUP QUIT WINCH USR1 USR2`, case-insensitive, optional `SIG`; any other name, here or in a `*.close` `signal`, → `BAD_PARAMS`) |
 | `pane.read` | `{pane_id, mode: "screen"\|"tail"\|"rendered", lines?, strip_ansi?, after_seq?}` | `screen`/`tail` → `{text, truncated}`; `rendered` → `{text, seq, next_seq, dropped, truncated}` |
@@ -76,11 +76,12 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
 | `pane.resume` | `{pane_id}` | `{pane, integration?}` (spawns adapter resume argv; errors unless restored+resumable) |
 | `pane.mark_seen` | `{pane_id}` | `{pane}` (records reading; clears ordinary attention while preserving unanswered decisions and their required attention) |
+| `pane.explain` | `{pane_id}` | `{pane_id, kind, live, hooked, source: "user"\|"bundled"\|"none", classifies, matched: {id, state, priority, index}?, rules: [{id, state, priority, region, matched}]}` (read-only screen-rule trace against the current title and visible screen; `classifies` = live, unhooked and has rules; `index` is the winner's position in `rules`, since ids may repeat across manifests) |
 | `pane.submit` | `{pane_id, text, submit_delay_ms?, stall_timeout_s?}` | `{submitted, outcome, transition_seq, lifecycle, attention}` (bracketed paste + delayed Enter; embedded `ESC[200~` / `ESC[201~` is `BAD_PARAMS` before any write, not stripped; gate checks lifecycle, resumes `input_required` to `working`) |
 | `decision.answer` | `{pane_id, decision_id, option_id}` | `{answered, lifecycle?, attention?}` (delivers through a live native permission waiter or the pane adapter's channel and consumes the id; stale/consumed ids → `NO_SUCH_DECISION`, unknown option or channelless adapter → `BAD_PARAMS`) |
 | `notify` | `{pane_id?, title, body?, severity?}` | `{notification}` |
 | `hook-event` | `{agent, event, pane_id?, client_pid?, payload?, message?, title?, severity?, decision?}` | `{accepted, agent, event, pane_id, lifecycle?, attention?}` (adapter classification; pane by explicit id or `client_pid` ancestry; `decision: {id, prompt, options[{id, label}]}` sets/supersedes the pane's pending decision, captured `answerable` iff the adapter has a channel) |
-| `report-session` | `{pane_id, agent_session_id, agent?}` | `{pane}` |
+| `report-session` | `{pane_id, agent_session_id, agent?, resume_argv?}` | `{pane}` (`resume_argv` replaces the adapter's resume command: ≤64 args, ≤8 KiB, no control characters, first arg a plain command name; else `BAD_PARAMS`) |
 | `subscribe` | `{events?: ["agent.*","attention.*",…], from_seq?}` | `{subscribed, seq, replay?}` then complete replay/live stream |
 | `wait` | `{pane_id, until: string\|string[], after?: wait_baseline, timeout_s?}` | `{satisfied, outcome, transition_seq, lifecycle, attention}` or `TIMEOUT` / `IDENTITY_CHANGED` |
 | `focus.next_unread` | — | `{pane_id?}` (severity→recency order) |
@@ -105,9 +106,12 @@ Without `after`, an already matching current state succeeds immediately.
 
 `task.start` requires `agent` or `argv` (else `BAD_PARAMS`) and runs cap →
 base → worktree → spawn synchronously: over-cap starts are refused with
-`RATE_LIMITED` before creating anything, and base/worktree/spawn failures
-are synchronous errors (`BAD_PARAMS` / `IO_ERROR`) that create no task.
-Only the background ready-wait + prompt write produces `failed` tasks with
+`RATE_LIMITED` before creating anything. Validation and base/worktree failures
+before the checkout exists return synchronous errors and create no task.
+Once the checkout exists, workspace/tab/parent/spawn failures persist a
+`failed` task and leave its worktree available for inspection or discard.
+The error includes `details: {task_id, stage}`. Background ready-wait and
+prompt-write failures also persist `failed` tasks with
 `{stage: ready_timeout|submit_refused, …}` evidence (`ready_timeout` adds
 `screen_tail`, the pane's last screen lines). The background step
 waits for the worker pane to reach `idle`/`done` (default
@@ -126,15 +130,29 @@ create new tasks. The merge target defaults to the recorded
 branch currently checked out in the source repo (`BAD_PARAMS` with
 `details: {expected, actual}` otherwise).
 
+`pane.submit` rechecks decisions immediately before its delayed Enter. If a
+permission request or pending decision arrived after paste, it returns
+`AGENT_BUSY` with `details: {stage: "delayed_enter", paste_delivered: true}`
+without writing Enter. The pasted text is already in the worker input box;
+inspect and resolve the decision before sending more input. Automatic Enter
+retries hold the same store read guard for the decision check and Enter write.
+For a task's background first submit, a refusal after paste uses recoverable
+`input_required` rather than failing the task. A current decision is recorded
+as `decision_required`; when no decision remains, existing submit-unconfirmed
+recovery applies. The pane's decision remains unanswered. If a decision arrives
+after Enter but before submit confirmation,
+the task commit preserves `input_required` and its `decision_required` evidence,
+for both the background first prompt and a follow-up.
+
 `task.wait` takes exactly one of `task_id` / `context_id` (both or neither
 → `BAD_PARAMS`); `until` accepts task states plus the pseudo-states
 `terminal` (any of completed/failed/canceled/rejected) and `settled`
 (terminal OR `input_required`, the default). A context wait ends when every
 task in it matches (an empty context matches immediately); unknown tasks →
 `NO_SUCH_TASK`, expiry → `TIMEOUT` (default timeout 3600 s). Unknown `until`
-strings never match (the wait runs to timeout). Unlike pane `wait`, the
-task waiter is a polling loop, not a single-flight connection: it does not
-cancel on client disconnect.
+strings and an empty `until` array return `BAD_PARAMS`. Like pane `wait`,
+`task.wait` is connection-bound and single-flight: client disconnect or server
+shutdown cancels the waiter. Task state persists independently of the waiter.
 
 `task.finish` records disposition through a store transition that emits
 `task.updated` with a top-level `task_id`. Conflict file names and a cleanup
@@ -372,3 +390,15 @@ defaults to `--until settled`; `finish` needs `--merge` or `--discard`);
 `pane.spawn`; `signaltty attention [--limit N]` → `attention.pending`.
 `signaltty schema` prints the live contract (same constants the router
 dispatches on); a sync test proves every listed method dispatches.
+
+`pane.resume` retains a directly selected path-qualified executable when its
+basename matches the adapter's bare resume command, including older snapshots.
+Explicit manifest resume paths and the retained configuration environment remain
+authoritative. Launch options are not copied into resume arguments.
+
+Relative executable paths supplied to `pane.spawn` or `pane.split` are anchored
+to their launch directory before spawning and stored as absolute paths. Later
+process directory changes therefore cannot redirect a session resume.
+
+Legacy snapshots with a relative original executable keep the adapter command:
+they do not persist a reliable initial directory to anchor that relative path.

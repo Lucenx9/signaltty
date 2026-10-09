@@ -617,10 +617,7 @@ mod tests {
             let root = std::env::temp_dir().join(format!(
                 "signaltty-git-hook-{}-{}",
                 std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
+                signaltty_core::ids::new_pane_id()
             ));
             std::fs::create_dir_all(&root).unwrap();
             let cwd = root.to_str().unwrap();

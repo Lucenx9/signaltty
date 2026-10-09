@@ -861,3 +861,200 @@ async fn submit_rejects_embedded_bracketed_paste_markers_before_any_write() {
 
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn submit_does_not_send_delayed_enter_to_new_permission_request() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let input_path = srv.state_dir.join("received-input");
+    let ws = c
+        .call(
+            "workspace.create",
+            json!({"cwd": repo.path(), "name": "submit-race"}),
+        )
+        .await
+        .unwrap();
+    let recorder = "import os, sys, tty\ntty.setraw(0)\nwith open(sys.argv[1], 'wb', buffering=0) as f:\n while True:\n  f.write(os.read(0, 4096))\n";
+    let pane = c
+        .call(
+            "pane.spawn",
+            json!({
+                "workspace_id": ws["workspace"]["id"],
+                "argv": ["python3", "-c", recorder, input_path]
+            }),
+        )
+        .await
+        .unwrap();
+    let pane_id = pane["pane"]["id"].as_str().unwrap().to_string();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !input_path.exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("raw PTY recorder ready");
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, repo.path()).await.unwrap();
+
+    let mut submit_client = srv.client().await;
+    let submit_pane = pane_id.clone();
+    let submit = tokio::spawn(async move {
+        submit_client
+            .call_raw_resp(
+                "pane.submit",
+                json!({
+                    "pane_id": submit_pane, "text": "review changes",
+                    "submit_delay_ms": 1000, "stall_timeout_s": 1
+                }),
+            )
+            .await
+    });
+    let expected = b"\x1b[200~review changes\x1b[201~";
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while std::fs::read(&input_path).unwrap() != expected {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("paste received before permission hook");
+    driver
+        .permission_request(&mut c, "Bash", json!({"command": "dangerous command"}))
+        .await
+        .unwrap();
+    let outcome = submit.await.unwrap();
+    // Let the raw reader consume any erroneous Enter before inspecting bytes.
+    c.call(
+        "pane.input",
+        json!({"pane_id": pane_id, "data_b64": "UkVDT1JERVJfQkFSUklFUg=="}),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !std::fs::read(&input_path)
+            .unwrap()
+            .ends_with(b"RECORDER_BARRIER")
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("input recorder drained");
+    let received = std::fs::read(&input_path).unwrap();
+    assert_eq!(
+        received,
+        [expected.as_slice(), b"RECORDER_BARRIER"].concat(),
+        "delayed Enter must never answer a newly arrived permission request"
+    );
+    let response = outcome.unwrap();
+    let error = response
+        .error
+        .expect("permission appeared during paste delay");
+    assert_eq!(error.code, code::AGENT_BUSY);
+    assert_eq!(
+        error.details,
+        json!({"stage": "delayed_enter", "paste_delivered": true})
+    );
+    let current = c
+        .call("pane.get", json!({"pane_id": pane_id}))
+        .await
+        .unwrap();
+    assert_eq!(current["pane"]["lifecycle"], "blocked");
+    assert_eq!(current["pane"]["attention"], "permission_required");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn background_submit_permission_after_paste_keeps_task_recoverable() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let input_path = srv.state_dir.join("background-input");
+    let recorder = "import os, sys, tty\ntty.setraw(0)\nwith open(sys.argv[1], 'wb', buffering=0) as f:\n while True:\n  f.write(os.read(0, 4096))\n";
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path(), "contract": {"objective": "review changes"},
+                "argv": ["python3", "-c", recorder, input_path], "agent": "codex",
+                "submit_delay_ms": 1000, "stall_timeout_s": 1
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !input_path.exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("raw recorder ready");
+    let driver = FakeAgentPane::new(pane_id, "codex");
+    driver.session_start(&mut c, repo.path()).await.unwrap();
+    let paste = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let bytes = std::fs::read(&input_path).unwrap();
+            if bytes.ends_with(b"\x1b[201~") {
+                break bytes;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("first prompt pasted");
+    driver
+        .permission_request(&mut c, "Bash", json!({"command": "needs permission"}))
+        .await
+        .unwrap();
+    let settled = c
+        .call("task.wait", json!({"task_id": task_id, "timeout_s": 3}))
+        .await
+        .unwrap();
+    assert_eq!(
+        settled["tasks"][0]["state"], "input_required",
+        "a live worker waiting for permission must not become terminal"
+    );
+    let current = c
+        .call("pane.get", json!({"pane_id": pane_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        settled["tasks"][0]["status_reason"],
+        json!({
+            "reason": "decision_required", "decision_id": current["pane"]["pending_decision"]["id"]
+        })
+    );
+    c.call(
+        "pane.input",
+        json!({"pane_id": pane_id, "data_b64": "UkVDT1JERVJfQkFSUklFUg=="}),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !std::fs::read(&input_path)
+            .unwrap()
+            .ends_with(b"RECORDER_BARRIER")
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("recorder drained");
+    assert_eq!(
+        std::fs::read(&input_path).unwrap(),
+        [paste, b"RECORDER_BARRIER".to_vec()].concat()
+    );
+    // An eventual result can still be accepted; a failed task rejects reports.
+    let report = c
+        .call(
+            "task.report",
+            json!({"task_id": task_id,
+        "status": "completed", "summary": "finished after resolving permission"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report["task"]["state"], "completed");
+    srv.shutdown().await;
+}

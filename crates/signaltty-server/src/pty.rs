@@ -1,10 +1,14 @@
 //! PTY ownership: spawn, pumps, resize, signals, exit reaping.
 //! The server — never clients — owns all of this. See docs/04.
 
+use crate::pty_io::{self, InputError, INPUT_TIMEOUT};
+use signaltty_proto::code;
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
+use std::fs::File;
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use base64::Engine;
 use chrono::Utc;
@@ -34,10 +38,46 @@ const ENV_ALLOW: &[&str] = &[
 const ENV_PREFIX_ALLOW: &[&str] = &["SIGNALTTY_", "CLAUDE_", "CODEX_", "OPENCODE_", "CURSOR_"];
 const ENV_BLOCK: &[&str] = &["LD_PRELOAD", "LD_LIBRARY_PATH", "SIGNALTTY_SOCKET"];
 
+/// Inherited handles to the outer terminal or an outer agent session; wrong
+/// inside a pane. Explicit `req.env` overrides may still set allowlisted ones.
+const HOST_ENV_DROP: &[&str] = &[
+    "ITERM_SESSION_ID",
+    "LC_TERMINAL",
+    "LC_TERMINAL_VERSION",
+    "WEZTERM_PANE",
+    "KITTY_WINDOW_ID",
+    "WT_SESSION",
+    "TMUX",
+    "TMUX_PANE",
+    "STY",
+    "ZELLIJ",
+    "ZELLIJ_SESSION_NAME",
+    "ZELLIJ_PANE_ID",
+    "CODEX_THREAD_ID",
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+];
+
+struct PtyWriter {
+    io: Mutex<File>,
+    canceled: AtomicBool,
+    queue: Arc<tokio::sync::Mutex<()>>,
+}
+
+type SharedWriter = Arc<PtyWriter>;
+
 pub struct PtyHandle {
     master: Box<dyn portable_pty::MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    writer: SharedWriter,
     child_pid: Option<u32>,
+}
+
+impl Drop for PtyHandle {
+    fn drop(&mut self) {
+        self.writer.canceled.store(true, Ordering::Release);
+    }
 }
 
 pub struct SpawnRequest {
@@ -169,12 +209,11 @@ impl PtyManager {
             cmd.args(&argv[1..]);
         }
         cmd.cwd(&req.cwd);
-        // Filtered environment: server env minus blocklist, plus
-        // allowlisted overrides, plus signaltty context.
-        for (k, v) in std::env::vars() {
-            if !ENV_BLOCK.contains(&k.as_str()) {
-                cmd.env(&k, &v);
-            }
+        // Filtered environment: `CommandBuilder` starts from the server env,
+        // so strip the blocklist and outer host handles, then apply
+        // allowlisted overrides, then signaltty context.
+        for k in ENV_BLOCK.iter().chain(HOST_ENV_DROP) {
+            cmd.env_remove(k);
         }
         for (k, v) in &req.env {
             if ENV_BLOCK.contains(&k.as_str()) {
@@ -188,42 +227,42 @@ impl PtyManager {
         if std::env::var("TERM").is_err() && !req.env.contains_key("TERM") {
             cmd.env("TERM", "xterm-256color");
         }
+        cmd.env("TERM_PROGRAM", "signaltty");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("SIGNALTTY_PANE", &req.pane_id);
         cmd.env("SIGNALTTY_SOCKET", &req.socket_path);
 
+        let (writer, reader) = pty_io::open(pair.master.as_ref())
+            .map_err(|e| format!("pty descriptors failed: {e}"))?;
         let child = pair
             .slave
             .spawn_command(cmd)
             .map_err(|e| format!("spawn failed: {e:#}"))?;
         let child_pid = child.process_id();
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| format!("pty reader failed: {e:#}"))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|e| format!("pty writer failed: {e:#}"))?;
-
         self.terms
             .lock()
             .unwrap()
             .ensure_surface(&req.pane_id, req.size.cols, req.size.rows);
-        self.handles.lock().unwrap().insert(
+        let previous = self.handles.lock().unwrap().insert(
             req.pane_id.clone(),
             PtyHandle {
                 master: pair.master,
-                writer,
+                writer: Arc::new(PtyWriter {
+                    io: Mutex::new(writer),
+                    canceled: AtomicBool::new(false),
+                    queue: Arc::new(tokio::sync::Mutex::new(())),
+                }),
                 child_pid,
             },
         );
+        drop(previous);
 
         // Reader + reaper thread. Blocking I/O by design; one per pane.
         let pump = self.clone();
         let pane_id = req.pane_id.clone();
         std::thread::Builder::new()
             .name(format!("pty-pump-{pane_id}"))
-            .spawn(move || pump.run(pane_id, reader, child))
+            .spawn(move || pump.run(pane_id, Box::new(reader), child))
             .map_err(|e| format!("pump thread failed: {e}"))?;
 
         Ok(integration)
@@ -333,20 +372,78 @@ impl PtyManager {
     }
 
     fn on_exit(&self, pane_id: &str, code: Option<i32>) {
-        self.handles.lock().unwrap().remove(pane_id);
+        let removed = self.handles.lock().unwrap().remove(pane_id);
+        drop(removed);
         // Viewers belong to connections, so they survive a child restart.
         self.store.write().unwrap().set_exited(pane_id, code);
         self.mark_persist();
     }
 
-    pub fn input(&self, pane_id: &str, data: &[u8]) -> Result<usize, String> {
-        let mut handles = self.handles.lock().unwrap();
-        let h = handles
-            .get_mut(pane_id)
-            .ok_or_else(|| "pane has no live PTY".to_string())?;
-        h.writer.write_all(data).map_err(|e| e.to_string())?;
-        h.writer.flush().map_err(|e| e.to_string())?;
-        Ok(data.len())
+    fn writer(&self, pane_id: &str) -> Result<SharedWriter, InputError> {
+        self.handles
+            .lock()
+            .unwrap()
+            .get(pane_id)
+            .map(|h| h.writer.clone())
+            .ok_or_else(|| InputError::new(code::PANE_EXITED, "pane has no live PTY", 0))
+    }
+
+    pub fn input(&self, pane_id: &str, data: &[u8]) -> Result<usize, InputError> {
+        Self::write_input(&self.writer(pane_id)?, data, Instant::now() + INPUT_TIMEOUT)
+    }
+
+    pub async fn input_async(&self, pane_id: &str, data: Vec<u8>) -> Result<usize, InputError> {
+        let deadline = Instant::now() + INPUT_TIMEOUT;
+        // Resolve once, so queued input cannot target a replacement process.
+        let writer = self.writer(pane_id)?;
+        InputError::check(&writer.canceled, deadline, 0)?;
+        let turn = tokio::time::timeout_at(
+            tokio::time::Instant::from_std(deadline),
+            writer.queue.clone().lock_owned(),
+        )
+        .await
+        .map_err(|_| InputError::new(code::TIMEOUT, "PTY input queue timed out", 0))?;
+        InputError::check(&writer.canceled, deadline, 0)?;
+        tokio::task::spawn_blocking(move || {
+            // Keep the turn until the actual I/O ends, even if its waiter drops.
+            let _turn = turn;
+            Self::write_input(&writer, &data, deadline)
+        })
+        .await
+        .map_err(|e| InputError {
+            code: code::IO_ERROR,
+            message: format!("PTY input worker failed: {e}"),
+            written_bytes: None,
+        })?
+    }
+
+    fn write_input(
+        writer: &SharedWriter,
+        data: &[u8],
+        deadline: Instant,
+    ) -> Result<usize, InputError> {
+        loop {
+            InputError::check(&writer.canceled, deadline, 0)?;
+            match writer.io.try_lock() {
+                Ok(mut io) => return pty_io::write(&mut io, data, deadline, &writer.canceled),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    std::thread::sleep(std::time::Duration::from_millis(5))
+                }
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(InputError::new(
+                        code::IO_ERROR,
+                        "PTY writer lock poisoned",
+                        0,
+                    ))
+                }
+            }
+        }
+    }
+
+    pub fn cancel_inputs(&self) {
+        for handle in self.handles.lock().unwrap().values() {
+            handle.writer.canceled.store(true, Ordering::Release);
+        }
     }
 
     pub fn resize(&self, pane_id: &str, size: PtySize) -> Result<(), String> {
@@ -390,7 +487,8 @@ impl PtyManager {
     /// itself is removed by the router.
     pub fn destroy(&self, pane_id: &str, sig: Option<&str>) {
         let _ = self.signal(pane_id, sig.unwrap_or("TERM"), false);
-        self.handles.lock().unwrap().remove(pane_id);
+        let removed = self.handles.lock().unwrap().remove(pane_id);
+        drop(removed);
         self.viewers.lock().unwrap().remove(pane_id);
         let mut terms = self.terms.lock().unwrap();
         terms.destroy(pane_id);
@@ -459,5 +557,90 @@ pub(crate) fn parse_signal(sig: &str) -> Result<nix::sys::signal::Signal, String
         "USR1" => Ok(SIGUSR1),
         "USR2" => Ok(SIGUSR2),
         _ => Err(format!("unsupported signal: {sig}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+    use std::sync::RwLock;
+    use std::task::Poll;
+    use std::time::Duration;
+
+    #[test]
+    fn same_pane_waiters_leave_blocking_pool_available() {
+        run_writer_queue_case(false);
+    }
+
+    #[test]
+    fn canceled_input_future_keeps_its_writer_turn_until_io_finishes() {
+        run_writer_queue_case(true);
+    }
+
+    fn run_writer_queue_case(cancel_first: bool) {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let repo = signaltty_testkit::TempGitRepo::new();
+                let ready = repo.path().join("ready");
+                let release = repo.path().join("release");
+                let (bcast, _) = broadcast::channel(64);
+                let ptys = PtyManager::new(
+                    Arc::new(RwLock::new(crate::store::Store::new())),
+                    bcast,
+                    Arc::new(AtomicBool::new(false)),
+                );
+                let child = "import os, sys, time, tty\ntty.setraw(0)\nopen(sys.argv[1], 'w').close()\nwhile not os.path.exists(sys.argv[2]): time.sleep(0.005)\nwhile True: os.read(0, 4096)\n";
+                for (id, argv) in [
+                    ("stalled", vec!["python3".to_string(), "-c".to_string(), child.to_string(), ready.to_string_lossy().into_owned(), release.to_string_lossy().into_owned()]),
+                    ("other", vec!["cat".to_string()]),
+                ] {
+                    ptys.spawn(SpawnRequest {
+                        pane_id: id.to_string(), cwd: repo.path().to_string_lossy().into_owned(), argv,
+                        env: HashMap::new(), size: PtySize {cols: 80, rows: 24},
+                        socket_path: repo.path().join("unused.sock").to_string_lossy().into_owned(),
+                    }).unwrap();
+                }
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while !ready.exists() { tokio::time::sleep(Duration::from_millis(5)).await; }
+                }).await.expect("raw child ready");
+                let first_manager = ptys.clone();
+                let first = tokio::spawn(async move {
+                    first_manager.input_async("stalled", vec![b'x'; 256 * 1024]).await
+                });
+                let writer = ptys.writer("stalled").unwrap();
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while writer.io.try_lock().is_ok() { tokio::task::yield_now().await; }
+                }).await.expect("first request owns the stalled writer");
+                if cancel_first {
+                    first.abort();
+                    tokio::task::yield_now().await;
+                }
+                let mut second = Box::pin(ptys.input_async("stalled", b"queued".to_vec()));
+                // Poll to the serialization wait before probing the other pane.
+                // On the old code this schedules a second blocked pool thread.
+                std::future::poll_fn(|cx| match second.as_mut().poll(cx) {
+                    Poll::Pending => Poll::Ready(()),
+                    Poll::Ready(_) => panic!("same-pane request must remain queued"),
+                }).await;
+                let other = tokio::time::timeout(Duration::from_secs(1), ptys.input_async("other", b"independent\n".to_vec())).await;
+                std::fs::write(&release, b"release").unwrap();
+                let first_result = tokio::time::timeout(Duration::from_secs(3), first).await;
+                let second_result = tokio::time::timeout(Duration::from_secs(3), second).await;
+                ptys.destroy("stalled", Some("TERM"));
+                ptys.destroy("other", Some("TERM"));
+                if cancel_first {
+                    assert!(first_result.unwrap().unwrap_err().is_cancelled());
+                } else {
+                    assert_eq!(first_result.unwrap().unwrap().unwrap(), 256 * 1024);
+                }
+                assert_eq!(second_result.unwrap().unwrap(), 6);
+                assert_eq!(other.expect("same-pane waiters must not occupy every pool thread").unwrap(), 12);
+            });
     }
 }

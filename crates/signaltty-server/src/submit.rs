@@ -115,7 +115,8 @@ impl From<SubmitError> for (String, String) {
 /// 4. Record pre-submit `WaitBaseline`.
 /// 5. Write bracketed paste (`\x1b[200~text\x1b[201~`).
 /// 6. Sleep `submit_delay`.
-/// 7. Write `\r`.
+/// 7. Recheck live/decision state and write `\r`; a new decision returns
+///    `AGENT_BUSY` with `paste_delivered: true`, leaving it unanswered.
 /// 8. Activity gate (if `check_activity`): wait up to `stall_timeout` for a newer `working` or `blocked` transition.
 /// 9. If worker pane belongs to an `input_required` task, resume it to `working`.
 #[allow(clippy::too_many_arguments)]
@@ -230,15 +231,51 @@ pub async fn submit_prompt(
     // Bracketed paste wrap: ESC[200~ text ESC[201~
     let paste = format!("\x1b[200~{text}\x1b[201~");
     ctx.ptys
-        .input(pane_id, paste.as_bytes())
-        .map_err(|e| SubmitError::new(code::IO_ERROR, format!("PTY input error: {e}")))?;
+        .input_async(pane_id, paste.into_bytes())
+        .await
+        .map_err(|e| {
+            SubmitError::with_details(
+                e.code,
+                format!("PTY input error: {e}"),
+                serde_json::json!({"written_bytes":e.written_bytes}),
+            )
+        })?;
 
     tokio::time::sleep(submit_delay).await;
 
-    // Send Enter (\r)
-    ctx.ptys
-        .input(pane_id, b"\r")
-        .map_err(|e| SubmitError::new(code::IO_ERROR, format!("PTY input error: {e}")))?;
+    {
+        let s = ctx.store.read().unwrap();
+        let pane = s
+            .panes
+            .get(pane_id)
+            .ok_or_else(|| SubmitError::new(code::NO_SUCH_PANE, pane_id.to_string()))?;
+        if !matches!(pane.live, LiveState::Live) {
+            return Err(SubmitError::new(
+                code::PANE_EXITED,
+                format!("pane '{pane_id}' has exited"),
+            ));
+        }
+        // A permission may arrive while the TUI is settling the paste. Enter
+        // now belongs to that decision, not to the prompt we already wrote.
+        if pane.pending_decision.is_some()
+            || pane.attention == Attention::PermissionRequired
+            || (pane.lifecycle == Lifecycle::Blocked && pane.attention != Attention::InputRequired)
+        {
+            return Err(SubmitError::with_details(
+                code::AGENT_BUSY,
+                "agent requires a decision after paste; Enter was not sent",
+                serde_json::json!({"stage": "delayed_enter", "paste_delivered": true}),
+            ));
+        }
+        // Keep this single-byte write under the decision check's read guard.
+        ctx.ptys.input(pane_id, b"\r").map_err(|e| {
+            SubmitError::with_details(
+                e.code,
+                format!("PTY input error: {e}"),
+                serde_json::json!({"written_bytes":e.written_bytes}),
+            )
+        })?;
+    }
 
     if !check_activity {
         let s = ctx.store.read().unwrap();
@@ -329,8 +366,10 @@ pub async fn submit_prompt(
                 enter_retried = true;
                 // Only into an untouched input box: never while a decision
                 // or permission prompt could take the Enter as a yes.
-                let untouched = ctx.store.read().unwrap().panes.get(pane_id).is_some_and(|p| {
-                    matches!(p.lifecycle, Lifecycle::Idle | Lifecycle::Done)
+                let s = ctx.store.read().unwrap();
+                let untouched = s.panes.get(pane_id).is_some_and(|p| {
+                    matches!(p.live, LiveState::Live)
+                        && matches!(p.lifecycle, Lifecycle::Idle | Lifecycle::Done)
                         && p.pending_decision.is_none()
                         && p.attention != Attention::PermissionRequired
                 });

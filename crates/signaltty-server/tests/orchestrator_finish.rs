@@ -1048,10 +1048,7 @@ async fn test_finish_uses_canonical_worktree_boundary() {
     let link = std::env::temp_dir().join(format!(
         "signaltty-wt-link-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        signaltty_core::ids::new_pane_id()
     ));
     std::os::unix::fs::symlink(&wt, &link).unwrap();
     let ws = c

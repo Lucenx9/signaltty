@@ -149,6 +149,25 @@ impl TestServer {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
+    /// Observe actual process exit without terminating it.
+    pub async fn wait_for_exit(&mut self, timeout: std::time::Duration) -> bool {
+        tokio::time::timeout(timeout, async {
+            loop {
+                if self
+                    .child
+                    .try_wait()
+                    .expect("inspect owned server")
+                    .is_some()
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
     /// Kill -9 without graceful shutdown (crash simulation).
     pub async fn kill(self) {}
 
@@ -387,15 +406,18 @@ impl FakeAgentPane {
     }
 }
 
-fn unique() -> u64 {
+fn unique_key(pid: u32, nanos: u128, sequence: u64) -> String {
+    format!("{pid}-{nanos}-{sequence}")
+}
+
+fn unique() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
-    // Mix in nanos for cross-process uniqueness.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .subsec_nanos() as u64;
-    N.fetch_add(1, Ordering::Relaxed) ^ nanos ^ (std::process::id() as u64) << 32
+        .as_nanos();
+    unique_key(std::process::id(), nanos, N.fetch_add(1, Ordering::Relaxed))
 }
 
 pub struct TestClient {
@@ -515,5 +537,15 @@ impl TestClient {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::unique_key;
+
+    #[test]
+    fn advancing_clock_cannot_cancel_the_sequence() {
+        assert_ne!(unique_key(7, 100, 0), unique_key(7, 101, 1));
     }
 }

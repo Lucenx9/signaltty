@@ -79,7 +79,7 @@ One status vocabulary, shared by every surface
 A sidebar row is three quiet lines, modelled on t3code's thread rows:
 the workspace mark (monogram on a stable per-workspace tint, kept off
 the accent and status hues; the content header repeats it in a
-left-aligned `mark name / branch · path` breadcrumb) and name with the
+left-aligned `mark name / context` breadcrumb) and name with the
 status slot on the right — "Working 3m", the age dropped under a
 minute — the latest message (or the
 verb-tense run state), then branch or folder with the agents on the
@@ -93,8 +93,12 @@ worst attention it counts, in the same colours.
 
 The close target reserves space on the name/status line only. Activity and
 the location/agent line span the row's full width, with roomier line spacing
-and readable secondary text. Workspace header context puts the branch before
-the directory; hovering the title exposes the complete context.
+and readable secondary text. Workspace header context shows the agent summary when agents are present.
+For shell workspaces it puts the branch before the directory, or shows the
+directory alone without a branch. The separator follows context visibility;
+startup and the last-workspace removal leave no dangling slash. Hovering the
+context exposes the complete branch and path, including when the visible
+labels ellipsize in a narrow window.
 
 Rules that keep it calm:
 
@@ -152,6 +156,10 @@ native `AdwWrapBox` choices. Long option labels wrap as well, so a 320px
 pane never forces the split wider. Choices keep their original decision
 and option IDs; removing the decision bar retains the mounted VTE.
 Header controls and workspace rows expose descriptive accessible names.
+Choice buttons follow the current decision ID, answerability and options,
+including when those options change under the same ID. Losing the answer
+channel removes the choices and shows the existing terminal-answer hint.
+Prompt-only updates keep mounted choice buttons and the VTE.
 
 Dividers persist: each `GtkPaned` reports to `tab.set_ratio` with its
 tree path once the drag rests 300 ms, never mid-drag. Reconciliation
@@ -240,7 +248,12 @@ configuration does not add another status badge (ADR-0013).
 The primary menu and command/workspace palette share the action registry.
 Ctrl+Shift+P opens the palette. It filters commands and cached workspace names
 and paths immediately, so typing and pressing Enter selects the current match.
-Up/Down selects a result; Enter invokes the existing action or switches the
+Up/Down selects a result and scrolls just enough to keep it visible while search retains
+focus. Filtering resets to the first visible match. No matches shows a native status
+page with recovery guidance; clearing the query restores the list. Commands show
+GTK-formatted shortcuts below their titles, including accessible descriptions, without
+narrowing the title at large text sizes. Full workspace names and paths remain available
+as literal tooltips. Enter invokes the existing action or switches the
 workspace. Escape restores terminal focus. Workspace switches keep already
 created VTE widgets attached to the output stream, including inactive workspaces;
 closing a pane or workspace prunes those widgets after the cache refresh.
@@ -292,3 +305,35 @@ The display tests `navigation_palette_fast_enter_and_git_dialogs_use_native_cont
 Set `SIGNALTTY_UI_EVIDENCE=/tmp/signaltty-local-workflows` on the first two to
 export light/dark palette, Git, search and zoom snapshots, including narrow Git
 dialogs. The fixtures use independent GTK windows and IPC channels.
+
+The isolated display tests
+`palette_keyboard_selection_stays_visible_while_search_keeps_focus` and
+`palette_empty_results_and_shortcuts_fit_narrow_appearances` cover long-list navigation,
+filtering after scrolling, no-match recovery and 360px layouts. `SIGNALTTY_UI_EVIDENCE`
+exports their native renders, including enlarged text with the application's
+high-contrast class. This class-based scene does not certify a screen-reader or a real
+desktop high-contrast theme.
+
+## Task Board presentation
+
+The Task Board retains its five lifecycle columns and native vertical lists.
+A horizontal GTK scroller keeps every column reachable in narrow windows,
+including by keyboard focus. Cards keep complete tooltips while labels
+ellipsize. Secondary metadata uses a single foreground treatment; high
+contrast restores metadata and column headings to full strength. Task
+classification and pane activation remain unchanged. Done keeps its total count
+and newest 20 cards; when more exist, a wrapping “Showing latest 20 of N”
+notice explains the visible subset.
+
+Background task events reconcile the open board in place. Task IDs retain row
+widgets, current metadata and pane destinations. Scrolled columns keep their
+surviving viewport anchors through insertions and removals; a moved focused card follows its
+identity into its new column. Removal chooses the next/previous surviving row
+in the original column, then native dialog focus. New navigation wins over
+pending restoration; GTK layout clamps and board-triggered focus animations
+do not count as new user scrolling. Empty/nonempty transitions retain the dialog.
+
+The isolated display test
+`task_board_fits_narrow_windows_and_reveals_last_column` checks narrow
+light/dark scenes, enlarged high-contrast text, scrolling to Done and
+activating its pane. `SIGNALTTY_UI_EVIDENCE` exports the native renders.

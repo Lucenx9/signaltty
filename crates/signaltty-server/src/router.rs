@@ -96,6 +96,36 @@ impl Ctx {
             .unwrap_or_else(|| signaltty_agent::adapter_for_kind(kind))
     }
 
+    /// `[[screen]]` rules of every overlay for `kind`, in file then
+    /// declaration order (several generic manifests may each add rules).
+    /// Any user rule for a kind replaces its bundled rules (ADR-0025).
+    /// Returns the source (`user`, `bundled` or `none`) with the rules.
+    pub fn screen_rules(
+        &self,
+        kind: AgentKind,
+    ) -> (&'static str, Vec<&signaltty_agent::screen::ScreenRule>) {
+        let user: Vec<_> = self
+            .overlays
+            .iter()
+            .filter(|o| o.kind() == kind)
+            .flat_map(|o| o.screen_rules())
+            .collect();
+        if !user.is_empty() {
+            return ("user", user);
+        }
+        let bundled: Vec<_> = signaltty_agent::bundled::bundled_screen_rules(kind)
+            .iter()
+            .collect();
+        (
+            if bundled.is_empty() {
+                "none"
+            } else {
+                "bundled"
+            },
+            bundled,
+        )
+    }
+
     pub fn detect_kind(&self, argv: &[String]) -> AgentKind {
         signaltty_agent::detect_kind_with_overlays(argv, &self.overlays)
     }
@@ -172,7 +202,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::PANE_SPAWN => h_pane_spawn(ctx, &req.params),
         method::PANE_SPLIT => h_pane_split(ctx, &req.params),
         method::PANE_GET => h_pane_get(ctx, &req.params),
-        method::PANE_INPUT => h_pane_input(ctx, &req.params),
+        method::PANE_INPUT => return h_pane_input(ctx, req).await,
         method::PANE_RESIZE => h_pane_resize(ctx, &req.params),
         method::PANE_SIGNAL => h_pane_signal(ctx, &req.params),
         method::PANE_READ => h_pane_read(ctx, &req.params),
@@ -181,7 +211,8 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::PANE_CLOSE => h_pane_close(ctx, &req.params),
         method::PANE_RESUME => h_pane_resume(ctx, &req.params),
         method::PANE_MARK_SEEN => h_pane_mark_seen(ctx, &req.params),
-        method::DECISION_ANSWER => h_decision_answer(ctx, &req.params),
+        method::PANE_EXPLAIN => h_pane_explain(ctx, &req.params),
+        method::DECISION_ANSWER => h_decision_answer(ctx, &req.params).await,
         method::NOTIFY => h_notify(ctx, &req.params),
         method::HOOK_EVENT => match decode::<params::HookEvent>(&req.params) {
             Ok(p) if p.wait_for_answer => return crate::approvals::wait(ctx, req).await,
@@ -684,6 +715,20 @@ fn launch_result(pane: &Pane, integration: Value) -> Value {
     result
 }
 
+fn anchor_launch_executable(
+    mut argv: Vec<String>,
+    cwd: &str,
+) -> Result<Vec<String>, (String, String)> {
+    let program = std::path::Path::new(&argv[0]);
+    if argv[0].contains('/') && !program.is_absolute() {
+        argv[0] = std::path::absolute(std::path::Path::new(cwd).join(program))
+            .map_err(|e| (code::IO_ERROR.to_string(), e.to_string()))?
+            .to_string_lossy()
+            .into_owned();
+    }
+    Ok(argv)
+}
+
 pub(crate) fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::PaneSpawn = decode(params)?;
     let raw = p.workspace_id;
@@ -737,6 +782,7 @@ pub(crate) fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(bad_params(format!("cwd is not a directory: {cwd}")));
     }
+    let argv = anchor_launch_executable(argv, &cwd)?;
     let existing_tab = p.tab_id.or_else(|| ws.active_tab_id.clone());
     let staged_tab = if existing_tab.is_none() {
         Some(Tab {
@@ -863,6 +909,7 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
     if argv.is_empty() {
         return Err(bad_params("'argv' must not be empty"));
     }
+    let argv = anchor_launch_executable(argv, &cwd)?;
     let now = Utc::now();
     let mut pane = Pane::new(ws_id, tab_id.clone(), cwd.clone(), argv.clone(), size, now);
     pane.agent.kind = ctx.detect_kind(&argv);
@@ -904,6 +951,50 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
     Ok((launch_result(&pane, integration), ConnEffect::default()))
 }
 
+/// Read-only screen-rule trace (spec 029): the same selection and match the
+/// classification tick uses, against the current title and visible screen.
+fn h_pane_explain(ctx: &Ctx, params: &Value) -> Handler {
+    let id = decode::<params::PaneId>(params)?.pane_id;
+    let (kind, live, hooked, title) = {
+        let s = ctx.store.read().unwrap();
+        let pane = s
+            .panes
+            .get(&id)
+            .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?;
+        (
+            pane.agent.kind,
+            matches!(pane.live, LiveState::Live),
+            s.is_hooked(&id),
+            pane.title.clone(),
+        )
+    };
+    let (source, rules) = ctx.screen_rules(kind);
+    let screen = ctx.ptys.terms().lock().unwrap().snapshot(&id);
+    let winner = signaltty_agent::screen::classify(rules.iter().copied(), &title, &screen);
+    let traced: Vec<Value> = rules
+        .iter()
+        .map(|r| {
+            json!({"id": r.id, "state": r.state.as_str(), "priority": r.priority,
+                   "region": r.region_label(), "matched": r.matches(&title, &screen)})
+        })
+        .collect();
+    Ok((
+        json!({
+            "pane_id": id,
+            "kind": kind.as_str(),
+            "live": live,
+            "hooked": hooked,
+            "source": source,
+            "classifies": live && !hooked && !rules.is_empty(),
+            // Rule ids may repeat across manifests: `index` names the entry.
+            "matched": winner.map(|w| json!({"id": w.id, "state": w.state.as_str(), "priority": w.priority,
+                "index": rules.iter().position(|r| std::ptr::eq(*r, w))})),
+            "rules": traced,
+        }),
+        ConnEffect::default(),
+    ))
+}
+
 fn h_pane_get(ctx: &Ctx, params: &Value) -> Handler {
     let id = decode::<params::PaneId>(params)?.pane_id;
     let s = ctx.store.read().unwrap();
@@ -917,37 +1008,45 @@ fn h_pane_get(ctx: &Ctx, params: &Value) -> Handler {
     ))
 }
 
-fn h_pane_input(ctx: &Ctx, params: &Value) -> Handler {
-    let p: params::PaneInput = decode(params)?;
-    let id = p.pane_id;
-    let data_b64 = p.data_b64;
-    if data_b64.len() > 1024 * 1024 {
-        return Err((
-            code::RATE_LIMITED.to_string(),
-            "input too large".to_string(),
-        ));
-    }
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(data_b64.as_bytes())
-        .map_err(|_| bad_params("invalid base64 in 'data_b64'"))?;
-    {
-        let s = ctx.store.read().unwrap();
-        let pane = s
-            .panes
-            .get(&id)
-            .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?;
-        if !matches!(pane.live, LiveState::Live) {
-            return Err((code::PANE_EXITED.to_string(), id));
+async fn h_pane_input(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
+    let validated = (|| -> Result<_, (String, String)> {
+        let p: params::PaneInput = decode(&req.params)?;
+        let id = p.pane_id;
+        let data_b64 = p.data_b64;
+        if data_b64.len() > 1024 * 1024 {
+            return Err((
+                code::RATE_LIMITED.to_string(),
+                "input too large".to_string(),
+            ));
         }
-    }
-    let written = ctx.ptys.input(&id, &data).map_err(|e| {
-        if e == "pane has no live PTY" {
-            (code::PANE_EXITED.to_string(), id.clone())
-        } else {
-            (code::IO_ERROR.to_string(), e)
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(data_b64.as_bytes())
+            .map_err(|_| bad_params("invalid base64 in 'data_b64'"))?;
+        {
+            let s = ctx.store.read().unwrap();
+            let pane = s
+                .panes
+                .get(&id)
+                .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.clone()))?;
+            if !matches!(pane.live, LiveState::Live) {
+                return Err((code::PANE_EXITED.to_string(), id));
+            }
         }
-    })?;
-    Ok((json!({"written": written}), ConnEffect::default()))
+        Ok((id, data))
+    })();
+    let response = match validated {
+        Err((code, message)) => Response::err(&req.id, &code, message),
+        Ok((id, data)) => match ctx.ptys.input_async(&id, data).await {
+            Ok(written) => Response::ok(&req.id, json!({"written":written})),
+            Err(e) => Response::err_with_details(
+                &req.id,
+                e.code,
+                e.message,
+                json!({"written_bytes":e.written_bytes}),
+            ),
+        },
+    };
+    (response, ConnEffect::default())
 }
 
 fn h_pane_resize(ctx: &Ctx, params: &Value) -> Handler {
@@ -1156,7 +1255,7 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
         (
             pane.cwd.clone(),
             pane.pty_size,
-            argv,
+            signaltty_agent::resolve_resume_argv(&pane.argv, &argv),
             pane.agent.config_env.clone(),
         )
     };
@@ -1166,7 +1265,7 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
         .spawn(SpawnRequest {
             pane_id: id.clone(),
             cwd,
-            argv,
+            argv: argv.clone(),
             env,
             size,
             socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
@@ -1176,6 +1275,7 @@ fn h_pane_resume(ctx: &Ctx, params: &Value) -> Handler {
         {
             let pane = s.panes.get_mut(&id).unwrap();
             pane.live = LiveState::Live;
+            pane.agent.resume_argv = Some(argv);
             pane.restore_state = RestoreState::Live;
             pane.last_activity_at = Utc::now();
         }
@@ -1207,7 +1307,7 @@ fn h_pane_mark_seen(ctx: &Ctx, params: &Value) -> Handler {
 /// Consumes the id first so a concurrent clear can never double-deliver;
 /// stale/double answers are typed `NO_SUCH_DECISION` (the client refreshes
 /// and drops its bar), never a redelivery.
-fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
+async fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::DecisionAnswer = decode(params)?;
     let (kind, live) = {
         let s = ctx.store.read().unwrap();
@@ -1257,41 +1357,28 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
     };
     let bytes = signaltty_agent::answer_bytes(channel, &pending.options, &p.option_id)
         .ok_or_else(|| bad_params(format!("unknown option '{}'", p.option_id)))?;
-    // Consume before delivering: a concurrent clear turns this into a
-    // typed stale-id on retry, never a second delivery.
-    let consumed = {
-        let mut s = ctx.store.write().unwrap();
-        s.answer_decision(&p.pane_id, &p.decision_id, &p.option_id)
-            .map(|ev| {
-                // Resolve this gate under the consume lock. A newer decision
-                // arriving during delivery must retain its own attention.
-                let cleared = s.mark_seen(&p.pane_id, "decision_answer");
-                (ev, cleared)
-            })
-    };
-    let Some(_) = consumed else {
-        return Err((
-            code::NO_SUCH_DECISION.to_string(),
-            format!("decision {} is stale", p.decision_id),
-        ));
-    };
-
-    if let Err(e) = ctx.ptys.input(&p.pane_id, &bytes) {
-        // The gate is consumed but the bytes never landed (the child
-        // exited between the checks): loud error, user answers in-terminal.
-        ctx.store.write().unwrap().emit(
-            event::DECISION_CLEARED,
-            json!({"pane_id": p.pane_id, "decision_id": p.decision_id, "reason": "pane_exited"}),
-        );
-        return Err(if e == "pane has no live PTY" {
-            (code::PANE_EXITED.to_string(), p.pane_id)
-        } else {
-            (code::IO_ERROR.to_string(), e)
-        });
+    match consume_deliver_resume(&ctx.store, &p, || async {
+        ctx.ptys.input_async(&p.pane_id, bytes).await.map(|_| ())
+    })
+    .await
+    {
+        Ok(()) => {}
+        Err(TypedAnswerError::Stale) => {
+            return Err((
+                code::NO_SUCH_DECISION.to_string(),
+                format!("decision {} is stale", p.decision_id),
+            ));
+        }
+        Err(TypedAnswerError::Delivery(e)) => {
+            return Err((e.code.to_string(), e.to_string()));
+        }
     }
     let (lifecycle, attention) = {
         let s = ctx.store.read().unwrap();
-        let pane = s.panes.get(&p.pane_id).unwrap();
+        let pane = s
+            .panes
+            .get(&p.pane_id)
+            .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), p.pane_id.clone()))?;
         (
             pane.lifecycle.as_str().to_string(),
             pane.attention.as_str().to_string(),
@@ -1302,6 +1389,47 @@ fn h_decision_answer(ctx: &Ctx, params: &Value) -> Handler {
         json!({"answered": true, "lifecycle": lifecycle, "attention": attention}),
         ConnEffect::default(),
     ))
+}
+
+enum TypedAnswerError<E> {
+    Stale,
+    Delivery(E),
+}
+
+/// Consume before delivering: a concurrent clear turns a retry into a typed
+/// stale-id, never a second delivery. The pane and its task resume only once
+/// `deliver` landed; on failure the gate stays consumed but the pane keeps
+/// its blocked state so the user answers in-terminal.
+async fn consume_deliver_resume<E, F: std::future::Future<Output = Result<(), E>>>(
+    store: &SharedStore,
+    p: &params::DecisionAnswer,
+    deliver: impl FnOnce() -> F,
+) -> Result<(), TypedAnswerError<E>> {
+    let consumed = {
+        let mut s = store.write().unwrap();
+        s.answer_decision(&p.pane_id, &p.decision_id, &p.option_id)
+            .map(|ev| {
+                // Resolve this gate under the consume lock. A newer decision
+                // arriving during delivery must retain its own attention.
+                let cleared = s.mark_seen(&p.pane_id, "decision_answer");
+                (ev, cleared)
+            })
+    };
+    if consumed.is_none() {
+        return Err(TypedAnswerError::Stale);
+    }
+
+    if let Err(e) = deliver().await {
+        // The gate is consumed but the bytes never landed (the child
+        // exited between the checks): loud error, user answers in-terminal.
+        store.write().unwrap().emit(
+            event::DECISION_CLEARED,
+            json!({"pane_id": p.pane_id, "decision_id": p.decision_id, "reason": "pane_exited"}),
+        );
+        return Err(TypedAnswerError::Delivery(e));
+    }
+    store.write().unwrap().resume_after_answer(&p.pane_id);
+    Ok(())
 }
 
 // ---- notifications ----
@@ -1525,15 +1653,23 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         }
     }
 
+    // Hooks dominate screen rules for the rest of this process (ADR-0006).
+    ctx.store.write().unwrap().mark_hooked(&pid);
+
     // 1. Session identity (+ resume argv) from the adapter.
     if let Some(sid) = adapter.session_identity(&event) {
         let kind = adapter.metadata().kind;
         let resume = adapter.resume_capability(&sid).map(|r| r.argv);
         let mut s = ctx.store.write().unwrap();
         if let Some(p) = s.panes.get_mut(&pid) {
+            // Same agent and session keep the stored command, which may be
+            // self-reported.
+            let new_session =
+                p.agent.kind != kind || p.agent.agent_session_id.as_deref() != Some(sid.as_str());
             p.agent.kind = kind;
-            if resume.is_some() {
-                p.agent.resume_argv = resume;
+            if resume.is_some() && (new_session || p.agent.resume_argv.is_none()) {
+                p.agent.resume_argv =
+                    resume.map(|argv| signaltty_agent::resolve_resume_argv(&p.argv, &argv));
             }
             p.last_activity_at = Utc::now();
         }
@@ -1583,6 +1719,19 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             decision.lifecycle = None;
             decision.attention = None;
         }
+        // Preserve turn-end intent even when its pane outcome is already settled.
+        let ends_turn = decision.lifecycle == Some(Lifecycle::Done);
+        // A session end trailing a finished turn restates the outcome: it must
+        // not reopen a read `done`, rewrite `failed` as `done`, or replace the
+        // useful last message with "session ended".
+        if hook.eq_ignore_ascii_case("sessionend")
+            && decision.lifecycle == Some(Lifecycle::Done)
+            && s.panes
+                .get(&pid)
+                .is_some_and(|p| matches!(p.lifecycle, Lifecycle::Done | Lifecycle::Failed))
+        {
+            decision = signaltty_agent::LifecycleDecision::default();
+        }
         if let Some(msg) = &decision.message {
             if let Some(p) = s.panes.get_mut(&pid) {
                 p.last_message = Some(msg.clone());
@@ -1591,22 +1740,22 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         }
         if let Some(lifecycle) = decision.lifecycle {
             s.set_lifecycle(&pid, lifecycle);
-            // Only `done` ends a turn. `idle` (e.g. SessionStart after the
-            // task is already working) is not turn end.
-            if lifecycle == Lifecycle::Done {
-                let target_task_id = s
-                    .tasks
-                    .values()
-                    .find(|t| t.pane_id.as_deref() == Some(&pid) && t.state == TaskState::Working)
-                    .map(|t| t.id.clone());
-                if let Some(tid) = target_task_id {
-                    let last_message = s.panes.get(&pid).and_then(|p| p.last_message.clone());
-                    let evidence = json!({
-                        "reason": "turn_ended_without_report",
-                        "last_message": last_message,
-                    });
-                    s.task_input_required_on_turn_end(&tid, Some(evidence));
-                }
+        }
+        // A suppressed SessionEnd still settles a worker that did not report.
+        // Idle hooks never end a turn.
+        if ends_turn {
+            let target_task_id = s
+                .tasks
+                .values()
+                .find(|t| t.pane_id.as_deref() == Some(&pid) && t.state == TaskState::Working)
+                .map(|t| t.id.clone());
+            if let Some(tid) = target_task_id {
+                let last_message = s.panes.get(&pid).and_then(|p| p.last_message.clone());
+                let evidence = json!({
+                    "reason": "turn_ended_without_report",
+                    "last_message": last_message,
+                });
+                s.task_input_required_on_turn_end(&tid, Some(evidence));
             }
         }
         match decision.attention {
@@ -1733,17 +1882,28 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
     let session_id = p.agent_session_id;
     let agent = p.agent.unwrap_or_else(|| "generic".to_string());
     let kind = AgentKind::parse(&agent).unwrap_or(AgentKind::Generic);
+    if let Some(ref argv) = p.resume_argv {
+        signaltty_agent::validate_resume_argv(argv)
+            .map_err(|e| (code::BAD_PARAMS.to_string(), e))?;
+    }
     let mut s = ctx.store.write().unwrap();
     let pane = s
         .panes
         .get_mut(&pane_id)
         .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), pane_id.clone()))?;
+    let new_session = pane.agent.kind != kind
+        || pane.agent.agent_session_id.as_deref() != Some(session_id.as_str());
     pane.agent.kind = kind;
-    // The adapter owns the official resume command for this id.
-    pane.agent.resume_argv = ctx
-        .adapter_for_kind(kind)
-        .resume_capability(&session_id)
-        .map(|r| r.argv);
+    if let Some(ref argv) = p.resume_argv {
+        pane.agent.resume_argv = Some(signaltty_agent::resolve_resume_argv(&pane.argv, argv));
+    } else if new_session || pane.agent.resume_argv.is_none() {
+        // The adapter owns the official resume command for a new agent or
+        // id; a repeated report keeps the stored (possibly self-reported) one.
+        pane.agent.resume_argv = ctx
+            .adapter_for_kind(kind)
+            .resume_capability(&session_id)
+            .map(|r| signaltty_agent::resolve_resume_argv(&pane.argv, &r.argv));
+    }
     let changed = s.set_agent_session(&pane_id, session_id).is_some();
     let pane = s.panes[&pane_id].clone();
     if !changed {
@@ -1753,6 +1913,38 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
 
     ctx.mark_persist();
     Ok((pane_result(&pane), ConnEffect::default()))
+}
+
+/// One screen-rule pass over live, hook-less panes (spec 027). True when
+/// any pane changed state.
+pub fn classify_screens(ctx: &Ctx) -> bool {
+    let candidates: Vec<(String, AgentKind, String)> = {
+        let s = ctx.store.read().unwrap();
+        s.panes
+            .values()
+            .filter(|p| matches!(p.live, LiveState::Live) && !s.is_hooked(&p.id))
+            .map(|p| (p.id.clone(), p.agent.kind, p.title.clone()))
+            .collect()
+    };
+    let mut changed = false;
+    for (id, kind, title) in candidates {
+        let (_, rules) = ctx.screen_rules(kind);
+        if rules.is_empty() {
+            continue;
+        }
+        // ponytail: one full visible-screen snapshot per rule-carrying pane per
+        // tick; skip unchanged output offsets if many such panes make it hot.
+        let screen = ctx.ptys.terms().lock().unwrap().snapshot(&id);
+        if let Some(rule) = signaltty_agent::screen::classify(rules, &title, &screen) {
+            let events = ctx
+                .store
+                .write()
+                .unwrap()
+                .apply_screen_state(&id, rule.state);
+            changed |= !events.is_empty();
+        }
+    }
+    changed
 }
 
 // ---- subscribe / wait / focus ----
@@ -1938,5 +2130,131 @@ async fn h_pane_submit(ctx: &Ctx, req: &Request, params: &Value) -> (Response, C
             };
             (resp, ConnEffect::default())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Store;
+    use signaltty_core::model::{Decision, DecisionOption, Pane, PtySize};
+    use signaltty_core::state::Attention;
+    use std::sync::RwLock;
+
+    fn blocked_store() -> (SharedStore, params::DecisionAnswer) {
+        let now = chrono::Utc::now();
+        let mut pane = Pane::new(
+            "ws_1".into(),
+            "tab_1".into(),
+            "/tmp".into(),
+            vec!["sh".into()],
+            PtySize::default(),
+            now,
+        );
+        pane.lifecycle = Lifecycle::Blocked;
+        let pane_id = pane.id.clone();
+        let mut store = Store::new();
+        store.panes.insert(pane_id.clone(), pane);
+        store.set_decision(
+            &pane_id,
+            Decision {
+                id: "d1".into(),
+                prompt: "Allow?".into(),
+                options: vec![DecisionOption {
+                    id: "once".into(),
+                    label: "Once".into(),
+                }],
+                answerable: true,
+                received_at: now,
+            },
+        );
+        store.raise_attention(&pane_id, Attention::PermissionRequired);
+        let answer = params::DecisionAnswer {
+            pane_id,
+            decision_id: "d1".into(),
+            option_id: "once".into(),
+        };
+        (Arc::new(RwLock::new(store)), answer)
+    }
+
+    fn names(store: &SharedStore) -> Vec<String> {
+        let s = store.read().unwrap();
+        s.events.iter().map(|e| e.name.clone()).collect()
+    }
+
+    #[tokio::test]
+    async fn pending_typed_delivery_keeps_the_pane_blocked_until_bytes_land() {
+        let (store, p) = blocked_store();
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let delivering = consume_deliver_resume(&store, &p, || async {
+            wait.await.unwrap();
+            Ok::<(), String>(())
+        });
+        tokio::pin!(delivering);
+        std::future::poll_fn(|cx| {
+            use std::future::Future;
+            assert!(delivering.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        {
+            let s = store.read().unwrap();
+            let pane = &s.panes[&p.pane_id];
+            assert!(pane.pending_decision.is_none());
+            assert_eq!(pane.lifecycle, Lifecycle::Blocked);
+        }
+        release.send(()).unwrap();
+        assert!(delivering.await.is_ok());
+        assert_eq!(
+            store.read().unwrap().panes[&p.pane_id].lifecycle,
+            Lifecycle::Working
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_typed_delivery_keeps_the_pane_blocked() {
+        let (store, p) = blocked_store();
+        let err: Result<(), TypedAnswerError<String>> =
+            consume_deliver_resume(&store, &p, || async { Err("pane has no live PTY".into()) })
+                .await;
+        assert!(matches!(err, Err(TypedAnswerError::Delivery(_))));
+        let s = store.read().unwrap();
+        let pane = &s.panes[&p.pane_id];
+        // The gate is consumed (no second delivery) but nothing resumed.
+        assert!(pane.pending_decision.is_none());
+        assert_eq!(pane.lifecycle, Lifecycle::Blocked);
+        let events = names(&store);
+        assert!(events.contains(&signaltty_proto::event::DECISION_ANSWERED.to_string()));
+        let last = s.events.back().unwrap();
+        assert_eq!(last.name, event::DECISION_CLEARED);
+        assert_eq!(last.payload["reason"], "pane_exited");
+        assert!(!events.contains(&"agent.working".to_string()));
+    }
+
+    #[tokio::test]
+    async fn delivered_typed_answer_resumes_the_blocked_pane() {
+        let (store, p) = blocked_store();
+        assert!(
+            consume_deliver_resume(&store, &p, || async { Ok::<(), String>(()) })
+                .await
+                .is_ok()
+        );
+        let s = store.read().unwrap();
+        let pane = &s.panes[&p.pane_id];
+        assert!(pane.pending_decision.is_none());
+        assert_eq!(pane.lifecycle, Lifecycle::Working);
+        assert_eq!(pane.attention, Attention::None);
+    }
+
+    #[tokio::test]
+    async fn stale_typed_answer_never_delivers() {
+        let (store, mut p) = blocked_store();
+        p.decision_id = "old".into();
+        let err: Result<(), TypedAnswerError<String>> =
+            consume_deliver_resume(&store, &p, || async { panic!("must not deliver") }).await;
+        assert!(matches!(err, Err(TypedAnswerError::Stale)));
+        let s = store.read().unwrap();
+        assert_eq!(s.panes[&p.pane_id].lifecycle, Lifecycle::Blocked);
+        assert!(s.panes[&p.pane_id].pending_decision.is_some());
     }
 }

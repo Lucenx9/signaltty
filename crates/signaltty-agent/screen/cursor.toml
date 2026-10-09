@@ -1,0 +1,65 @@
+# Ported from herdr (https://github.com/herdrdev/herdr) src/detect/manifests/cursor.toml
+# at commit 2563803, Copyright herdr contributors, Apache-2.0
+# (https://www.apache.org/licenses/LICENSE-2.0). Changes: herdr `contains`
+# becomes a case-insensitive escaped regex, `whole_recent` becomes
+# `lines = 200`, nested any/all gates are flattened into separate rules or
+# alternations, and herdr's known-agent idle fallback is the explicit
+# lowest-priority `idle_fallback` rule.
+
+[agent]
+kind = "cursor"
+
+[[screen]]
+id = "write_file_approval"
+state = "blocked"
+lines = 8
+priority = 320
+all = ['(?i)write to this file\?', '(?i)proceed \(y\)', '(?i)reject & propose changes|esc or n or p|add write\(']
+
+# herdr approval_prompt, first branch ("skip (esc or n)" is covered below).
+[[screen]]
+id = "approval_run_once"
+state = "blocked"
+lines = 200
+priority = 300
+all = ['(?i)waiting for approval', '(?i)run this command\?', '(?i)run \(once\) \(y\)']
+
+[[screen]]
+id = "approval_prompt"
+state = "blocked"
+lines = 200
+priority = 300
+regex = [
+  '(?i)\(y\) \(enter\)',
+  '(?im)^[ \t]*allow .*\(y\)',
+  '(?i)keep \(n\)',
+  '(?i)skip \(esc or n\)',
+  '(?im)^[ \t]*(?:→[ \t]*)?run .*\(y\)',
+]
+
+[[screen]]
+id = "stop_hint_working"
+state = "working"
+lines = 6
+priority = 100
+regex = ['(?i)ctrl\+c to stop']
+
+[[screen]]
+id = "background_task_status_working"
+state = "working"
+lines = 5
+priority = 95
+regex = ['(?i)\b[1-9][0-9]*[ \t]+background[ \t]+tasks?\b']
+
+[[screen]]
+id = "spinner_working"
+state = "working"
+lines = 8
+priority = 90
+regex = ['(?m)^[ \t]*(⬡|⬢|[\x{2800}-\x{28FF}]+)[ \t]+\p{Alphabetic}+\w*ing\b']
+
+[[screen]]
+id = "idle_fallback"
+state = "idle"
+priority = -1000
+regex = ['']
