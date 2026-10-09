@@ -228,9 +228,12 @@ region of the visible screen (lines trimmed, empty lines dropped):
 [[screen]]
 id = "approval"             # shown in load errors
 state = "blocked"           # working | blocked | idle | hold
-region = "bottom"           # bottom (default) | title | screen | prompt_box
+region = "bottom"           # bottom (default) | title | screen | top | prompt_box
                             # | above_prompt_box | after_last_rule
-lines = 12                  # last non-empty lines, 1..=200; bottom defaults to 12
+                            # | after_last_prompt | before_current_prompt
+                            # | without_current_prompt
+lines = 12                  # last (top: first) non-empty lines, 1..=200;
+                            # bottom and top default to 12
 regex = ['Allow\? \[y/n\]'] # any match; (?m) for per-line anchors
 # all = ['…']               # every regex must also match
 # not = ['…']               # no regex may match
@@ -243,12 +246,18 @@ is the text between the second-last rule and the next one (empty without
 two rules), `above_prompt_box` everything before it (the whole screen
 without a box), `after_last_rule` everything below the last rule (the whole
 screen without one), `screen` the whole visible screen, `bottom` = `screen`
-+ `lines = 12`. A winning `hold` rule leaves the pane's state unchanged (a
++ `lines = 12`, `top` the first `lines` (default 12). For Codex's `›` prompt
+(a line that is `›` or starts with `› `): `after_last_prompt` is everything
+after the last prompt line; the current prompt is the last prompt line with
+no `•`, `■`, `✗` or `✓` block line after it, `before_current_prompt` is
+everything above it and `without_current_prompt` is the whole screen only
+when there is no current prompt (otherwise empty); without a prompt both
+prompt regions read the whole screen. A winning `hold` rule leaves the pane's state unchanged (a
 transcript viewer or model picker is not a turn state).
 
-signaltty bundles rules for `pi`, `opencode`, `cursor` and `claude`, ported
-from herdr (`crates/signaltty-agent/screen/`); each ends with an
-`idle_fallback` rule (priority -1000, empty regex) so a known agent with no
+signaltty bundles rules for `pi`, `opencode`, `cursor`, `claude` and
+`codex`, ported from herdr (`crates/signaltty-agent/screen/`); each ends with
+an `idle_fallback` rule (priority -1000, empty regex) so a known agent with no
 working or blocked sign reads as idle. Any user `[[screen]]` rule for a kind
 replaces that kind's bundled rules; copy the bundled file to adjust it.
 
