@@ -81,12 +81,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 
     // Plugin event hooks: every broadcast event (except high-volume
     // pty.data) is offered to matching hooks as JSON on stdin.
-    {
-        let ctx = ctx.clone();
-        tokio::spawn(async move {
-            run_plugin_event_hooks(ctx).await;
-        });
-    }
+    spawn_plugin_event_hooks(ctx.clone());
 
     // Live /proc refresh (docs/07 layer 4): promote agent kinds and follow
     // cwds every 10s. Broadcasts + persists only when something changed.
@@ -447,11 +442,21 @@ fn plugin_catch_up_after_lag(store: &Store, last_seq: u64) -> (u64, Vec<StoredEv
     (cursor, deliver)
 }
 
-async fn run_plugin_event_hooks(ctx: Arc<Ctx>) {
-    let mut rx = ctx.bcast.subscribe();
-    // Anchor at the current store cursor so Lagged catch-up never replays
-    // history emitted before this subscriber existed (e.g. recover_tasks).
-    let mut last_seq = ctx.store.read().unwrap().seq;
+fn spawn_plugin_event_hooks(ctx: Arc<Ctx>) -> tokio::task::JoinHandle<()> {
+    // Store emits under its write lock. Capture receiver and cursor together,
+    // before spawning, so startup events cannot fall between them or the first poll.
+    let (rx, last_seq) = {
+        let store = ctx.store.read().unwrap();
+        (ctx.bcast.subscribe(), store.seq)
+    };
+    tokio::spawn(run_plugin_event_hooks(ctx, rx, last_seq))
+}
+
+async fn run_plugin_event_hooks(
+    ctx: Arc<Ctx>,
+    mut rx: broadcast::Receiver<StoredEvent>,
+    mut last_seq: u64,
+) {
     loop {
         match rx.recv().await {
             Ok(ev) => {
@@ -865,6 +870,49 @@ mod tests {
         assert!(pending
             .iter()
             .all(|e| e.name != signaltty_proto::event::PTY_DATA));
+        std::fs::remove_dir_all(base).unwrap();
+    }
+    #[tokio::test]
+    async fn plugin_subscriber_captures_events_before_task_is_polled() {
+        let (ctx, base, _) = test_context();
+        let dir = ctx.config.plugin_dir.join("counter");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.toml"),
+            r#"[plugin]
+name = "counter"
+[[hook]]
+events = ["hook.worthy"]
+command = ["true"]
+"#,
+        )
+        .unwrap();
+        ctx.plugins.reload();
+        ctx.store
+            .write()
+            .unwrap()
+            .emit("hook.worthy", serde_json::json!({"old": true}));
+        let task = spawn_plugin_event_hooks(ctx.clone());
+        // The current-thread runtime cannot poll the spawned task until we await.
+        // Overflow the live channel before that first poll.
+        for i in 0..32 {
+            ctx.store
+                .write()
+                .unwrap()
+                .emit("hook.worthy", serde_json::json!({"i": i}));
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if ctx.plugins.status()["plugins"][0]["hooks"][0]["runs"] == 32 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        task.abort();
+        let _ = task.await;
         std::fs::remove_dir_all(base).unwrap();
     }
 }
