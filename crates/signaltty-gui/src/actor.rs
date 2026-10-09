@@ -197,6 +197,10 @@ struct Pending {
     deadline: Instant,
 }
 
+/// Error every call gets while the actor waits to reconnect. It is sent
+/// only after `UiEvent::Disconnected`, so the UI already shows the banner.
+pub const RECONNECTING: &str = "reconnecting";
+
 async fn actor_main(socket: PathBuf, mut rx: mpsc::UnboundedReceiver<ActorRequest>, ui: UiTx) {
     let mut attached = HashMap::new();
     let mut reconnecting = false;
@@ -212,7 +216,7 @@ async fn actor_main(socket: PathBuf, mut rx: mpsc::UnboundedReceiver<ActorReques
                 _ = tokio::time::sleep_until(retry_at) => break,
                 req = rx.recv() => match req {
                     None => return,
-                    Some(ActorRequest::Call { reply, .. }) => { let _ = reply.send(Err("reconnecting".into())); }
+                    Some(ActorRequest::Call { reply, .. }) => { let _ = reply.send(Err(RECONNECTING.into())); }
                     Some(ActorRequest::Attach { pane_id, cols, rows }) => { attached.insert(pane_id, (cols, rows)); }
                     Some(ActorRequest::Detach { pane_id }) => { attached.remove(&pane_id); }
                 }

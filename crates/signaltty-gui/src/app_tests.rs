@@ -22,6 +22,25 @@ fn sidebar_pointer_tracks_the_trailing_edge_in_both_directions() {
 }
 
 #[test]
+fn load_errors_skip_the_toast_while_the_connection_is_down() {
+    assert_eq!(
+        load_error_toast(false, "workspaces", "workspace.list failed").as_deref(),
+        Some("Couldn't load workspaces — workspace.list failed")
+    );
+    assert_eq!(
+        load_error_toast(false, "tasks", "boom").as_deref(),
+        Some("Couldn't load tasks — boom")
+    );
+    assert_eq!(load_error_toast(true, "workspaces", "reconnecting"), None);
+    assert_eq!(load_error_toast(true, "tasks", "boom"), None);
+    // The reply may beat the Disconnected event that reveals the banner.
+    assert_eq!(
+        load_error_toast(false, "tasks", crate::actor::RECONNECTING),
+        None
+    );
+}
+
+#[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
 fn desktop_motion_preference_applies_at_startup_and_changes_live() {
     adw::init().unwrap();

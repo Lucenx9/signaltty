@@ -130,6 +130,16 @@ pub(crate) fn user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
 }
 
+/// Toast text for a failed load, or `None` when the failure is the lost
+/// connection itself: the banner already says the server is unreachable,
+/// so a toast would repeat it (HIG: ongoing states belong in a banner,
+/// toasts are for single events). The reply can be handled before the
+/// `Disconnected` event reveals the banner, hence the error check too.
+fn load_error_toast(banner_revealed: bool, what: &str, error: &str) -> Option<String> {
+    let disconnected = banner_revealed || error == crate::actor::RECONNECTING;
+    (!disconnected).then(|| format!("Couldn't load {what} — {error}"))
+}
+
 /// Map from pane_id -> workspace_id built from snapshot cache.
 fn pane_to_workspace_map(snapshots: &HashMap<String, Snapshot>) -> HashMap<String, String> {
     let mut map = HashMap::new();
@@ -962,7 +972,9 @@ impl App {
             .await;
         self.model.borrow_mut().cache = cache;
         for error in errors {
-            self.toast(&format!("Couldn't load workspaces — {error}"));
+            if let Some(msg) = load_error_toast(self.banner.is_revealed(), "workspaces", &error) {
+                self.toast(&msg);
+            }
         }
         if full {
             self.seed_tasks().await;
@@ -1081,7 +1093,11 @@ impl App {
                     self.model.borrow_mut().tasks.complete_seed(ticket, tasks);
                 }
             }
-            Err(e) => self.toast(&format!("Couldn't load tasks — {e}")),
+            Err(e) => {
+                if let Some(msg) = load_error_toast(self.banner.is_revealed(), "tasks", &e) {
+                    self.toast(&msg);
+                }
+            }
         }
     }
 
