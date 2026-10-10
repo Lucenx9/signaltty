@@ -561,7 +561,7 @@ fn emit(json_mode: bool, result: &Value, human: String) {
 }
 
 fn shell_cmd() -> Vec<String> {
-    vec![std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())]
+    vec![signaltty_core::paths::user_shell()]
 }
 
 /// Parse `--after-baseline` JSON. An explicit `null` (e.g. from `jq .wait_baseline`

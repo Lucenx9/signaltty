@@ -127,7 +127,7 @@ pub struct App {
 }
 
 pub(crate) fn user_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
+    signaltty_core::paths::user_shell()
 }
 
 /// Toast text for a failed load, or `None` when the failure is the lost
