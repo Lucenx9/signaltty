@@ -3920,3 +3920,122 @@ fn finished_task_workspace_has_workspace_finished_css_class() {
     drop(app);
     worker.join().unwrap();
 }
+
+fn widgets_with_class(root: &gtk4::Widget, class: &str, out: &mut Vec<gtk4::Widget>) {
+    if root.has_css_class(class) {
+        out.push(root.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        widgets_with_class(&widget, class, out);
+        child = widget.next_sibling();
+    }
+}
+
+/// Preferences show each scheme as a miniature window and each theme as
+/// a light and a dark orb; choosing one applies and persists it.
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn preferences_preview_schemes_and_themes() {
+    let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+    let config = std::env::temp_dir().join(format!("signaltty-prefs-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    gtk4::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
+    app.window.set_default_size(920, 680);
+    app.window.present();
+    let dialog = crate::preferences::build_dialog(&app);
+    dialog.present(Some(&app.window));
+    let root = dialog.clone().upcast::<gtk4::Widget>();
+    wait_ui(|| dialog.is_mapped());
+
+    let mut previews = Vec::new();
+    widgets_with_class(&root, "scheme-preview", &mut previews);
+    assert_eq!(
+        previews.len(),
+        3,
+        "System, Light and Dark each get a preview"
+    );
+    for preview in &previews {
+        wait_ui(|| preview.width() > 0);
+        assert!(preview.width() >= 148 && preview.height() >= 92);
+    }
+    // System splits its content: light on the left, dark on the right.
+    let mut halves = Vec::new();
+    widgets_with_class(&previews[0], "mw-content", &mut halves);
+    assert!(halves[0].has_css_class("light") && halves[1].has_css_class("dark"));
+    // ...split where its calc(21px + 50%) background does, so the
+    // backing never shows as a step or hairline at the seam.
+    let split = halves[1].compute_bounds(&previews[0]).unwrap().x();
+    let expected = 21.0 + previews[0].width() as f32 / 2.0;
+    assert!(
+        (split - expected).abs() <= 1.0,
+        "System split at {split}, background at {expected}"
+    );
+    // Every part stays left to right, as its CSS is drawn, in RTL too.
+    for preview in &previews {
+        let mut stack = vec![preview.clone()];
+        while let Some(widget) = stack.pop() {
+            assert_eq!(widget.direction(), gtk4::TextDirection::Ltr);
+            let mut child = widget.first_child();
+            while let Some(next) = child {
+                child = next.next_sibling();
+                stack.push(next);
+            }
+        }
+    }
+    let mut orbs = Vec::new();
+    widgets_with_class(&root, "theme-swatch", &mut orbs);
+    assert_eq!(orbs.len(), 2 * signaltty_core::theme::Theme::ALL.len());
+
+    for (name, scheme) in [
+        ("light", adw::ColorScheme::ForceLight),
+        ("dark", adw::ColorScheme::ForceDark),
+    ] {
+        adw::StyleManager::default().set_color_scheme(scheme);
+        while glib::MainContext::default().iteration(false) {}
+        capture_workflow(&app.window, &format!("preferences-{name}"));
+    }
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::Default);
+
+    let grove = find_matching_widget::<gtk4::Button>(&root, &|button| {
+        button.has_css_class("theme-card") && has_label(button.upcast_ref(), "Grove")
+    })
+    .unwrap();
+    grove.emit_clicked();
+    assert_eq!(app.preference().theme, signaltty_core::theme::Theme::Grove);
+    assert!(grove.has_css_class("selected"));
+    let mut selected = Vec::new();
+    widgets_with_class(&root, "selected", &mut selected);
+    assert_eq!(selected.len(), 2, "one scheme and one theme stay selected");
+    assert_eq!(
+        crate::preferences::load_preference().theme,
+        signaltty_core::theme::Theme::Grove,
+        "the choice persists"
+    );
+
+    dialog.close();
+    app.window.destroy();
+    let _ = std::fs::remove_dir_all(&config);
+    match previous_config {
+        Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+        None => std::env::remove_var("XDG_CONFIG_HOME"),
+    }
+}
