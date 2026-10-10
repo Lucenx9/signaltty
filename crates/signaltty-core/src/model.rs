@@ -356,6 +356,21 @@ impl Layout {
         }
     }
 
+    /// Exchange the leaves `a` and `b`, keeping the tree shape and ratios.
+    /// A tree holding only one of them renames it, so swapping across
+    /// two tabs is the same call on both trees.
+    pub fn swap_panes(&mut self, a: &str, b: &str) {
+        match self {
+            Layout::Pane { pane_id } if pane_id == a => *pane_id = b.to_string(),
+            Layout::Pane { pane_id } if pane_id == b => *pane_id = a.to_string(),
+            Layout::Pane { .. } => {}
+            Layout::Split { first, second, .. } => {
+                first.swap_panes(a, b);
+                second.swap_panes(a, b);
+            }
+        }
+    }
+
     pub fn panes(&self) -> Vec<String> {
         let mut out = Vec::new();
         self.collect(&mut out);
@@ -1199,6 +1214,21 @@ mod tests {
         assert!(l.remove("b"));
         assert_eq!(l.panes(), vec!["a".to_string(), "c".to_string()]);
         assert!(!l.remove("zzz"));
+    }
+
+    #[test]
+    fn swap_panes_exchanges_leaves_in_place() {
+        let mut l = pane("a");
+        l.split("a", SplitDir::Right, "b".into());
+        l.split("b", SplitDir::Down, "c".into());
+        let before = l.clone();
+        l.swap_panes("a", "c");
+        assert_eq!(l.panes(), vec!["c", "b", "a"]);
+        l.swap_panes("a", "c");
+        assert_eq!(l, before);
+        // One side only: a rename, as in a cross-tab swap.
+        l.swap_panes("b", "x");
+        assert_eq!(l.panes(), vec!["a", "x", "c"]);
     }
 
     /// Width share of each pane left-to-right, for Right runs.
