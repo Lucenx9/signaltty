@@ -300,8 +300,8 @@ numbers, context, and explicit added/removed signs. Semantic text colors support
 light and dark themes; long code lines scroll within the reader. New text files
 show additions. Binary, unchanged, unavailable and incomplete previews have
 explicit notices. Refresh invalidates the old patch and reads the current
-summary. The reader ignores replies superseded by selection, Back, refresh or
-dialog closure. File reads use a dedicated connection with a ten-second deadline
+summary. The reader ignores replies superseded by selection, Back, refresh or a
+workspace switch. File reads use a dedicated connection with a ten-second deadline
 and never alter terminal widgets. See [ADR-0016](adr/0016-file-diff-review.md).
 
 The display tests `navigation_palette_fast_enter_and_git_dialogs_use_native_controls`,
