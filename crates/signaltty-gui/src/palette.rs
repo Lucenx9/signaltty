@@ -80,7 +80,7 @@ pub fn present(
         .iter()
         .map(|ws| Choice {
             label: ws.name.clone(),
-            detail: format!("Workspace · {}", tilde(&ws.cwd)),
+            detail: format!("Workspace · {}", ws.cwd),
             subtitle: Some(tilde(&ws.cwd)),
             accelerator: None,
             target: Target::Workspace(ws.id.clone()),
@@ -106,8 +106,16 @@ pub fn present(
             return false;
         };
         let needle = query.text().to_lowercase();
-        choice.label.to_lowercase().contains(&needle)
-            || choice.detail.to_lowercase().contains(&needle)
+        // The raw path lives in `detail`, the `~` form in `subtitle`:
+        // either spelling finds the workspace.
+        [
+            Some(&choice.label),
+            Some(&choice.detail),
+            choice.subtitle.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|text| text.to_lowercase().contains(&needle))
     });
     for choice in choices.iter() {
         let row = adw::ActionRow::new();
@@ -132,10 +140,14 @@ pub fn present(
         row.set_title_lines(2);
         row.set_subtitle_lines(2);
         row.set_tooltip_text(Some(&format!("{}\n{}", choice.label, choice.detail)));
-        if let Some(shortcut) = shortcut {
-            row.upcast_ref::<gtk4::ListBoxRow>().update_property(&[
-                gtk4::accessible::Property::Description(&format!("Command · {shortcut}")),
-            ]);
+        // Commands have no visible subtitle, so say what they are.
+        if choice.subtitle.is_none() {
+            let description = match &shortcut {
+                Some(shortcut) => format!("Command · {shortcut}"),
+                None => choice.detail.clone(),
+            };
+            row.upcast_ref::<gtk4::ListBoxRow>()
+                .update_property(&[gtk4::accessible::Property::Description(&description)]);
         }
         row.set_activatable(true);
         list.append(&row);
