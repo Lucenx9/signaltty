@@ -98,7 +98,7 @@ fn scheme_preview(appearance: Appearance) -> gtk4::Box {
     let spacer = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     spacer.set_vexpand(true);
     start.append(&spacer);
-    start.append(&bar(&["mw-input"]));
+    start.append(&part(gtk4::Orientation::Horizontal, &["mw-input"]));
 
     let end = part(
         gtk4::Orientation::Vertical,
@@ -114,7 +114,7 @@ fn scheme_preview(appearance: Appearance) -> gtk4::Box {
     let spacer = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     spacer.set_vexpand(true);
     end.append(&spacer);
-    let input = bar(&["mw-input", "mw-input-end"]);
+    let input = part(gtk4::Orientation::Horizontal, &["mw-input", "mw-input-end"]);
     let dot = part(gtk4::Orientation::Horizontal, &["mw-dot"]);
     dot.set_halign(gtk4::Align::End);
     dot.set_hexpand(true);
@@ -129,6 +129,8 @@ fn scheme_preview(appearance: Appearance) -> gtk4::Box {
     let preview = part(gtk4::Orientation::Horizontal, &["scheme-preview", scheme]);
     preview.set_spacing(0);
     preview.set_overflow(gtk4::Overflow::Hidden);
+    // The CSS (gradient split, input ends) is drawn left to right.
+    preview.set_direction(gtk4::TextDirection::Ltr);
     preview.set_size_request(148, 92);
     preview.append(&side);
     preview.append(&start);

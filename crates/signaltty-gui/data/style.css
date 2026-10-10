@@ -1064,8 +1064,8 @@ button.pill:focus-visible,
 /* ---- preferences cards + swatches ---------------------------------------
  * Each swatch carries its own theme-<id> class inside a window that
  * has another, so every swatch rule uses literal hexes (never the
- * variables): pane colour with a diagonal accent split. Signal has no
- * own accent; its swatch previews against the stock default blue.
+ * variables): radial-gradient orbs. Signal has no own accent; its
+ * orbs preview against the stock default blue.
  */
 .theme-swatch {
   min-width: 34px;
@@ -1103,11 +1103,8 @@ button.pill:focus-visible,
   min-width: 30px;
   padding: 8px 6px;
 }
-.scheme-preview .mw-content {
-  padding: 8px 7px;
-}
-.scheme-preview .mw-start { padding-right: 2px; }
-.scheme-preview .mw-end { padding-left: 2px; }
+.scheme-preview .mw-start { padding: 8px 0 8px 7px; }
+.scheme-preview .mw-end { padding: 8px 7px 8px 0; }
 /* Where two parts meet on a fractional pixel, antialiasing lets the
  * preview's own background through; matching it to the parts keeps the
  * card colour from drawing a hairline between them. */
@@ -1136,7 +1133,8 @@ button.pill:focus-visible,
 }
 .scheme-preview .light .mw-panel { background-color: #ffffff; box-shadow: 0 0 0 1px alpha(black, 0.08); }
 .scheme-preview .dark .mw-panel { background-color: #1e1e23; box-shadow: 0 0 0 1px alpha(white, 0.08); }
-/* The input bar runs across both halves; its rounded ends close it. */
+/* The input bar runs across both halves (they meet with no padding);
+ * its rounded ends close it. */
 .scheme-preview .mw-input {
   min-height: 9px;
   border-radius: 999px 0 0 999px;
@@ -1243,3 +1241,12 @@ button.card.appearance-card:checked:hover {
  * desktop's contrast-adjusted semantic colors after theme changes. */
 .file-diff-added-color { color: var(--success-color); }
 .file-diff-removed-color { color: var(--error-color); }
+
+/* Preferences previews draw literal low-alpha edges; high contrast
+ * outlines them in the text colour instead. */
+.high-contrast .scheme-preview {
+  box-shadow: 0 0 0 1px currentColor;
+}
+.high-contrast .theme-swatch {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
