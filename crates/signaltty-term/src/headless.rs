@@ -1104,6 +1104,14 @@ impl HeadlessBackend {
             .map(|s| s.rendered(after_seq, max_lines))
     }
 
+    /// Forget the scrolled-off lines (`pane.clear`); the screen itself is
+    /// cleared by feeding ED. Cursors into the forgotten range read as dropped.
+    pub fn clear_history(&mut self, id: &str) {
+        if let Some(s) = self.surfaces.get_mut(id) {
+            s.history.clear();
+        }
+    }
+
     /// Last `n` content lines (oldest→newest), optionally ANSI-stripped.
     /// Rebased on the rendered ring: same shape as before, cursor-correct.
     pub fn tail(&self, id: &str, n: usize, strip: bool) -> Option<Vec<String>> {
@@ -1404,6 +1412,23 @@ mod tests {
         let after = rendered_text(&b, "p");
         assert_eq!(after, before);
         assert!(!after.contains("alt content"));
+    }
+
+    #[test]
+    fn clear_history_forgets_scrolled_lines() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 4);
+        for i in 0..10 {
+            b.feed_output("p", format!("old {i}\r\n").as_bytes());
+        }
+        let cursor = b.rendered("p", 0, 200).unwrap().next_seq;
+        b.feed_output("p", b"\x1b[H\x1b[2J\x1b[3J");
+        b.clear_history("p");
+        assert_eq!(b.ring_len("p"), 0);
+        b.feed_output("p", b"new\r\n");
+        let r = b.rendered("p", cursor, 200).unwrap();
+        assert_eq!(r.text, "new");
+        assert!(r.dropped, "the cleared lines are gone");
     }
 
     #[test]
