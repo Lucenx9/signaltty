@@ -1003,13 +1003,24 @@ async fn hook_event_drives_codex_lifecycle() {
         json!(["codex", "resume", "sess-1"])
     );
 
-    // Prompt → working; permission → blocked + permission_required.
+    assert_eq!(p["pane"]["last_message"], "session started");
+
+    // Prompt → working; the session-start message no longer describes the
+    // turn. Permission → blocked + permission_required.
     c.call(
         "hook-event",
         json!({"agent": "codex", "event": "UserPromptSubmit", "pane_id": pane}),
     )
     .await
     .unwrap();
+    let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+    assert!(
+        p["pane"]
+            .get("last_message")
+            .is_none_or(serde_json::Value::is_null),
+        "a new turn clears the stale message: {}",
+        p["pane"]
+    );
     let r = c
         .call(
             "hook-event",
