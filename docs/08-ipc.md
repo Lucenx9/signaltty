@@ -64,6 +64,8 @@ clients can `subscribe {from_seq}` to replay.
 | `tab.close` | `{tab_id, signal?}` | `{closed}` |
 | `tab.set_layout` | `{tab_id, layout}` | `{tab}` |
 | `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
+| `layout.export` | `{tab_id}` | `{workspace_id, tab_id, title, root}`; `root` is `null` for an empty tab |
+| `layout.apply` | `{workspace_id, title?, root}` | `{tab, panes}`; starts a new tab, one pane per leaf |
 | `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?, parent_pane_id?, label?, relationship?, task_id?}` | `{pane, integration?}` |
 | `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane, integration?}` (new sibling) |
 | `pane.rename` | `{pane_id, name?}` | `{pane}`; `name` absent or `null` clears it |
@@ -323,6 +325,21 @@ pane (collapsing its parent; a tab left without panes becomes empty, as after
 Each touched tab emits `tab.updated`; a pane that changed tab emits
 `pane.updated`. Zoom stays a per-window GUI view, so there is no `pane.zoom`.
 
+`layout.export` describes a tab as a portable tree: the `tab.set_layout`
+shape (`type`, `dir`, `ratio`, `first`, `second`), each `pane` leaf adding
+the pane's `cwd`, launch `argv` and `name` if it has one. `layout.apply`
+starts a new active tab (title default `layout`) in the workspace from such a
+tree: one new pane per leaf, launched with the leaf's `argv` (default the
+user shell) in its `cwd` (default the workspace folder), named `name` if set.
+Leaf `pane_id` is ignored, so export output applies as is. Every leaf is
+checked before anything starts: a missing `cwd`, empty `argv`, invalid name,
+name held by another pane or repeated in the tree, a non-finite ratio, or
+more than 32 panes is `BAD_PARAMS`. If a pane fails to start, the panes
+already started are stopped and the call returns `SPAWN_FAILED` with nothing
+created. Success emits `tab.created`, then `pane.created` per pane in leaf
+order; the first leaf has focus. To replace a tab, apply then `tab.close` the
+old one.
+
 `tab.set_ratio` moves one divider: `path` holds 0 (first) / 1
 (second) choices from the tab root (`[]` = root) and must resolve to
 a `Split`, else `BAD_PARAMS`. `ratio` is clamped to 0.05–0.95 so a
@@ -432,6 +449,9 @@ defaults to `--until settled`; `finish` needs `--merge` or `--discard`);
 `signaltty pane wait-output <id> <pattern> [--regex] [--mode …] [--after-seq N]
 [--timeout S] [--raw]` → `pane.wait_for_output`; `signaltty pane clear <id>` → `pane.clear`;
 `signaltty pane rename <id> [name]` → `pane.rename`;
+`signaltty tab export <id>` → `layout.export` (always JSON);
+`signaltty tab apply --workspace <id> [--title T] <file|->` → `layout.apply`
+(takes `tab export` output or a bare tree);
 `signaltty pane swap <id> <target>` → `pane.swap`; `signaltty pane move <id> <target>
 [--direction right|down]` → `pane.move`;
 `signaltty pane spawn … [--parent-pane …] [--label …] [--relationship …]` →
