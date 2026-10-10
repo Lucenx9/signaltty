@@ -1771,6 +1771,7 @@ dependencies = [
  "futures-util",
  "nix 0.29.0",
  "portable-pty",
+ "regex",
  "serde",
  "serde_json",
  "signaltty-agent",

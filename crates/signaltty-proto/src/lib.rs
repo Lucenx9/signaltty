@@ -147,6 +147,8 @@ pub mod method {
     pub const PANE_RESIZE: &str = "pane.resize";
     pub const PANE_SIGNAL: &str = "pane.signal";
     pub const PANE_READ: &str = "pane.read";
+    pub const PANE_WAIT_FOR_OUTPUT: &str = "pane.wait_for_output";
+    pub const PANE_CLEAR: &str = "pane.clear";
     pub const PANE_ATTACH: &str = "pane.attach";
     pub const PANE_DETACH: &str = "pane.detach";
     pub const PANE_CLOSE: &str = "pane.close";
@@ -208,6 +210,8 @@ pub mod method {
         PANE_RESIZE,
         PANE_SIGNAL,
         PANE_READ,
+        PANE_WAIT_FOR_OUTPUT,
+        PANE_CLEAR,
         PANE_ATTACH,
         PANE_DETACH,
         PANE_CLOSE,
