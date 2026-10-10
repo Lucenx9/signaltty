@@ -30,6 +30,7 @@ pub struct Ctx {
     pub store: SharedStore,
     pub approvals: crate::approvals::Approvals,
     pub worktrees: crate::worktrees::Worktrees,
+    pub turns: crate::turns::TurnBaselines,
     pub bcast: broadcast::Sender<StoredEvent>,
     pub ptys: PtyManager,
     pub config: Config,
@@ -264,7 +265,7 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::WORKSPACE_RENAME => h_workspace_rename(ctx, params),
         method::WORKSPACE_CLOSE => h_workspace_close(ctx, params),
         method::WORKSPACE_REFRESH_GIT => h_workspace_refresh_git(ctx, params),
-        method::WORKSPACE_DIFF => h_workspace_diff(ctx, params),
+        method::WORKSPACE_DIFF => h_workspace_diff(ctx, params).await,
         method::WORKSPACE_FILE_DIFF => h_workspace_file_diff(ctx, params).await,
         method::WORKTREE_LIST => match decode::<params::WorkspaceId>(params) {
             Ok(p) => crate::worktrees::list(ctx, p)
@@ -659,6 +660,7 @@ pub(crate) fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
         .workspaces
         .remove(&id)
         .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), id.clone()))?;
+    ctx.turns.forget(&id);
     let panes: Vec<_> = s
         .panes
         .values()
@@ -715,26 +717,52 @@ fn h_workspace_refresh_git(ctx: &Ctx, params: &Value) -> Handler {
 
 /// Worktree-vs-HEAD diff as data (t3code `+N −N` language). On demand
 /// only; a non-repo is `BAD_PARAMS`, never an empty lie.
-fn h_workspace_diff(ctx: &Ctx, params: &Value) -> Handler {
-    let raw = decode::<params::WorkspaceId>(params)?.workspace_id;
+async fn h_workspace_diff(ctx: &Ctx, params: &Value) -> Handler {
+    let p: params::WorkspaceDiff = decode(params)?;
     let (id, cwd) = {
         let s = ctx.store.read().unwrap();
-        let id = resolve_workspace(&s, &raw)
-            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?;
+        let id = resolve_workspace(&s, &p.workspace_id)
+            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), p.workspace_id.clone()))?;
         let cwd = s.workspaces.get(&id).unwrap().cwd.clone();
         (id, cwd)
     };
-    match crate::git::git_diff(&cwd) {
-        Some(diff) => Ok((
-            json!({
-                "workspace_id": id, "branch": diff.branch,
-                "files": diff.files, "dirs": diff.dirs,
-                "added": diff.added, "removed": diff.removed,
-            }),
-            ConnEffect::default(),
-        )),
-        None => Err(bad_params(format!("not a git repo: {cwd}"))),
+    let (diff, turn) = match p.scope {
+        params::DiffScope::Head => (
+            crate::git::git_diff(&cwd)
+                .ok_or_else(|| bad_params(format!("not a git repo: {cwd}")))?,
+            None,
+        ),
+        params::DiffScope::Turn => {
+            let Some(baseline) = ctx.turns.get(&id) else {
+                let empty = crate::git::summarize(None, Vec::new());
+                return Ok((
+                    json!({
+                        "workspace_id": id, "scope": "turn", "turn": null,
+                        "branch": empty.branch, "files": empty.files, "dirs": empty.dirs,
+                        "added": empty.added, "removed": empty.removed,
+                    }),
+                    ConnEffect::default(),
+                ));
+            };
+            let base = crate::turns::baseline_tree(&baseline)?;
+            let now = crate::turns::snapshot(&cwd).await?;
+            let files = crate::turns::changed_files(&now.root, base, &now.tree).await?;
+            let branch = crate::git::current_branch(&now.root);
+            (
+                crate::git::summarize(branch, files),
+                Some(json!({"pane_id": baseline.pane_id, "started_at": baseline.started_at})),
+            )
+        }
+    };
+    let mut result = json!({
+        "workspace_id": id, "scope": p.scope, "branch": diff.branch,
+        "files": diff.files, "dirs": diff.dirs,
+        "added": diff.added, "removed": diff.removed,
+    });
+    if let Some(turn) = turn {
+        result["turn"] = turn;
     }
+    Ok((result, ConnEffect::default()))
 }
 
 async fn h_workspace_file_diff(ctx: &Ctx, value: &Value) -> Handler {
@@ -746,7 +774,15 @@ async fn h_workspace_file_diff(ctx: &Ctx, value: &Value) -> Handler {
         let cwd = s.workspaces[&id].cwd.clone();
         (id, cwd)
     };
-    let diff = crate::file_diff::read(&cwd, &p.path).await?;
+    let diff = match p.scope {
+        params::DiffScope::Head => crate::file_diff::read(&cwd, &p.path).await?,
+        params::DiffScope::Turn => {
+            let baseline = crate::turns::require(ctx, &id)?;
+            let base = crate::turns::baseline_tree(&baseline)?;
+            let now = crate::turns::snapshot(&cwd).await?;
+            crate::file_diff::read_between(&now.root, &p.path, base, &now.tree).await?
+        }
+    };
     Ok((
         json!({"workspace_id":id,"path":diff.path,"untracked":diff.untracked,"content":diff.content}),
         ConnEffect::default(),

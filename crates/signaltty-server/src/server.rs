@@ -91,6 +91,7 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         store: store.clone(),
         approvals: crate::approvals::Approvals::default(),
         worktrees: crate::worktrees::Worktrees::default(),
+        turns: crate::turns::TurnBaselines::default(),
         bcast,
         ptys: ptys.clone(),
         config: config.clone(),
@@ -104,6 +105,9 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     // Plugin event hooks: every broadcast event (except high-volume
     // pty.data) is offered to matching hooks as JSON on stdin.
     spawn_plugin_event_hooks(ctx.clone());
+
+    // Turn baselines (spec 041): snapshot the checkout when a turn starts.
+    crate::turns::spawn_capture(ctx.clone());
 
     // Live /proc refresh (docs/07 layer 4): promote agent kinds and follow
     // cwds every 10s. Broadcasts + persists only when something changed.
@@ -563,6 +567,7 @@ mod tests {
             save_lock: Default::default(),
             approvals: crate::approvals::Approvals::default(),
             worktrees: crate::worktrees::Worktrees::default(),
+            turns: crate::turns::TurnBaselines::default(),
             plugins: signaltty_plugin::PluginRegistry::load(config.plugin_dir),
             overlays: Default::default(),
         });

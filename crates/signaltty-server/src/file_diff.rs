@@ -35,6 +35,65 @@ pub async fn read_with_base(
         .map_err(|_| (code::TIMEOUT.into(), "File diff read timed out".into()))?
 }
 
+/// One file's patch between two trees of the checkout at `root` (spec 041:
+/// turn start against now). Both trees hold untracked files as content.
+pub async fn read_between(
+    root: &str,
+    path: &str,
+    base: &str,
+    current: &str,
+) -> Result<FileDiff, ParamError> {
+    validate_path(path)?;
+    timeout(READ_TIMEOUT, read_between_inner(root, path, base, current))
+        .await
+        .map_err(|_| (code::TIMEOUT.into(), "File diff read timed out".into()))?
+}
+
+async fn read_between_inner(
+    root: &str,
+    path: &str,
+    base: &str,
+    current: &str,
+) -> Result<FileDiff, ParamError> {
+    for tree in [base, current] {
+        let entry = git(root, &["ls-tree", "-z", tree, "--", path], true).await?;
+        if entry.bytes.starts_with(b"040000 ") {
+            return Err(bad_params("Expected one file, not a directory"));
+        }
+    }
+    let output = git(
+        root,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--no-relative",
+            "--submodule=short",
+            "--unified=3",
+            base,
+            current,
+            "--",
+            path,
+        ],
+        true,
+    )
+    .await?;
+    let content = if output.too_large {
+        unavailable("Preview exceeds the 512 KiB size limit.")
+    } else if output.bytes.is_empty() {
+        DiffContent::Unchanged
+    } else {
+        parse_patch(&output.bytes, false).unwrap_or_else(unavailable)
+    };
+    Ok(FileDiff {
+        path: path.into(),
+        untracked: false,
+        content,
+    })
+}
+
 fn validate_path(path: &str) -> Result<(), ParamError> {
     if path.is_empty()
         || path.starts_with('/')

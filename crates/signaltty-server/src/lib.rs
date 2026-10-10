@@ -18,6 +18,7 @@ pub mod server;
 pub mod store;
 pub mod submit;
 pub mod tasks;
+pub mod turns;
 pub mod worktrees;
 
 pub use config::Config;
