@@ -76,8 +76,8 @@ fn refresh_button(header: &adw::HeaderBar) -> gtk4::Button {
     button
 }
 
-/// Rows carry their path in the widget name; the empty-state row has
-/// none, so it sorts first and starts no directory group.
+/// File rows carry `file:<path>` as their widget name. The empty-state
+/// row ("no-changes") is mounted only when nothing changed.
 const FILE_ROW: &str = "file:";
 
 fn row_path(row: &gtk4::ListBoxRow) -> Option<String> {
@@ -87,6 +87,11 @@ fn row_path(row: &gtk4::ListBoxRow) -> Option<String> {
 /// `src/ui/app.rs` → (`src/ui`, `app.rs`); top-level files have no group.
 fn split_path(path: &str) -> (&str, &str) {
     path.rsplit_once('/').unwrap_or(("", path))
+}
+
+fn sort_key(path: &str) -> (String, String) {
+    let (dir, name) = split_path(path);
+    (dir.to_owned(), name.to_owned())
 }
 
 impl ChangesPanel {
@@ -110,7 +115,12 @@ impl ChangesPanel {
         list_body.append(&summary);
         let rows = gtk4::ListBox::new();
         rows.set_selection_mode(gtk4::SelectionMode::Single);
-        rows.set_sort_func(|left, right| left.widget_name().cmp(&right.widget_name()).into());
+        // Directory first, then name: `a/x.rs`, `a/z.rs` stay one group
+        // even though `a/b/y.rs` sorts between them as a flat string.
+        rows.set_sort_func(|left, right| {
+            let key = |row: &gtk4::ListBoxRow| row_path(row).map(|path| sort_key(&path));
+            key(left).cmp(&key(right)).into()
+        });
         // A directory label opens each run of files that share a parent.
         rows.set_header_func(|row, before| {
             let dir = row_path(row).map(|path| split_path(&path).0.to_owned());
@@ -308,7 +318,11 @@ impl ChangesPanel {
 
     /// Put keyboard focus in the panel (on open from the keyboard).
     pub fn focus(&self) {
-        self.inner.list_refresh.grab_focus();
+        if self.inner.in_reader() {
+            self.inner.reader.grab_focus();
+        } else {
+            self.inner.list_refresh.grab_focus();
+        }
     }
 }
 
@@ -473,6 +487,9 @@ impl Changes {
                 row.set_widget_name(&format!("{FILE_ROW}{}", file.path));
                 row.set_title(split_path(&file.path).1);
                 row.set_tooltip_text(Some(&file.path));
+                // The title is the bare name; screen readers get the path.
+                row.upcast_ref::<gtk4::ListBoxRow>()
+                    .update_property(&[gtk4::accessible::Property::Description(&file.path)]);
                 row.set_title_lines(1);
                 row.set_activatable(true);
                 let stat = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
@@ -636,5 +653,17 @@ impl Changes {
             }
         }
         self.status.set_visible(!self.status.text().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_sort_by_directory_then_name() {
+        let mut paths = ["a/z.rs", "a/b/y.rs", "top.md", "a/x.rs"];
+        paths.sort_by_key(|path| sort_key(path));
+        assert_eq!(paths, ["top.md", "a/x.rs", "a/z.rs", "a/b/y.rs"]);
     }
 }

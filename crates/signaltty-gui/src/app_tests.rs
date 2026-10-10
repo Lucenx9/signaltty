@@ -1696,8 +1696,17 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
         }
         assert_eq!(reads(), before, "re-showing a workspace re-read its diff");
         capture_workflow(&app.window, &format!("changes-{theme}"));
+        app.changes.focus();
+        assert!(
+            gtk4::prelude::GtkWindowExt::focus(&app.window).is_some_and(|f| f.is_ancestor(&panel))
+        );
         gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-changes", None).unwrap();
         assert!(!app.changes_split.shows_sidebar());
+        let focus = gtk4::prelude::GtkWindowExt::focus(&app.window);
+        assert!(
+            focus.is_some_and(|focus| focus.type_().name() == "VteTerminal"),
+            "closing the panel returns focus to the terminal"
+        );
         gtk4::prelude::WidgetExt::activate_action(&app.window, "win.worktrees", None).unwrap();
         let dialog = app.window.visible_dialog().unwrap();
         wait_ui(|| has_label(&dialog.child().unwrap(), "/tmp/main <checkout>&"));

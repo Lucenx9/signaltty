@@ -540,7 +540,8 @@ impl App {
     }
 
     fn connect_signals(&self) {
-        // Opening the Changes panel loads the active workspace.
+        // Opening the Changes panel loads the active workspace. Closing it
+        // needs nothing: the split view hands focus back to the content.
         let w = self.weak();
         self.changes_split.connect_show_sidebar_notify(move |_| {
             if let Some(a) = w.upgrade() {
