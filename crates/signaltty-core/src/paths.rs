@@ -92,6 +92,16 @@ fn data_dir_from(xdg: Option<String>, home: Option<String>) -> PathBuf {
     }
 }
 
+/// Program for a pane launched without argv: `$SHELL`, or `sh` when it is
+/// unset or empty (an empty program name cannot be spawned).
+pub fn user_shell() -> String {
+    shell_from(std::env::var("SHELL").ok())
+}
+
+fn shell_from(shell: Option<String>) -> String {
+    non_empty(shell).unwrap_or_else(|| "sh".to_string())
+}
+
 /// Directory scanned for plugin packages (`<name>/plugin.toml`).
 pub fn plugin_dir() -> PathBuf {
     std::env::var("SIGNALTTY_PLUGIN_DIR")
@@ -140,6 +150,14 @@ mod tests {
             data_dir_from(Some(String::new()), Some(String::new())),
             PathBuf::from("/tmp/signaltty-data")
         );
+    }
+
+    #[test]
+    fn empty_shell_counts_as_unset() {
+        // `SHELL=` used to launch an empty program name, which fails to spawn.
+        assert_eq!(shell_from(Some("/bin/zsh".into())), "/bin/zsh");
+        assert_eq!(shell_from(Some(String::new())), "sh");
+        assert_eq!(shell_from(None), "sh");
     }
 
     #[test]

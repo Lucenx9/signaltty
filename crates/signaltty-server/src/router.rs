@@ -401,8 +401,12 @@ fn h_server_shutdown(ctx: &Ctx, params: &Value) -> Handler {
 
 // ---- workspaces ----
 
+/// `$HOME`, or `/tmp` when it is unset or empty (an empty cwd is no directory).
 fn default_cwd() -> String {
-    std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string())
+    std::env::var("HOME")
+        .ok()
+        .filter(|home| !home.is_empty())
+        .unwrap_or_else(|| "/tmp".to_string())
 }
 
 /// Unique handle for `base`: `base`, `base-2`, … Handles are immutable
@@ -1069,10 +1073,6 @@ fn h_pane_move(ctx: &Ctx, params: &Value) -> Handler {
     finish_rearrange(ctx, s, &[&ta, &tb], &[a])
 }
 
-fn user_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
-}
-
 fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
     let ps: params::PaneSplit = decode(params)?;
     let pane_id = ps.pane_id;
@@ -1103,7 +1103,9 @@ fn h_pane_split(ctx: &Ctx, params: &Value) -> Handler {
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(bad_params(format!("cwd is not a directory: {cwd}")));
     }
-    let argv = ps.argv.unwrap_or_else(|| vec![user_shell()]);
+    let argv = ps
+        .argv
+        .unwrap_or_else(|| vec![signaltty_core::paths::user_shell()]);
     if argv.is_empty() {
         return Err(bad_params("'argv' must not be empty"));
     }
