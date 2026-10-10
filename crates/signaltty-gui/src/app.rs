@@ -1676,6 +1676,21 @@ impl App {
                 crate::metrics::record("event", &name);
                 let task_changed = self.model.borrow_mut().tasks.apply_event(&name, &payload);
                 self.maybe_notify(&name, &payload);
+                if self.changes_split.shows_sidebar() {
+                    let workspace =
+                        payload["workspace_id"]
+                            .as_str()
+                            .map(str::to_owned)
+                            .or_else(|| {
+                                let pane = payload["pane_id"].as_str()?;
+                                self.model
+                                    .borrow()
+                                    .cache
+                                    .pane_workspace(pane)
+                                    .map(str::to_owned)
+                            });
+                    self.changes.on_event(&name, workspace.as_deref());
+                }
                 self.pending_refresh.borrow_mut().on_event(
                     &self.model.borrow().cache,
                     &name,

@@ -109,6 +109,10 @@ impl PendingRefresh {
 }
 
 impl WorkspaceCache {
+    pub fn pane_workspace(&self, pane_id: &str) -> Option<&str> {
+        self.pane_workspaces.get(pane_id).map(String::as_str)
+    }
+
     fn remove(&mut self, id: &str) {
         if let Some(old) = self.snapshots.remove(id) {
             for pane in old.panes {

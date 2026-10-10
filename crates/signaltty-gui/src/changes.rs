@@ -25,6 +25,89 @@ struct Summary {
     files: Vec<SummaryFile>,
     added: u64,
     removed: u64,
+    /// The latest turn (turn scope only); `null` before any turn.
+    #[serde(default)]
+    turn: Option<serde_json::Value>,
+}
+
+/// What the panel compares against (spec 041).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Scope {
+    Head,
+    Turn,
+}
+
+impl Scope {
+    /// Short labels fit the 320px panel; tooltips carry the full name.
+    const TOGGLES: [(&'static str, &'static str, &'static str); 2] = [
+        ("head", "All", "All changes against HEAD"),
+        ("turn", "Turn", "Changes in the latest agent turn"),
+    ];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Scope::Head => "head",
+            Scope::Turn => "turn",
+        }
+    }
+
+    fn parse(name: &str) -> Scope {
+        if name == "turn" {
+            Scope::Turn
+        } else {
+            Scope::Head
+        }
+    }
+
+    /// The totals line; `files` is `None` when no turn is recorded.
+    fn summary(self, files: Option<usize>, added: u64, removed: u64) -> String {
+        let label = match self {
+            Scope::Head => "Changes against HEAD",
+            Scope::Turn => "Latest turn",
+        };
+        match files {
+            Some(files) => format!("{label} · {files} files · +{added} −{removed}"),
+            None => label.to_owned(),
+        }
+    }
+
+    fn empty(self, has_turn: bool) -> &'static str {
+        match (self, has_turn) {
+            (Scope::Head, _) => "No working tree changes",
+            (Scope::Turn, true) => "No changes in the latest turn",
+            (Scope::Turn, false) => "No agent turn recorded in this workspace yet.",
+        }
+    }
+
+    fn reader(self) -> &'static str {
+        match self {
+            Scope::Head => "Changes against HEAD",
+            Scope::Turn => "Changes in the latest turn",
+        }
+    }
+
+    fn unchanged(self) -> &'static str {
+        match self {
+            Scope::Head => "This file no longer has changes against HEAD.",
+            Scope::Turn => "This file no longer has changes in the latest turn.",
+        }
+    }
+}
+
+/// The turn view follows its workspace: a new baseline, or a turn that
+/// stops (done, idle, failed, blocked), re-reads it.
+fn refreshes_turn(scope: Scope, name: &str, event_workspace: Option<&str>, shown: &str) -> bool {
+    use signaltty_proto::event;
+    scope == Scope::Turn
+        && event_workspace == Some(shown)
+        && matches!(
+            name,
+            event::WORKSPACE_TURN_STARTED
+                | event::AGENT_DONE
+                | event::AGENT_IDLE
+                | event::AGENT_FAILED
+                | event::AGENT_BLOCKED
+        )
 }
 
 struct Changes {
@@ -33,6 +116,8 @@ struct Changes {
     /// after the last workspace closes.
     workspace: RefCell<Option<String>>,
     navigation: adw::NavigationView,
+    scope: Cell<Scope>,
+    reader_scope: gtk4::Label,
     list_page: adw::NavigationPage,
     reader_page: adw::NavigationPage,
     list_refresh: gtk4::Button,
@@ -109,6 +194,19 @@ impl ChangesPanel {
         hide.update_property(&[gtk4::accessible::Property::Label("Hide Changes")]);
         hide.set_action_name(Some("win.show-changes"));
         list_header.pack_start(&hide);
+        let scopes = adw::ToggleGroup::new();
+        for (name, label, tooltip) in Scope::TOGGLES {
+            let toggle = adw::Toggle::new();
+            toggle.set_name(Some(name));
+            toggle.set_label(Some(label));
+            toggle.set_tooltip(tooltip);
+            scopes.add(toggle);
+        }
+        scopes.set_active_name(Some(Scope::Head.as_str()));
+        scopes
+            .upcast_ref::<gtk4::Widget>()
+            .update_property(&[gtk4::accessible::Property::Label("Compare against")]);
+        list_header.set_title_widget(Some(&scopes));
         list_body.append(&list_header);
         let summary = label();
         summary.add_css_class("changes-summary");
@@ -161,10 +259,10 @@ impl ChangesPanel {
         let path = label();
         path.add_css_class("heading");
         reader_body.append(&path);
-        let scope = label();
-        scope.set_text("Changes against HEAD");
-        scope.add_css_class("dim-label");
-        reader_body.append(&scope);
+        let reader_scope = label();
+        reader_scope.set_text(Scope::Head.reader());
+        reader_scope.add_css_class("dim-label");
+        reader_body.append(&reader_scope);
         let status = label();
         reader_body.append(&status);
         let added_color = gtk4::Label::new(None);
@@ -208,6 +306,8 @@ impl ChangesPanel {
             actor,
             workspace: RefCell::new(None),
             navigation: navigation.clone(),
+            scope: Cell::new(Scope::Head),
+            reader_scope,
             list_page,
             reader_page,
             list_refresh: list_refresh.clone(),
@@ -231,6 +331,17 @@ impl ChangesPanel {
                 }
             });
         }
+        let weak = Rc::downgrade(&this);
+        scopes.connect_active_name_notify(move |scopes| {
+            if let Some(this) = weak.upgrade() {
+                let scope = Scope::parse(scopes.active_name().as_deref().unwrap_or("head"));
+                if scope != this.scope.replace(scope) {
+                    this.reader_scope.set_text(scope.reader());
+                    this.reset();
+                    this.refresh();
+                }
+            }
+        });
         let weak = Rc::downgrade(&this);
         back.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
@@ -314,6 +425,16 @@ impl ChangesPanel {
         this.workspace.borrow_mut().take();
         this.reset();
         this.summary.set_text("No workspace is open.");
+    }
+
+    /// Re-read the turn view when its workspace starts or stops a turn.
+    /// `workspace` is the event's workspace, when the caller knows it.
+    pub fn on_event(&self, name: &str, workspace: Option<&str>) {
+        let this = &self.inner;
+        let shown = this.workspace.borrow().clone();
+        if shown.is_some_and(|shown| refreshes_turn(this.scope.get(), name, workspace, &shown)) {
+            this.refresh();
+        }
     }
 
     /// Put keyboard focus in the panel (on open from the keyboard).
@@ -436,7 +557,7 @@ impl Changes {
                 .actor
                 .call(
                     signaltty_proto::method::WORKSPACE_DIFF,
-                    json!({"workspace_id": workspace}),
+                    json!({"workspace_id": workspace, "scope": this.scope.get().as_str()}),
                 )
                 .await
                 .and_then(|value| {
@@ -472,11 +593,12 @@ impl Changes {
     }
 
     fn render_summary(self: &Rc<Self>, summary: Summary) {
-        self.summary.set_text(&format!(
-            "Changes against HEAD · {} files · +{} −{}",
-            summary.files.len(),
+        let scope = self.scope.get();
+        let has_turn = scope == Scope::Head || summary.turn.as_ref().is_some_and(|t| !t.is_null());
+        self.summary.set_text(&scope.summary(
+            has_turn.then_some(summary.files.len()),
             summary.added,
-            summary.removed
+            summary.removed,
         ));
         let mut previous = std::mem::take(&mut *self.row_map.borrow_mut());
         let mut current = BTreeMap::new();
@@ -518,7 +640,7 @@ impl Changes {
             let row = adw::ActionRow::new();
             row.set_widget_name("no-changes");
             row.set_use_markup(false);
-            row.set_title("No working tree changes");
+            row.set_title(scope.empty(has_turn));
             self.rows.append(&row);
         }
         // Rows keep their place across refreshes; a new file can change
@@ -564,7 +686,7 @@ impl Changes {
                 .actor
                 .call(
                     signaltty_proto::method::WORKSPACE_FILE_DIFF,
-                    json!({"workspace_id": workspace, "path": path}),
+                    json!({"workspace_id": workspace, "path": path, "scope": this.scope.get().as_str()}),
                 )
                 .await
                 .and_then(|value| {
@@ -595,9 +717,7 @@ impl Changes {
             DiffContent::Binary => self.status.set_text(&format!(
                 "{untracked}Binary file changed. No text preview is available."
             )),
-            DiffContent::Unchanged => self
-                .status
-                .set_text("This file no longer has changes against HEAD."),
+            DiffContent::Unchanged => self.status.set_text(self.scope.get().unchanged()),
             DiffContent::Unavailable { reason } => {
                 self.status.set_text(&format!("{untracked}{reason}"))
             }
@@ -659,6 +779,53 @@ impl Changes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wording_names_the_scope() {
+        assert_eq!(
+            Scope::Head.summary(Some(3), 4, 1),
+            "Changes against HEAD · 3 files · +4 −1"
+        );
+        assert_eq!(
+            Scope::Turn.summary(Some(1), 2, 0),
+            "Latest turn · 1 files · +2 −0"
+        );
+        assert_eq!(Scope::Turn.summary(None, 0, 0), "Latest turn");
+        assert_eq!(Scope::Head.empty(true), "No working tree changes");
+        assert_eq!(Scope::Turn.empty(true), "No changes in the latest turn");
+        assert_eq!(
+            Scope::Turn.empty(false),
+            "No agent turn recorded in this workspace yet."
+        );
+        assert_eq!(Scope::Turn.reader(), "Changes in the latest turn");
+        assert_eq!(
+            Scope::Turn.unchanged(),
+            "This file no longer has changes in the latest turn."
+        );
+    }
+
+    #[test]
+    fn turn_view_refreshes_on_its_workspace_turn_events_only() {
+        use signaltty_proto::event;
+        let ws = Some("ws");
+        assert!(refreshes_turn(
+            Scope::Turn,
+            event::WORKSPACE_TURN_STARTED,
+            ws,
+            "ws"
+        ));
+        assert!(refreshes_turn(Scope::Turn, event::AGENT_DONE, ws, "ws"));
+        assert!(refreshes_turn(Scope::Turn, event::AGENT_BLOCKED, ws, "ws"));
+        assert!(!refreshes_turn(Scope::Turn, event::AGENT_WORKING, ws, "ws"));
+        assert!(!refreshes_turn(
+            Scope::Turn,
+            event::AGENT_DONE,
+            Some("other"),
+            "ws"
+        ));
+        assert!(!refreshes_turn(Scope::Turn, event::AGENT_DONE, None, "ws"));
+        assert!(!refreshes_turn(Scope::Head, event::AGENT_DONE, ws, "ws"));
+    }
 
     #[test]
     fn files_sort_by_directory_then_name() {
