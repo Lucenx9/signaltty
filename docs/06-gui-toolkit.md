@@ -53,7 +53,9 @@ overlay below 760sp, resizable via a drag handle on its edge clamped to
 tab), one primary menu, every command a `win.*` action with an
 accelerator. Colour comes only from libadwaita variables, so light,
 dark, the system accent and high contrast follow the desktop;
-terminals take the desktop monospace font and a matching palette.
+terminals take the desktop monospace font with 1.1× leading, GNOME's
+ANSI palette on dark panes and a light palette whose inks read at 4.5:1 on
+white (unit-tested), and a pane title without the shell's `user@host:` prefix.
 Dark mode redefines those variables (under a `.dark` window class
 mirrored from `AdwStyleManager`) into a wider lightness ladder —
 sidebar, near-black canvas, pane cards — edged by hairlines, per
