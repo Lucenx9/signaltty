@@ -1,0 +1,110 @@
+# Ported from herdr (https://github.com/herdrdev/herdr) src/detect/manifests/muse.toml
+# at commit 2563803, Copyright herdr contributors, Apache-2.0
+# (https://www.apache.org/licenses/LICENSE-2.0). Changes: a generic manifest
+# scoped to herdr's binary names (spec 033; `muse-bin-*` stands for herdr's versioned launcher target); `contains` lists (all must
+# appear) become case-insensitive escaped regexes in `all`; `line_regex`
+# becomes a `(?m)` regex with `\s` narrowed to `[ \t]`; nested any/all gates
+# become alternations, `(?is)a.*b|b.*a` pairs or split rules; `unknown` +
+# `skip_state_update` becomes `hold`; `whole_recent` becomes `lines = 200`;
+# herdr's known-agent idle fallback is the explicit `idle_fallback` rule.
+#
+# herdr's evidence notes are kept below.
+
+# Idle has a `⟩` prompt and `model · effort · cwd` footer. Active turns show
+# `◆ Working (... · esc to interrupt)` or another activity label with the
+# same interrupt hint. Structured questions show two co-occurring footer
+# controls (`Enter to select` + `Tab for an optional note`, or `Enter to
+# toggle` + `Esc to interrupt`). First launch in an untrusted directory shows
+# `Do you trust this workspace?` with `Trust and continue`. `/theme` and
+# `/skills` menus are overlays whose prior state is kept. Each approval rule
+# requires a pair because Muse can print one phrase as ordinary text.
+
+[agent]
+kind = "generic"
+binaries = ["muse", "muse-code", "muse-cli", "muse-bin-*"]
+
+[[screen]]
+id = "workspace_trust_blocked"
+state = "blocked"
+priority = 970
+lines = 12
+all = ['(?i)do you trust this workspace\?', '(?i)trust and continue|use up/down']
+
+[[screen]]
+id = "pick_request_blocked"
+state = "blocked"
+priority = 950
+lines = 8
+regex = [
+  '(?is)enter to select.*tab for an optional note|tab for an optional note.*enter to select',
+  '(?is)enter to toggle.*esc to interrupt|esc to interrupt.*enter to toggle',
+]
+
+[[screen]]
+id = "menu_overlay"
+state = "hold"
+priority = 940
+lines = 8
+regex = [
+  '(?is)enter confirm.*esc go back|esc go back.*enter confirm',
+  '(?is)enter save.*esc go back|esc go back.*enter save',
+]
+
+# herdr menu_overlay, three-control branch.
+[[screen]]
+id = "menu_overlay_filter"
+state = "hold"
+priority = 940
+lines = 8
+all = ['(?i)space toggle', '(?i)esc close', '(?i)type filter']
+
+[[screen]]
+id = "working_esc_interrupt"
+state = "working"
+priority = 900
+lines = 8
+regex = ['(?i)esc to interrupt']
+not = [
+  '(?is)enter to select.*tab for an optional note|tab for an optional note.*enter to select',
+  '(?is)enter to toggle.*esc to interrupt|esc to interrupt.*enter to toggle',
+]
+
+[[screen]]
+id = "blocked_approval"
+state = "blocked"
+priority = 850
+lines = 8
+regex = [
+  '(?is)allow this stage once.*always allow in this workspace|always allow in this workspace.*allow this stage once',
+  '(?is)allow once.*allow for this session|allow for this session.*allow once',
+  "(?is)yes, proceed.*yes, don't ask again this session|yes, don't ask again this session.*yes, proceed",
+]
+
+# herdr's three-control menu veto is left out: `menu_overlay_filter` (940)
+# always outranks this rule when those controls are in its 5 lines.
+[[screen]]
+id = "idle_prompt"
+state = "idle"
+priority = 700
+lines = 5
+regex = ['(?m)^[ \t]*⟩[ \t]*$', '(?m)^[ \t]*⟩[ \t]+\S']
+not = [
+  '(?i)esc to interrupt',
+  '(?is)enter to select.*tab for an optional note|tab for an optional note.*enter to select',
+  '(?is)enter confirm.*esc go back|esc go back.*enter confirm',
+  '(?is)enter save.*esc go back|esc go back.*enter save',
+]
+
+[[screen]]
+id = "idle_status_fallback"
+state = "idle"
+priority = 500
+lines = 3
+regex = ['(?m)^[ \t]*\S+ · (?:none|minimal|low|medium|high|xhigh|ultra) · ']
+not = ['(?i)esc to interrupt']
+
+[[screen]]
+id = "idle_fallback"
+state = "idle"
+priority = -1000
+regex = ['']

@@ -538,3 +538,23 @@ async fn an_unreadable_agents_dir_keeps_the_active_manifests() {
     assert_eq!(r["manifests"], json!([]));
     srv.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_versioned_muse_binary_reaches_the_muse_rules() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let muse = program_as("muse-bin-0.2.1-R708.1");
+    let id = spawn_program(
+        &mut c,
+        json!([
+            muse,
+            "-c",
+            "printf '◆ Working (3s · esc to interrupt)\\n'; sleep 30"
+        ]),
+    )
+    .await;
+    wait(&mut c, &id, "working", 5).await.unwrap();
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["matched"]["id"], "working_esc_interrupt");
+    srv.shutdown().await;
+}

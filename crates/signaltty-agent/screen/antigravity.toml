@@ -1,0 +1,79 @@
+# Ported from herdr (https://github.com/herdrdev/herdr) src/detect/manifests/antigravity.toml
+# at commit 2563803, Copyright herdr contributors, Apache-2.0
+# (https://www.apache.org/licenses/LICENSE-2.0). Changes: a generic manifest
+# scoped to herdr's binary names (spec 033; herdr calls it `agy`); `contains` lists (all must
+# appear) become case-insensitive escaped regexes in `all`; `line_regex`
+# becomes a `(?m)` regex with `\s` narrowed to `[ \t]`; nested any/all gates
+# become alternations, `(?is)a.*b|b.*a` pairs or split rules; `unknown` +
+# `skip_state_update` becomes `hold`; `whole_recent` becomes `lines = 200`;
+# herdr's known-agent idle fallback is the explicit `idle_fallback` rule.
+#
+# herdr's evidence notes are kept below.
+
+# Dialogs replace the prompt box and end with a key-hint row directly above
+# the "esc to cancel" footer: permission "↑/↓ Navigate · tab Amend · …",
+# question "↑/↓ Navigate · enter Select · esc Skip", trust "↑/↓ Navigate ·
+# enter Confirm", slash menu "↑/↓ Navigate · enter Select · tab Complete"
+# (idle). Working turns draw a braille spinner above the prompt box and the
+# footer reads "esc to cancel" under its bottom border; the idle footer reads
+# "? for shortcuts".
+
+[agent]
+kind = "generic"
+binaries = ["agy", "antigravity", "antigravity-cli"]
+
+[[screen]]
+id = "permission_prompt"
+state = "blocked"
+priority = 300
+lines = 2
+all = ['(?i)navigate', '(?i)tab amend']
+
+[[screen]]
+id = "question_prompt"
+state = "blocked"
+priority = 290
+lines = 2
+all = ['(?i)navigate', '(?i)esc skip']
+
+[[screen]]
+id = "trust_prompt"
+state = "blocked"
+priority = 280
+lines = 8
+all = [
+  '(?i)do you trust the contents of this project\?',
+  '(?i)yes, i trust this folder',
+  '(?i)enter confirm',
+]
+
+# Pre-1.1.28 permission dialog.
+[[screen]]
+id = "legacy_permission_prompt"
+state = "blocked"
+priority = 270
+lines = 200
+all = [
+  '(?i)requesting permission for:',
+  '(?is)do you want to proceed\?|tab amend.*edit command|edit command.*tab amend',
+]
+
+[[screen]]
+id = "esc_cancel_footer_working"
+state = "working"
+priority = 110
+lines = 2
+regex = ['(?m)^\s*─{3,}\s*esc to cancel\b']
+
+[[screen]]
+id = "spinner_working"
+state = "working"
+priority = 100
+lines = 12
+regex = ['(?m)^[ \t]*[\x{2801}-\x{28FF}]+[ \t]+\S']
+
+[[screen]]
+id = "idle_fallback"
+state = "idle"
+priority = -1000
+regex = ['']
