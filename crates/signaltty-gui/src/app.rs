@@ -1052,7 +1052,7 @@ impl App {
                 self.title_context.set_visible(false);
                 self.title_context.set_tooltip_text(None);
                 self.content.set_visible_child_name("no-workspace");
-                self.sync_changes();
+                self.follow_changes();
             }
         }
         {
@@ -1271,7 +1271,7 @@ impl App {
             self.navigate();
         }
         self.title.set_text(&self.display_title(&ws));
-        self.sync_changes();
+        self.follow_changes();
         sidebar::set_mark(&self.title_mark, &ws.id, &ws.name);
         self.title_mark.set_visible(true);
         // Agent workspaces show their agents; shells show their location.
@@ -2056,14 +2056,26 @@ impl App {
         }
     }
 
-    /// The panel follows the active workspace while it is open; a closed
-    /// panel does no reads.
+    /// Opening the panel reads the active workspace; a closed panel does
+    /// no reads.
     fn sync_changes(&self) {
         if !self.changes_split.shows_sidebar() {
             return;
         }
         match self.active_ws_id() {
             Some(id) => self.changes.show(&id),
+            None => self.changes.clear(),
+        }
+    }
+
+    /// While open, the panel moves with the active workspace but does not
+    /// re-read it: the model re-shows the workspace on every agent event.
+    fn follow_changes(&self) {
+        if !self.changes_split.shows_sidebar() {
+            return;
+        }
+        match self.active_ws_id() {
+            Some(id) => self.changes.follow(&id),
             None => self.changes.clear(),
         }
     }

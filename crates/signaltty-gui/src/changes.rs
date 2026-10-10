@@ -290,6 +290,14 @@ impl ChangesPanel {
         this.refresh();
     }
 
+    /// Follow the active workspace without re-reading the same one:
+    /// model refreshes re-show the workspace on every agent event.
+    pub fn follow(&self, workspace: &str) {
+        if self.inner.workspace.borrow().as_deref() != Some(workspace) {
+            self.show(workspace);
+        }
+    }
+
     /// No workspace is open: nothing to review.
     pub fn clear(&self) {
         let this = &self.inner;

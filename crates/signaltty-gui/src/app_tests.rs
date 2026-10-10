@@ -1678,6 +1678,23 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
         assert!(has_label(&panel, "+12") && has_label(&panel, "−3"));
         assert!(has_label(&panel, "Binary"));
         assert!(has_label(&panel, "Untracked"));
+        // Agent events re-show the active workspace; that must not re-run git.
+        let reads = || {
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(method, _)| method == "workspace.diff")
+                .count()
+        };
+        let before = reads();
+        let active = app.active_ws_id().unwrap();
+        app.show_workspace_internal(&active, false);
+        let settle = std::time::Instant::now() + std::time::Duration::from_millis(300);
+        while std::time::Instant::now() < settle {
+            glib::MainContext::default().iteration(false);
+        }
+        assert_eq!(reads(), before, "re-showing a workspace re-read its diff");
         capture_workflow(&app.window, &format!("changes-{theme}"));
         gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-changes", None).unwrap();
         assert!(!app.changes_split.shows_sidebar());
