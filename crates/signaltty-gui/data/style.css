@@ -1115,25 +1115,92 @@ button.pill:focus-visible,
 /* ---- preferences cards + swatches ---------------------------------------
  * Each swatch carries its own theme-<id> class inside a window that
  * has another, so every swatch rule uses literal hexes (never the
- * variables): pane colour with a diagonal accent split. Signal has no
- * own accent; its swatch previews against the stock default blue.
+ * variables): radial-gradient orbs. Signal has no own accent; its
+ * orbs preview against the stock default blue.
  */
 .theme-swatch {
-  min-width: 28px;
-  min-height: 28px;
-  border-radius: 8px;
-  border: 1px solid var(--border-color);
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px alpha(black, 0.08);
 }
-.theme-swatch.theme-signal.light { background: linear-gradient(135deg, #ffffff 62%, #3584e4 62%); }
-.theme-swatch.theme-signal.dark { background: linear-gradient(135deg, #111114 62%, #3584e4 62%); }
-.theme-swatch.theme-grove.light { background: linear-gradient(135deg, #effdfd 62%, #097e82 62%); }
-.theme-swatch.theme-grove.dark { background: linear-gradient(135deg, #071414 62%, #097e82 62%); }
-.theme-swatch.theme-ocean.light { background: linear-gradient(135deg, #f3fbff 62%, #097a9e 62%); }
-.theme-swatch.theme-ocean.dark { background: linear-gradient(135deg, #091318 62%, #097a9e 62%); }
-.theme-swatch.theme-ember.light { background: linear-gradient(135deg, #fff8f5 62%, #bc5107 62%); }
-.theme-swatch.theme-ember.dark { background: linear-gradient(135deg, #180f0b 62%, #bc5107 62%); }
-.theme-swatch.theme-iris.light { background: linear-gradient(135deg, #fbf8ff 62%, #895ac3 62%); }
-.theme-swatch.theme-iris.dark { background: linear-gradient(135deg, #131018 62%, #895ac3 62%); }
+.dark .theme-swatch {
+  box-shadow: inset 0 0 0 1px alpha(white, 0.1);
+}
+/* Orbs (t3code): the light orb is the canvas lit from the top left and
+ * fading into the accent; the dark one is the accent glowing out of the
+ * dark canvas. */
+.theme-swatch.theme-signal.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #ffffff 30%, #b8d3f6 72%, #3584e4 125%); }
+.theme-swatch.theme-signal.dark { background-image: radial-gradient(circle at 32% 28%, #5d9de9 0%, #1d2f49 48%, #111114 82%); }
+.theme-swatch.theme-grove.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #effdfd 30%, #9fd3d4 72%, #097e82 125%); }
+.theme-swatch.theme-grove.dark { background-image: radial-gradient(circle at 32% 28%, #2fa3a7 0%, #0b3a3b 48%, #071414 82%); }
+.theme-swatch.theme-ocean.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #f3fbff 30%, #a1d0de 72%, #097a9e 125%); }
+.theme-swatch.theme-ocean.dark { background-image: radial-gradient(circle at 32% 28%, #2f9ec2 0%, #0b3546 48%, #091318 82%); }
+.theme-swatch.theme-ember.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #fff8f5 30%, #f0bd98 72%, #bc5107 125%); }
+.theme-swatch.theme-ember.dark { background-image: radial-gradient(circle at 32% 28%, #e07a32 0%, #4a250e 48%, #180f0b 82%); }
+.theme-swatch.theme-iris.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #fbf8ff 30%, #d2bdeb 72%, #895ac3 125%); }
+.theme-swatch.theme-iris.dark { background-image: radial-gradient(circle at 32% 28%, #a77ed9 0%, #36244a 48%, #131018 82%); }
+
+/* Scheme previews: a miniature window per choice, in literal colours so
+ * a dark window can still show what Light looks like. */
+.scheme-preview {
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px alpha(black, 0.1);
+}
+.dark .scheme-preview {
+  box-shadow: 0 0 0 1px alpha(white, 0.1);
+}
+.scheme-preview .mw-sidebar {
+  min-width: 30px;
+  padding: 8px 6px;
+}
+.scheme-preview .mw-start { padding: 8px 0 8px 7px; }
+.scheme-preview .mw-end { padding: 8px 7px 8px 0; }
+/* Where two parts meet on a fractional pixel, antialiasing lets the
+ * preview's own background through; matching it to the parts keeps the
+ * card colour from drawing a hairline between them. */
+.scheme-preview.light { background-color: #fbfbfc; }
+.scheme-preview.dark { background-color: #16161a; }
+/* The halves split what the 42px sidebar leaves: 21px + 50%. */
+.scheme-preview.system { background-image: linear-gradient(to right, #fbfbfc calc(21px + 50%), #16161a calc(21px + 50%)); }
+.scheme-preview .light.mw-sidebar { background-color: #ebebee; }
+.scheme-preview .light.mw-content { background-color: #fbfbfc; }
+.scheme-preview .dark.mw-sidebar { background-color: #0c0c0e; }
+.scheme-preview .dark.mw-content { background-color: #16161a; }
+.scheme-preview .mw-bar {
+  min-height: 4px;
+  border-radius: 999px;
+}
+.scheme-preview .light .mw-bar { background-color: alpha(black, 0.12); }
+.scheme-preview .dark .mw-bar { background-color: alpha(white, 0.14); }
+.scheme-preview .mw-bar.wide { min-width: 18px; }
+.scheme-preview .mw-bar.mid { min-width: 12px; }
+.scheme-preview .mw-bar.short { min-width: 8px; }
+.scheme-preview .mw-bar.long { min-width: 36px; }
+.scheme-preview .mw-title { min-height: 6px; margin-bottom: 2px; }
+.scheme-preview .mw-panel {
+  padding: 5px;
+  border-radius: 4px;
+}
+.scheme-preview .light .mw-panel { background-color: #ffffff; box-shadow: 0 0 0 1px alpha(black, 0.08); }
+.scheme-preview .dark .mw-panel { background-color: #1e1e23; box-shadow: 0 0 0 1px alpha(white, 0.08); }
+/* The input bar runs across both halves (they meet with no padding);
+ * its rounded ends close it. */
+.scheme-preview .mw-input {
+  min-height: 9px;
+  border-radius: 999px 0 0 999px;
+  padding: 0 2px;
+}
+.scheme-preview .mw-input.mw-input-end { border-radius: 0 999px 999px 0; }
+.scheme-preview .light .mw-input { background-color: alpha(black, 0.07); }
+.scheme-preview .dark .mw-input { background-color: alpha(white, 0.09); }
+.scheme-preview .mw-dot {
+  min-width: 5px;
+  min-height: 5px;
+  margin: 2px 0;
+  border-radius: 999px;
+  background-color: var(--accent-bg-color);
+}
 
 .theme-card,
 .appearance-card {
@@ -1145,6 +1212,18 @@ button.pill:focus-visible,
 .appearance-card.selected {
   border-color: var(--accent-bg-color);
   box-shadow: 0 0 0 2px var(--accent-bg-color);
+}
+/* Selection is the ring alone: a filled card would tint the preview it
+ * is meant to show. Hover and press keep libadwaita's neutral 4% / 8%. */
+button.card.appearance-card:checked {
+  background-image: none;
+}
+button.card.appearance-card:checked:hover {
+  background-image: image(alpha(currentColor, 0.04));
+}
+button.card.appearance-card:checked:active,
+button.card.appearance-card:checked.keyboard-activating {
+  background-image: image(alpha(currentColor, 0.08));
 }
 
 /* ---- high contrast (last: equal specificity loses to source order) ------
@@ -1217,3 +1296,12 @@ button.pill:focus-visible,
  * desktop's contrast-adjusted semantic colors after theme changes. */
 .file-diff-added-color { color: var(--success-color); }
 .file-diff-removed-color { color: var(--error-color); }
+
+/* Preferences previews draw literal low-alpha edges; high contrast
+ * outlines them in the text colour instead. */
+.high-contrast .scheme-preview {
+  box-shadow: 0 0 0 1px currentColor;
+}
+.high-contrast .theme-swatch {
+  box-shadow: inset 0 0 0 1px currentColor;
+}

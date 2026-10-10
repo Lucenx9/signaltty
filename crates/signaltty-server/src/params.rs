@@ -46,10 +46,30 @@ pub struct WorkspaceId {
     pub workspace_id: String,
 }
 
+/// What a workspace diff compares against (spec 041).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffScope {
+    /// The checkout against HEAD.
+    #[default]
+    Head,
+    /// The checkout against its tree at the latest agent turn start.
+    Turn,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceDiff {
+    pub workspace_id: String,
+    #[serde(default)]
+    pub scope: DiffScope,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceFileDiff {
     pub workspace_id: String,
     pub path: String,
+    #[serde(default)]
+    pub scope: DiffScope,
 }
 
 #[derive(Debug, Deserialize)]

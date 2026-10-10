@@ -60,6 +60,95 @@ fn select_only(chosen: &impl IsA<gtk4::Widget>) {
     }
 }
 
+/// A miniature window in the scheme it selects: sidebar, content with
+/// text lines, a side card and the input's accent dot. System splits the
+/// content down the middle, light on the left and dark on the right.
+fn scheme_preview(appearance: Appearance) -> gtk4::Box {
+    let (sidebar, left, right) = match appearance {
+        Appearance::System => ("light", "light", "dark"),
+        Appearance::Light => ("light", "light", "light"),
+        Appearance::Dark => ("dark", "dark", "dark"),
+    };
+    // GTK does not inherit text direction, so every part is pinned
+    // left to right: the CSS (gradient split, input ends) and the End
+    // alignments of the side card and accent dot are drawn that way.
+    let part = |orientation, classes: &[&str]| {
+        let b = gtk4::Box::new(orientation, 4);
+        b.set_direction(gtk4::TextDirection::Ltr);
+        for class in classes {
+            b.add_css_class(class);
+        }
+        b
+    };
+    let bar = |classes: &[&str]| {
+        let b = part(gtk4::Orientation::Horizontal, classes);
+        b.add_css_class("mw-bar");
+        b
+    };
+
+    let side = part(gtk4::Orientation::Vertical, &["mw-sidebar", sidebar]);
+    for width in ["wide", "mid", "mid"] {
+        side.append(&bar(&[width]));
+    }
+
+    let start = part(
+        gtk4::Orientation::Vertical,
+        &["mw-content", "mw-start", left],
+    );
+    start.set_hexpand(true);
+    start.append(&bar(&["wide", "mw-title"]));
+    start.append(&bar(&["long"]));
+    start.append(&bar(&["mid"]));
+    let spacer = part(gtk4::Orientation::Vertical, &[]);
+    spacer.set_vexpand(true);
+    start.append(&spacer);
+    start.append(&part(gtk4::Orientation::Horizontal, &["mw-input"]));
+
+    let end = part(
+        gtk4::Orientation::Vertical,
+        &["mw-content", "mw-end", right],
+    );
+    end.set_hexpand(true);
+    let panel = part(gtk4::Orientation::Vertical, &["mw-panel"]);
+    panel.set_halign(gtk4::Align::End);
+    for width in ["mid", "short", "short"] {
+        panel.append(&bar(&[width]));
+    }
+    end.append(&panel);
+    let spacer = part(gtk4::Orientation::Vertical, &[]);
+    spacer.set_vexpand(true);
+    end.append(&spacer);
+    let input = part(gtk4::Orientation::Horizontal, &["mw-input", "mw-input-end"]);
+    let dot = part(gtk4::Orientation::Horizontal, &["mw-dot"]);
+    dot.set_halign(gtk4::Align::End);
+    dot.set_hexpand(true);
+    input.append(&dot);
+    end.append(&input);
+
+    let scheme = match appearance {
+        Appearance::System => "system",
+        Appearance::Light => "light",
+        Appearance::Dark => "dark",
+    };
+    // The halves share what the sidebar leaves equally, whatever their
+    // content asks for, so the System split lands where its
+    // calc(21px + 50%) background does.
+    let halves = part(gtk4::Orientation::Horizontal, &["mw-halves"]);
+    halves.set_spacing(0);
+    halves.set_homogeneous(true);
+    halves.set_hexpand(true);
+    halves.append(&start);
+    halves.append(&end);
+
+    let preview = part(gtk4::Orientation::Horizontal, &["scheme-preview", scheme]);
+    preview.set_spacing(0);
+    preview.set_overflow(gtk4::Overflow::Hidden);
+    preview.set_size_request(148, 92);
+    preview.append(&side);
+    preview.append(&halves);
+    preview
+}
+
 /// Build the Preferences dialog with Appearance and Theme controls.
 pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
     let dialog = adw::PreferencesDialog::new();
@@ -81,25 +170,8 @@ pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
     let mut appearance_buttons = Vec::new();
     for app_variant in [Appearance::System, Appearance::Light, Appearance::Dark] {
         let btn = gtk4::ToggleButton::new();
-        // Neutral previews: System shows both halves, the others one.
-        let preview = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
-        preview.set_halign(gtk4::Align::Center);
-        let variants: &[&str] = match app_variant {
-            Appearance::System => &["light", "dark"],
-            Appearance::Light => &["light"],
-            Appearance::Dark => &["dark"],
-        };
-        for variant in variants {
-            let swatch = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-            swatch.add_css_class("theme-swatch");
-            swatch.add_css_class(Theme::Signal.css_class());
-            swatch.add_css_class(variant);
-            swatch.set_size_request(24, 24);
-            preview.append(&swatch);
-        }
-        let card_box = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
-        card_box.set_halign(gtk4::Align::Center);
-        card_box.append(&preview);
+        let card_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+        card_box.append(&scheme_preview(app_variant));
         card_box.append(&gtk4::Label::new(Some(app_variant.label())));
         btn.set_child(Some(&card_box));
         btn.add_css_class("card");
@@ -150,28 +222,20 @@ pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
         btn.add_css_class("theme-card");
         btn.update_property(&[gtk4::accessible::Property::Label(theme.label())]);
 
-        let card_box = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+        let card_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
         card_box.set_halign(gtk4::Align::Center);
         card_box.set_valign(gtk4::Align::Center);
 
-        // Dual swatches container
-        let swatches_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        // One orb per variant, light then dark (t3code theme cards).
+        let swatches_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         swatches_box.set_halign(gtk4::Align::Center);
-
-        let light_swatch = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        light_swatch.add_css_class("theme-swatch");
-        light_swatch.add_css_class(theme.css_class());
-        light_swatch.add_css_class("light");
-        light_swatch.set_size_request(24, 24);
-
-        let dark_swatch = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        dark_swatch.add_css_class("theme-swatch");
-        dark_swatch.add_css_class(theme.css_class());
-        dark_swatch.add_css_class("dark");
-        dark_swatch.set_size_request(24, 24);
-
-        swatches_box.append(&light_swatch);
-        swatches_box.append(&dark_swatch);
+        for variant in ["light", "dark"] {
+            let orb = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+            orb.add_css_class("theme-swatch");
+            orb.add_css_class(theme.css_class());
+            orb.add_css_class(variant);
+            swatches_box.append(&orb);
+        }
 
         let label = gtk4::Label::new(Some(theme.label()));
 
