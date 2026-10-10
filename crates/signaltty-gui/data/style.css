@@ -70,11 +70,17 @@
   box-shadow: 0 0 0 2px alpha(var(--error-bg-color), 0.25);
 }
 
-/* Spinner stand-in for the dot while an agent is working. */
-.status-spinner {
-  min-width: 12px;
-  min-height: 12px;
-  color: var(--accent-color);
+/* Working breathes instead of spinning (t3code status-pulse): the same
+ * dot as every other state, so a row never changes shape mid-turn.
+ * ~0.6 Hz, well clear of the slow oscillations that read as unease. */
+.status-dot.lifecycle-working { background-color: var(--accent-bg-color); }
+
+@keyframes status-pulse {
+  from { opacity: 1; }
+  to { opacity: 0.35; }
+}
+.pulse {
+  animation: status-pulse 800ms cubic-bezier(0.77, 0, 0.175, 1) infinite alternate;
 }
 
 /* ---- status pill ("Approval", "Input", …) --------------------------- */
@@ -689,6 +695,9 @@ button.pill:focus-visible,
 .reduced-motion .sidebar-handle,
 .reduced-motion .board-card {
   transition: none;
+}
+.reduced-motion .pulse {
+  animation: none;
 }
 .reduced-motion .row-close:active,
 .reduced-motion .pane-actions button:active,

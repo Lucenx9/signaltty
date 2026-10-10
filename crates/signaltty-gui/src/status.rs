@@ -16,7 +16,12 @@ const ATTENTION_CLASSES: [&str; 5] = [
     "attention-error",
 ];
 
-const LIFECYCLE_CLASSES: [&str; 3] = ["lifecycle-done", "lifecycle-blocked", "lifecycle-failed"];
+const LIFECYCLE_CLASSES: [&str; 4] = [
+    "lifecycle-working",
+    "lifecycle-done",
+    "lifecycle-blocked",
+    "lifecycle-failed",
+];
 
 pub fn attention_class(a: Attention) -> Option<&'static str> {
     match a {
@@ -82,7 +87,7 @@ pub fn lifecycle_label(l: Lifecycle) -> &'static str {
 pub struct RowStatus {
     pub label: Option<&'static str>,
     pub class: Option<&'static str>,
-    pub spinner: bool,
+    pub pulse: bool,
 }
 
 /// Attention outranks lifecycle; "Done" only speaks while unseen —
@@ -91,14 +96,14 @@ pub fn row_status(lifecycle: Lifecycle, attention: Attention) -> RowStatus {
     let say = |label, class| RowStatus {
         label: Some(label),
         class: Some(class),
-        spinner: false,
+        pulse: false,
     };
     if let Some(label) = attention_label(attention) {
         return say(label, attention_class(attention).unwrap_or_default());
     }
     match (lifecycle, attention) {
         (Lifecycle::Working, _) => RowStatus {
-            spinner: true,
+            pulse: true,
             ..say("Working", "lifecycle-working")
         },
         (Lifecycle::Blocked, _) => say("Waiting", "lifecycle-blocked"),
@@ -107,12 +112,12 @@ pub fn row_status(lifecycle: Lifecycle, attention: Attention) -> RowStatus {
         (_, Attention::Unread) => RowStatus {
             label: None,
             class: Some("attention-unread"),
-            spinner: false,
+            pulse: false,
         },
         _ => RowStatus {
             label: None,
             class: None,
-            spinner: false,
+            pulse: false,
         },
     }
 }
@@ -204,10 +209,10 @@ pub fn effective_lifecycle(pane: &Pane) -> Lifecycle {
     }
 }
 
-/// Leading lifecycle mark: a spinner while working, otherwise a dot
-/// coloured by state (hollow when there is nothing to report).
+/// Leading lifecycle mark: a dot coloured by state that pulses while
+/// working (hollow when there is nothing to report).
 pub struct LifecycleIndicator {
-    pub widget: gtk4::Stack,
+    pub widget: gtk4::Box,
     dot: gtk4::Box,
 }
 
@@ -217,20 +222,19 @@ impl LifecycleIndicator {
         dot.add_css_class("status-dot");
         dot.set_valign(gtk4::Align::Center);
         dot.set_halign(gtk4::Align::Center);
-        let spinner = libadwaita::Spinner::new();
-        spinner.add_css_class("status-spinner");
-        let widget = gtk4::Stack::new();
-        widget.set_transition_type(gtk4::StackTransitionType::Crossfade);
-        widget.set_transition_duration(150);
+        // Homogeneous: the dot gets the whole 12px cell and centres in it
+        // without asking its parent for expansion.
+        let widget = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        widget.set_homogeneous(true);
         widget.set_size_request(12, 12);
         widget.set_valign(gtk4::Align::Center);
-        widget.add_named(&dot, Some("dot"));
-        widget.add_named(&spinner, Some("spinner"));
+        widget.append(&dot);
         LifecycleIndicator { widget, dot }
     }
 
     pub fn set(&self, l: Lifecycle) {
         let class = match l {
+            Lifecycle::Working => Some("lifecycle-working"),
             Lifecycle::Done => Some("lifecycle-done"),
             Lifecycle::Blocked => Some("lifecycle-blocked"),
             Lifecycle::Failed => Some("lifecycle-failed"),
@@ -242,13 +246,18 @@ impl LifecycleIndicator {
         } else {
             self.dot.remove_css_class("hollow");
         }
-        self.widget
-            .set_visible_child_name(if l == Lifecycle::Working {
-                "spinner"
-            } else {
-                "dot"
-            });
+        set_pulse(&self.dot, l == Lifecycle::Working);
         self.widget.set_tooltip_text(Some(lifecycle_label(l)));
+    }
+}
+
+/// Working is shown by a breathing dot (CSS `pulse`), not a spinner:
+/// calmer beside text, and the same mark shape as every other state.
+fn set_pulse(dot: &gtk4::Box, on: bool) {
+    if on {
+        dot.add_css_class("pulse");
+    } else {
+        dot.remove_css_class("pulse");
     }
 }
 
@@ -257,7 +266,8 @@ impl LifecycleIndicator {
 /// `row_status` has nothing to say.
 pub struct StatusSlot {
     pub widget: gtk4::Box,
-    mark: gtk4::Stack,
+    mark: gtk4::Box,
+    dot: gtk4::Box,
     label: gtk4::Label,
 }
 
@@ -279,12 +289,11 @@ impl StatusSlot {
         dot.add_css_class("row-status-dot");
         dot.set_valign(gtk4::Align::Center);
         dot.set_halign(gtk4::Align::Center);
-        let spinner = libadwaita::Spinner::new();
-        let mark = gtk4::Stack::new();
+        let mark = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        mark.set_homogeneous(true);
         mark.set_size_request(12, 12);
         mark.set_valign(gtk4::Align::Center);
-        mark.add_named(&dot, Some("dot"));
-        mark.add_named(&spinner, Some("spinner"));
+        mark.append(&dot);
         let label = gtk4::Label::new(None);
         label.add_css_class("numeric");
         let widget = gtk4::Box::new(gtk4::Orientation::Horizontal, 5);
@@ -296,6 +305,7 @@ impl StatusSlot {
         StatusSlot {
             widget,
             mark,
+            dot,
             label,
         }
     }
@@ -311,8 +321,7 @@ impl StatusSlot {
             self.widget.remove_css_class("speaking");
         }
         self.mark.set_visible(s.class.is_some());
-        self.mark
-            .set_visible_child_name(if s.spinner { "spinner" } else { "dot" });
+        set_pulse(&self.dot, s.pulse);
         let text = slot_text(s.label, time, age);
         if self.label.text() != text {
             self.label.set_text(&text);
@@ -400,12 +409,12 @@ mod tests {
             pane.restore_state = signaltty_core::RestoreState::Restored;
             let displayed = worst_lifecycle([&pane]);
             assert_eq!(lifecycle_label(displayed), "Exited");
-            assert!(!row_status(displayed, Attention::None).spinner);
+            assert!(!row_status(displayed, Attention::None).pulse);
             assert_eq!(pane.lifecycle, saved, "saved history is retained");
         }
         pane.live = signaltty_core::LiveState::Live;
         pane.lifecycle = Lifecycle::Working;
-        assert!(row_status(worst_lifecycle([&pane]), Attention::None).spinner);
+        assert!(row_status(worst_lifecycle([&pane]), Attention::None).pulse);
     }
 
     #[test]
@@ -443,7 +452,7 @@ mod tests {
         assert_eq!(label(Lifecycle::Failed, Attention::None), Some("Failed"));
         let working = s(Lifecycle::Working, Attention::Unread);
         assert_eq!(working.label, Some("Working"));
-        assert!(working.spinner);
+        assert!(working.pulse);
         assert_eq!(label(Lifecycle::Done, Attention::Unread), Some("Done"));
         assert_eq!(label(Lifecycle::Done, Attention::None), None, "seen → time");
         assert_eq!(
@@ -451,7 +460,7 @@ mod tests {
             RowStatus {
                 label: None,
                 class: Some("attention-unread"),
-                spinner: false
+                pulse: false
             }
         );
         assert_eq!(s(Lifecycle::Idle, Attention::None).class, None);
