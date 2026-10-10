@@ -106,8 +106,10 @@ impl Hooks {
         Ok(hooks)
     }
 
-    /// A pane's own provider overrides; empty values keep the defaults
-    /// instead of resolving to the launch directory itself.
+    /// A pane's own provider overrides. An empty value is ignored rather than
+    /// resolved to the launch directory, so the root this `Hooks` already has
+    /// (the server's own override if it has one, else the provider default)
+    /// stays in place. The child process itself still sees the empty value.
     pub fn with_overrides(
         mut self,
         env: &std::collections::HashMap<String, String>,
