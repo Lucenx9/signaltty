@@ -294,6 +294,8 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::TAB_CLOSE => h_tab_close(ctx, params),
         method::TAB_SET_LAYOUT => h_tab_set_layout(ctx, params),
         method::TAB_SET_RATIO => h_tab_set_ratio(ctx, params),
+        method::LAYOUT_EXPORT => h_layout_export(ctx, params),
+        method::LAYOUT_APPLY => h_layout_apply(ctx, params),
         method::PANE_SPAWN => h_pane_spawn(ctx, params),
         method::PANE_SPLIT => h_pane_split(ctx, params),
         method::PANE_SWAP => h_pane_swap(ctx, params),
@@ -888,6 +890,189 @@ fn h_tab_set_ratio(ctx: &Ctx, params: &Value) -> Handler {
 
     ctx.mark_persist();
     Ok((json!({"tab": tab}), ConnEffect::default()))
+}
+
+/// A tab's layout as a portable tree (spec 041): `tab.set_layout`'s
+/// shape, each leaf adding the pane's `cwd`, `argv` and `name`.
+fn h_layout_export(ctx: &Ctx, params: &Value) -> Handler {
+    let p: params::LayoutExport = decode(params)?;
+    let s = ctx.store.read().unwrap();
+    let tab = s
+        .tabs
+        .get(&p.tab_id)
+        .ok_or_else(|| (code::NO_SUCH_TAB.to_string(), p.tab_id.clone()))?;
+    fn node(s: &crate::store::Store, layout: &signaltty_core::model::Layout) -> Value {
+        use signaltty_core::model::Layout;
+        match layout {
+            Layout::Pane { pane_id } => {
+                let mut leaf = json!({"type": "pane", "pane_id": pane_id});
+                if let Some(pane) = s.panes.get(pane_id) {
+                    leaf["cwd"] = json!(pane.cwd);
+                    leaf["argv"] = json!(pane.argv);
+                    if let Some(name) = &pane.name {
+                        leaf["name"] = json!(name);
+                    }
+                }
+                leaf
+            }
+            Layout::Split {
+                dir,
+                ratio,
+                first,
+                second,
+            } => json!({"type": "split", "dir": dir, "ratio": ratio,
+                "first": node(s, first), "second": node(s, second)}),
+        }
+    }
+    let root = tab.layout.as_ref().map(|l| node(&s, l));
+    Ok((
+        json!({"workspace_id": tab.workspace_id, "tab_id": tab.id,
+            "title": tab.title, "root": root}),
+        ConnEffect::default(),
+    ))
+}
+
+/// Upper bound on panes one `layout.apply` may start.
+const LAYOUT_APPLY_MAX_PANES: usize = 32;
+
+/// Start a new tab from a layout tree (spec 041): one fresh pane per leaf.
+/// Every leaf is checked before anything starts; a failed spawn stops the
+/// panes already started, so the call is all or nothing.
+fn h_layout_apply(ctx: &Ctx, params: &Value) -> Handler {
+    use params::LayoutSpec;
+    use signaltty_core::model::Layout;
+
+    let p: params::LayoutApply = decode(params)?;
+    let raw = p.workspace_id;
+    let mut s = ctx.store.write().unwrap();
+    let ws_id = resolve_workspace(&s, &raw)
+        .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?;
+    let ws_cwd = s.workspaces[&ws_id].cwd.clone();
+    let now = Utc::now();
+    let tab_id = new_tab_id();
+    let size = resolve_size(None, None);
+
+    // Validate every leaf and build the tree with the new pane ids.
+    let mut panes: Vec<Pane> = Vec::new();
+    fn build<F>(spec: params::LayoutSpec, make: &mut F) -> Result<Layout, (String, String)>
+    where
+        F: FnMut(
+            Option<String>,
+            Option<Vec<String>>,
+            Option<String>,
+        ) -> Result<String, (String, String)>,
+    {
+        Ok(match spec {
+            LayoutSpec::Pane { cwd, argv, name } => Layout::Pane {
+                pane_id: make(cwd, argv, name)?,
+            },
+            LayoutSpec::Split {
+                dir,
+                ratio,
+                first,
+                second,
+            } => Layout::Split {
+                dir,
+                ratio,
+                first: Box::new(build(*first, make)?),
+                second: Box::new(build(*second, make)?),
+            },
+        })
+    }
+    let mut layout = build(p.root, &mut |cwd, argv, name| {
+        if panes.len() == LAYOUT_APPLY_MAX_PANES {
+            return Err(bad_params(format!(
+                "layout has more than {LAYOUT_APPLY_MAX_PANES} panes"
+            )));
+        }
+        let cwd = cwd.unwrap_or_else(|| ws_cwd.clone());
+        if !std::path::Path::new(&cwd).is_dir() {
+            return Err(bad_params(format!("cwd is not a directory: {cwd}")));
+        }
+        let argv = argv.unwrap_or_else(|| vec![signaltty_core::paths::user_shell()]);
+        if argv.is_empty() {
+            return Err(bad_params("'argv' must not be empty"));
+        }
+        let argv = anchor_launch_executable(argv, &cwd)?;
+        if let Some(name) = name.as_deref() {
+            if !valid_pane_name(name) {
+                return Err(bad_params(format!("bad pane name {name}")));
+            }
+            let taken = s.panes.values().chain(panes.iter());
+            if let Some(other) = taken.into_iter().find(|o| o.name.as_deref() == Some(name)) {
+                return Err(bad_params(format!(
+                    "name {name} is taken by pane {}",
+                    other.id
+                )));
+            }
+        }
+        let mut pane = Pane::new(ws_id.clone(), tab_id.clone(), cwd, argv, size, now);
+        pane.agent.kind = ctx.detect_kind(&pane.argv);
+        pane.name = name;
+        let id = pane.id.clone();
+        panes.push(pane);
+        Ok(id)
+    })?;
+    layout
+        .validate_and_normalize()
+        .map_err(|e| bad_params(e.to_string()))?;
+
+    // Start every pane; undo the started ones if one fails.
+    let mut integrations = Vec::new();
+    let mut references = Vec::new();
+    for pane in &panes {
+        let started = ctx
+            .worktrees
+            .references
+            .enter(&pane.cwd)
+            .and_then(|reference| {
+                references.push(reference);
+                ctx.ptys
+                    .spawn(SpawnRequest {
+                        pane_id: pane.id.clone(),
+                        cwd: pane.cwd.clone(),
+                        argv: pane.argv.clone(),
+                        env: HashMap::new(),
+                        size,
+                        socket_path: ctx.config.socket_path.to_string_lossy().to_string(),
+                    })
+                    .map_err(|e| (code::SPAWN_FAILED.to_string(), e))
+            });
+        match started {
+            Ok(integration) => integrations.push(integration),
+            Err(e) => {
+                for started in &panes[..integrations.len()] {
+                    ctx.ptys.destroy(&started.id, None);
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    let tab = Tab {
+        id: tab_id.clone(),
+        workspace_id: ws_id.clone(),
+        title: p.title.unwrap_or_else(|| "layout".to_string()),
+        active_pane_id: Some(panes[0].id.clone()),
+        layout: Some(layout),
+        created_at: now,
+    };
+    let ws = s.workspaces.get_mut(&ws_id).unwrap();
+    ws.tabs.push(tab_id.clone());
+    ws.active_tab_id = Some(tab_id.clone());
+    ws.updated_at = now;
+    s.tabs.insert(tab_id, tab.clone());
+    s.emit(event::TAB_CREATED, json!({"tab": tab}));
+    let mut results = Vec::new();
+    for (pane, integration) in panes.iter().zip(integrations) {
+        s.panes.insert(pane.id.clone(), pane.clone());
+        s.publish_pane(pane, false);
+        results.push(launch_result(pane, integration));
+    }
+    drop(s);
+    drop(references);
+    ctx.mark_persist();
+    Ok((json!({"tab": tab, "panes": results}), ConnEffect::default()))
 }
 
 // ---- panes ----
