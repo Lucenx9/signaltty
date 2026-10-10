@@ -26,12 +26,16 @@ const MAX_PENDING: usize = 8192;
 
 pub struct OscScanner {
     pending: Vec<u8>,
+    /// Inside an OSC too long to carry: its bytes, terminator included,
+    /// are payload, never a bell.
+    discarding: bool,
 }
 
 impl OscScanner {
     pub fn new() -> OscScanner {
         OscScanner {
             pending: Vec::new(),
+            discarding: false,
         }
     }
 
@@ -42,6 +46,17 @@ impl OscScanner {
         buf.extend_from_slice(data);
         let mut events = Vec::new();
         let mut i = 0;
+        if self.discarding {
+            match find_osc_end(&buf, 0) {
+                Ok((end, term_len)) => i = end + term_len,
+                Err(Some(next)) => i = next,
+                Err(None) => {
+                    self.pending = trailing_esc(&buf);
+                    return Vec::new();
+                }
+            }
+            self.discarding = false;
+        }
         while i < buf.len() {
             if buf[i] == ESC && i + 1 < buf.len() && buf[i + 1] == b']' {
                 match find_osc_end(&buf, i + 2) {
@@ -68,10 +83,21 @@ impl OscScanner {
         let rest = &buf[i.min(buf.len())..];
         self.pending = rest[..rest.len().min(MAX_PENDING)].to_vec();
         if rest.len() > MAX_PENDING {
-            // Pathological run without terminator: drop to stay bounded.
-            self.pending.clear();
+            // Only an unterminated OSC carries this much: drop it to stay
+            // bounded and skip the rest of it.
+            self.discarding = true;
+            self.pending = trailing_esc(rest);
         }
         events
+    }
+}
+
+/// A trailing ESC may start the ST that ends a discarded OSC.
+fn trailing_esc(buf: &[u8]) -> Vec<u8> {
+    if buf.last() == Some(&ESC) {
+        vec![ESC]
+    } else {
+        Vec::new()
     }
 }
 
@@ -255,6 +281,32 @@ mod tests {
                 source: "osc777",
             }]
         );
+    }
+
+    #[test]
+    fn oversized_osc_terminator_is_not_a_bell() {
+        // OSC 52 clipboard writes routinely exceed the carry buffer.
+        let mut stream = b"\x1b]52;c;".to_vec();
+        stream.extend(std::iter::repeat_n(b'A', 3 * MAX_PENDING));
+        stream.extend_from_slice(b"\x07\x1b]9;after\x07");
+        let chunks: Vec<&[u8]> = stream.chunks(MAX_PENDING).collect();
+        assert_eq!(
+            scan(&chunks),
+            vec![OscEvent::Notify {
+                title: None,
+                body: "after".into(),
+                source: "osc9",
+            }]
+        );
+    }
+
+    #[test]
+    fn oversized_osc_st_split_across_chunks() {
+        let mut stream = b"\x1b]52;c;".to_vec();
+        stream.extend(std::iter::repeat_n(b'A', 2 * MAX_PENDING));
+        stream.push(ESC);
+        let ev = scan(&[&stream, b"\\plain\x07"]);
+        assert_eq!(ev, vec![OscEvent::Bell]);
     }
 
     #[test]
