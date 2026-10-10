@@ -156,6 +156,42 @@
   color: alpha(currentColor, 0.55);
 }
 
+/* ---- changes panel ----------------------------------------------------- */
+
+/* t3code's diff panel: quiet totals, directory labels opening each
+ * group, a file name per row and its counts in the diff colours. */
+/* The docked panel is a sidebar nested in the content pane, which
+ * libadwaita paints with the secondary-sidebar colours. Mirroring the
+ * main sidebar keeps both edges one plane in every theme. */
+window {
+  --secondary-sidebar-bg-color: var(--sidebar-bg-color);
+  --secondary-sidebar-fg-color: var(--sidebar-fg-color);
+  --secondary-sidebar-backdrop-color: var(--sidebar-backdrop-color);
+  --secondary-sidebar-border-color: var(--sidebar-border-color);
+  --secondary-sidebar-shade-color: var(--sidebar-shade-color);
+}
+.changes-summary {
+  font-size: 0.82em;
+  color: alpha(currentColor, 0.65);
+}
+.changes-dir {
+  padding: 10px 12px 2px 12px;
+  font-size: 0.82em;
+  font-weight: 600;
+  color: alpha(currentColor, 0.6);
+}
+.changes-list > row > box.header {
+  min-height: 34px;
+}
+.changes-stat {
+  font-size: 0.85em;
+  font-weight: 600;
+}
+.changes-stat .changes-tag {
+  font-weight: 500;
+  color: alpha(currentColor, 0.6);
+}
+
 /* ---- sidebar -------------------------------------------------------- */
 
 /* Three quiet lines: the name carries weight, the headline reads as

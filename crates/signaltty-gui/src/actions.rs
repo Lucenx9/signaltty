@@ -58,7 +58,7 @@ pub const ACTIONS: &[ActionDef] = &[
         handler: HandlerKind::ShowChanges,
         label: Some("Show Changes"),
         section: 0,
-        accel: None,
+        accel: Some("<Control><Shift>d"),
     },
     ActionDef {
         name: "show-board",
