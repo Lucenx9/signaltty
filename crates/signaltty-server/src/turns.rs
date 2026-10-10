@@ -123,6 +123,20 @@ pub async fn snapshot(cwd: &str) -> Result<Snapshot, ParamError> {
     Ok(Snapshot { root, tree })
 }
 
+/// The checkout root of `cwd`; a non-repo is `BAD_PARAMS`, as in the HEAD
+/// scope, even before any turn is recorded.
+pub async fn repo_root(cwd: &str) -> Result<String, ParamError> {
+    git(cwd, &["rev-parse", "--show-toplevel"], None)
+        .await
+        .map_err(|(c, e)| {
+            if c == code::BAD_PARAMS {
+                bad_params(format!("not a git repo: {cwd}"))
+            } else {
+                (c, e)
+            }
+        })
+}
+
 /// Changed files between two trees of one checkout.
 pub async fn changed_files(
     root: &str,

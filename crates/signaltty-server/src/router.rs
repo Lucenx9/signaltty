@@ -734,6 +734,7 @@ async fn h_workspace_diff(ctx: &Ctx, params: &Value) -> Handler {
         ),
         params::DiffScope::Turn => {
             let Some(baseline) = ctx.turns.get(&id) else {
+                crate::turns::repo_root(&cwd).await?;
                 let empty = crate::git::summarize(None, Vec::new());
                 return Ok((
                     json!({

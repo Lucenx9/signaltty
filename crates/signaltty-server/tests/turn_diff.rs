@@ -166,3 +166,34 @@ async fn turn_file_read_without_a_turn_is_bad_params() {
         .unwrap_err();
     assert!(err.contains("BAD_PARAMS"), "{err}");
 }
+
+#[tokio::test]
+async fn turn_scope_rejects_a_non_repo_before_any_turn() {
+    let dir = std::env::temp_dir().join(format!(
+        "signaltty-turn-nonrepo-{}-{}",
+        std::process::id(),
+        signaltty_core::ids::new_pane_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    // The temp root is the git ceiling so a TMPDIR inside a checkout is
+    // never discovered as a parent repo.
+    let ceiling = std::env::temp_dir();
+    let server =
+        TestServer::start_with_env(&[("GIT_CEILING_DIRECTORIES", ceiling.to_str().unwrap())]).await;
+    let mut client = server.client().await;
+    let workspace = client
+        .call("workspace.create", json!({"cwd": dir, "name": "plain"}))
+        .await
+        .unwrap()["workspace"]
+        .clone();
+    let err = client
+        .call(
+            "workspace.diff",
+            json!({"workspace_id": workspace["id"], "scope": "turn"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("BAD_PARAMS"), "{err}");
+    server.shutdown().await;
+    std::fs::remove_dir_all(&dir).ok();
+}
