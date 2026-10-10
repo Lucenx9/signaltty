@@ -749,7 +749,7 @@ impl Row {
         // second line should spend height on, so the row drops to name
         // and place (spec 039).
         self.activity
-            .set_visible(!quiet_headline(s) || self.tasks.is_visible());
+            .set_visible(!quiet_headline(s) || self.tasks.get_visible());
         let time = s.last_activity.map(time_ago).unwrap_or_default();
         // Attention dates from when it was raised; lifecycle from its change.
         let began = if s.attention == Attention::None {
@@ -1268,6 +1268,38 @@ mod tests {
         assert_eq!(s.headline(now), "Worked for 2m");
         s.message = Some("Bash(cargo test)".into());
         assert_eq!(s.headline(now), "Bash(cargo test)");
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn task_chips_bring_back_a_quiet_rows_activity_line() {
+        gtk4::init().unwrap();
+        let sidebar = Sidebar::new();
+        sidebar.update(vec![summary(
+            "ws",
+            Lifecycle::Unknown,
+            Attention::None,
+            None,
+        )]);
+        let activity = |sidebar: &Sidebar| sidebar.rows.borrow()[0].activity.get_visible();
+        assert!(
+            !activity(&sidebar),
+            "plain shell row drops its headline line"
+        );
+        let chip = TaskChipView {
+            kind: "Task",
+            label: "fix".into(),
+            show_label: true,
+            lineage: None,
+            state: "Working",
+            css_class: "task-working",
+            tooltip: "fix".into(),
+            accessible_name: "Task fix, Working".into(),
+        };
+        sidebar.set_task_chips(&[("ws".to_string(), vec![chip])].into());
+        assert!(activity(&sidebar), "chips live on that line, so it returns");
+        sidebar.set_task_chips(&Default::default());
+        assert!(!activity(&sidebar));
     }
 
     #[test]
