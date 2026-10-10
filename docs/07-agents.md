@@ -261,15 +261,17 @@ state unchanged (a transcript viewer or model picker is not a turn state).
 
 Agents without their own kind run as `generic` panes. A `generic` manifest
 that lists `binaries` applies its `[[screen]]` rules only to generic panes
-running one of those programs; without `binaries` it applies to every generic
+running one of those programs (an entry ending in `*` matches a prefix, e.g.
+`muse-bin-*`; detection overlays match the same way); without `binaries` it applies to every generic
 pane. The program is the spawn argv's basename, refreshed every 10 s from the
 deepest non-shell descendant; a `node` (`nodejs`), `bun`, `deno` or `python` runtime is
 named after the script it runs (`pane.explain` shows it as `process`).
 
 signaltty bundles rules for `pi`, `opencode`, `cursor`, `claude` and `codex`,
 and for the generic programs `gemini`, `copilot` (also `github-copilot`,
-`ghcs`), `droid`, `kilo` (`kilo-code`) and `qodercli` (`qoderclicn`, `qoder`,
-`qodercn`), ported from herdr (`crates/signaltty-agent/screen/`); each ends
+`ghcs`), `droid`, `kilo` (`kilo-code`), `qodercli` (`qoderclicn`, `qoder`,
+`qodercn`), `muse` (`muse-code`, `muse-cli`, `muse-bin-*`) and `agy`
+(`antigravity`, `antigravity-cli`), ported from herdr (`crates/signaltty-agent/screen/`); each ends
 with an `idle_fallback` rule (priority -1000, empty regex) so a known agent
 with no working or blocked sign reads as idle. User `[[screen]]` rules replace
 the bundled ones for the panes they apply to (a kind, or for generic panes a

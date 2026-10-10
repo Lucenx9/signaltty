@@ -21,6 +21,8 @@ const BUNDLED: &[&str] = &[
     include_str!("../screen/droid.toml"),
     include_str!("../screen/kilo.toml"),
     include_str!("../screen/qodercli.toml"),
+    include_str!("../screen/muse.toml"),
+    include_str!("../screen/antigravity.toml"),
 ];
 
 /// Bundled `[[screen]]` rules for a pane of `kind` running `process`, in
@@ -98,7 +100,17 @@ mod tests {
         }
         // Generic rules only apply to their own programs, shells excluded.
         for process in [
-            "gemini", "copilot", "ghcs", "droid", "kilo", "qodercli", "qoder",
+            "gemini",
+            "copilot",
+            "ghcs",
+            "droid",
+            "kilo",
+            "qodercli",
+            "qoder",
+            "muse",
+            "muse-bin-0.2.1-R708.1",
+            "agy",
+            "antigravity-cli",
         ] {
             let rules = bundled_screen_rules(AgentKind::Generic, process);
             assert!(!rules.is_empty(), "{process}");
@@ -732,5 +744,170 @@ mod tests {
         );
         assert_program("qodercli", "⠙ Reading files\n", Working, "spinner_working");
         assert_program("qodercli", "⠙\n", Idle, "idle_fallback");
+    }
+
+    #[test]
+    fn muse_screens() {
+        use ScreenState::*;
+        let m = "muse-bin-0.2.1";
+        assert_program(
+            m,
+            "Do you trust this workspace?\n  Trust and continue\n  Quit\n",
+            Blocked,
+            "workspace_trust_blocked",
+        );
+        assert_program(
+            m,
+            "Which file?\nEnter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt\n",
+            Blocked,
+            "pick_request_blocked",
+        );
+        assert_program(
+            m,
+            "Pick any\nEnter to toggle · ↑/↓ to move · Esc to interrupt\n",
+            Blocked,
+            "pick_request_blocked",
+        );
+        assert_program(
+            m,
+            "/theme\n  dark\nenter confirm · esc go back\n",
+            Hold,
+            "menu_overlay",
+        );
+        assert_program(
+            m,
+            "/skills\nspace toggle · type filter · esc close\n",
+            Hold,
+            "menu_overlay_filter",
+        );
+        assert_program(
+            m,
+            "◆ Working (12s · esc to interrupt)\n⟩ \n",
+            Working,
+            "working_esc_interrupt",
+        );
+        assert_program(
+            m,
+            "Run cargo test?\n  Allow this stage once\n  Always allow in this workspace\n",
+            Blocked,
+            "blocked_approval",
+        );
+        assert_program(
+            m,
+            "Allow once\nAllow for this session\n",
+            Blocked,
+            "blocked_approval",
+        );
+        // One approval phrase alone is ordinary text after a turn.
+        assert_program(
+            m,
+            "I can do that. Allow once?\n⟩ \nopus · high · ~/repo\n",
+            Idle,
+            "idle_prompt",
+        );
+        assert_program(m, "done\n⟩ \n", Idle, "idle_prompt");
+        assert_program(
+            m,
+            "done\nopus · high · ~/repo\n",
+            Idle,
+            "idle_status_fallback",
+        );
+        assert_program(m, "done\n", Idle, "idle_fallback");
+        // Every alternative of each rule, and each order-free pair reversed.
+        assert_program(
+            m,
+            "Network access requested.\n  Yes, proceed\n  Yes, don't ask again this session\n",
+            Blocked,
+            "blocked_approval",
+        );
+        assert_program(
+            m,
+            "Always allow in this workspace\nAllow this stage once\n",
+            Blocked,
+            "blocked_approval",
+        );
+        assert_program(
+            m,
+            "Do you trust this workspace?\n  Use Up/Down to select\n",
+            Blocked,
+            "workspace_trust_blocked",
+        );
+        assert_program(
+            m,
+            "/settings\nenter save · esc go back\n",
+            Hold,
+            "menu_overlay",
+        );
+        assert_program(m, "esc go back · enter confirm\n", Hold, "menu_overlay");
+        assert_program(
+            m,
+            "Which file?\nTab for an optional note · Enter to select\n",
+            Blocked,
+            "pick_request_blocked",
+        );
+    }
+
+    #[test]
+    fn antigravity_screens() {
+        use ScreenState::*;
+        let a = "agy";
+        assert_program(
+            a,
+            "Run: rm -rf build\n↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel\n",
+            Blocked,
+            "permission_prompt",
+        );
+        assert_program(
+            a,
+            "Which one?\n↑/↓ Navigate · enter Select · esc Skip\nesc to cancel\n",
+            Blocked,
+            "question_prompt",
+        );
+        assert_program(
+            a,
+            "Do you trust the contents of this project?\n> Yes, I trust this folder\n  No\n↑/↓ Navigate · enter Confirm\n",
+            Blocked,
+            "trust_prompt",
+        );
+        assert_program(
+            a,
+            "Requesting permission for: shell\nDo you want to proceed?\n",
+            Blocked,
+            "legacy_permission_prompt",
+        );
+        assert_program(
+            a,
+            "⠋ Thinking about the diff\n> \n──────────── esc to cancel\n",
+            Working,
+            "esc_cancel_footer_working",
+        );
+        assert_program(a, "⠙ Reading files\nmore\n> \n", Working, "spinner_working");
+        // The slash menu is idle: no `tab amend` / `esc skip` pair.
+        assert_program(
+            a,
+            "/help\n↑/↓ Navigate · enter Select · tab Complete\n? for shortcuts\n",
+            Idle,
+            "idle_fallback",
+        );
+        assert_program(a, "> \n? for shortcuts\n", Idle, "idle_fallback");
+        assert_program(
+            a,
+            "Requesting permission for: bash\ntab amend · edit command\n",
+            Blocked,
+            "legacy_permission_prompt",
+        );
+        assert_program(
+            a,
+            "Requesting permission for: bash\nedit command · tab amend\n",
+            Blocked,
+            "legacy_permission_prompt",
+        );
+        // A dialog hint row only counts in the last two lines.
+        assert_program(
+            a,
+            "↑/↓ Navigate · tab Amend\nesc to cancel\n> \n? for shortcuts\n",
+            Idle,
+            "idle_fallback",
+        );
     }
 }
