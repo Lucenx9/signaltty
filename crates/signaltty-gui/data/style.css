@@ -1163,12 +1163,16 @@ button.pill:focus-visible,
   box-shadow: 0 0 0 2px var(--accent-bg-color);
 }
 /* Selection is the ring alone: a filled card would tint the preview it
- * is meant to show. */
+ * is meant to show. Hover and press keep libadwaita's neutral 4% / 8%. */
 button.card.appearance-card:checked {
   background-image: none;
 }
 button.card.appearance-card:checked:hover {
   background-image: image(alpha(currentColor, 0.04));
+}
+button.card.appearance-card:checked:active,
+button.card.appearance-card:checked.keyboard-activating {
+  background-image: image(alpha(currentColor, 0.08));
 }
 
 /* ---- high contrast (last: equal specificity loses to source order) ------
