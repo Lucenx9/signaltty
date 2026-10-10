@@ -469,13 +469,19 @@ impl PaneWidget {
             name.as_str()
         });
         self.term.set_font(Some(&font));
+        self.term.set_cell_height_scale(CELL_HEIGHT_SCALE);
         let fg_hex = if sm.is_dark() {
             DARK_FOREGROUND
         } else {
             LIGHT_FOREGROUND
         };
         let rgba = |hex: &str| gtk4::gdk::RGBA::parse(hex).expect("palette colour");
-        let palette: Vec<gtk4::gdk::RGBA> = PALETTE.iter().map(|c| rgba(c)).collect();
+        let inks = if sm.is_dark() {
+            &DARK_PALETTE
+        } else {
+            &LIGHT_PALETTE
+        };
+        let palette: Vec<gtk4::gdk::RGBA> = inks.iter().map(|c| rgba(c)).collect();
         let palette: Vec<&gtk4::gdk::RGBA> = palette.iter().collect();
         self.term.set_colors(
             Some(&rgba(fg_hex)),
@@ -540,7 +546,8 @@ impl PaneWidget {
     /// Refresh header + ring from fresh pane state.
     pub fn update_meta(&self, pane: &Pane) {
         let live = matches!(pane.live, LiveState::Live);
-        self.title.set_text(&pane.title);
+        self.title
+            .set_text(display_title(&pane.title, &gtk4::glib::host_name()));
         self.title.set_tooltip_text(Some(&pane.cwd));
         let mut context: Vec<String> = Vec::new();
         if let Some(agent) = agent_name(pane.agent.kind) {
@@ -662,15 +669,99 @@ impl PaneWidget {
 const LIGHT_FOREGROUND: &str = "#241f31";
 const DARK_FOREGROUND: &str = "#deddda";
 
-/// GNOME palette (as in Console/Ptyxis): legible on both schemes.
-const PALETTE: [&str; 16] = [
+/// GNOME palette (as in Console/Ptyxis) on dark panes.
+const DARK_PALETTE: [&str; 16] = [
     "#241f31", "#c01c28", "#2ec27e", "#f5c211", "#1e78e4", "#9841bb", "#0ab9dc", "#c0bfbc",
     "#5e5c64", "#ed333b", "#57e389", "#f8e45c", "#51a1ff", "#c061cb", "#4fd2fd", "#f6f5f4",
 ];
 
+/// Light panes need their own inks: GNOME's yellow and greens are made for
+/// dark backgrounds and vanish on white (`git log` hashes, prompts). Every
+/// colour here reads at 4.5:1 or better on white except the two greys,
+/// which stay dim on purpose.
+const LIGHT_PALETTE: [&str; 16] = [
+    "#24292f", "#cf222e", "#116329", "#7d4e00", "#0969da", "#8250df", "#1b7c83", "#6e7781",
+    "#57606a", "#a40e26", "#1a7f37", "#9a6700", "#1b74d6", "#865fcc", "#2a7f93", "#8c959f",
+];
+
+/// Leading for the terminal grid: VTE's default packs rows edge to edge.
+const CELL_HEIGHT_SCALE: f64 = 1.1;
+
+/// Window titles from shells read `user@host: ~/path`; the header already
+/// says where the pane is, so a local `user@host:` prefix is noise. A
+/// different host (an SSH session) is information and stays.
+fn display_title<'a>(title: &'a str, local_host: &str) -> &'a str {
+    let trimmed = title.trim();
+    let short = |host: &str| host.split('.').next().unwrap_or(host).to_ascii_lowercase();
+    // `\u@\h: \w` and the space-less `\u@\h:\w` (only before a path).
+    let parts = trimmed.split_once(": ").or_else(|| {
+        trimmed
+            .split_once(':')
+            .filter(|(_, rest)| rest.starts_with(['~', '/']))
+    });
+    match parts {
+        Some((who, rest))
+            if !rest.is_empty()
+                && !who.contains(char::is_whitespace)
+                && who.split_once('@').is_some_and(|(user, host)| {
+                    !user.is_empty() && !host.is_empty() && short(host) == short(local_host)
+                }) =>
+        {
+            rest
+        }
+        _ => trimmed,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_titles_drop_the_user_at_host_prefix() {
+        let t = |title| display_title(title, "luxhole");
+        assert_eq!(t("simone@luxhole: ~/code/app"), "~/code/app");
+        assert_eq!(t("root@LuxHole.local: /"), "/", "short, case-blind host");
+        assert_eq!(
+            t("deploy@prod-1: /srv"),
+            "deploy@prod-1: /srv",
+            "a remote host is kept"
+        );
+        assert_eq!(t("claude"), "claude");
+        assert_eq!(t("vim: main.rs"), "vim: main.rs", "no @, kept");
+        assert_eq!(t("Note: a@b c"), "Note: a@b c", "@ after the colon");
+        assert_eq!(
+            t("a b@luxhole: x"),
+            "a b@luxhole: x",
+            "spaces before the colon"
+        );
+        assert_eq!(t("me@luxhole: "), "me@luxhole:", "nothing after it");
+        assert_eq!(t("me@luxhole:~/src"), "~/src", "no space before a path");
+        assert_eq!(t("me@luxhole:x"), "me@luxhole:x", "no space, not a path");
+    }
+
+    /// WCAG relative luminance contrast against white.
+    fn contrast_on_white(hex: &str) -> f64 {
+        let channel = |i: usize| {
+            let v = f64::from(u8::from_str_radix(&hex[i..i + 2], 16).unwrap()) / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let l = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+        1.05 / (l + 0.05)
+    }
+
+    #[test]
+    fn light_palette_inks_read_on_white() {
+        for (i, hex) in LIGHT_PALETTE.iter().enumerate() {
+            let floor = if matches!(i, 7 | 15) { 2.5 } else { 4.5 };
+            let ratio = contrast_on_white(hex);
+            assert!(ratio >= floor, "colour {i} {hex}: {ratio:.2}:1 < {floor}");
+        }
+    }
     use signaltty_core::DecisionOption;
 
     fn decision(answerable: bool) -> Decision {

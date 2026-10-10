@@ -2259,6 +2259,14 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
                 p.last_message = Some(msg.clone());
                 p.last_activity_at = Utc::now();
             }
+        } else if decision.lifecycle == Some(Lifecycle::Working) {
+            // A new turn makes the previous message stale ("session started",
+            // the last answer): rows show the run state until the turn speaks.
+            if let Some(p) = s.panes.get_mut(&pid) {
+                if p.lifecycle != Lifecycle::Working {
+                    p.last_message = None;
+                }
+            }
         }
         if let Some(lifecycle) = decision.lifecycle {
             s.set_lifecycle(&pid, lifecycle);
