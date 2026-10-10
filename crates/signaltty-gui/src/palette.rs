@@ -7,6 +7,7 @@ use libadwaita::prelude::*;
 use signaltty_core::Workspace;
 
 use crate::actions::ACTIONS;
+use crate::util::tilde;
 
 #[derive(Clone)]
 enum Target {
@@ -18,6 +19,8 @@ enum Target {
 struct Choice {
     label: String,
     detail: String,
+    /// Second line under the title; commands have none.
+    subtitle: Option<String>,
     accelerator: Option<&'static str>,
     target: Target,
 }
@@ -42,6 +45,7 @@ pub fn present(
     body.append(&entry);
     let list = gtk4::ListBox::new();
     list.add_css_class("boxed-list");
+    list.add_css_class("palette-list");
     list.set_valign(gtk4::Align::Start);
     list.set_margin_start(18);
     list.set_margin_end(18);
@@ -76,7 +80,8 @@ pub fn present(
         .iter()
         .map(|ws| Choice {
             label: ws.name.clone(),
-            detail: format!("Workspace · {}", ws.cwd),
+            detail: format!("Workspace · {}", tilde(&ws.cwd)),
+            subtitle: Some(tilde(&ws.cwd)),
             accelerator: None,
             target: Target::Workspace(ws.id.clone()),
         })
@@ -84,6 +89,7 @@ pub fn present(
             action.label.map(|label| Choice {
                 label: label.into(),
                 detail: "Command".into(),
+                subtitle: None,
                 accelerator: action.accel,
                 target: Target::Action(format!("win.{}", action.name)),
             })
@@ -111,7 +117,18 @@ pub fn present(
             .accelerator
             .and_then(gtk4::accelerator_parse)
             .map(|(key, modifiers)| gtk4::accelerator_get_label(key, modifiers));
-        row.set_subtitle(shortcut.as_deref().unwrap_or(&choice.detail));
+        // Commands are one line with their shortcut as a trailing hint
+        // (t3code palette); workspaces keep their location underneath.
+        if let Some(subtitle) = &choice.subtitle {
+            row.set_subtitle(subtitle);
+        }
+        if let Some(shortcut) = &shortcut {
+            let hint = gtk4::Label::new(Some(shortcut));
+            hint.add_css_class("palette-shortcut");
+            hint.add_css_class("numeric");
+            hint.set_valign(gtk4::Align::Center);
+            row.add_suffix(&hint);
+        }
         row.set_title_lines(2);
         row.set_subtitle_lines(2);
         row.set_tooltip_text(Some(&format!("{}\n{}", choice.label, choice.detail)));

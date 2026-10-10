@@ -143,6 +143,19 @@
 
 .workspace-tasks { margin-right: 2px; }
 
+/* ---- command palette --------------------------------------------------- */
+
+/* Denser than a settings list: commands are scanned, not read. */
+.palette-list > row > box.header {
+  min-height: 40px;
+}
+
+/* The shortcut is a quiet trailing hint, not a second line. */
+.palette-shortcut {
+  font-size: 0.82em;
+  color: alpha(currentColor, 0.55);
+}
+
 /* ---- sidebar -------------------------------------------------------- */
 
 /* Three quiet lines: the name carries weight, the headline reads as
