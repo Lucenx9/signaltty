@@ -288,6 +288,8 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::PANE_RESIZE => h_pane_resize(ctx, &req.params),
         method::PANE_SIGNAL => h_pane_signal(ctx, &req.params),
         method::PANE_READ => h_pane_read(ctx, &req.params),
+        method::PANE_CLEAR => h_pane_clear(ctx, &req.params),
+        method::PANE_WAIT_FOR_OUTPUT => return h_pane_wait_for_output(ctx, req, &req.params).await,
         method::PANE_ATTACH => h_pane_attach(ctx, &req.params),
         method::PANE_DETACH => h_pane_detach(ctx, &req.params),
         method::PANE_CLOSE => h_pane_close(ctx, &req.params),
@@ -1183,14 +1185,19 @@ fn h_pane_signal(ctx: &Ctx, params: &Value) -> Handler {
 
 fn h_pane_read(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::PaneRead = decode(params)?;
-    let id = p.pane_id;
+    Ok((read_pane(ctx, &p)?, ConnEffect::default()))
+}
+
+/// One `pane.read`; `pane.wait_for_output` polls through it.
+fn read_pane(ctx: &Ctx, p: &params::PaneRead) -> Result<Value, (String, String)> {
+    let id = p.pane_id.clone();
     {
         let s = ctx.store.read().unwrap();
         if !s.panes.contains_key(&id) {
             return Err((code::NO_SUCH_PANE.to_string(), id));
         }
     }
-    let mode = p.mode.unwrap_or(params::ReadMode::Tail);
+    let mode = p.mode.as_ref().unwrap_or(&params::ReadMode::Tail);
     let strip = p.strip_ansi.unwrap_or(true);
     let terms = ctx.ptys.terms();
     let terms = terms.lock().unwrap();
@@ -1202,35 +1209,26 @@ fn h_pane_read(ctx: &Ctx, params: &Value) -> Handler {
             } else {
                 text
             };
-            Ok((
-                json!({"text": text, "truncated": false}),
-                ConnEffect::default(),
-            ))
+            Ok(json!({"text": text, "truncated": false}))
         }
         params::ReadMode::Tail => {
             let n = p.lines.unwrap_or(200).min(5000) as usize;
             let lines = terms.tail(&id, n, strip).unwrap_or_default();
             let total = terms.ring_len(&id);
-            Ok((
-                json!({"text": lines.join("\n"), "truncated": total > lines.len()}),
-                ConnEffect::default(),
-            ))
+            Ok(json!({"text": lines.join("\n"), "truncated": total > lines.len()}))
         }
         params::ReadMode::Rendered => {
             let n = p.lines.unwrap_or(200).min(5000) as usize;
             let after = p.after_seq.unwrap_or(0);
             match terms.rendered(&id, after, n) {
                 None => Err((code::NO_SUCH_PANE.to_string(), id)),
-                Some(r) => Ok((
-                    json!({
-                        "text": r.text,
-                        "seq": r.seq,
-                        "next_seq": r.next_seq,
-                        "dropped": r.dropped,
-                        "truncated": r.truncated,
-                    }),
-                    ConnEffect::default(),
-                )),
+                Some(r) => Ok(json!({
+                    "text": r.text,
+                    "seq": r.seq,
+                    "next_seq": r.next_seq,
+                    "dropped": r.dropped,
+                    "truncated": r.truncated,
+                })),
             }
         }
     }
@@ -2177,6 +2175,86 @@ async fn h_wait(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffe
             }
         }
     }
+}
+
+/// Poll `pane.read` until a line matches (spec 036). In `rendered` mode the
+/// cursor advances, so only output newer than `after_seq` can match.
+async fn h_pane_wait_for_output(
+    ctx: &Ctx,
+    req: &Request,
+    params: &Value,
+) -> (Response, ConnEffect) {
+    let respond = |result: Result<Value, (String, String)>| {
+        (
+            match result {
+                Ok(value) => Response::ok(&req.id, value),
+                Err((code, message)) => Response::err(&req.id, &code, message),
+            },
+            ConnEffect::default(),
+        )
+    };
+    let mut p: params::PaneWaitForOutput = match decode(params) {
+        Ok(p) => p,
+        Err(e) => return respond(Err(e)),
+    };
+    let regex = match p.regex.unwrap_or(false) {
+        false => None,
+        true => match regex::Regex::new(&p.pattern) {
+            Ok(re) => Some(re),
+            Err(e) => return respond(Err(bad_params(format!("invalid regex: {e}")))),
+        },
+    };
+    let Some(deadline) =
+        tokio::time::Instant::now().checked_add(Duration::from_secs(p.timeout_s.unwrap_or(3600)))
+    else {
+        return respond(Err(bad_params("wait timeout is too large")));
+    };
+    let rendered = matches!(p.read.mode, Some(params::ReadMode::Rendered));
+    let mut tick = tokio::time::interval(Duration::from_millis(100));
+    loop {
+        // Checked before the read: output written before the exit still counts.
+        let live = ctx.ptys.is_live(&p.read.pane_id);
+        let mut read = match read_pane(ctx, &p.read) {
+            Ok(read) => read,
+            Err(e) => return respond(Err(e)),
+        };
+        let matched = read["text"]
+            .as_str()
+            .unwrap_or("")
+            .lines()
+            .find(|line| match &regex {
+                Some(re) => re.is_match(line),
+                None => line.contains(&p.pattern),
+            })
+            .map(str::to_string);
+        if let Some(line) = matched {
+            read["matched_line"] = json!(line);
+            return respond(Ok(read));
+        }
+        if !live {
+            return respond(Err((
+                code::PANE_EXITED.into(),
+                "pane exited without a match".into(),
+            )));
+        }
+        if rendered {
+            p.read.after_seq = read["next_seq"].as_u64();
+        }
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(deadline) => return respond(Err((code::TIMEOUT.into(), format!("timed out waiting for {:?}", p.pattern)))),
+            _ = tick.tick() => {},
+        }
+    }
+}
+
+fn h_pane_clear(ctx: &Ctx, params: &Value) -> Handler {
+    let p: params::PaneId = decode(params)?;
+    if !ctx.store.read().unwrap().panes.contains_key(&p.pane_id) {
+        return Err((code::NO_SUCH_PANE.to_string(), p.pane_id));
+    }
+    ctx.ptys.clear(&p.pane_id);
+    Ok((json!({}), ConnEffect::default()))
 }
 
 fn h_next_unread(ctx: &Ctx) -> Handler {

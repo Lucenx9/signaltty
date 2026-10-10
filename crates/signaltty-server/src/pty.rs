@@ -72,6 +72,9 @@ pub struct PtyHandle {
     master: Box<dyn portable_pty::MasterPty + Send>,
     writer: SharedWriter,
     child_pid: Option<u32>,
+    /// Held per output chunk, so injected output (`clear`) never interleaves
+    /// with the reader's chunks and stream offsets stay in order.
+    output: Arc<Mutex<OscScanner>>,
 }
 
 impl Drop for PtyHandle {
@@ -239,6 +242,7 @@ impl PtyManager {
             .spawn_command(cmd)
             .map_err(|e| format!("spawn failed: {e:#}"))?;
         let child_pid = child.process_id();
+        let output = Arc::new(Mutex::new(OscScanner::new()));
         self.terms
             .lock()
             .unwrap()
@@ -253,6 +257,7 @@ impl PtyManager {
                     queue: Arc::new(tokio::sync::Mutex::new(())),
                 }),
                 child_pid,
+                output: output.clone(),
             },
         );
         drop(previous);
@@ -262,7 +267,7 @@ impl PtyManager {
         let pane_id = req.pane_id.clone();
         std::thread::Builder::new()
             .name(format!("pty-pump-{pane_id}"))
-            .spawn(move || pump.run(pane_id, Box::new(reader), child))
+            .spawn(move || pump.run(pane_id, Box::new(reader), child, output))
             .map_err(|e| format!("pump thread failed: {e}"))?;
 
         Ok(integration)
@@ -273,13 +278,13 @@ impl PtyManager {
         pane_id: String,
         mut reader: Box<dyn Read + Send>,
         mut child: Box<dyn portable_pty::Child + Send + Sync>,
+        output: Arc<Mutex<OscScanner>>,
     ) {
         let mut buf = [0u8; 8192];
-        let mut scanner = OscScanner::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
-                Ok(n) => self.on_output(&pane_id, &buf[..n], &mut scanner),
+                Ok(n) => self.on_output(&pane_id, &buf[..n], &mut output.lock().unwrap()),
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break, // EIO after child death is normal.
             }
@@ -323,6 +328,23 @@ impl PtyManager {
                 }),
             });
         }
+    }
+
+    /// `pane.clear`: ED goes through the output path, so the server grid and
+    /// every attached view clear at one stream offset; then drop the history.
+    pub fn clear(&self, pane_id: &str) {
+        let output = self
+            .handles
+            .lock()
+            .unwrap()
+            .get(pane_id)
+            .map(|h| h.output.clone());
+        // An exited pane has no reader left to interleave with.
+        let mut idle = OscScanner::new();
+        let mut held = output.as_ref().map(|o| o.lock().unwrap());
+        let scanner = held.as_deref_mut().unwrap_or(&mut idle);
+        self.on_output(pane_id, b"\x1b[H\x1b[2J\x1b[3J", scanner);
+        self.terms.lock().unwrap().clear_history(pane_id);
     }
 
     fn on_osc_event(&self, pane_id: &str, ev: OscEvent) {

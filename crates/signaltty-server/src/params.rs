@@ -252,6 +252,16 @@ pub struct PaneRead {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PaneWaitForOutput {
+    #[serde(flatten)]
+    pub read: PaneRead,
+    #[serde(rename = "match")]
+    pub pattern: String,
+    pub regex: Option<bool>,
+    pub timeout_s: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PaneAttach {
     pub pane_id: String,
     pub cols: Option<u16>,
