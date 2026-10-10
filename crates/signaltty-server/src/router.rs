@@ -883,11 +883,13 @@ pub(crate) fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     pane.task_id = p.task_id;
     pane.agent.config_env = env
         .iter()
-        .filter(|(key, _)| {
-            matches!(
-                key.as_str(),
-                "CLAUDE_CONFIG_DIR" | "CODEX_HOME" | "OPENCODE_CONFIG_DIR"
-            )
+        .filter(|(key, value)| {
+            // An empty value means "unset", not the launch directory.
+            !value.is_empty()
+                && matches!(
+                    key.as_str(),
+                    "CLAUDE_CONFIG_DIR" | "CODEX_HOME" | "OPENCODE_CONFIG_DIR"
+                )
         })
         .map(|(key, value)| {
             let path = std::path::Path::new(value);

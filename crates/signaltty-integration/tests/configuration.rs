@@ -453,3 +453,30 @@ fn relative_provider_roots_resolve_against_launch_directory() {
     );
     assert!(!f.home.join(".codex/hooks.json").exists());
 }
+
+#[test]
+fn empty_provider_overrides_keep_the_default_roots() {
+    // An empty `CODEX_HOME=` must not resolve to the launch directory and
+    // drop hooks.json / settings.json into the project itself.
+    let f = Fixture::new();
+    let cwd = f.home.join("project");
+    fs::create_dir_all(&cwd).unwrap();
+    let env = std::collections::HashMap::from([
+        ("CLAUDE_CONFIG_DIR".to_string(), String::new()),
+        ("CODEX_HOME".to_string(), String::new()),
+        ("OPENCODE_CONFIG_DIR".to_string(), String::new()),
+    ]);
+    let hooks = f.hooks.clone().with_overrides(&env, &cwd);
+    assert_eq!(
+        hooks.file_for("codex").unwrap(),
+        f.home.join(".codex/hooks.json")
+    );
+    assert_eq!(
+        hooks.file_for("claude").unwrap(),
+        f.home.join(".claude/settings.json")
+    );
+    assert_eq!(
+        hooks.file_for("opencode").unwrap(),
+        f.home.join("config/opencode/plugins/signaltty.js")
+    );
+}
