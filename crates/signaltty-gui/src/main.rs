@@ -6,6 +6,7 @@ mod actor;
 mod app;
 mod board;
 mod changes;
+mod details;
 mod dividers;
 mod metrics;
 mod new_workspace;
