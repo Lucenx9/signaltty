@@ -406,6 +406,25 @@ enum PaneOp {
         #[arg(long)]
         raw: bool,
     },
+    /// Block until a line of the pane's output contains (or matches) a pattern.
+    WaitOutput {
+        id: String,
+        pattern: String,
+        #[arg(long)]
+        regex: bool,
+        #[arg(long, value_parser = ["screen", "tail", "rendered"], default_value = "tail")]
+        mode: String,
+        #[arg(long, default_value_t = 200)]
+        lines: u64,
+        #[arg(long)]
+        after_seq: Option<u64>,
+        #[arg(long, default_value_t = 3600)]
+        timeout: u64,
+    },
+    /// Blank the pane's screen and scrollback in every view.
+    Clear {
+        id: String,
+    },
     Attach {
         id: String,
     },
@@ -1472,6 +1491,27 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                     } else {
                         println!("{}", r["text"].as_str().unwrap_or(""));
                     }
+                    Ok(())
+                }
+                PaneOp::WaitOutput {
+                    id,
+                    pattern,
+                    regex,
+                    mode,
+                    lines,
+                    after_seq,
+                    timeout,
+                } => {
+                    let r = c
+                        .call("pane.wait_for_output", json!({"pane_id": id, "match": pattern, "regex": regex, "mode": mode, "lines": lines, "after_seq": after_seq, "timeout_s": timeout}))
+                        .await?;
+                    let line = r["matched_line"].as_str().unwrap_or("").to_string();
+                    emit(json, &r, line);
+                    Ok(())
+                }
+                PaneOp::Clear { id } => {
+                    let r = c.call("pane.clear", json!({"pane_id": id})).await?;
+                    emit(json, &r, format!("cleared {id}"));
                     Ok(())
                 }
                 PaneOp::Close { id } => {
