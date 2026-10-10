@@ -66,6 +66,8 @@ clients can `subscribe {from_seq}` to replay.
 | `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
 | `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?, parent_pane_id?, label?, relationship?, task_id?}` | `{pane, integration?}` |
 | `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane, integration?}` (new sibling) |
+| `pane.swap` | `{pane_id, target_pane_id}` | `{tabs}` (touched tabs; each pane takes the other's slot) |
+| `pane.move` | `{pane_id, target_pane_id, direction?: "right"\|"down"}` | `{tabs}` (touched tabs; re-split next to the target) |
 | `pane.get` | `{pane_id}` | `{pane, wait_baseline}` |
 | `pane.input` | `{pane_id, data_b64}` | `{written}`; five-second input budget, stalled input → `TIMEOUT`, closed bound PTY → `PANE_EXITED`; write failures carry `details.written_bytes` (kernel-accepted prefix, `null` if a worker failure makes it unknown); no automatic retry |
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
@@ -303,6 +305,15 @@ foreign or repeated pane IDs return `BAD_PARAMS` without mutation. Split ratios
 must be finite and clamp to 0.05–0.95. Layout replacement arranges existing
 panes; `pane.close` deletes one.
 
+`pane.swap` and `pane.move` rearrange live panes without touching their
+processes. Both panes must be distinct, in one workspace and in their tab
+layouts, else `BAD_PARAMS`. Swap keeps the tree shape and ratios; across tabs
+each pane changes tab and the tab's focus stays on its slot. Move removes the
+pane (collapsing its parent; a tab left without panes becomes empty, as after
+`pane.close`) and splits the target, evening out the run like `pane.split`.
+Each touched tab emits `tab.updated`; a pane that changed tab emits
+`pane.updated`. Zoom stays a per-window GUI view, so there is no `pane.zoom`.
+
 `tab.set_ratio` moves one divider: `path` holds 0 (first) / 1
 (second) choices from the tab root (`[]` = root) and must resolve to
 a `Split`, else `BAD_PARAMS`. `ratio` is clamped to 0.05–0.95 so a
@@ -411,6 +422,8 @@ defaults to `--until settled`; `finish` needs `--merge` or `--discard`);
 `signaltty pane read … --mode rendered [--after-seq N]` → `pane.read`;
 `signaltty pane wait-output <id> <pattern> [--regex] [--mode …] [--after-seq N]
 [--timeout S] [--raw]` → `pane.wait_for_output`; `signaltty pane clear <id>` → `pane.clear`;
+`signaltty pane swap <id> <target>` → `pane.swap`; `signaltty pane move <id> <target>
+[--direction right|down]` → `pane.move`;
 `signaltty pane spawn … [--parent-pane …] [--label …] [--relationship …]` →
 `pane.spawn`; `signaltty attention [--limit N]` → `attention.pending`.
 `signaltty schema` prints the live contract (same constants the router
