@@ -77,6 +77,16 @@ async fn a_named_pane_is_addressable_by_name_and_survives_restart() {
     )
     .await
     .unwrap();
+    // Layout leaves take names too.
+    let tab = g["pane"]["tab_id"].clone();
+    c.call(
+        "tab.set_layout",
+        json!({"tab_id": tab, "layout": {"type": "split", "dir": "down", "ratio": 0.3,
+            "first": {"type": "pane", "pane_id": "worker-1"},
+            "second": {"type": "pane", "pane_id": a}}}),
+    )
+    .await
+    .unwrap();
     // Renaming by name and to the same name is fine.
     c.call(
         "pane.rename",

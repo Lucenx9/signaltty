@@ -359,19 +359,50 @@ const PANE_ID_FIELDS: [&str; 3] = ["pane_id", "target_pane_id", "parent_pane_id"
 fn with_pane_names(ctx: &Ctx, params: &Value) -> Option<Value> {
     let obj = params.as_object()?;
     let s = ctx.store.read().unwrap();
+    let id_of = |raw: &str| {
+        if s.panes.contains_key(raw) {
+            return None;
+        }
+        let pane = s.panes.values().find(|p| p.name.as_deref() == Some(raw))?;
+        Some(pane.id.clone())
+    };
+    // Clone lazily: most requests carry no names, and `pane.input` may be large.
     let mut out: Option<Value> = None;
     for field in PANE_ID_FIELDS {
-        let Some(raw) = obj.get(field).and_then(Value::as_str) else {
-            continue;
-        };
-        if s.panes.contains_key(raw) {
-            continue;
+        if let Some(id) = obj.get(field).and_then(Value::as_str).and_then(id_of) {
+            out.get_or_insert_with(|| params.clone())[field] = json!(id);
         }
-        if let Some(pane) = s.panes.values().find(|p| p.name.as_deref() == Some(raw)) {
-            out.get_or_insert_with(|| params.clone())[field] = json!(pane.id);
+    }
+    // `tab.set_layout` trees name panes in their leaves.
+    if obj.contains_key("layout") {
+        let mut next = out.clone().unwrap_or_else(|| params.clone());
+        if resolve_leaves(&mut next["layout"], &id_of) {
+            out = Some(next);
         }
     }
     out
+}
+
+fn resolve_leaves(node: &mut Value, id_of: &impl Fn(&str) -> Option<String>) -> bool {
+    match node.get("type").and_then(Value::as_str) {
+        Some("pane") => match node.get("pane_id").and_then(Value::as_str).and_then(id_of) {
+            Some(id) => {
+                node["pane_id"] = json!(id);
+                true
+            }
+            None => false,
+        },
+        Some("split") => {
+            let mut changed = false;
+            for side in ["first", "second"] {
+                if let Some(child) = node.get_mut(side) {
+                    changed |= resolve_leaves(child, id_of);
+                }
+            }
+            changed
+        }
+        _ => false,
+    }
 }
 
 /// herdr's agent-name rule: a lowercase slug of at most 32 bytes.
