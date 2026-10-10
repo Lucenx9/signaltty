@@ -282,21 +282,26 @@ background IPC connection with a 90-second deadline, so approvals and normal
 control traffic keep flowing. An uncertain mutation is never automatically
 replayed.
 
-Show Changes reads `workspace.diff` only on open or explicit Refresh. Its heading
-says "Changes against HEAD" and shows aggregate file/line counts. Each tracked
-text file has its own added/removed counts; binary and untracked entries carry
-explicit labels. It does not imply a per-turn diff. Workspace names, paths and
-file names render literally, including `<`, `>` and `&`.
+Show Changes (Ctrl+Shift+D, header toggle, palette, main menu) docks a panel at
+the window's right edge, beside the terminals, in an end-side
+`AdwOverlaySplitView`. Below 1100sp it overlays the content; below 760sp the
+header toggle hides so the header fits 360px. The panel reads `workspace.diff`
+when opened, when the active workspace changes while it is open, and on explicit
+Refresh; a closed panel does no reads. Its summary says "Changes against HEAD"
+with aggregate file/line counts. Files sort by path under a directory label per
+group; each row shows the file name (full path in the tooltip) and `+N −N` in the
+diff colours, or "Untracked"/"Binary". It does not imply a per-turn diff.
+Workspace names, paths and file names render literally, including `<`, `>` and `&`.
 
-Activating a file opens a full-width reader in the same native dialog, using
+Activating a file pushes a reader inside the same panel, using
 `workspace.file_diff`. Back returns to the preserved file list and row focus.
 The selectable, noneditable monospace view shows hunk headings, old/new line
 numbers, context, and explicit added/removed signs. Semantic text colors support
 light and dark themes; long code lines scroll within the reader. New text files
 show additions. Binary, unchanged, unavailable and incomplete previews have
 explicit notices. Refresh invalidates the old patch and reads the current
-summary. The reader ignores replies superseded by selection, Back, refresh or
-dialog closure. File reads use a dedicated connection with a ten-second deadline
+summary. The reader ignores replies superseded by selection, Back, refresh or a
+workspace switch. File reads use a dedicated connection with a ten-second deadline
 and never alter terminal widgets. See [ADR-0016](adr/0016-file-diff-review.md).
 
 The display tests `navigation_palette_fast_enter_and_git_dialogs_use_native_controls`,

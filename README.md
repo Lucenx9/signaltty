@@ -85,8 +85,9 @@ GUI shortcuts (Ctrl+Shift, so plain Ctrl chords reach the terminal):
 
 The main menu also offers **Worktrees** and **Show Changes**. Worktrees lists
 Git's registered checkouts and opens each as a workspace. Create a checkout
-on a new branch to isolate another agent's edits. **Show Changes** displays
-working-tree changes against HEAD, with per-file counts and binary/untracked
+on a new branch to isolate another agent's edits. **Show Changes**
+(Ctrl+Shift+D) docks a panel beside the terminals with working-tree changes
+against HEAD, grouped by directory, with per-file counts and binary/untracked
 labels. Pane zoom changes only the view; saved divider ratios stay intact.
 
 The same checkout operations are available to scripts:

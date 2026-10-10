@@ -99,10 +99,6 @@ fn clear(rows: &gtk4::ListBox) {
     }
 }
 
-pub fn changes(window: &adw::ApplicationWindow, actor: IpcHandle, workspace: &str) {
-    crate::changes::present(window, actor, workspace);
-}
-
 #[derive(Deserialize)]
 struct Worktree {
     path: String,

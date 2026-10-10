@@ -85,6 +85,10 @@ pub struct App {
     toasts: adw::ToastOverlay,
     banner: adw::Banner,
     split_view: adw::OverlaySplitView,
+    /// Right-hand split: workspace content, with the Changes panel
+    /// docked at the end (overlaid on narrow windows).
+    changes_split: adw::OverlaySplitView,
+    changes: crate::changes::ChangesPanel,
     sidebar_overlay: gtk4::Overlay,
     title: gtk4::Label,
     title_context: gtk4::Label,
@@ -269,6 +273,11 @@ impl App {
         btn_new_tab.update_property(&[gtk4::accessible::Property::Label("New Tab")]);
         btn_new_tab.set_action_name(Some("win.new-tab"));
         header.pack_end(&btn_new_tab);
+        let btn_changes = gtk4::ToggleButton::new();
+        btn_changes.set_icon_name("sidebar-show-right-symbolic");
+        btn_changes.set_tooltip_text(Some("Changes (Ctrl+Shift+D)"));
+        btn_changes.update_property(&[gtk4::accessible::Property::Label("Changes")]);
+        header.pack_end(&btn_changes);
         let attention = Self::attention_button();
         header.pack_end(&attention.revealer);
 
@@ -317,19 +326,48 @@ impl App {
         content_page.add_top_bar(&tab_bar);
         content_page.set_content(Some(&content));
 
+        let changes = crate::changes::ChangesPanel::new(actor.clone());
+        let changes_split = adw::OverlaySplitView::new();
+        changes_split.set_sidebar_position(gtk4::PackType::End);
+        changes_split.set_sidebar_width_unit(adw::LengthUnit::Px);
+        changes_split.set_min_sidebar_width(320.0);
+        changes_split.set_max_sidebar_width(440.0);
+        changes_split.set_sidebar_width_fraction(0.36);
+        changes_split.set_show_sidebar(false);
+        changes_split.set_sidebar(Some(&changes.widget));
+        changes_split.set_content(Some(&content_page));
+        changes_split
+            .bind_property("show-sidebar", &btn_changes, "active")
+            .bidirectional()
+            .sync_create()
+            .build();
+
         let split_view = adw::OverlaySplitView::new();
         split_view.set_sidebar_width_unit(adw::LengthUnit::Px);
         split_view.set_sidebar(Some(&sidebar_overlay));
-        split_view.set_content(Some(&content_page));
+        split_view.set_content(Some(&changes_split));
         split_view.set_min_sidebar_width(260.0);
         split_view.set_max_sidebar_width(340.0);
         split_view.set_sidebar_width_fraction(0.24);
 
+        // Only the last matching breakpoint applies, so the wider one
+        // goes first and the narrow one repeats its setters.
+        // Below 1100sp the docked panel would squeeze the terminals: it
+        // overlays them instead.
+        let medium = adw::Breakpoint::new(
+            adw::BreakpointCondition::parse("max-width: 1100sp").expect("breakpoint"),
+        );
+        medium.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
+        window.add_breakpoint(medium);
         // Narrow windows: the sidebar overlays instead of squeezing panes.
         let narrow = adw::Breakpoint::new(
             adw::BreakpointCondition::parse("max-width: 760sp").expect("breakpoint"),
         );
         narrow.add_setter(&split_view, "collapsed", Some(&true.to_value()));
+        narrow.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
+        // The header must fit 360px (spec 024); Changes stays on its
+        // shortcut, the palette and the main menu.
+        narrow.add_setter(&btn_changes, "visible", Some(&false.to_value()));
         window.add_breakpoint(narrow);
 
         let toasts = adw::ToastOverlay::new();
@@ -341,6 +379,8 @@ impl App {
             toasts,
             banner,
             split_view,
+            changes_split,
+            changes,
             sidebar_overlay,
             title,
             title_context,
@@ -500,6 +540,14 @@ impl App {
     }
 
     fn connect_signals(&self) {
+        // Opening the Changes panel loads the active workspace. Closing it
+        // needs nothing: the split view hands focus back to the content.
+        let w = self.weak();
+        self.changes_split.connect_show_sidebar_notify(move |_| {
+            if let Some(a) = w.upgrade() {
+                a.sync_changes();
+            }
+        });
         // Sidebar selection (guard: programmatic re-select is a no-op).
         let w = self.weak();
         self.sidebar.set_on_select(move |ws_id| {
@@ -1005,6 +1053,7 @@ impl App {
                 self.title_context.set_visible(false);
                 self.title_context.set_tooltip_text(None);
                 self.content.set_visible_child_name("no-workspace");
+                self.follow_changes();
             }
         }
         {
@@ -1223,6 +1272,7 @@ impl App {
             self.navigate();
         }
         self.title.set_text(&self.display_title(&ws));
+        self.follow_changes();
         sidebar::set_mark(&self.title_mark, &ws.id, &ws.name);
         self.title_mark.set_visible(true);
         // Agent workspaces show their agents; shells show their location.
@@ -2000,8 +2050,34 @@ impl App {
     }
 
     fn action_show_changes(&self) {
-        if let Some(id) = self.active_ws_id() {
-            crate::workspace_dialogs::changes(&self.window, self.actor.clone(), &id);
+        let open = !self.changes_split.shows_sidebar();
+        self.changes_split.set_show_sidebar(open);
+        if open {
+            self.changes.focus();
+        }
+    }
+
+    /// Opening the panel reads the active workspace; a closed panel does
+    /// no reads.
+    fn sync_changes(&self) {
+        if !self.changes_split.shows_sidebar() {
+            return;
+        }
+        match self.active_ws_id() {
+            Some(id) => self.changes.show(&id),
+            None => self.changes.clear(),
+        }
+    }
+
+    /// While open, the panel moves with the active workspace but does not
+    /// re-read it: the model re-shows the workspace on every agent event.
+    fn follow_changes(&self) {
+        if !self.changes_split.shows_sidebar() {
+            return;
+        }
+        match self.active_ws_id() {
+            Some(id) => self.changes.follow(&id),
+            None => self.changes.clear(),
         }
     }
 
