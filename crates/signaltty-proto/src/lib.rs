@@ -142,6 +142,8 @@ pub mod method {
     pub const TAB_SET_RATIO: &str = "tab.set_ratio";
     pub const PANE_SPAWN: &str = "pane.spawn";
     pub const PANE_SPLIT: &str = "pane.split";
+    pub const PANE_SWAP: &str = "pane.swap";
+    pub const PANE_MOVE: &str = "pane.move";
     pub const PANE_GET: &str = "pane.get";
     pub const PANE_INPUT: &str = "pane.input";
     pub const PANE_RESIZE: &str = "pane.resize";
@@ -205,6 +207,8 @@ pub mod method {
         TAB_SET_RATIO,
         PANE_SPAWN,
         PANE_SPLIT,
+        PANE_SWAP,
+        PANE_MOVE,
         PANE_GET,
         PANE_INPUT,
         PANE_RESIZE,

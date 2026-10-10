@@ -222,6 +222,19 @@ pub struct PaneSplit {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PaneSwap {
+    pub pane_id: String,
+    pub target_pane_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PaneMove {
+    pub pane_id: String,
+    pub target_pane_id: String,
+    pub direction: Option<SplitDirection>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PaneInput {
     pub pane_id: String,
     pub data_b64: String,
