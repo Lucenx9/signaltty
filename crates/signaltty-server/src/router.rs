@@ -241,97 +241,94 @@ fn pane_result(pane: &Pane) -> Value {
 }
 
 pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
+    let named = with_pane_names(ctx, &req.params);
+    let params = named.as_ref().unwrap_or(&req.params);
     let out: Handler = match req.method.as_str() {
-        method::SERVER_STATUS => h_server_status(ctx, &req.params),
-        method::SERVER_SHUTDOWN => h_server_shutdown(ctx, &req.params),
+        method::SERVER_STATUS => h_server_status(ctx, params),
+        method::SERVER_SHUTDOWN => h_server_shutdown(ctx, params),
         method::SERVER_SCHEMA => h_server_schema(),
-        method::WORKSPACE_CREATE => h_workspace_create(ctx, &req.params),
+        method::WORKSPACE_CREATE => h_workspace_create(ctx, params),
         method::WORKSPACE_LIST => h_workspace_list(ctx),
-        method::WORKSPACE_GET => h_workspace_get(ctx, &req.params),
-        method::WORKSPACE_RENAME => h_workspace_rename(ctx, &req.params),
-        method::WORKSPACE_CLOSE => h_workspace_close(ctx, &req.params),
-        method::WORKSPACE_REFRESH_GIT => h_workspace_refresh_git(ctx, &req.params),
-        method::WORKSPACE_DIFF => h_workspace_diff(ctx, &req.params),
-        method::WORKSPACE_FILE_DIFF => h_workspace_file_diff(ctx, &req.params).await,
-        method::WORKTREE_LIST => match decode::<params::WorkspaceId>(&req.params) {
+        method::WORKSPACE_GET => h_workspace_get(ctx, params),
+        method::WORKSPACE_RENAME => h_workspace_rename(ctx, params),
+        method::WORKSPACE_CLOSE => h_workspace_close(ctx, params),
+        method::WORKSPACE_REFRESH_GIT => h_workspace_refresh_git(ctx, params),
+        method::WORKSPACE_DIFF => h_workspace_diff(ctx, params),
+        method::WORKSPACE_FILE_DIFF => h_workspace_file_diff(ctx, params).await,
+        method::WORKTREE_LIST => match decode::<params::WorkspaceId>(params) {
             Ok(p) => crate::worktrees::list(ctx, p)
                 .await
                 .map(|v| (v, ConnEffect::default())),
             Err(e) => Err(e),
         },
-        method::WORKTREE_CREATE => match decode::<params::WorktreeCreate>(&req.params) {
+        method::WORKTREE_CREATE => match decode::<params::WorktreeCreate>(params) {
             Ok(p) => crate::worktrees::create(ctx, p)
                 .await
                 .map(|v| (v, ConnEffect::default())),
             Err(e) => Err(e),
         },
-        method::WORKTREE_OPEN => match decode::<params::WorktreeOpen>(&req.params) {
+        method::WORKTREE_OPEN => match decode::<params::WorktreeOpen>(params) {
             Ok(p) => crate::worktrees::open(ctx, p)
                 .await
                 .map(|v| (v, ConnEffect::default())),
             Err(e) => Err(e),
         },
-        method::WORKTREE_REMOVE => match decode::<params::WorktreeRemove>(&req.params) {
+        method::WORKTREE_REMOVE => match decode::<params::WorktreeRemove>(params) {
             Ok(p) => crate::worktrees::remove(ctx, p)
                 .await
                 .map(|v| (v, ConnEffect::default())),
             Err(e) => Err(e),
         },
-        method::TAB_CREATE => h_tab_create(ctx, &req.params),
-        method::TAB_CLOSE => h_tab_close(ctx, &req.params),
-        method::TAB_SET_LAYOUT => h_tab_set_layout(ctx, &req.params),
-        method::TAB_SET_RATIO => h_tab_set_ratio(ctx, &req.params),
-        method::PANE_SPAWN => h_pane_spawn(ctx, &req.params),
-        method::PANE_SPLIT => h_pane_split(ctx, &req.params),
-        method::PANE_SWAP => h_pane_swap(ctx, &req.params),
-        method::PANE_MOVE => h_pane_move(ctx, &req.params),
-        method::PANE_GET => h_pane_get(ctx, &req.params),
+        method::TAB_CREATE => h_tab_create(ctx, params),
+        method::TAB_CLOSE => h_tab_close(ctx, params),
+        method::TAB_SET_LAYOUT => h_tab_set_layout(ctx, params),
+        method::TAB_SET_RATIO => h_tab_set_ratio(ctx, params),
+        method::PANE_SPAWN => h_pane_spawn(ctx, params),
+        method::PANE_SPLIT => h_pane_split(ctx, params),
+        method::PANE_SWAP => h_pane_swap(ctx, params),
+        method::PANE_RENAME => h_pane_rename(ctx, params),
+        method::PANE_MOVE => h_pane_move(ctx, params),
+        method::PANE_GET => h_pane_get(ctx, params),
         method::PANE_INPUT => return h_pane_input(ctx, req).await,
-        method::PANE_RESIZE => h_pane_resize(ctx, &req.params),
-        method::PANE_SIGNAL => h_pane_signal(ctx, &req.params),
-        method::PANE_READ => h_pane_read(ctx, &req.params),
-        method::PANE_CLEAR => h_pane_clear(ctx, &req.params),
-        method::PANE_WAIT_FOR_OUTPUT => return h_pane_wait_for_output(ctx, req, &req.params).await,
-        method::PANE_ATTACH => h_pane_attach(ctx, &req.params),
-        method::PANE_DETACH => h_pane_detach(ctx, &req.params),
-        method::PANE_CLOSE => h_pane_close(ctx, &req.params),
-        method::PANE_RESUME => h_pane_resume(ctx, &req.params),
-        method::PANE_MARK_SEEN => h_pane_mark_seen(ctx, &req.params),
-        method::PANE_EXPLAIN => h_pane_explain(ctx, &req.params),
-        method::DECISION_ANSWER => h_decision_answer(ctx, &req.params).await,
-        method::NOTIFY => h_notify(ctx, &req.params),
-        method::HOOK_EVENT => match decode::<params::HookEvent>(&req.params) {
+        method::PANE_RESIZE => h_pane_resize(ctx, params),
+        method::PANE_SIGNAL => h_pane_signal(ctx, params),
+        method::PANE_READ => h_pane_read(ctx, params),
+        method::PANE_CLEAR => h_pane_clear(ctx, params),
+        method::PANE_WAIT_FOR_OUTPUT => return h_pane_wait_for_output(ctx, req, params).await,
+        method::PANE_ATTACH => h_pane_attach(ctx, params),
+        method::PANE_DETACH => h_pane_detach(ctx, params),
+        method::PANE_CLOSE => h_pane_close(ctx, params),
+        method::PANE_RESUME => h_pane_resume(ctx, params),
+        method::PANE_MARK_SEEN => h_pane_mark_seen(ctx, params),
+        method::PANE_EXPLAIN => h_pane_explain(ctx, params),
+        method::DECISION_ANSWER => h_decision_answer(ctx, params).await,
+        method::NOTIFY => h_notify(ctx, params),
+        method::HOOK_EVENT => match decode::<params::HookEvent>(params) {
             Ok(p) if p.wait_for_answer => return crate::approvals::wait(ctx, req).await,
-            Ok(_) => h_hook_event(ctx, &req.params),
+            Ok(_) => h_hook_event(ctx, params),
             Err(error) => Err(error),
         },
-        method::REPORT_SESSION => h_report_session(ctx, &req.params),
-        method::SUBSCRIBE => h_subscribe(ctx, &req.params),
-        method::WAIT => return h_wait(ctx, req, &req.params).await,
+        method::REPORT_SESSION => h_report_session(ctx, params),
+        method::SUBSCRIBE => h_subscribe(ctx, params),
+        method::WAIT => return h_wait(ctx, req, params).await,
         method::FOCUS_NEXT_UNREAD => h_next_unread(ctx),
         method::PLUGIN_LIST => h_plugin_list(ctx),
         method::PLUGIN_RELOAD => h_plugin_reload(ctx),
         method::AGENTS_LIST => Ok((ctx.overlays().status(), ConnEffect::default())),
         method::AGENTS_RELOAD => h_agents_reload(ctx),
-        method::TASK_START => return crate::tasks::h_task_start(ctx, req, &req.params).await,
-        method::TASK_GET => return crate::tasks::h_task_get(ctx, req, &req.params),
-        method::TASK_LIST => return crate::tasks::h_task_list(ctx, req, &req.params),
-        method::TASK_WAIT => return crate::tasks::h_task_wait(ctx, req, &req.params).await,
-        method::TASK_CANCEL => return crate::tasks::h_task_cancel(ctx, req, &req.params),
-        method::PANE_SUBMIT => return h_pane_submit(ctx, req, &req.params).await,
-        method::TASK_REPORT => return crate::tasks::h_task_report(ctx, req, &req.params),
-        method::ATTENTION_PENDING => {
-            return crate::tasks::h_attention_pending(ctx, req, &req.params)
-        }
-        method::TASK_DIFF => return crate::tasks::h_task_diff(ctx, req, &req.params).await,
-        method::TASK_FILE_DIFF => {
-            return crate::tasks::h_task_file_diff(ctx, req, &req.params).await
-        }
-        method::TASK_FINISH => return crate::tasks::h_task_finish(ctx, req, &req.params).await,
-        method::TASK_PR_OPEN => return crate::tasks::h_task_pr_open(ctx, req, &req.params).await,
-        method::TASK_PR_REFRESH => {
-            return crate::tasks::h_task_pr_refresh(ctx, req, &req.params).await
-        }
+        method::TASK_START => return crate::tasks::h_task_start(ctx, req, params).await,
+        method::TASK_GET => return crate::tasks::h_task_get(ctx, req, params),
+        method::TASK_LIST => return crate::tasks::h_task_list(ctx, req, params),
+        method::TASK_WAIT => return crate::tasks::h_task_wait(ctx, req, params).await,
+        method::TASK_CANCEL => return crate::tasks::h_task_cancel(ctx, req, params),
+        method::PANE_SUBMIT => return h_pane_submit(ctx, req, params).await,
+        method::TASK_REPORT => return crate::tasks::h_task_report(ctx, req, params),
+        method::ATTENTION_PENDING => return crate::tasks::h_attention_pending(ctx, req, params),
+        method::TASK_DIFF => return crate::tasks::h_task_diff(ctx, req, params).await,
+        method::TASK_FILE_DIFF => return crate::tasks::h_task_file_diff(ctx, req, params).await,
+        method::TASK_FINISH => return crate::tasks::h_task_finish(ctx, req, params).await,
+        method::TASK_PR_OPEN => return crate::tasks::h_task_pr_open(ctx, req, params).await,
+        method::TASK_PR_REFRESH => return crate::tasks::h_task_pr_refresh(ctx, req, params).await,
         _ => Err((
             code::UNKNOWN_METHOD.to_string(),
             format!("unknown method '{}'", req.method),
@@ -341,6 +338,66 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         Ok((result, effect)) => (Response::ok(&req.id, result), effect),
         Err((c, m)) => (Response::err(&req.id, &c, m), ConnEffect::default()),
     }
+}
+
+/// Pane-id fields that may carry a pane name instead.
+const PANE_ID_FIELDS: [&str; 3] = ["pane_id", "target_pane_id", "parent_pane_id"];
+
+/// Rewrite pane names to ids so every handler accepts either; an
+/// existing id always wins. `None` when nothing changed.
+fn with_pane_names(ctx: &Ctx, params: &Value) -> Option<Value> {
+    let obj = params.as_object()?;
+    let s = ctx.store.read().unwrap();
+    let mut out: Option<Value> = None;
+    for field in PANE_ID_FIELDS {
+        let Some(raw) = obj.get(field).and_then(Value::as_str) else {
+            continue;
+        };
+        if s.panes.contains_key(raw) {
+            continue;
+        }
+        if let Some(pane) = s.panes.values().find(|p| p.name.as_deref() == Some(raw)) {
+            out.get_or_insert_with(|| params.clone())[field] = json!(pane.id);
+        }
+    }
+    out
+}
+
+/// herdr's agent-name rule: a lowercase slug of at most 32 bytes.
+fn valid_pane_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some('a'..='z'))
+        && name.len() <= 32
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+fn h_pane_rename(ctx: &Ctx, params: &Value) -> Handler {
+    let p: params::PaneRename = decode(params)?;
+    if let Some(name) = p.name.as_deref() {
+        if !valid_pane_name(name) {
+            return Err(bad_params(
+                "name must be a lowercase slug: [a-z][a-z0-9_-]*, at most 32 bytes",
+            ));
+        }
+    }
+    let mut s = ctx.store.write().unwrap();
+    if !s.panes.contains_key(&p.pane_id) {
+        return Err((code::NO_SUCH_PANE.to_string(), p.pane_id));
+    }
+    if let Some(other) = s
+        .panes
+        .values()
+        .find(|o| o.id != p.pane_id && o.name.is_some() && o.name == p.name)
+    {
+        return Err(bad_params(format!("name is taken by pane {}", other.id)));
+    }
+    let pane = s.panes.get_mut(&p.pane_id).unwrap();
+    pane.name = p.name;
+    let pane = pane.clone();
+    s.emit(event::PANE_UPDATED, json!({"pane": pane}));
+    drop(s);
+    ctx.mark_persist();
+    Ok((pane_result(&pane), ConnEffect::default()))
 }
 
 // ---- server ----

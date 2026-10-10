@@ -222,6 +222,13 @@ pub struct PaneSplit {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PaneRename {
+    pub pane_id: String,
+    /// `null` or absent clears the name.
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PaneSwap {
     pub pane_id: String,
     pub target_pane_id: String,

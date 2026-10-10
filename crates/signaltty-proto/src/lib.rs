@@ -143,6 +143,7 @@ pub mod method {
     pub const PANE_SPAWN: &str = "pane.spawn";
     pub const PANE_SPLIT: &str = "pane.split";
     pub const PANE_SWAP: &str = "pane.swap";
+    pub const PANE_RENAME: &str = "pane.rename";
     pub const PANE_MOVE: &str = "pane.move";
     pub const PANE_GET: &str = "pane.get";
     pub const PANE_INPUT: &str = "pane.input";
@@ -208,6 +209,7 @@ pub mod method {
         PANE_SPAWN,
         PANE_SPLIT,
         PANE_SWAP,
+        PANE_RENAME,
         PANE_MOVE,
         PANE_GET,
         PANE_INPUT,
