@@ -24,8 +24,9 @@ fn read_stat(pid: u32) -> Option<(u32, String)> {
     let mut fields = after.split_whitespace();
     let _state = fields.next()?;
     let ppid: u32 = fields.next()?.parse().ok()?;
-    let comm = stat.split('(').nth(1)?.rsplit(')').next()?.to_string();
-    Some((ppid, comm))
+    let (before, _) = stat.rsplit_once(')')?;
+    let (_, comm) = before.split_once('(')?;
+    Some((ppid, comm.to_string()))
 }
 
 fn children_of(ppid: u32) -> Vec<u32> {
@@ -209,9 +210,10 @@ mod tests {
         assert!(!argv0.is_empty(), "test binary has argv[0]");
         let cwd = proc_cwd(pid).unwrap();
         assert!(std::path::Path::new(&cwd).is_dir());
-        // read_stat agrees on parentage with std.
-        let (ppid, _comm) = read_stat(pid).unwrap();
+        // read_stat agrees on parentage with std and extracts comm.
+        let (ppid, comm) = read_stat(pid).unwrap();
         assert!(ppid > 0);
+        assert!(!comm.is_empty(), "comm is parsed");
     }
 
     #[test]
