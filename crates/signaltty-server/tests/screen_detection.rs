@@ -326,7 +326,7 @@ fn program_as(name: &str) -> String {
     link.to_string_lossy().to_string()
 }
 
-const GEMINI_APPLY: &str = "printf '│ Apply this change?\\n'; sleep 30";
+const GEMINI_APPLY: &str = "printf '│ Apply this change?\\n'; sleep 30; :";
 
 async fn spawn_program(c: &mut TestClient, argv: Value) -> String {
     let w = c
