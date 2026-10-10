@@ -19,7 +19,7 @@ Acceptance: Terminal rows get 1.1× leading (`set_cell_height_scale`).
 
 ### 4. Noisy pane titles (P2)
 Pane headers repeated the shell's window title verbatim (`simone@luxhole: ~/.t3/…`).
-Acceptance: A leading `user@host: ` prefix is dropped from the displayed title (the full working directory stays in the tooltip). Titles without that exact shape are untouched; a unit test covers the edge cases.
+Acceptance: A leading `user@host: ` (or `user@host:` directly before a `~` or `/` path) is dropped from the displayed title when the host is the local machine (short, case-insensitive name); the full working directory stays in the tooltip. A different host, such as an SSH session, keeps its prefix because it says the pane is remote. Other titles are untouched; a unit test covers the edge cases.
 
 ## Requirements
 - FR-001: Server-side message clearing in the hook path only; IPC shape unchanged.

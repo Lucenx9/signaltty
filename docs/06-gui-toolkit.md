@@ -55,7 +55,9 @@ accelerator. Colour comes only from libadwaita variables, so light,
 dark, the system accent and high contrast follow the desktop;
 terminals take the desktop monospace font with 1.1× leading, GNOME's
 ANSI palette on dark panes and a light palette whose inks read at 4.5:1 on
-white (unit-tested), and a pane title without the shell's `user@host:` prefix.
+white apart from two deliberately dim greys (unit-tested), and a pane title
+without the shell's `user@host:` prefix when the host is the local one (a
+remote SSH host stays visible).
 Dark mode redefines those variables (under a `.dark` window class
 mirrored from `AdwStyleManager`) into a wider lightness ladder —
 sidebar, near-black canvas, pane cards — edged by hairlines, per

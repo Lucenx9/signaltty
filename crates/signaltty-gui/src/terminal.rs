@@ -546,7 +546,8 @@ impl PaneWidget {
     /// Refresh header + ring from fresh pane state.
     pub fn update_meta(&self, pane: &Pane) {
         let live = matches!(pane.live, LiveState::Live);
-        self.title.set_text(display_title(&pane.title));
+        self.title
+            .set_text(display_title(&pane.title, &gtk4::glib::host_name()));
         self.title.set_tooltip_text(Some(&pane.cwd));
         let mut context: Vec<String> = Vec::new();
         if let Some(agent) = agent_name(pane.agent.kind) {
@@ -687,14 +688,23 @@ const LIGHT_PALETTE: [&str; 16] = [
 const CELL_HEIGHT_SCALE: f64 = 1.1;
 
 /// Window titles from shells read `user@host: ~/path`; the header already
-/// says where the pane is, so the `user@host:` prefix is noise.
-fn display_title(title: &str) -> &str {
+/// says where the pane is, so a local `user@host:` prefix is noise. A
+/// different host (an SSH session) is information and stays.
+fn display_title<'a>(title: &'a str, local_host: &str) -> &'a str {
     let trimmed = title.trim();
-    match trimmed.split_once(": ") {
+    let short = |host: &str| host.split('.').next().unwrap_or(host).to_ascii_lowercase();
+    // `\u@\h: \w` and the space-less `\u@\h:\w` (only before a path).
+    let parts = trimmed.split_once(": ").or_else(|| {
+        trimmed
+            .split_once(':')
+            .filter(|(_, rest)| rest.starts_with(['~', '/']))
+    });
+    match parts {
         Some((who, rest))
             if !rest.is_empty()
+                && !who.contains(char::is_whitespace)
                 && who.split_once('@').is_some_and(|(user, host)| {
-                    !user.is_empty() && !host.is_empty() && !who.contains(char::is_whitespace)
+                    !user.is_empty() && !host.is_empty() && short(host) == short(local_host)
                 }) =>
         {
             rest
@@ -709,20 +719,25 @@ mod tests {
 
     #[test]
     fn shell_titles_drop_the_user_at_host_prefix() {
-        assert_eq!(display_title("simone@luxhole: ~/code/app"), "~/code/app");
-        assert_eq!(display_title("claude"), "claude");
-        assert_eq!(display_title("vim: main.rs"), "vim: main.rs", "no @, kept");
+        let t = |title| display_title(title, "luxhole");
+        assert_eq!(t("simone@luxhole: ~/code/app"), "~/code/app");
+        assert_eq!(t("root@LuxHole.local: /"), "/", "short, case-blind host");
         assert_eq!(
-            display_title("Note: a@b c"),
-            "Note: a@b c",
-            "@ after the colon"
+            t("deploy@prod-1: /srv"),
+            "deploy@prod-1: /srv",
+            "a remote host is kept"
         );
+        assert_eq!(t("claude"), "claude");
+        assert_eq!(t("vim: main.rs"), "vim: main.rs", "no @, kept");
+        assert_eq!(t("Note: a@b c"), "Note: a@b c", "@ after the colon");
         assert_eq!(
-            display_title("a b@c: x"),
-            "a b@c: x",
+            t("a b@luxhole: x"),
+            "a b@luxhole: x",
             "spaces before the colon"
         );
-        assert_eq!(display_title("me@host: "), "me@host:", "nothing after it");
+        assert_eq!(t("me@luxhole: "), "me@luxhole:", "nothing after it");
+        assert_eq!(t("me@luxhole:~/src"), "~/src", "no space before a path");
+        assert_eq!(t("me@luxhole:x"), "me@luxhole:x", "no space, not a path");
     }
 
     /// WCAG relative luminance contrast against white.
