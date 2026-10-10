@@ -420,6 +420,8 @@ enum PaneOp {
         after_seq: Option<u64>,
         #[arg(long, default_value_t = 3600)]
         timeout: u64,
+        #[arg(long)]
+        raw: bool,
     },
     /// Blank the pane's screen and scrollback in every view.
     Clear {
@@ -1501,9 +1503,10 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                     lines,
                     after_seq,
                     timeout,
+                    raw,
                 } => {
                     let r = c
-                        .call("pane.wait_for_output", json!({"pane_id": id, "match": pattern, "regex": regex, "mode": mode, "lines": lines, "after_seq": after_seq, "timeout_s": timeout}))
+                        .call("pane.wait_for_output", json!({"pane_id": id, "match": pattern, "regex": regex, "mode": mode, "lines": lines, "after_seq": after_seq, "timeout_s": timeout, "strip_ansi": !raw}))
                         .await?;
                     let line = r["matched_line"].as_str().unwrap_or("").to_string();
                     emit(json, &r, line);
