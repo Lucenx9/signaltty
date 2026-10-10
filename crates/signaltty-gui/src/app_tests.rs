@@ -3903,6 +3903,26 @@ fn preferences_preview_schemes_and_themes() {
     let mut halves = Vec::new();
     widgets_with_class(&previews[0], "mw-content", &mut halves);
     assert!(halves[0].has_css_class("light") && halves[1].has_css_class("dark"));
+    // ...split where its calc(21px + 50%) background does, so the
+    // backing never shows as a step or hairline at the seam.
+    let split = halves[1].compute_bounds(&previews[0]).unwrap().x();
+    let expected = 21.0 + previews[0].width() as f32 / 2.0;
+    assert!(
+        (split - expected).abs() <= 1.0,
+        "System split at {split}, background at {expected}"
+    );
+    // Every part stays left to right, as its CSS is drawn, in RTL too.
+    for preview in &previews {
+        let mut stack = vec![preview.clone()];
+        while let Some(widget) = stack.pop() {
+            assert_eq!(widget.direction(), gtk4::TextDirection::Ltr);
+            let mut child = widget.first_child();
+            while let Some(next) = child {
+                child = next.next_sibling();
+                stack.push(next);
+            }
+        }
+    }
     let mut orbs = Vec::new();
     widgets_with_class(&root, "theme-swatch", &mut orbs);
     assert_eq!(orbs.len(), 2 * signaltty_core::theme::Theme::ALL.len());

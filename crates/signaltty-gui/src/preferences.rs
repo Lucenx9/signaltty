@@ -69,8 +69,12 @@ fn scheme_preview(appearance: Appearance) -> gtk4::Box {
         Appearance::Light => ("light", "light", "light"),
         Appearance::Dark => ("dark", "dark", "dark"),
     };
+    // GTK does not inherit text direction, so every part is pinned
+    // left to right: the CSS (gradient split, input ends) and the End
+    // alignments of the side card and accent dot are drawn that way.
     let part = |orientation, classes: &[&str]| {
         let b = gtk4::Box::new(orientation, 4);
+        b.set_direction(gtk4::TextDirection::Ltr);
         for class in classes {
             b.add_css_class(class);
         }
@@ -95,7 +99,7 @@ fn scheme_preview(appearance: Appearance) -> gtk4::Box {
     start.append(&bar(&["wide", "mw-title"]));
     start.append(&bar(&["long"]));
     start.append(&bar(&["mid"]));
-    let spacer = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let spacer = part(gtk4::Orientation::Vertical, &[]);
     spacer.set_vexpand(true);
     start.append(&spacer);
     start.append(&part(gtk4::Orientation::Horizontal, &["mw-input"]));
@@ -111,7 +115,7 @@ fn scheme_preview(appearance: Appearance) -> gtk4::Box {
         panel.append(&bar(&[width]));
     }
     end.append(&panel);
-    let spacer = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let spacer = part(gtk4::Orientation::Vertical, &[]);
     spacer.set_vexpand(true);
     end.append(&spacer);
     let input = part(gtk4::Orientation::Horizontal, &["mw-input", "mw-input-end"]);
@@ -126,15 +130,22 @@ fn scheme_preview(appearance: Appearance) -> gtk4::Box {
         Appearance::Light => "light",
         Appearance::Dark => "dark",
     };
+    // The halves share what the sidebar leaves equally, whatever their
+    // content asks for, so the System split lands where its
+    // calc(21px + 50%) background does.
+    let halves = part(gtk4::Orientation::Horizontal, &["mw-halves"]);
+    halves.set_spacing(0);
+    halves.set_homogeneous(true);
+    halves.set_hexpand(true);
+    halves.append(&start);
+    halves.append(&end);
+
     let preview = part(gtk4::Orientation::Horizontal, &["scheme-preview", scheme]);
     preview.set_spacing(0);
     preview.set_overflow(gtk4::Overflow::Hidden);
-    // The CSS (gradient split, input ends) is drawn left to right.
-    preview.set_direction(gtk4::TextDirection::Ltr);
     preview.set_size_request(148, 92);
     preview.append(&side);
-    preview.append(&start);
-    preview.append(&end);
+    preview.append(&halves);
     preview
 }
 
