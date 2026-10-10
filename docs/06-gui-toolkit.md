@@ -296,6 +296,13 @@ group; each row shows the file name (full path in the tooltip) and `+N −N` in 
 diff colours, or "Untracked"/"Binary". It does not imply a per-turn diff.
 Workspace names, paths and file names render literally, including `<`, `>` and `&`.
 
+Clicking the header breadcrumb opens the workspace details card
+(`details.rs`, after t3code's thread details): branch (or "Detached HEAD"),
+the `~` path with Copy Path, running agents, the workspace's task with its pull
+request and check status, `Changes +N −N` (read with `workspace.diff` only when
+the card opens; it opens the Changes panel), and Open Folder. Rows that do not
+apply are hidden; the breadcrumb is inactive without a workspace.
+
 Activating a file pushes a reader inside the same panel, using
 `workspace.file_diff`. Back returns to the preserved file list and row focus.
 The selectable, noneditable monospace view shows hunk headings, old/new line

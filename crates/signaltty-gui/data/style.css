@@ -275,6 +275,57 @@ window {
   color: alpha(currentColor, 0.5);
 }
 
+/* The breadcrumb is a button that opens the details card: it keeps its
+ * text look, gains a quiet hover slab, and does not dim while there is
+ * no workspace to describe. */
+toolbarview > .top-bar headerbar menubutton.crumb-button > button {
+  padding: 0 8px 0 2px;
+}
+/* libadwaita dims a disabled menubutton with a filter on the node. */
+menubutton.crumb-button:disabled {
+  filter: none;
+}
+menubutton.crumb-button > button:disabled {
+  color: inherit;
+}
+
+/* ---- workspace details card ------------------------------------------- */
+
+/* t3code's thread details: icon rows in quiet sections, hairlines
+ * between them, colour only on the PR status and change counts. */
+popover.details-popover > contents {
+  padding: 6px;
+  border-radius: 14px;
+}
+.details-card {
+  min-width: 300px;
+}
+.details-section + .details-section {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-color);
+}
+.details-row {
+  min-height: 22px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+button.details-row {
+  font-weight: normal;
+}
+.details-icon {
+  color: alpha(currentColor, 0.6);
+}
+.details-pr-status {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: alpha(currentColor, 0.65);
+}
+.details-pr-status.pr-passing { color: var(--success-color); }
+.details-pr-status.pr-failing { color: var(--error-color); }
+.details-pr-status.pr-pending { color: var(--warning-color); }
+.details-pr-status.pr-merged { color: var(--purple-3); }
+
 .wordmark {
   margin-left: 6px;
   font-weight: 700;

@@ -93,6 +93,8 @@ pub struct App {
     title: gtk4::Label,
     title_context: gtk4::Label,
     title_mark: gtk4::Label,
+    crumb_button: gtk4::MenuButton,
+    details: Rc<crate::details::DetailsCard>,
     sidebar: Sidebar,
     tab_view: adw::TabView,
     content: gtk4::Stack,
@@ -260,7 +262,18 @@ impl App {
         btn_sidebar.update_property(&[gtk4::accessible::Property::Label("Toggle Sidebar")]);
         btn_sidebar.set_action_name(Some("win.toggle-sidebar"));
         header.pack_start(&btn_sidebar);
-        header.pack_start(&title_box);
+        // The breadcrumb opens the workspace details card.
+        let details = crate::details::DetailsCard::new();
+        let crumb_button = gtk4::MenuButton::new();
+        crumb_button.set_child(Some(&title_box));
+        crumb_button.set_popover(Some(&details.popover));
+        crumb_button.add_css_class("crumb-button");
+        crumb_button.set_tooltip_text(Some("Workspace Details"));
+        // The name stays the visible title; the description says what it opens.
+        crumb_button
+            .update_property(&[gtk4::accessible::Property::Description("Workspace Details")]);
+        crumb_button.set_sensitive(false);
+        header.pack_start(&crumb_button);
         let btn_menu = gtk4::MenuButton::new();
         btn_menu.set_icon_name("open-menu-symbolic");
         btn_menu.set_tooltip_text(Some("Main Menu"));
@@ -385,6 +398,8 @@ impl App {
             title,
             title_context,
             title_mark,
+            crumb_button,
+            details,
             sidebar,
             tab_view,
             content,
@@ -540,6 +555,13 @@ impl App {
     }
 
     fn connect_signals(&self) {
+        // Opening the details card fills it from the active workspace.
+        let w = self.weak();
+        self.details.popover.connect_show(move |_| {
+            if let Some(a) = w.upgrade() {
+                a.fill_details();
+            }
+        });
         // Opening the Changes panel loads the active workspace. Closing it
         // needs nothing: the split view hands focus back to the content.
         let w = self.weak();
@@ -1049,6 +1071,8 @@ impl App {
                 self.render_tabs();
                 self.title.set_text("signaltty");
                 self.title_mark.set_visible(false);
+                self.crumb_button.set_sensitive(false);
+                self.details.popover.popdown();
                 self.title_context.set_text("");
                 self.title_context.set_visible(false);
                 self.title_context.set_tooltip_text(None);
@@ -1267,6 +1291,8 @@ impl App {
         let ws = snapshot.workspace;
         if self.active_ws_id().as_deref() != Some(ws_id) {
             self.zoom.borrow_mut().take();
+            // The card describes one workspace; a switch closes it.
+            self.details.popover.popdown();
         }
         if user_navigation && self.active_ws_id().as_deref() != Some(ws_id) {
             self.navigate();
@@ -1275,6 +1301,7 @@ impl App {
         self.follow_changes();
         sidebar::set_mark(&self.title_mark, &ws.id, &ws.name);
         self.title_mark.set_visible(true);
+        self.crumb_button.set_sensitive(true);
         // Agent workspaces show their agents; shells show their location.
         let agents = sidebar::summarize(&ws, &snapshot.panes).agents;
         let place = tilde(&ws.cwd);
@@ -2070,6 +2097,22 @@ impl App {
         if open {
             self.changes.focus();
         }
+    }
+
+    fn fill_details(&self) {
+        let Some(id) = self.active_ws_id() else {
+            return;
+        };
+        let snapshot = self.model.borrow().cache.snapshots.get(&id).cloned();
+        let Some(snapshot) = snapshot else { return };
+        let agents = sidebar::summarize(&snapshot.workspace, &snapshot.panes).agents;
+        let details = crate::details::details(
+            &snapshot.workspace,
+            &snapshot.panes,
+            &self.model.borrow().tasks,
+            agents,
+        );
+        self.details.fill(details, &id, &self.actor);
     }
 
     /// Opening the panel reads the active workspace; a closed panel does

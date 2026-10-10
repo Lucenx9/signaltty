@@ -4039,3 +4039,139 @@ fn preferences_preview_schemes_and_themes() {
         None => std::env::remove_var("XDG_CONFIG_HOME"),
     }
 }
+
+/// Answer unrelated calls with null until `method` arrives.
+fn call_named(
+    requests: &mut tokio::sync::mpsc::UnboundedReceiver<ActorRequest>,
+    method: &str,
+) -> (Value, tokio::sync::oneshot::Sender<Result<Value, String>>) {
+    loop {
+        wait_ui(|| !requests.is_empty());
+        if let ActorRequest::Call {
+            method: name,
+            params,
+            reply,
+            ..
+        } = requests.try_recv().unwrap()
+        {
+            if name == method {
+                return (params, reply);
+            }
+            let _ = reply.send(Ok(Value::Null));
+        }
+    }
+}
+
+/// The breadcrumb opens a details card: branch, path, task and PR, and
+/// change totals read on open; Changes opens the docked panel.
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn breadcrumb_opens_the_workspace_details_card() {
+    let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+    let config = std::env::temp_dir().join(format!("signaltty-details-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    gtk4::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
+    app.window.set_default_size(1280, 760);
+    app.window.present();
+    assert!(!app.crumb_button.is_sensitive(), "no workspace, no details");
+
+    let snapshot = chip_scene_snapshot();
+    let mut task = chip_scene_task("fix-parser");
+    task["pr"] = json!({
+        "number": 77,
+        "url": "https://github.com/example/repo/pull/77",
+        "state": "open",
+        "checks": "passing"
+    });
+    {
+        let mut model = app.model.borrow_mut();
+        model.cache.workspaces = vec![snapshot.workspace.clone()];
+        model
+            .cache
+            .snapshots
+            .insert(snapshot.workspace.id.clone(), snapshot.clone());
+        assert!(model
+            .tasks
+            .apply_event(signaltty_proto::event::TASK_CREATED, &json!({"task": task})));
+    }
+    app.show_workspace("fix");
+    assert!(app.crumb_button.is_sensitive());
+
+    app.crumb_button.popup();
+    let card = app.details.popover.clone().upcast::<gtk4::Widget>();
+    let (params, reply) = call_named(&mut requests, "workspace.diff");
+    assert_eq!(params["workspace_id"], "fix");
+    reply
+        .send(Ok(json!({"added": 12, "removed": 3, "files": [
+            {"path": "src/parser.rs", "added": 12, "removed": 3, "untracked": false, "binary": false}
+        ]})))
+        .unwrap();
+    wait_ui(|| has_label(&card, "+12") && has_label(&card, "−3"));
+    assert!(has_label(&card, "fix/parser"));
+    assert!(has_label(
+        &card,
+        &crate::util::tilde(&snapshot.workspace.cwd)
+    ));
+    assert!(has_label(&card, "Task fix-parser · Working"));
+    assert!(has_label(&card, "#77") && has_label(&card, "Checks passing"));
+    for (name, scheme) in [
+        ("light", adw::ColorScheme::ForceLight),
+        ("dark", adw::ColorScheme::ForceDark),
+    ] {
+        adw::StyleManager::default().set_color_scheme(scheme);
+        while glib::MainContext::default().iteration(false) {}
+        capture_workflow(&app.window, &format!("details-{name}"));
+    }
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::Default);
+
+    // Copy Path puts the full path on the clipboard.
+    button_with_tooltip(&card, "Copy Path")
+        .unwrap()
+        .emit_clicked();
+    let copied = Rc::new(RefCell::new(None));
+    let capture = copied.clone();
+    card.clipboard()
+        .read_text_async(None::<&gio::Cancellable>, move |result| {
+            *capture.borrow_mut() = Some(result.unwrap().unwrap().to_string())
+        });
+    wait_ui(|| copied.borrow().is_some());
+    assert_eq!(
+        copied.borrow().as_deref(),
+        Some(snapshot.workspace.cwd.as_str())
+    );
+
+    // Changes hands over to the docked panel and closes the card.
+    button_with_tooltip(&card, "Show Changes (Ctrl+Shift+D)")
+        .unwrap()
+        .emit_clicked();
+    wait_ui(|| !app.details.popover.is_visible());
+    assert!(app.changes_split.shows_sidebar());
+
+    card.clipboard().set_text("");
+    app.window.destroy();
+    let _ = std::fs::remove_dir_all(&config);
+    match previous_config {
+        Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+        None => std::env::remove_var("XDG_CONFIG_HOME"),
+    }
+}
