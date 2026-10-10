@@ -71,6 +71,8 @@ clients can `subscribe {from_seq}` to replay.
 | `pane.resize` | `{pane_id, cols, rows}` | `{pane}` |
 | `pane.signal` | `{pane_id, signal, group?}` | `{sent}` (`INT TERM KILL HUP QUIT WINCH USR1 USR2`, case-insensitive, optional `SIG`; any other name, here or in a `*.close` `signal`, → `BAD_PARAMS`) |
 | `pane.read` | `{pane_id, mode: "screen"\|"tail"\|"rendered", lines?, strip_ansi?, after_seq?}` | `screen`/`tail` → `{text, truncated}`; `rendered` → `{text, seq, next_seq, dropped, truncated}` |
+| `pane.wait_for_output` | `pane.read` params + `{match, regex?, timeout_s?}` | the matching read's result + `matched_line`, or `TIMEOUT` / `PANE_EXITED`; invalid regex → `BAD_PARAMS` |
+| `pane.clear` | `{pane_id}` | `{}`; blanks screen and scrollback in every view |
 | `pane.attach` | `{pane_id, cols?, rows?, mark_seen?}` | `{snapshot_b64, output_offset, size, live, ...}` then `pty.data` stream; the snapshot is replayable VT state (contents, colours, cursor, modes) (`mark_seen` default true; GUIs pass false and acknowledge on focus) |
 | `pane.detach` | `{pane_id}` | `{detached}` (also implicit on disconnect) |
 | `pane.close` | `{pane_id, signal?}` | `{closed}` |
@@ -186,6 +188,20 @@ never refused on agent state, never move the viewport. While a full-screen
 TUI owns the alternate grid, reads return the current alt grid; repaints
 bump the touched rows' sequences (poll again with `next_seq` for deltas)
 and nothing is appended to history. See docs/05 (rendered ring).
+
+`pane.wait_for_output` re-reads the pane every 100 ms, with the same `mode`,
+`lines` and `strip_ansi` as `pane.read`, until one line contains `match` (or
+matches it as a regex when `regex` is true; `timeout_s` defaults to 3600). In
+`screen`/`tail` mode a line already on screen matches at once. In `rendered`
+mode only lines newer than `after_seq` match and the cursor advances between
+polls: capture `next_seq` before submitting work, then wait from it. A pane
+whose process has exited is read once more and then fails with `PANE_EXITED`.
+
+`pane.clear` writes `ESC[H ESC[2J ESC[3J` into the pane's output stream, in
+order with the program's output, so the server grid and every attached view
+clear at one `output_offset`; the server also drops its scrolled-off history,
+and `rendered` cursors from before the clear read as `dropped`. The program
+is not told: a full-screen TUI stays blank until it repaints.
 
 `pane.get` adds `wait_baseline {pane_id, process_instance, agent_session_id,
 session_generation, lifecycle_seq, attention_seq}`. Capture it **before** submitting
@@ -388,6 +404,8 @@ defaults to `--until settled`; `finish` needs `--merge` or `--discard`);
 `task.report` (falls back to `$SIGNALTTY_TASK` / `$SIGNALTTY_PANE`);
 `signaltty pane submit … --text …` → `pane.submit`;
 `signaltty pane read … --mode rendered [--after-seq N]` → `pane.read`;
+`signaltty pane wait-output <id> <pattern> [--regex] [--mode …] [--after-seq N]
+[--timeout S]` → `pane.wait_for_output`; `signaltty pane clear <id>` → `pane.clear`;
 `signaltty pane spawn … [--parent-pane …] [--label …] [--relationship …]` →
 `pane.spawn`; `signaltty attention [--limit N]` → `attention.pending`.
 `signaltty schema` prints the live contract (same constants the router
