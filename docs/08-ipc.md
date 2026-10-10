@@ -66,6 +66,7 @@ clients can `subscribe {from_seq}` to replay.
 | `tab.set_ratio` | `{tab_id, path, ratio}` | `{tab}` |
 | `pane.spawn` | `{workspace_id, tab_id?, cwd?, argv, env?, cols?, rows?, agent_hint?, parent_pane_id?, label?, relationship?, task_id?}` | `{pane, integration?}` |
 | `pane.split` | `{pane_id, direction: "right"\|"down", argv?, cwd?}` | `{pane, integration?}` (new sibling) |
+| `pane.rename` | `{pane_id, name?}` | `{pane}`; `name` absent or `null` clears it |
 | `pane.swap` | `{pane_id, target_pane_id}` | `{tabs}` (touched tabs; each pane takes the other's slot) |
 | `pane.move` | `{pane_id, target_pane_id, direction?: "right"\|"down"}` | `{tabs}` (touched tabs; re-split next to the target) |
 | `pane.get` | `{pane_id}` | `{pane, wait_baseline}` |
@@ -305,6 +306,14 @@ foreign or repeated pane IDs return `BAD_PARAMS` without mutation. Split ratios
 must be finite and clamp to 0.05–0.95. Layout replacement arranges existing
 panes; `pane.close` deletes one.
 
+`pane.rename` gives a pane a unique name: a lowercase slug
+(`[a-z][a-z0-9_-]*`, at most 32 bytes, herdr's agent-name rule). An invalid
+name, or one another pane holds, is `BAD_PARAMS`. Every request's `pane_id`,
+`target_pane_id` and `parent_pane_id`, and the leaves of a `tab.set_layout`
+tree, accept the name in place of the id. A
+real pane id always wins over a name. The name persists across restarts and
+emits `pane.updated`.
+
 `pane.swap` and `pane.move` rearrange live panes without touching their
 processes. Both panes must be distinct, in one workspace and in their tab
 layouts, else `BAD_PARAMS`. Swap keeps the tree shape and ratios; across tabs
@@ -422,6 +431,7 @@ defaults to `--until settled`; `finish` needs `--merge` or `--discard`);
 `signaltty pane read … --mode rendered [--after-seq N]` → `pane.read`;
 `signaltty pane wait-output <id> <pattern> [--regex] [--mode …] [--after-seq N]
 [--timeout S] [--raw]` → `pane.wait_for_output`; `signaltty pane clear <id>` → `pane.clear`;
+`signaltty pane rename <id> [name]` → `pane.rename`;
 `signaltty pane swap <id> <target>` → `pane.swap`; `signaltty pane move <id> <target>
 [--direction right|down]` → `pane.move`;
 `signaltty pane spawn … [--parent-pane …] [--label …] [--relationship …]` →

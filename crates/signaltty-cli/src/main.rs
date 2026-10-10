@@ -370,6 +370,11 @@ enum PaneOp {
         #[arg(last = true)]
         cmd: Vec<String>,
     },
+    /// Name a pane so it can be addressed by name; no name clears it.
+    Rename {
+        id: String,
+        name: Option<String>,
+    },
     /// Exchange two panes' slots (any tabs of one workspace).
     Swap {
         id: String,
@@ -1521,6 +1526,17 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                         .call("pane.wait_for_output", json!({"pane_id": id, "match": pattern, "regex": regex, "mode": mode, "lines": lines, "after_seq": after_seq, "timeout_s": timeout, "strip_ansi": !raw}))
                         .await?;
                     let line = r["matched_line"].as_str().unwrap_or("").to_string();
+                    emit(json, &r, line);
+                    Ok(())
+                }
+                PaneOp::Rename { id, name } => {
+                    let r = c
+                        .call("pane.rename", json!({"pane_id": id, "name": name}))
+                        .await?;
+                    let line = match &name {
+                        Some(name) => format!("named {id} {name}"),
+                        None => format!("cleared the name of {id}"),
+                    };
                     emit(json, &r, line);
                     Ok(())
                 }
