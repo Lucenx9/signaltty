@@ -75,41 +75,53 @@ impl Hooks {
 
     /// An explicit home isolates provider roots; otherwise honor provider overrides.
     pub fn from_env(home: Option<&Path>, reporter: PathBuf) -> Result<Self, Error> {
+        Self::from_vars(home, reporter, |name| std::env::var_os(name))
+    }
+
+    /// [`Hooks::from_env`] over any variable source. A set-but-empty
+    /// variable counts as unset (as XDG does), so no root becomes `""`.
+    fn from_vars(
+        home: Option<&Path>,
+        reporter: PathBuf,
+        var: impl Fn(&str) -> Option<std::ffi::OsString>,
+    ) -> Result<Self, Error> {
+        let var = |name: &str| var(name).filter(|v| !v.is_empty()).map(PathBuf::from);
         let root = home
             .map(Path::to_path_buf)
-            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .or_else(|| var("HOME"))
             .ok_or_else(|| Error("HOME is not set".into()))?;
-        let config = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| root.join(".config"));
+        let config = var("XDG_CONFIG_HOME").unwrap_or_else(|| root.join(".config"));
         let mut hooks = Self::new(root, config, reporter);
         if home.is_none() {
-            if let Some(p) = std::env::var_os("CLAUDE_CONFIG_DIR") {
-                hooks.claude_home = p.into();
+            if let Some(p) = var("CLAUDE_CONFIG_DIR") {
+                hooks.claude_home = p;
             }
-            if let Some(p) = std::env::var_os("CODEX_HOME") {
-                hooks.codex_home = p.into();
+            if let Some(p) = var("CODEX_HOME") {
+                hooks.codex_home = p;
             }
-            if let Some(p) = std::env::var_os("OPENCODE_CONFIG_DIR") {
-                hooks.opencode_home = p.into();
+            if let Some(p) = var("OPENCODE_CONFIG_DIR") {
+                hooks.opencode_home = p;
             }
         }
         Ok(hooks)
     }
 
+    /// A pane's own provider overrides; empty values keep the defaults
+    /// instead of resolving to the launch directory itself.
     pub fn with_overrides(
         mut self,
         env: &std::collections::HashMap<String, String>,
         cwd: &Path,
     ) -> Self {
-        if let Some(p) = env.get("CLAUDE_CONFIG_DIR") {
-            self.claude_home = p.into();
+        let var = |name: &str| env.get(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+        if let Some(p) = var("CLAUDE_CONFIG_DIR") {
+            self.claude_home = p;
         }
-        if let Some(p) = env.get("CODEX_HOME") {
-            self.codex_home = p.into();
+        if let Some(p) = var("CODEX_HOME") {
+            self.codex_home = p;
         }
-        if let Some(p) = env.get("OPENCODE_CONFIG_DIR") {
-            self.opencode_home = p.into();
+        if let Some(p) = var("OPENCODE_CONFIG_DIR") {
+            self.opencode_home = p;
         }
         for root in [
             &mut self.home,
@@ -626,3 +638,35 @@ export default {
   },
 };
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_environment_roots_count_as_unset() {
+        let vars = |name: &str| match name {
+            "HOME" => Some("/home/u".into()),
+            "XDG_CONFIG_HOME" | "CLAUDE_CONFIG_DIR" | "CODEX_HOME" | "OPENCODE_CONFIG_DIR" => {
+                Some("".into())
+            }
+            _ => None,
+        };
+        let hooks = Hooks::from_vars(None, "/bin/signaltty".into(), vars).unwrap();
+        assert_eq!(
+            hooks.file_for("claude").unwrap(),
+            Path::new("/home/u/.claude/settings.json")
+        );
+        assert_eq!(
+            hooks.file_for("codex").unwrap(),
+            Path::new("/home/u/.codex/hooks.json")
+        );
+        assert_eq!(
+            hooks.file_for("opencode").unwrap(),
+            Path::new("/home/u/.config/opencode/plugins/signaltty.js")
+        );
+        // `HOME=` has no root to fall back to; never write relative paths.
+        let empty_home = |name: &str| (name == "HOME").then(|| "".into());
+        assert!(Hooks::from_vars(None, "/bin/signaltty".into(), empty_home).is_err());
+    }
+}
