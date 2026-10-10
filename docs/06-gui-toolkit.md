@@ -62,7 +62,10 @@ Preferences (Ctrl+,) picks an appearance (System / Light / Dark) and one
 of five themes (Signal, Grove, Ocean, Ember, Iris); a `theme-<id>` window
 class redefines the same variables per theme and variant, Signal keeping
 the desktop accent (ADR-0019, `specs/017-themes`). The choice persists in
-`$XDG_CONFIG_HOME/signaltty/gui.json`.
+`$XDG_CONFIG_HOME/signaltty/gui.json`. Each appearance is previewed as a
+miniature window (System split light/dark down the middle) and each theme as
+a light and a dark orb; selection is an accent ring, never a fill
+(`specs/042-preferences-previews`).
 
 One status vocabulary, shared by every surface
 (`crates/signaltty-gui/src/status.rs`, colours in `data/style.css`):
