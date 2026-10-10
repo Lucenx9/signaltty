@@ -1336,6 +1336,77 @@ async fn report_session_builds_resume_and_pane_resume_spawns() {
 }
 
 #[tokio::test]
+async fn empty_provider_env_is_not_retained_for_resume() {
+    // `CODEX_HOME=` means "unset", not "the launch directory": it must not be
+    // stored in config_env, or resume would hand the cwd back as CODEX_HOME.
+    let agents = plugin_test_dir("codex-empty-home");
+    let codex = codex_fixture(&agents);
+    write_manifest(
+        &agents,
+        "codex.toml",
+        &format!(
+            "[agent]\nkind = \"codex\"\n[session]\nresume = [{}, \"resume\", \"{{session_id}}\"]\n",
+            json!(codex)
+        ),
+    );
+    let project = agents.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let srv = TestServer::start_with_dirs(None, Some(&agents)).await;
+    let mut c = srv.client().await;
+    let ws = c
+        .call("workspace.create", json!({"cwd": project}))
+        .await
+        .unwrap();
+    let launch = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws["workspace"]["id"], "argv": [codex, "--version"],
+        "env": {"CODEX_HOME": "", "CLAUDE_CONFIG_DIR": "", "OPENCODE_CONFIG_DIR": ""}}),
+        )
+        .await
+        .unwrap();
+    let pane = launch["pane"]["id"].as_str().unwrap().to_string();
+    // An empty config_env is omitted from the wire.
+    assert!(
+        launch["pane"]["agent"].get("config_env").is_none(),
+        "{}",
+        launch["pane"]["agent"]
+    );
+    c.call(
+        "wait",
+        json!({"pane_id": pane, "until": "exited", "timeout_s": 15}),
+    )
+    .await
+    .unwrap();
+    c.call(
+        "report-session",
+        json!({"pane_id": pane, "agent_session_id": "empty-home", "agent": "codex"}),
+    )
+    .await
+    .unwrap();
+    let r = c
+        .call("pane.resume", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    assert_eq!(r["pane"]["live"]["state"], "live");
+    assert!(r["pane"]["agent"].get("config_env").is_none());
+    wait_for_text(
+        &mut c,
+        &pane,
+        "fixture-resume:empty-home",
+        Duration::from_secs(5),
+    )
+    .await;
+    assert!(!project.join("hooks.json").exists());
+    assert!(srv.integration_home.join(".codex/hooks.json").is_file());
+    c.call("pane.close", json!({"pane_id": pane}))
+        .await
+        .unwrap();
+    srv.shutdown().await;
+    std::fs::remove_dir_all(agents).unwrap();
+}
+
+#[tokio::test]
 async fn report_session_custom_resume_argv_and_validation() {
     let srv = TestServer::start().await;
     let mut c = srv.client().await;
