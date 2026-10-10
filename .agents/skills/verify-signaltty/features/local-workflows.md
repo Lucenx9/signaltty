@@ -11,7 +11,8 @@ Use Ctrl+Shift+P for the palette, Ctrl+Shift+R to rename, Ctrl+Shift+F to search
 and Ctrl+Shift+Z to zoom. The window menu also exposes these commands, Worktrees
 and Show Changes. Worktree creation opens a shell workspace. Closing that
 workspace preserves its checkout; removal is a separate confirmation.
-In Show Changes, activate a file to read its numbered patch. Back returns to the
+Show Changes (Ctrl+Shift+D) docks a panel beside the terminals and follows the
+active workspace. Activate a file to read its numbered patch. Back returns to the
 preserved file list; Refresh reads current changes again.
 
 ## Driving it with GTK and real Git
