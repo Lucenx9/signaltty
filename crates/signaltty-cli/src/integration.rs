@@ -6,7 +6,11 @@ use std::path::{Path, PathBuf};
 pub fn home_dir(override_home: Option<&str>) -> Result<PathBuf, CliError> {
     override_home
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        })
         .ok_or_else(|| CliError::Usage("HOME is not set (use --home)".into()))
 }
 pub fn valid_agents() -> &'static [&'static str] {

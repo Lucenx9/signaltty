@@ -214,6 +214,23 @@ async fn cli_decision_answer_flow() {
     srv.shutdown().await;
 }
 
+#[test]
+fn cli_empty_home_is_unset() {
+    // `HOME=` must not resolve skill dirs relative to the cwd.
+    let out = Command::new(bin_path("signaltty"))
+        .args(["skill", "status", "--json"])
+        .env("HOME", "")
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("HOME is not set (use --home)"), "{err}");
+}
+
 #[tokio::test]
 async fn cli_skill_cat_check_install() {
     // `skill` prints the embedded doc; `check` gates on SIGNALTTY_PANE.
