@@ -42,9 +42,13 @@ pub fn socket_path() -> PathBuf {
 }
 
 fn socket_path_from(socket: Option<String>, runtime: PathBuf) -> PathBuf {
-    socket
-        .map(PathBuf::from)
-        .unwrap_or_else(|| runtime.join("signaltty.sock"))
+    path_override(socket).unwrap_or_else(|| runtime.join("signaltty.sock"))
+}
+
+/// A `SIGNALTTY_*` path override; set-but-empty counts as unset, like the
+/// XDG variables, so `SIGNALTTY_SOCKET=` never resolves to an empty path.
+fn path_override(value: Option<String>) -> Option<PathBuf> {
+    non_empty(value).map(PathBuf::from)
 }
 
 pub fn state_dir() -> PathBuf {
@@ -104,17 +108,15 @@ fn shell_from(shell: Option<String>) -> String {
 
 /// Directory scanned for plugin packages (`<name>/plugin.toml`).
 pub fn plugin_dir() -> PathBuf {
-    std::env::var("SIGNALTTY_PLUGIN_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| config_dir().join("plugins"))
+    path_override(std::env::var("SIGNALTTY_PLUGIN_DIR").ok())
+        .unwrap_or_else(|| config_dir().join("plugins"))
 }
 
 /// Directory scanned for agent detection overlays (`<name>.toml`).
 /// See docs/07, ADR-0009.
 pub fn agents_dir() -> PathBuf {
-    std::env::var("SIGNALTTY_AGENTS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| config_dir().join("agents"))
+    path_override(std::env::var("SIGNALTTY_AGENTS_DIR").ok())
+        .unwrap_or_else(|| config_dir().join("agents"))
 }
 
 #[cfg(test)]
@@ -169,6 +171,20 @@ mod tests {
         assert_eq!(
             socket_path_from(None, "/run/x".into()),
             PathBuf::from("/run/x/signaltty.sock")
+        );
+    }
+
+    #[test]
+    fn empty_path_overrides_count_as_unset() {
+        // `SIGNALTTY_SOCKET=` used to resolve to an empty socket path.
+        assert_eq!(
+            socket_path_from(Some(String::new()), "/run/x".into()),
+            PathBuf::from("/run/x/signaltty.sock")
+        );
+        assert_eq!(path_override(Some(String::new())), None);
+        assert_eq!(
+            path_override(Some("/srv/agents".into())),
+            Some(PathBuf::from("/srv/agents"))
         );
     }
 }

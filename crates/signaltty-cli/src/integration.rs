@@ -83,9 +83,7 @@ pub fn status(home: Option<&Path>, agents: &[String], json: bool) -> Result<(), 
             "trust": if *agent == "codex" { "provider_review" } else { "provider_managed" }});
     }
     // Detection overlays (data, not code): manifests in the agents dir.
-    let agents_dir = std::env::var("SIGNALTTY_AGENTS_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| signaltty_core::paths::agents_dir());
+    let agents_dir = signaltty_core::paths::agents_dir();
     let mut manifests = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&agents_dir) {
         let mut files: Vec<_> = entries
