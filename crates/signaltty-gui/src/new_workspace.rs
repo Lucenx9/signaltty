@@ -6,7 +6,8 @@
 //! the folder picker is [`gtk4::FileDialog`] in folder mode.
 //!
 //! Agent choices come from the adapter registry
-//! (`signaltty_agent::adapter_for_kind`): only agents whose binary is
+//! (`signaltty_agent::adapter_for_kind`) and the bundled generic screen
+//! manifests (`bundled::bundled_programs`): only agents whose binary is
 //! on `PATH` are offered, so the GUI and the server's argv detection
 //! can never disagree. Pure helpers (PATH lookup, argv splitting,
 //! defaults) are toolkit-free and unit-tested below.
@@ -55,8 +56,9 @@ fn agent_kinds() -> [(AgentKind, &'static str); 5] {
 }
 
 /// Shell first (always available), then every agent with a binary on
-/// `PATH`. Adapters owning several binaries (Cursor) use the first
-/// one found.
+/// `PATH`: built-in adapters, then the generic agents with bundled
+/// screen rules. Agents owning several binaries (Cursor) use the
+/// first one found.
 pub fn available_commands() -> Vec<CommandOption> {
     let mut out = vec![CommandOption {
         label: "Shell",
@@ -65,6 +67,15 @@ pub fn available_commands() -> Vec<CommandOption> {
     for (kind, label) in agent_kinds() {
         let meta = signaltty_agent::adapter_for_kind(kind).metadata();
         if let Some(bin) = meta.binaries.iter().find(|b| binary_in_path(b).is_some()) {
+            out.push(CommandOption {
+                label,
+                argv: vec![bin.to_string()],
+            });
+        }
+    }
+    // Generic agents signaltty has screen rules for (gemini, copilot, …).
+    for (label, bins) in signaltty_agent::bundled::bundled_programs() {
+        if let Some(bin) = bins.into_iter().find(|b| binary_in_path(b).is_some()) {
             out.push(CommandOption {
                 label,
                 argv: vec![bin.to_string()],
