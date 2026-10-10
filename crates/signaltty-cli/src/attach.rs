@@ -32,6 +32,7 @@ pub async fn run(socket: &std::path::Path, pane_id: &str) -> Result<(), CliError
             json!({"pane_id": pane_id, "cols": cols, "rows": rows}),
         )
         .await?;
+    let seen = attach["output_offset"].as_u64().unwrap_or(0);
     if let Some(snap) = attach.get("snapshot_b64").and_then(|v| v.as_str()) {
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(snap) {
             let mut out = tokio::io::stdout();
@@ -46,7 +47,7 @@ pub async fn run(socket: &std::path::Path, pane_id: &str) -> Result<(), CliError
     }
 
     crossterm::terminal::enable_raw_mode().map_err(|e| CliError::Io(e.to_string()))?;
-    let result = attach_loop(socket, pane_id, client).await;
+    let result = attach_loop(socket, pane_id, client, seen).await;
     let _ = crossterm::terminal::disable_raw_mode();
     println!();
     result
@@ -56,6 +57,7 @@ async fn attach_loop(
     socket: &std::path::Path,
     pane_id: &str,
     client: Client,
+    mut seen: u64,
 ) -> Result<(), CliError> {
     let (reader, _writer) = client.into_parts();
     // `next_line` is cancel-safe; `read_line` would drop a partly received
@@ -99,7 +101,9 @@ async fn attach_loop(
                     "pty.data" => {
                         if let Some(b64) = payload.get("data_b64").and_then(|v| v.as_str()) {
                             if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
-                                out.write_all(&bytes).await.map_err(|e| CliError::Io(e.to_string()))?;
+                                let end = payload["output_offset"].as_u64();
+                                let bytes = unseen_output(&mut seen, end, &bytes);
+                                out.write_all(bytes).await.map_err(|e| CliError::Io(e.to_string()))?;
                                 out.flush().await.map_err(|e| CliError::Io(e.to_string()))?;
                             }
                         }
@@ -118,6 +122,18 @@ async fn attach_loop(
     }
 }
 
+/// The attach snapshot already covers output up to `seen`; a chunk
+/// streamed while it was taken may overlap it.
+fn unseen_output<'a>(seen: &mut u64, end: Option<u64>, data: &'a [u8]) -> &'a [u8] {
+    let Some(end) = end else {
+        return data;
+    };
+    let start = end.saturating_sub(data.len() as u64);
+    let covered = seen.saturating_sub(start).min(data.len() as u64) as usize;
+    *seen = (*seen).max(end);
+    &data[covered..]
+}
+
 async fn send_input(client: &mut Client, pane_id: &str, data: &[u8]) -> Result<(), CliError> {
     client
         .call(
@@ -134,6 +150,16 @@ async fn send_input(client: &mut Client, pane_id: &str, data: &[u8]) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_covered_by_the_snapshot_is_not_written_twice() {
+        let mut seen = 8;
+        assert_eq!(unseen_output(&mut seen, Some(8), b"abcd"), b"");
+        assert_eq!(unseen_output(&mut seen, Some(10), b"efgh"), b"gh");
+        assert_eq!(unseen_output(&mut seen, Some(12), b"ij"), b"ij");
+        assert_eq!(seen, 12);
+        assert_eq!(unseen_output(&mut seen, None, b"kl"), b"kl");
+    }
 
     #[test]
     fn exit_or_close_of_this_pane_ends_attach() {
