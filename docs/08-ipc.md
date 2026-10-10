@@ -196,14 +196,17 @@ matches it as a regex when `regex` is true; `timeout_s` defaults to 3600). In
 mode only lines newer than `after_seq` match and the cursor advances between
 polls: capture `next_seq` before submitting work, then wait from it. Each
 rendered poll reads up to the 5000-line cap whatever `lines` says, so a burst
-cannot step the cursor past a match. A pane
+cannot step the cursor past a match; only output that outruns the whole
+retained ring between two polls (more than 5000 lines in 100 ms) can be missed. A pane
 whose process has exited is read once more and then fails with `PANE_EXITED`.
 
 `pane.clear` writes `ESC[H ESC[2J ESC[3J` into the pane's output stream, in
 order with the program's output, so the server grid and every attached view
 clear at one `output_offset`; the server also drops its scrolled-off history,
 and `rendered` cursors from before the clear read as `dropped`. The program
-is not told: a full-screen TUI stays blank until it repaints.
+is not told: a full-screen TUI stays blank until it repaints. ED clears the
+active screen only, so while a TUI holds the alternate screen, the main
+screen's text comes back when it exits.
 
 `pane.get` adds `wait_baseline {pane_id, process_instance, agent_session_id,
 session_generation, lifecycle_seq, attention_seq}`. Capture it **before** submitting
