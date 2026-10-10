@@ -342,7 +342,8 @@ async fn handle_conn(ctx: Arc<Ctx>, stream: UnixStream) -> Result<(), Box<dyn st
                     && req.params.get("wait_for_answer").and_then(serde_json::Value::as_bool) == Some(true);
                 let is_wait_call = native_wait
                     || req.method == signaltty_proto::method::WAIT
-                    || req.method == signaltty_proto::method::TASK_WAIT;
+                    || req.method == signaltty_proto::method::TASK_WAIT
+                    || req.method == signaltty_proto::method::PANE_WAIT_FOR_OUTPUT;
                 let (mut resp, effect) = if is_wait_call {
                     tokio::select! {
                         result = dispatch(&ctx, &req) => result,

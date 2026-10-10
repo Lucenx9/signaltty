@@ -2210,7 +2210,12 @@ async fn h_pane_wait_for_output(
         return respond(Err(bad_params("wait timeout is too large")));
     };
     let rendered = matches!(p.read.mode, Some(params::ReadMode::Rendered));
+    if rendered {
+        // The cursor skips whatever a truncated read leaves out; read the cap.
+        p.read.lines = Some(5000);
+    }
     let mut tick = tokio::time::interval(Duration::from_millis(100));
+    tick.reset(); // The loop reads first; the first tick is 100 ms out.
     loop {
         // Checked before the read: output written before the exit still counts.
         let live = ctx.ptys.is_live(&p.read.pane_id);

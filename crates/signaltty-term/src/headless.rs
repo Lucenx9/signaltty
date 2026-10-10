@@ -1432,6 +1432,17 @@ mod tests {
     }
 
     #[test]
+    fn clear_history_drops_cursors_on_a_mostly_blank_screen() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"one\r\ntwo\r\n");
+        let cursor = b.rendered("p", 0, 200).unwrap().next_seq;
+        b.feed_output("p", b"\x1b[H\x1b[2J\x1b[3J");
+        b.clear_history("p");
+        assert!(b.rendered("p", cursor, 200).unwrap().dropped);
+    }
+
+    #[test]
     fn rendered_clear_does_not_flood_history() {
         let mut b = HeadlessBackend::new();
         b.create_surface("p", 80, 24);

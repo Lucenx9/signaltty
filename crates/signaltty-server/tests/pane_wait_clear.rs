@@ -84,7 +84,7 @@ async fn rendered_mode_only_matches_lines_after_the_cursor() {
     let mut c = s.client().await;
     let release = release_file();
     let script = format!(
-        "echo MARK one; while [ ! -e {0} ]; do sleep 0.05; done; echo MARK two; sleep 30",
+        "echo MARK one; while [ ! -e {0} ]; do sleep 0.05; done; echo MARK two; seq 1 50; sleep 30",
         release.display()
     );
     let pane = spawn(&mut c, &script).await;
@@ -115,7 +115,7 @@ async fn rendered_mode_only_matches_lines_after_the_cursor() {
     let wait = tokio::spawn(async move {
         wait_output(
             &mut waiter,
-            json!({"pane_id": pane, "match": "MARK", "mode": "rendered", "after_seq": head, "timeout_s": 10}),
+            json!({"pane_id": pane, "match": "MARK", "mode": "rendered", "after_seq": head, "lines": 5, "timeout_s": 10}),
         )
         .await
     });
@@ -141,6 +141,16 @@ async fn an_exited_pane_without_a_match_fails_fast() {
     .unwrap_err();
     assert!(e.starts_with("PANE_EXITED"), "{e}");
     assert!(start.elapsed() < Duration::from_secs(10));
+
+    // A process that exits mid-wait ends the wait too.
+    let sleeper = spawn(&mut c, "sleep 0.5").await;
+    let e = wait_output(
+        &mut c,
+        json!({"pane_id": sleeper, "match": "never", "timeout_s": 30}),
+    )
+    .await
+    .unwrap_err();
+    assert!(e.starts_with("PANE_EXITED"), "{e}");
 
     // Output written before the exit still matches.
     let r = wait_output(
@@ -168,6 +178,12 @@ async fn clear_blanks_the_server_view_and_streams_to_viewers() {
     .await
     .unwrap();
 
+    let cursor = c
+        .call("pane.read", json!({"pane_id": pane, "mode": "rendered"}))
+        .await
+        .unwrap()["next_seq"]
+        .as_u64()
+        .unwrap();
     let mut viewer = s.client().await;
     let offset = viewer
         .call("pane.attach", json!({"pane_id": pane, "mark_seen": false}))
@@ -180,6 +196,14 @@ async fn clear_blanks_the_server_view_and_streams_to_viewers() {
         .await
         .unwrap();
 
+    let r = c
+        .call(
+            "pane.read",
+            json!({"pane_id": pane, "mode": "rendered", "after_seq": cursor}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["dropped"], json!(true), "{r}");
     for mode in ["tail", "screen"] {
         let r = c
             .call("pane.read", json!({"pane_id": pane, "mode": mode}))
