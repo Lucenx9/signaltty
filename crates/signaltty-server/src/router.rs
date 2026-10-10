@@ -241,8 +241,19 @@ fn pane_result(pane: &Pane) -> Value {
 }
 
 pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
-    let named = with_pane_names(ctx, &req.params);
-    let params = named.as_ref().unwrap_or(&req.params);
+    // Rewrite the whole request: some handlers take `req`, not `params`.
+    let named;
+    let req = match with_pane_names(ctx, &req.params) {
+        Some(params) => {
+            named = Request {
+                params,
+                ..req.clone()
+            };
+            &named
+        }
+        None => req,
+    };
+    let params = &req.params;
     let out: Handler = match req.method.as_str() {
         method::SERVER_STATUS => h_server_status(ctx, params),
         method::SERVER_SHUTDOWN => h_server_shutdown(ctx, params),

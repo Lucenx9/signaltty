@@ -59,6 +59,15 @@ async fn a_named_pane_is_addressable_by_name_and_survives_restart() {
     )
     .await
     .unwrap();
+    // Handlers that read the raw request see the name resolved too.
+    let r = c
+        .call(
+            "pane.input",
+            json!({"pane_id": "reviewer", "data_b64": "eAo="}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["written"], 2);
     c.call("pane.rename", json!({"pane_id": b, "name": "worker-1"}))
         .await
         .unwrap();
