@@ -79,6 +79,18 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
     if manifest.agent.binaries.iter().any(|b| b.is_empty()) {
         return Err("binaries must not contain empty names".to_string());
     }
+    // `name-*` matches a prefix (Muse runs `muse-bin-<version>`); `*` only
+    // at the end, after at least one character.
+    if let Some(bad) = manifest
+        .agent
+        .binaries
+        .iter()
+        .find(|b| b.find('*').is_some_and(|i| i == 0 || i != b.len() - 1))
+    {
+        return Err(format!(
+            "binaries entry '{bad}': '*' only as the last character of a prefix"
+        ));
+    }
     for (hook, ov) in &manifest.lifecycle {
         if let Some(l) = &ov.lifecycle {
             Lifecycle::parse(l).ok_or_else(|| format!("[lifecycle.{hook}] bad lifecycle '{l}'"))?;
@@ -136,7 +148,7 @@ impl OverlayAdapter {
     pub fn screen_rules_for(&self, process: &str) -> &[ScreenRule] {
         let binaries = &self.manifest.agent.binaries;
         let scoped = self.kind() == AgentKind::Generic && !binaries.is_empty();
-        if scoped && !binaries.iter().any(|b| b == process) {
+        if scoped && !binaries.iter().any(|b| binary_matches(b, process)) {
             return &[];
         }
         &self.screen
@@ -163,7 +175,7 @@ impl AgentAdapter for OverlayAdapter {
                 .agent
                 .binaries
                 .iter()
-                .any(|b| b == proc.bin_name())
+                .any(|b| binary_matches(b, proc.bin_name()))
     }
 
     fn lifecycle_state(&self, ev: &AdapterEvent) -> LifecycleDecision {
@@ -224,6 +236,14 @@ impl AgentAdapter for OverlayAdapter {
             display_name: self.display_name.unwrap_or(base.display_name),
             binaries: base.binaries,
         }
+    }
+}
+
+/// A `binaries` entry: an exact program name, or `prefix*`.
+fn binary_matches(pattern: &str, name: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => name.starts_with(prefix),
+        None => pattern == name,
     }
 }
 
@@ -336,6 +356,30 @@ message = "future says hi"
         assert_eq!(first, "Codex (wrap)");
         // Same text, same leaked copy: repeated reloads do not grow memory.
         assert!(std::ptr::eq(first, again));
+    }
+
+    #[test]
+    fn binaries_ending_in_a_star_match_a_prefix() {
+        let m = |bins: &str| {
+            parse_manifest(&format!("[agent]\nkind = \"generic\"\nbinaries = {bins}\n[[screen]]\nid = \"r\"\nstate = \"idle\"\nregex = ['x']\n"))
+        };
+        let o = OverlayAdapter::new(m("[\"muse\", \"muse-bin-*\"]").unwrap()).unwrap();
+        assert_eq!(o.screen_rules_for("muse-bin-0.2.1-R708.1").len(), 1);
+        assert_eq!(o.screen_rules_for("muse").len(), 1);
+        // The prefix itself starts with the prefix; one character short does not.
+        assert_eq!(o.screen_rules_for("muse-bin-").len(), 1);
+        assert!(o.screen_rules_for("muse-bin").is_empty());
+        assert!(o.screen_rules_for("musex").is_empty());
+        // Detection overlays use the same matching.
+        let codex = OverlayAdapter::new(
+            parse_manifest("[agent]\nkind = \"codex\"\nbinaries = [\"codex-wrap-*\"]\n").unwrap(),
+        )
+        .unwrap();
+        assert!(codex.identify(&proc_of("codex-wrap-2")));
+        assert!(!codex.identify(&proc_of("codex-wrapper")));
+        // `*` only at the end, never alone.
+        assert!(m("[\"*\"]").is_err());
+        assert!(m("[\"mu*se\"]").is_err());
     }
 
     #[test]
