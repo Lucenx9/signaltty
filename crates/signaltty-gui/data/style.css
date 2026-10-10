@@ -281,9 +281,12 @@ window {
 toolbarview > .top-bar headerbar menubutton.crumb-button > button {
   padding: 0 8px 0 2px;
 }
+/* libadwaita dims a disabled menubutton with a filter on the node. */
+menubutton.crumb-button:disabled {
+  filter: none;
+}
 menubutton.crumb-button > button:disabled {
   color: inherit;
-  opacity: 1;
 }
 
 /* ---- workspace details card ------------------------------------------- */

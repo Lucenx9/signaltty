@@ -269,6 +269,9 @@ impl App {
         crumb_button.set_popover(Some(&details.popover));
         crumb_button.add_css_class("crumb-button");
         crumb_button.set_tooltip_text(Some("Workspace Details"));
+        // The name stays the visible title; the description says what it opens.
+        crumb_button
+            .update_property(&[gtk4::accessible::Property::Description("Workspace Details")]);
         crumb_button.set_sensitive(false);
         header.pack_start(&crumb_button);
         let btn_menu = gtk4::MenuButton::new();
@@ -1288,6 +1291,8 @@ impl App {
         let ws = snapshot.workspace;
         if self.active_ws_id().as_deref() != Some(ws_id) {
             self.zoom.borrow_mut().take();
+            // The card describes one workspace; a switch closes it.
+            self.details.popover.popdown();
         }
         if user_navigation && self.active_ws_id().as_deref() != Some(ws_id) {
             self.navigate();

@@ -51,13 +51,15 @@ pub fn details(ws: &Workspace, panes: &[Pane], tasks: &TaskIndex, agents: String
             .clone()
             .filter(|branch| !branch.trim().is_empty())
     };
+    // A workspace can hold several task panes; the latest task speaks.
     let task = tasks
         .iter()
-        .find(|task| {
+        .filter(|task| {
             task.pane_id
                 .as_deref()
                 .is_some_and(|id| panes.iter().any(|pane| pane.id == id))
         })
+        .max_by_key(|task| task.updated_at)
         .map(|task| TaskDetail {
             label: task.label.clone(),
             state: state_word(task.state),
@@ -303,6 +305,10 @@ impl DetailsCard {
                     }
                     pr_status.add_css_class(pr.class);
                     pr_row.set_tooltip_text(Some(&pr.url));
+                    pr_row.update_property(&[gtk4::accessible::Property::Label(&format!(
+                        "Pull request #{}, {}",
+                        pr.number, pr.status
+                    ))]);
                 }
                 *self.pr_url.borrow_mut() = task.pr.map(|pr| pr.url);
             }
@@ -357,6 +363,98 @@ impl DetailsCard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
+    use signaltty_core::PtySize;
+
+    fn workspace(git: serde_json::Value) -> Workspace {
+        let now = Utc.with_ymd_and_hms(2026, 10, 10, 12, 0, 0).unwrap();
+        Workspace {
+            id: "ws".into(),
+            name: "ws".into(),
+            handle: "ws".into(),
+            cwd: "/tmp/repo".into(),
+            git: serde_json::from_value(git).unwrap(),
+            tabs: vec![],
+            active_tab_id: None,
+            auto_resume: false,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn pane(id: &str) -> Pane {
+        let now = Utc.with_ymd_and_hms(2026, 10, 10, 12, 0, 0).unwrap();
+        let mut pane = Pane::new(
+            "ws".into(),
+            "tab".into(),
+            "/tmp/repo".into(),
+            vec!["sh".into()],
+            PtySize::default(),
+            now,
+        );
+        pane.id = id.into();
+        pane
+    }
+
+    fn task(id: &str, pane: &str, label: &str, minute: u32) -> serde_json::Value {
+        let at = Utc
+            .with_ymd_and_hms(2026, 10, 10, 12, minute, 0)
+            .unwrap()
+            .to_rfc3339();
+        json!({
+            "id": id, "context_id": "ctx", "pane_id": pane, "label": label,
+            "contract": {"objective": "x"}, "source_repo": "/tmp/repo",
+            "worktree_path": "/tmp/wt", "branch": "b", "base_ref": "HEAD",
+            "base_sha": "0", "state": "working", "created_at": at, "updated_at": at
+        })
+    }
+
+    #[test]
+    fn branch_reads_detached_or_hides_when_blank() {
+        let tasks = TaskIndex::default();
+        let d = details(
+            &workspace(json!({"branch": "main"})),
+            &[],
+            &tasks,
+            String::new(),
+        );
+        assert_eq!(d.branch.as_deref(), Some("main"));
+        let d = details(
+            &workspace(json!({"detached": true})),
+            &[],
+            &tasks,
+            String::new(),
+        );
+        assert_eq!(d.branch.as_deref(), Some("Detached HEAD"));
+        let d = details(
+            &workspace(json!({"branch": "  "})),
+            &[],
+            &tasks,
+            String::new(),
+        );
+        assert_eq!(d.branch, None, "blank branch hides the row");
+        assert_eq!(d.cwd, "/tmp/repo");
+    }
+
+    #[test]
+    fn the_latest_task_in_the_workspace_speaks() {
+        let mut tasks = TaskIndex::default();
+        for value in [
+            task("t_old", "p1", "old", 1),
+            task("t_new", "p2", "new", 5),
+            task("t_elsewhere", "p9", "elsewhere", 9),
+        ] {
+            assert!(tasks.apply_event(
+                signaltty_proto::event::TASK_CREATED,
+                &json!({"task": value})
+            ));
+        }
+        let panes = [pane("p1"), pane("p2")];
+        let d = details(&workspace(json!({})), &panes, &tasks, String::new());
+        assert_eq!(d.task.unwrap().label, "new");
+        let d = details(&workspace(json!({})), &[pane("p3")], &tasks, String::new());
+        assert!(d.task.is_none(), "no task pane, no task section");
+    }
 
     #[test]
     fn pull_request_says_its_end_state_before_its_checks() {
