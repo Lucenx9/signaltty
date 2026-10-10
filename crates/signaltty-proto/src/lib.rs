@@ -140,6 +140,8 @@ pub mod method {
     pub const TAB_CLOSE: &str = "tab.close";
     pub const TAB_SET_LAYOUT: &str = "tab.set_layout";
     pub const TAB_SET_RATIO: &str = "tab.set_ratio";
+    pub const LAYOUT_EXPORT: &str = "layout.export";
+    pub const LAYOUT_APPLY: &str = "layout.apply";
     pub const PANE_SPAWN: &str = "pane.spawn";
     pub const PANE_SPLIT: &str = "pane.split";
     pub const PANE_SWAP: &str = "pane.swap";
@@ -206,6 +208,8 @@ pub mod method {
         TAB_CLOSE,
         TAB_SET_LAYOUT,
         TAB_SET_RATIO,
+        LAYOUT_EXPORT,
+        LAYOUT_APPLY,
         PANE_SPAWN,
         PANE_SPLIT,
         PANE_SWAP,

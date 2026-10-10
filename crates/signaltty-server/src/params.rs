@@ -123,6 +123,37 @@ pub struct TabSetLayout {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LayoutExport {
+    pub tab_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LayoutApply {
+    pub workspace_id: String,
+    pub title: Option<String>,
+    pub root: LayoutSpec,
+}
+
+/// A `layout.apply` tree: the `tab.set_layout` shape whose leaves say
+/// what to start instead of naming live panes (`pane_id` is ignored, so
+/// `layout.export` output applies as is).
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LayoutSpec {
+    Pane {
+        cwd: Option<String>,
+        argv: Option<Vec<String>>,
+        name: Option<String>,
+    },
+    Split {
+        dir: SplitDir,
+        ratio: f32,
+        first: Box<LayoutSpec>,
+        second: Box<LayoutSpec>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TabSetRatio {
     pub tab_id: String,
     pub path: SplitPath,
