@@ -309,7 +309,8 @@ panes; `pane.close` deletes one.
 `pane.rename` gives a pane a unique name: a lowercase slug
 (`[a-z][a-z0-9_-]*`, at most 32 bytes, herdr's agent-name rule). An invalid
 name, or one another pane holds, is `BAD_PARAMS`. Every request's `pane_id`,
-`target_pane_id` and `parent_pane_id` accept the name in place of the id. A
+`target_pane_id` and `parent_pane_id`, and the leaves of a `tab.set_layout`
+tree, accept the name in place of the id. A
 real pane id always wins over a name. The name persists across restarts and
 emits `pane.updated`.
 

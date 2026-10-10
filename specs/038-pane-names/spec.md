@@ -13,8 +13,8 @@ generated `pane_…` id.
 2. A name is a lowercase slug, `[a-z][a-z0-9_-]*`, at most 32 bytes (herdr's
    rule), and is unique across the server. Otherwise → `BAD_PARAMS`. An
    unknown pane → `NO_SUCH_PANE`.
-3. In every request, `pane_id`, `target_pane_id` and `parent_pane_id` accept
-   a name in place of the id. A real id wins.
+3. In every request, `pane_id`, `target_pane_id`, `parent_pane_id` and
+   `tab.set_layout` leaves accept a name in place of the id. A real id wins.
 4. Documented in `docs/08`, `method::ALL`, the CLI (`pane rename`), and an
    integration test (rename, address by name, restart, clear, errors).
 
