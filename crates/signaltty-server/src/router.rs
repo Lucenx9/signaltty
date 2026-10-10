@@ -283,6 +283,8 @@ pub async fn dispatch(ctx: &Ctx, req: &Request) -> (Response, ConnEffect) {
         method::TAB_SET_RATIO => h_tab_set_ratio(ctx, &req.params),
         method::PANE_SPAWN => h_pane_spawn(ctx, &req.params),
         method::PANE_SPLIT => h_pane_split(ctx, &req.params),
+        method::PANE_SWAP => h_pane_swap(ctx, &req.params),
+        method::PANE_MOVE => h_pane_move(ctx, &req.params),
         method::PANE_GET => h_pane_get(ctx, &req.params),
         method::PANE_INPUT => return h_pane_input(ctx, req).await,
         method::PANE_RESIZE => h_pane_resize(ctx, &req.params),
@@ -955,6 +957,116 @@ pub(crate) fn h_pane_spawn(ctx: &Ctx, params: &Value) -> Handler {
     drop(s);
     ctx.mark_persist();
     Ok((launch_result(&pane, integration), ConnEffect::default()))
+}
+
+/// Tabs of two distinct laid-out panes in one workspace, for swap/move.
+fn layout_pair(
+    s: &crate::store::Store,
+    a: &str,
+    b: &str,
+) -> Result<(String, String), (String, String)> {
+    if a == b {
+        return Err(bad_params("pane_id and target_pane_id must differ"));
+    }
+    let mut tabs = Vec::new();
+    for id in [a, b] {
+        let pane = s
+            .panes
+            .get(id)
+            .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), id.to_string()))?;
+        if !s
+            .tabs
+            .get(&pane.tab_id)
+            .and_then(|tab| tab.layout.as_ref())
+            .is_some_and(|layout| layout.panes().iter().any(|p| p == id))
+        {
+            return Err(bad_params(format!("pane {id} is not in its tab layout")));
+        }
+        tabs.push((pane.workspace_id.clone(), pane.tab_id.clone()));
+    }
+    if tabs[0].0 != tabs[1].0 {
+        return Err(bad_params("panes belong to different workspaces"));
+    }
+    Ok((tabs[0].1.clone(), tabs[1].1.clone()))
+}
+
+/// Emit the touched tabs (and moved panes) once, then persist.
+fn finish_rearrange(
+    ctx: &Ctx,
+    mut s: std::sync::RwLockWriteGuard<'_, crate::store::Store>,
+    tabs: &[&str],
+    moved: &[&str],
+) -> Handler {
+    let mut out = Vec::new();
+    for id in tabs {
+        let tab = s.tabs[*id].clone();
+        s.emit(event::TAB_UPDATED, json!({"tab": tab}));
+        out.push(tab);
+    }
+    for id in moved {
+        let pane = s.panes[*id].clone();
+        s.emit(event::PANE_UPDATED, json!({"pane": pane}));
+    }
+    drop(s);
+    ctx.mark_persist();
+    Ok((json!({"tabs": out}), ConnEffect::default()))
+}
+
+fn h_pane_swap(ctx: &Ctx, params: &Value) -> Handler {
+    let p: params::PaneSwap = decode(params)?;
+    let (a, b) = (p.pane_id.as_str(), p.target_pane_id.as_str());
+    let mut s = ctx.store.write().unwrap();
+    let (ta, tb) = layout_pair(&s, a, b)?;
+    if ta == tb {
+        let tab = s.tabs.get_mut(&ta).unwrap();
+        tab.layout.as_mut().unwrap().swap_panes(a, b);
+        return finish_rearrange(ctx, s, &[&ta], &[]);
+    }
+    for id in [&ta, &tb] {
+        let tab = s.tabs.get_mut(id).unwrap();
+        tab.layout.as_mut().unwrap().swap_panes(a, b);
+        // Focus stays on the tab's slot, now held by the other pane.
+        if let Some(active) = tab.active_pane_id.as_mut() {
+            if active == a || active == b {
+                *active = if active == a { b } else { a }.to_string();
+            }
+        }
+    }
+    s.panes.get_mut(a).unwrap().tab_id = tb.clone();
+    s.panes.get_mut(b).unwrap().tab_id = ta.clone();
+    finish_rearrange(ctx, s, &[&ta, &tb], &[a, b])
+}
+
+fn h_pane_move(ctx: &Ctx, params: &Value) -> Handler {
+    let p: params::PaneMove = decode(params)?;
+    let (a, b) = (p.pane_id.as_str(), p.target_pane_id.as_str());
+    let dir = p
+        .direction
+        .as_ref()
+        .map(|d| d.split_dir())
+        .unwrap_or(SplitDir::Right);
+    let mut s = ctx.store.write().unwrap();
+    let (ta, tb) = layout_pair(&s, a, b)?;
+    let source = s.tabs.get_mut(&ta).unwrap();
+    let layout = source.layout.as_mut().unwrap();
+    if layout.panes().len() == 1 {
+        source.layout = None;
+    } else {
+        layout.remove(a);
+    }
+    if ta != tb && source.active_pane_id.as_deref() == Some(a) {
+        source.active_pane_id = source
+            .layout
+            .as_ref()
+            .and_then(|l| l.panes().into_iter().next());
+    }
+    let dest = s.tabs.get_mut(&tb).unwrap();
+    dest.layout.as_mut().unwrap().split(b, dir, a.to_string());
+    if ta == tb {
+        return finish_rearrange(ctx, s, &[&tb], &[]);
+    }
+    s.panes.get_mut(a).unwrap().tab_id = tb.clone();
+    finish_rearrange(ctx, s, &[&ta, &tb], &[a])
 }
 
 fn user_shell() -> String {
