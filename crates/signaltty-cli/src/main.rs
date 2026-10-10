@@ -312,6 +312,9 @@ enum WorkspaceOp {
     /// Worktree-vs-HEAD diff as data (files, per-dir groups, totals).
     Diff {
         id: String,
+        /// Changes since the latest agent turn started, committed or not.
+        #[arg(long)]
+        turn: bool,
     },
 }
 
@@ -745,11 +748,30 @@ async fn run(args: Args) -> Result<(), CliError> {
                     emit(json, &r, format!("branch={branch}"));
                     Ok(())
                 }
-                WorkspaceOp::Diff { id } => {
+                WorkspaceOp::Diff { id, turn } => {
+                    let scope = if turn { "turn" } else { "head" };
                     let r = c
-                        .call("workspace.diff", json!({"workspace_id": id}))
+                        .call(
+                            "workspace.diff",
+                            json!({"workspace_id": id, "scope": scope}),
+                        )
                         .await?;
+                    if turn && r["turn"].is_null() {
+                        emit(
+                            json,
+                            &r,
+                            "No agent turn recorded in this workspace yet.".to_string(),
+                        );
+                        return Ok(());
+                    }
                     let mut human = String::new();
+                    if turn {
+                        human.push_str(&format!(
+                            "latest turn: started {} by {}\n",
+                            r["turn"]["started_at"].as_str().unwrap_or("?"),
+                            r["turn"]["pane_id"].as_str().unwrap_or("?"),
+                        ));
+                    }
                     for f in r["files"].as_array().cloned().unwrap_or_default() {
                         let path = f["path"].as_str().unwrap_or("?");
                         if f["untracked"].as_bool().unwrap_or(false) {

@@ -339,6 +339,9 @@ async fn cli_workspace_diff_reports_counts() {
     assert!(ok, "{text}");
     assert!(text.contains("+1 -0 a.txt"), "{text}");
     assert!(text.contains("total +1 -0"), "{text}");
+    let (ok, text) = cli(&srv.socket, &["workspace", "diff", "--turn", &ws]);
+    assert!(ok, "{text}");
+    assert_eq!(text.trim(), "No agent turn recorded in this workspace yet.");
     srv.shutdown().await;
     std::fs::remove_dir_all(&dir).ok();
 }
