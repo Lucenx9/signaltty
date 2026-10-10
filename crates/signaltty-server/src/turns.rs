@@ -60,21 +60,50 @@ pub struct Snapshot {
     pub tree: String,
 }
 
-/// Removes the private index (and a lock git may leave) on every path.
-struct TempIndex(PathBuf);
+/// A private index in a fresh 0700 directory, so another local user cannot
+/// pre-create or symlink the predictable path in the shared temp dir. The
+/// directory (with any lock git leaves) is removed on every path.
+struct TempIndex {
+    dir: PathBuf,
+    index: PathBuf,
+}
+
+impl TempIndex {
+    fn create() -> std::io::Result<TempIndex> {
+        use std::os::unix::fs::DirBuilderExt;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let mut attempts = 0;
+        loop {
+            let dir = std::env::temp_dir().join(format!(
+                "signaltty-turn-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            // mkdir never follows a symlink and fails if the path exists.
+            match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+                Ok(()) => {
+                    let index = dir.join("index");
+                    return Ok(TempIndex { dir, index });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 16 => {
+                    attempts += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
 
 impl Drop for TempIndex {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-        let _ = std::fs::remove_file(self.0.with_extension("index.lock"));
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
 /// Tree of every tracked and unignored untracked file in `cwd`'s checkout,
 /// staged through a copy of the index so the user's index stays untouched.
 pub async fn snapshot(cwd: &str) -> Result<Snapshot, ParamError> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = git(cwd, &["rev-parse", "--show-toplevel"], None).await?;
     let index = git(
         &root,
@@ -82,19 +111,15 @@ pub async fn snapshot(cwd: &str) -> Result<Snapshot, ParamError> {
         None,
     )
     .await?;
-    let temp = TempIndex(std::env::temp_dir().join(format!(
-        "signaltty-turn-{}-{}.index",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )));
+    let temp = TempIndex::create().map_err(|e| (code::IO_ERROR.into(), e.to_string()))?;
     // The copy keeps stat data, so only changed files are hashed again.
-    match std::fs::copy(&index, &temp.0) {
+    match std::fs::copy(&index, &temp.index) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err((code::IO_ERROR.into(), e.to_string())),
     }
-    git(&root, &["add", "--all"], Some(&temp.0)).await?;
-    let tree = git(&root, &["write-tree"], Some(&temp.0)).await?;
+    git(&root, &["add", "--all"], Some(&temp.index)).await?;
+    let tree = git(&root, &["write-tree"], Some(&temp.index)).await?;
     Ok(Snapshot { root, tree })
 }
 
