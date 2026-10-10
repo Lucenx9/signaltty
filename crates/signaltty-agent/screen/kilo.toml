@@ -10,6 +10,7 @@
 
 [agent]
 kind = "generic"
+display_name = "Kilo Code"
 binaries = ["kilo", "kilo-code"]
 
 [[screen]]

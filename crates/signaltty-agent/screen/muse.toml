@@ -21,6 +21,7 @@
 
 [agent]
 kind = "generic"
+display_name = "Muse"
 binaries = ["muse", "muse-code", "muse-cli", "muse-bin-*"]
 
 [[screen]]
