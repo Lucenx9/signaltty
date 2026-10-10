@@ -177,8 +177,6 @@ impl Overlays {
 }
 
 impl Ctx {
-    /// Wake every shutdown waiter and leave a permit if `serve` is between
-    /// accepts. `notify_waiters` alone drops the signal when nobody is parked.
     /// The shutdown snapshot. Only the first shutdown trigger saves (logind,
     /// a signal or `server.shutdown`; a later SIGTERM sees torn-down state),
     /// and no debounced flush runs after it.
@@ -195,6 +193,8 @@ impl Ctx {
         }
     }
 
+    /// Wake every shutdown waiter and leave a permit if `serve` is between
+    /// accepts. `notify_waiters` alone drops the signal when nobody is parked.
     pub(crate) fn request_shutdown(&self) {
         self.stopping
             .store(true, std::sync::atomic::Ordering::SeqCst);
