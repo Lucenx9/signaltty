@@ -76,23 +76,8 @@ pub fn git_diff(cwd: &str) -> Option<WorktreeDiff> {
             &base,
         ],
     )?;
-    let mut files = Vec::new();
-    for record in numstat.split(|b| *b == 0).filter(|r| !r.is_empty()) {
-        let line = std::str::from_utf8(record).ok()?;
-        let mut parts = line.splitn(3, '\t');
-        let (added_s, removed_s, path) = match (parts.next(), parts.next(), parts.next()) {
-            (Some(a), Some(r), Some(p)) => (a, r, p),
-            _ => continue,
-        };
-        let binary = added_s == "-";
-        files.push(DiffFile {
-            path: path.to_string(),
-            added: added_s.parse().unwrap_or(0),
-            removed: removed_s.parse().unwrap_or(0),
-            untracked: false,
-            binary,
-        });
-    }
+    // A non-UTF-8 path is skipped, never the whole diff (as in task_git_diff).
+    let mut files = numstat_files(&numstat);
     let status = git_bytes(
         cwd,
         &[
@@ -105,8 +90,11 @@ pub fn git_diff(cwd: &str) -> Option<WorktreeDiff> {
     )
     .unwrap_or_default();
     for path in status.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let Ok(path) = std::str::from_utf8(path) else {
+            continue;
+        };
         files.push(DiffFile {
-            path: std::str::from_utf8(path).ok()?.to_owned(),
+            path: path.to_owned(),
             added: 0,
             removed: 0,
             untracked: true,
@@ -804,6 +792,32 @@ mod tests {
             .files
             .iter()
             .any(|f| f.path == untracked && f.untracked));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn diff_skips_non_utf8_paths_instead_of_failing() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = fixture_repo("latin1");
+        // A Latin-1 name (`caf\xe9.txt`) is a valid Linux filename.
+        let tracked = std::ffi::OsStr::from_bytes(b"caf\xe9.txt");
+        std::fs::write(dir.join(tracked), "old\n").unwrap();
+        for args in [vec!["add", "-A"], vec!["commit", "-qm", "odd name"]] {
+            let ok = Command::new("git").arg("-C").arg(&dir).args(args).status();
+            assert!(ok.unwrap().success());
+        }
+        std::fs::write(dir.join(tracked), "new\n").unwrap();
+        let untracked = std::ffi::OsStr::from_bytes(b"na\xefve.txt");
+        std::fs::write(dir.join(untracked), "untracked\n").unwrap();
+        std::fs::write(dir.join("fresh.txt"), "untracked\n").unwrap();
+        std::fs::write(dir.join("a.txt"), "changed again\n").unwrap();
+        let diff = git_diff(dir.to_str().unwrap()).expect("a repo with an odd name still diffs");
+        assert!(diff.files.iter().any(|f| f.path == "a.txt" && !f.untracked));
+        assert!(diff
+            .files
+            .iter()
+            .any(|f| f.path == "fresh.txt" && f.untracked));
+        assert_eq!(diff.files.len(), 2, "{:?}", diff.files);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -143,7 +143,8 @@ pub async fn changed_files(
     base: &str,
     current: &str,
 ) -> Result<Vec<crate::git::DiffFile>, ParamError> {
-    let numstat = git(
+    // Raw bytes: `numstat_files` skips non-UTF-8 paths itself.
+    let numstat = git_raw(
         root,
         &[
             "diff",
@@ -157,7 +158,7 @@ pub async fn changed_files(
         None,
     )
     .await?;
-    Ok(crate::git::numstat_files(numstat.as_bytes()))
+    Ok(crate::git::numstat_files(&numstat))
 }
 
 /// The tree a turn-scoped read compares against, or `None` before any turn.
@@ -177,6 +178,13 @@ pub fn require(ctx: &Ctx, workspace_id: &str) -> Result<Baseline, ParamError> {
 }
 
 async fn git(cwd: &str, args: &[&str], index: Option<&Path>) -> Result<String, ParamError> {
+    let text = String::from_utf8(git_raw(cwd, args, index).await?)
+        .map_err(|_| bad_params("Git output is not valid UTF-8"))?;
+    Ok(text.strip_suffix('\n').unwrap_or(&text).to_owned())
+}
+
+/// Stdout of a Git command as bytes, for output that may carry paths.
+async fn git_raw(cwd: &str, args: &[&str], index: Option<&Path>) -> Result<Vec<u8>, ParamError> {
     let mut command = tokio::process::Command::new("git");
     command
         .arg("-C")
@@ -199,9 +207,7 @@ async fn git(cwd: &str, args: &[&str], index: Option<&Path>) -> Result<String, P
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         ));
     }
-    let text = String::from_utf8(output.stdout)
-        .map_err(|_| bad_params("Git output is not valid UTF-8"))?;
-    Ok(text.strip_suffix('\n').unwrap_or(&text).to_owned())
+    Ok(output.stdout)
 }
 
 /// A turn starts on `agent.working`, except when a permission prompt
@@ -328,5 +334,26 @@ mod tests {
         assert_eq!(status(&repo), before, "index untouched");
         let listed = repo.git(&["ls-tree", "--name-only", &snap.tree]).stdout;
         assert_eq!(String::from_utf8(listed).unwrap(), "README.md\nnew.txt\n");
+    }
+
+    #[tokio::test]
+    async fn changed_files_skips_non_utf8_paths_instead_of_failing() {
+        use std::os::unix::ffi::OsStrExt;
+        let repo = signaltty_testkit::TempGitRepo::new();
+        let cwd = repo.path().to_str().unwrap();
+        // A Latin-1 name (`caf\xe9.txt`) is a valid Linux filename.
+        let odd = repo
+            .path()
+            .join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt"));
+        std::fs::write(&odd, "old\n").unwrap();
+        let base = snapshot(cwd).await.unwrap();
+        std::fs::write(&odd, "new\n").unwrap();
+        std::fs::write(repo.path().join("plain.txt"), "plain\n").unwrap();
+        let now = snapshot(cwd).await.unwrap();
+        let files = changed_files(&now.root, &base.tree, &now.tree)
+            .await
+            .expect("a turn with an odd name still diffs");
+        let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["plain.txt"]);
     }
 }
