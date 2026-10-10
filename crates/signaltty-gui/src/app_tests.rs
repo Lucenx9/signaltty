@@ -1886,6 +1886,84 @@ fn numbered_diff_fixture(path: &str) -> Value {
 
 #[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
+fn changes_panel_scopes_to_the_latest_turn() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let window = adw::ApplicationWindow::new(&application);
+    window.set_default_size(920, 680);
+    let terminal = gtk4::Label::new(Some("Workspace terminals stay mounted"));
+    terminal.set_hexpand(true);
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let panel = crate::changes::ChangesPanel::new(actor);
+    let host = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    host.append(&terminal);
+    host.append(&panel.widget);
+    window.set_content(Some(&host));
+    window.present();
+    panel.show("a");
+    let root = panel.widget.clone().upcast::<gtk4::Widget>();
+    let (params, reply) = next_diff_call(&mut requests, "workspace.diff");
+    assert_eq!(params["scope"], "head");
+    reply
+        .send(Ok(json!({"added":1,"removed":0,"files":[
+            {"path":"README.md","added":1,"removed":0,"binary":false,"untracked":false}
+        ]})))
+        .unwrap();
+    wait_ui(|| has_label(&root, "Changes against HEAD · 1 files · +1 −0"));
+    // The turn view does not follow events.
+    panel.on_event("agent.done", Some("a"));
+    assert!(requests.is_empty());
+
+    let scopes = find_widget::<adw::ToggleGroup>(&root).unwrap();
+    assert_eq!(scopes.n_toggles(), 2);
+    scopes.set_active_name(Some("turn"));
+    let (params, reply) = next_diff_call(&mut requests, "workspace.diff");
+    assert_eq!(params["scope"], "turn");
+    reply
+        .send(Ok(json!({"added":0,"removed":0,"files":[],"turn":null})))
+        .unwrap();
+    wait_ui(|| {
+        action_row_with_title(&root, "No agent turn recorded in this workspace yet.").is_some()
+    });
+    assert!(action_row_with_title(&root, "README.md").is_none());
+
+    // Only this workspace's turns re-read the list.
+    panel.on_event("agent.done", Some("b"));
+    panel.on_event("agent.working", Some("a"));
+    assert!(requests.is_empty());
+    panel.on_event("workspace.turn_started", Some("a"));
+    let (params, reply) = next_diff_call(&mut requests, "workspace.diff");
+    assert_eq!(params["scope"], "turn");
+    reply
+        .send(Ok(json!({"added":3,"removed":1,
+        "turn":{"pane_id":"pane_a","started_at":"2026-10-10T10:00:00Z"},
+        "files":[
+            {"path":"src/new.rs","added":2,"removed":0,"binary":false,"untracked":false},
+            {"path":"notes.txt","added":1,"removed":1,"binary":false,"untracked":false}
+        ]})))
+        .unwrap();
+    wait_ui(|| has_label(&root, "Latest turn · 2 files · +3 −1"));
+    capture_workflow(&window, "changes-turn");
+
+    let row = action_row_with_title(&root, "new.rs").unwrap();
+    adw::prelude::ActionRowExt::activate(&row);
+    let (params, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    assert_eq!(params["path"], "src/new.rs");
+    assert_eq!(params["scope"], "turn");
+    reply
+        .send(Ok(
+            json!({"path":"src/new.rs","untracked":false,"content":{"kind":"unchanged"}}),
+        ))
+        .unwrap();
+    wait_ui(|| has_label(&root, "This file no longer has changes in the latest turn."));
+    assert!(has_label(&root, "Changes in the latest turn"));
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
 fn file_diff_reader_uses_native_numbered_selectable_controls() {
     adw::init().unwrap();
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();

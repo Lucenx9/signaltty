@@ -290,6 +290,58 @@ pub fn task_git_diff(
     })
 }
 
+/// Files of a `git diff --numstat -z --no-renames` between two trees.
+/// Paths that are not UTF-8 are skipped, as in [`task_git_diff`].
+pub(crate) fn numstat_files(numstat: &[u8]) -> Vec<DiffFile> {
+    numstat
+        .split(|b| *b == 0)
+        .filter_map(|record| {
+            let mut parts = std::str::from_utf8(record).ok()?.splitn(3, '\t');
+            let (added, removed, path) = (parts.next()?, parts.next()?, parts.next()?);
+            Some(DiffFile {
+                path: path.to_string(),
+                added: added.parse().unwrap_or(0),
+                removed: removed.parse().unwrap_or(0),
+                untracked: false,
+                binary: added == "-",
+            })
+        })
+        .collect()
+}
+
+/// Sort `files` by path and roll their counts up per directory.
+pub(crate) fn summarize(branch: Option<String>, mut files: Vec<DiffFile>) -> WorktreeDiff {
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut dir_sums = std::collections::BTreeMap::<String, (u64, u64)>::new();
+    for f in &files {
+        let dir = match f.path.rsplit_once('/') {
+            Some((dir, _)) => dir.to_string(),
+            None => ".".to_string(),
+        };
+        let entry = dir_sums.entry(dir).or_default();
+        entry.0 += f.added;
+        entry.1 += f.removed;
+    }
+    WorktreeDiff {
+        branch,
+        added: files.iter().map(|f| f.added).sum(),
+        removed: files.iter().map(|f| f.removed).sum(),
+        files,
+        dirs: dir_sums
+            .into_iter()
+            .map(|(dir, (added, removed))| DiffDir {
+                dir,
+                added,
+                removed,
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn current_branch(cwd: &str) -> Option<String> {
+    git(cwd, &["branch", "--show-current"]).filter(|b| !b.is_empty())
+}
+
 /// Line count for one untracked path. Never follows symlinks, never reads
 /// past [`signaltty_core::diff::MAX_PREVIEW_BYTES`], and opens non-blocking
 /// so a fifo cannot stall the caller. Anything that is not a small regular

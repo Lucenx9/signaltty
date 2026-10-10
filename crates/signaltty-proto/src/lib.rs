@@ -261,6 +261,7 @@ pub mod event {
     pub const WORKSPACE_UPDATED: &str = "workspace.updated";
     pub const WORKSPACE_CLOSED: &str = "workspace.closed";
     pub const WORKTREE_CHANGED: &str = "worktree.changed";
+    pub const WORKSPACE_TURN_STARTED: &str = "workspace.turn_started";
     pub const TAB_CREATED: &str = "tab.created";
     pub const TAB_UPDATED: &str = "tab.updated";
     pub const TAB_CLOSED: &str = "tab.closed";
@@ -296,6 +297,7 @@ pub mod event {
         WORKSPACE_UPDATED,
         WORKSPACE_CLOSED,
         WORKTREE_CHANGED,
+        WORKSPACE_TURN_STARTED,
         TAB_CREATED,
         TAB_UPDATED,
         TAB_CLOSED,
