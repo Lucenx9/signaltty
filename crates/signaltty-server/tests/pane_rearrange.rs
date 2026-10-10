@@ -165,12 +165,23 @@ async fn move_splits_next_to_the_target() {
         .unwrap()
         .to_string();
     let x = spawn(&mut c, &w, Some(&t2)).await;
+    let mut viewer = s.client().await;
+    viewer
+        .call("subscribe", json!({"events": ["pane.updated"]}))
+        .await
+        .unwrap();
     let r = c
         .call("pane.move", json!({"pane_id": x, "target_pane_id": b}))
         .await
         .unwrap();
     assert_eq!(r["tabs"].as_array().unwrap().len(), 2);
-    assert!(tab(&mut c, &w, &t2).await["layout"].is_null());
+    let ev = viewer
+        .read_events(1, std::time::Duration::from_secs(5))
+        .await;
+    assert_eq!(ev[0]["payload"]["pane"]["tab_id"], json!(t1));
+    let emptied = tab(&mut c, &w, &t2).await;
+    assert!(emptied["layout"].is_null());
+    assert!(emptied["active_pane_id"].is_null());
     assert_eq!(tab_of(&mut c, &x).await, t1);
     assert_eq!(
         leaves(&tab(&mut c, &w, &t1).await["layout"]),
