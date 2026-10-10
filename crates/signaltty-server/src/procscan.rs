@@ -213,7 +213,12 @@ mod tests {
         // read_stat agrees on parentage with std and extracts comm.
         let (ppid, comm) = read_stat(pid).unwrap();
         assert!(ppid > 0);
-        assert!(!comm.is_empty(), "comm is parsed");
+        let expected = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap();
+        assert_eq!(
+            comm,
+            expected.trim_end_matches('\n'),
+            "comm matches /proc/<pid>/comm"
+        );
     }
 
     #[test]
