@@ -531,6 +531,9 @@ pub struct Pane {
     pub root_pane_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Unique address (`pane.rename`); accepted wherever a pane id is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relationship: Option<Relationship>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -581,6 +584,7 @@ impl Pane {
             parent_pane_id: None,
             root_pane_id: None,
             label: None,
+            name: None,
             relationship: None,
             task_id: None,
         }
