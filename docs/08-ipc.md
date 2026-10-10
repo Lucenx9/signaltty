@@ -194,7 +194,9 @@ and nothing is appended to history. See docs/05 (rendered ring).
 matches it as a regex when `regex` is true; `timeout_s` defaults to 3600). In
 `screen`/`tail` mode a line already on screen matches at once. In `rendered`
 mode only lines newer than `after_seq` match and the cursor advances between
-polls: capture `next_seq` before submitting work, then wait from it. A pane
+polls: capture `next_seq` before submitting work, then wait from it. Each
+rendered poll reads up to the 5000-line cap whatever `lines` says, so a burst
+cannot step the cursor past a match. A pane
 whose process has exited is read once more and then fails with `PANE_EXITED`.
 
 `pane.clear` writes `ESC[H ESC[2J ESC[3J` into the pane's output stream, in
@@ -405,7 +407,7 @@ defaults to `--until settled`; `finish` needs `--merge` or `--discard`);
 `signaltty pane submit … --text …` → `pane.submit`;
 `signaltty pane read … --mode rendered [--after-seq N]` → `pane.read`;
 `signaltty pane wait-output <id> <pattern> [--regex] [--mode …] [--after-seq N]
-[--timeout S]` → `pane.wait_for_output`; `signaltty pane clear <id>` → `pane.clear`;
+[--timeout S] [--raw]` → `pane.wait_for_output`; `signaltty pane clear <id>` → `pane.clear`;
 `signaltty pane spawn … [--parent-pane …] [--label …] [--relationship …]` →
 `pane.spawn`; `signaltty attention [--limit N]` → `attention.pending`.
 `signaltty schema` prints the live contract (same constants the router
