@@ -54,8 +54,8 @@ clients can `subscribe {from_seq}` to replay.
 | `workspace.rename` | `{workspace_id, name}` | `{workspace}` |
 | `workspace.close` | `{workspace_id, signal?}` | `{closed}` |
 | `workspace.refresh_git` | `{workspace_id}` | `{workspace}` |
-| `workspace.diff` | `{workspace_id}` | `{workspace_id, branch?, files[{path, added, removed, untracked, binary}], dirs[{dir, added, removed}], added, removed}` (worktree-vs-HEAD `git diff --numstat` as data; non-repo → `BAD_PARAMS`) |
-| `workspace.file_diff` | `{workspace_id, path}` | `{workspace_id, path, untracked, content}` (one literal root-relative filename; typed text hunks or binary/unchanged/unavailable state; current worktree against HEAD) |
+| `workspace.diff` | `{workspace_id, scope?}` | `{workspace_id, scope, branch?, files[{path, added, removed, untracked, binary}], dirs[{dir, added, removed}], added, removed, turn?}` (`scope` `head` (default): worktree-vs-HEAD `git diff --numstat` as data; `turn`: latest turn baseline vs the checkout now, with `turn {pane_id, started_at}` or `null` before any turn (ADR-0029); non-repo → `BAD_PARAMS`) |
+| `workspace.file_diff` | `{workspace_id, path, scope?}` | `{workspace_id, path, untracked, content}` (one literal root-relative filename; typed text hunks or binary/unchanged/unavailable state; current worktree against HEAD, or against the latest turn baseline with `scope: "turn"`, `BAD_PARAMS` before any turn) |
 | `worktree.list` | `{workspace_id}` | `{worktrees:[{path, branch?, head?, main, bare, locked, prunable, workspace_id?}]}` (actual Git registrations and open workspace association) |
 | `worktree.create` | `{workspace_id, path, branch, name?}` | `{workspace, path, reused:false}` (absolute new checkout path, new branch at source HEAD; checkout retained if subsequent workspace binding fails) |
 | `worktree.open` | `{workspace_id, path, name?}` | `{workspace, path, reused}` (absolute registered checkout path, canonical-cwd workspace reuse) |
@@ -363,6 +363,7 @@ does not follow symlinks to read external content. See
 
 ```text
 workspace.created  workspace.updated  workspace.closed
+workspace.turn_started
 worktree.changed
 tab.created        tab.updated        tab.closed
 pane.created       pane.updated       pane.exited        pane.closed
@@ -376,6 +377,11 @@ task.created       task.updated       task.result
 git.branch_changed
 server.will_shutdown
 ```
+
+`workspace.turn_started {workspace_id, pane_id, started_at}` follows an
+`agent.working` that does not come from `blocked`, once the server has recorded
+the workspace checkout as the latest turn baseline (ADR-0029). It is also emitted
+when that capture failed: turn-scoped reads then report the error.
 
 `worktree.changed {operation, path, workspace_id}` records checkout creation,
 new workspace association or removal; `operation` is `create`, `open` or

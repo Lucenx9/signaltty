@@ -1,6 +1,6 @@
 # ADR-0011: Diff as Data, Turn Scoping Deferred
 
-**Status**: Accepted (2026-09-29) · **Spec**: `specs/007-notif-actions-diff/`
+**Status**: Accepted (2026-09-29); decision 2 superseded by ADR-0029 · **Spec**: `specs/007-notif-actions-diff/`
 
 ## Context
 
