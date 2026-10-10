@@ -370,6 +370,18 @@ enum PaneOp {
         #[arg(last = true)]
         cmd: Vec<String>,
     },
+    /// Exchange two panes' slots (any tabs of one workspace).
+    Swap {
+        id: String,
+        target: String,
+    },
+    /// Re-split a pane next to the target (any tab of one workspace).
+    Move {
+        id: String,
+        target: String,
+        #[arg(long, value_parser = ["right", "down"], default_value = "right")]
+        direction: String,
+    },
     Get {
         id: String,
     },
@@ -1510,6 +1522,30 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                         .await?;
                     let line = r["matched_line"].as_str().unwrap_or("").to_string();
                     emit(json, &r, line);
+                    Ok(())
+                }
+                PaneOp::Swap { id, target } => {
+                    let r = c
+                        .call(
+                            "pane.swap",
+                            json!({"pane_id": id, "target_pane_id": target}),
+                        )
+                        .await?;
+                    emit(json, &r, format!("swapped {id} and {target}"));
+                    Ok(())
+                }
+                PaneOp::Move {
+                    id,
+                    target,
+                    direction,
+                } => {
+                    let r = c
+                        .call(
+                            "pane.move",
+                            json!({"pane_id": id, "target_pane_id": target, "direction": direction}),
+                        )
+                        .await?;
+                    emit(json, &r, format!("moved {id} next to {target}"));
                     Ok(())
                 }
                 PaneOp::Clear { id } => {
