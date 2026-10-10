@@ -133,8 +133,8 @@ the New Workspace dialog (`crates/signaltty-gui/src/new_workspace.rs`,
 folder (via `GtkFileDialog`, defaulting to the active workspace's
 folder or home), name (prefilled from the folder, editable) and
 first command (Shell plus every agent whose binary is on `PATH`,
-binaries taken from the adapter registry, plus a custom command
-field). Enter confirms, Esc cancels, Create is suggested. Confirming
+binaries taken from the adapter registry and the bundled generic
+screen manifests, plus a custom command field). Enter confirms, Esc cancels, Create is suggested. Confirming
 runs `workspace.create` + `pane.spawn` like `signaltty new`, shows
 the workspace and focuses the new pane. The dialog is single
 instance and shared by Ctrl+Shift+N, the sidebar "+" and the empty
