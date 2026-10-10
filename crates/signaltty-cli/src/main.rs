@@ -326,6 +326,19 @@ enum TabOp {
     Close {
         id: String,
     },
+    /// Print a tab's layout tree as JSON (`layout.export`).
+    Export {
+        id: String,
+    },
+    /// Start a new tab from a layout JSON file, or stdin with `-`
+    /// (`layout.apply`); takes `tab export` output as is.
+    Apply {
+        #[arg(long)]
+        workspace: String,
+        #[arg(long)]
+        title: Option<String>,
+        file: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -798,6 +811,39 @@ async fn run(args: Args) -> Result<(), CliError> {
                 TabOp::Close { id } => {
                     let r = c.call("tab.close", json!({"tab_id": id})).await?;
                     emit(json, &r, format!("closed {id}"));
+                    Ok(())
+                }
+                TabOp::Export { id } => {
+                    let r = c.call("layout.export", json!({"tab_id": id})).await?;
+                    println!("{}", serde_json::to_string_pretty(&r).unwrap());
+                    Ok(())
+                }
+                TabOp::Apply {
+                    workspace,
+                    title,
+                    file,
+                } => {
+                    let text = if file == "-" {
+                        std::io::read_to_string(std::io::stdin())
+                    } else {
+                        std::fs::read_to_string(&file)
+                    }
+                    .map_err(|e| CliError::Usage(format!("{file}: {e}")))?;
+                    let mut tree: Value = serde_json::from_str(&text)
+                        .map_err(|e| CliError::Usage(format!("{file}: {e}")))?;
+                    // Accept a whole `tab export` result or a bare tree.
+                    if tree.get("root").is_some() {
+                        tree = tree["root"].take();
+                    }
+                    let r = c
+                        .call(
+                            "layout.apply",
+                            json!({"workspace_id": workspace, "title": title, "root": tree}),
+                        )
+                        .await?;
+                    let id = r["tab"]["id"].as_str().unwrap_or("?").to_string();
+                    let n = r["panes"].as_array().map_or(0, Vec::len);
+                    emit(json, &r, format!("tab {id} with {n} panes"));
                     Ok(())
                 }
             }
