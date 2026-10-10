@@ -20,6 +20,7 @@
 
 [agent]
 kind = "generic"
+display_name = "Antigravity"
 binaries = ["agy", "antigravity", "antigravity-cli"]
 
 [[screen]]

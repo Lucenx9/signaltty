@@ -10,6 +10,7 @@
 
 [agent]
 kind = "generic"
+display_name = "Copilot"
 binaries = ["copilot", "github-copilot", "ghcs"]
 
 [[screen]]

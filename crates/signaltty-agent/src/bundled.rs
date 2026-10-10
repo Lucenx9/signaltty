@@ -25,25 +25,40 @@ const BUNDLED: &[&str] = &[
     include_str!("../screen/antigravity.toml"),
 ];
 
+fn manifests() -> &'static [OverlayAdapter] {
+    static MANIFESTS: OnceLock<Vec<OverlayAdapter>> = OnceLock::new();
+    MANIFESTS.get_or_init(|| {
+        BUNDLED
+            .iter()
+            .map(|text| {
+                let manifest = parse_manifest(text).expect("bundled screen manifest");
+                OverlayAdapter::new(manifest).expect("bundled screen manifest")
+            })
+            .collect()
+    })
+}
+
 /// Bundled `[[screen]]` rules for a pane of `kind` running `process`, in
 /// file then declaration order. Generic manifests are scoped to their
 /// `binaries` (spec 033); other kinds ignore `process`.
 pub fn bundled_screen_rules(kind: AgentKind, process: &str) -> Vec<&'static ScreenRule> {
-    static MANIFESTS: OnceLock<Vec<OverlayAdapter>> = OnceLock::new();
-    MANIFESTS
-        .get_or_init(|| {
-            BUNDLED
-                .iter()
-                .map(|text| {
-                    let manifest = parse_manifest(text).expect("bundled screen manifest");
-                    OverlayAdapter::new(manifest).expect("bundled screen manifest")
-                })
-                .collect()
-        })
+    manifests()
         .iter()
         .filter(|m| m.kind() == kind)
         .flat_map(|m| m.screen_rules_for(process))
         .collect()
+}
+
+/// Generic programs the bundled rules recognise, as `(display name,
+/// launchable binaries)` in file order, so launchers can offer them.
+/// Prefix patterns (`muse-bin-*`) only match running processes.
+pub fn bundled_programs() -> impl Iterator<Item = (&'static str, Vec<&'static str>)> {
+    manifests().iter().filter_map(|m| {
+        let agent = &m.manifest().agent;
+        let name = agent.display_name.as_deref()?;
+        let bins = agent.binaries.iter().map(String::as_str);
+        Some((name, bins.filter(|b| !b.ends_with('*')).collect()))
+    })
 }
 
 #[cfg(test)]
@@ -79,6 +94,20 @@ mod tests {
             Some((want, rule.to_string())),
             "{kind:?} on:\n{screen}"
         );
+    }
+
+    #[test]
+    fn every_generic_program_is_launchable_by_name() {
+        let programs: Vec<_> = bundled_programs().collect();
+        assert_eq!(programs.len(), 7);
+        for (name, bins) in &programs {
+            assert!(!bins.is_empty(), "{name}");
+            for bin in bins {
+                assert!(!bin.contains('*'), "{name}: {bin}");
+                assert!(!bundled_screen_rules(AgentKind::Generic, bin).is_empty());
+            }
+        }
+        assert!(programs.contains(&("Gemini", vec!["gemini"])));
     }
 
     #[test]

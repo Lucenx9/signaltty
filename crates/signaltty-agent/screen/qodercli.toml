@@ -10,6 +10,7 @@
 
 [agent]
 kind = "generic"
+display_name = "Qoder"
 binaries = ["qodercli", "qoderclicn", "qoder", "qodercn"]
 
 [[screen]]

@@ -10,6 +10,7 @@
 
 [agent]
 kind = "generic"
+display_name = "Droid"
 binaries = ["droid"]
 
 # "use ↑↓ to navigate" contains "↑↓ to navigate".

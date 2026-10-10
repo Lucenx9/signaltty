@@ -10,6 +10,7 @@
 
 [agent]
 kind = "generic"
+display_name = "Gemini"
 binaries = ["gemini"]
 
 [[screen]]
