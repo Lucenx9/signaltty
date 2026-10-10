@@ -750,6 +750,15 @@ button.pill:focus-visible,
   --dialog-bg-color: #18181c;
   --border-color: alpha(white, 0.09);
 }
+/* Floating dialogs: libadwaita's light inner outline stays; its drop
+ * shadow is tuned for grey canvases and vanishes on near-black, so the
+ * dark sheet gets a dark outer edge and a deep, soft drop instead
+ * (t3code dialog-glass, minus the blur GTK cannot draw). */
+.dark floating-sheet > sheet {
+  box-shadow:
+    0 0 0 1px alpha(black, 0.5),
+    0 24px 72px -20px alpha(black, 0.9);
+}
 .dark .sidebar-pane headerbar {
   background-color: var(--sidebar-bg-color);
 }
