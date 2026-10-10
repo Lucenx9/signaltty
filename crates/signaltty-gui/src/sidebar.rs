@@ -137,6 +137,11 @@ impl WsSummary {
     }
 }
 
+/// True when the headline only restates that a plain process runs.
+fn quiet_headline(s: &WsSummary) -> bool {
+    s.message.is_none() && s.lifecycle == Lifecycle::Unknown
+}
+
 /// Priority order for the sidebar (docs/14 §1): groups of root workspaces
 /// and their child task workspaces. Groups sort by worst attention severity,
 /// then best lifecycle rank (blocked → failed → done → working → idle),
@@ -402,6 +407,7 @@ struct Row {
     name: gtk4::Label,
     status: StatusSlot,
     message: gtk4::Label,
+    activity: gtk4::Box,
     place: gtk4::Label,
     agents: gtk4::Label,
     metadata: gtk4::Box,
@@ -575,6 +581,7 @@ impl Row {
             name,
             status,
             message,
+            activity,
             place,
             agents,
             metadata,
@@ -738,6 +745,11 @@ impl Row {
             self.message.set_text(&headline);
             self.message.set_tooltip_text(Some(&headline));
         }
+        // A plain shell's headline is the bare "Running": nothing a
+        // second line should spend height on, so the row drops to name
+        // and place (spec 039).
+        self.activity
+            .set_visible(!quiet_headline(s) || self.tasks.get_visible());
         let time = s.last_activity.map(time_ago).unwrap_or_default();
         // Attention dates from when it was raised; lifecycle from its change.
         let began = if s.attention == Attention::None {
@@ -1256,6 +1268,48 @@ mod tests {
         assert_eq!(s.headline(now), "Worked for 2m");
         s.message = Some("Bash(cargo test)".into());
         assert_eq!(s.headline(now), "Bash(cargo test)");
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn task_chips_bring_back_a_quiet_rows_activity_line() {
+        gtk4::init().unwrap();
+        let sidebar = Sidebar::new();
+        sidebar.update(vec![summary(
+            "ws",
+            Lifecycle::Unknown,
+            Attention::None,
+            None,
+        )]);
+        let activity = |sidebar: &Sidebar| sidebar.rows.borrow()[0].activity.get_visible();
+        assert!(
+            !activity(&sidebar),
+            "plain shell row drops its headline line"
+        );
+        let chip = TaskChipView {
+            kind: "Task",
+            label: "fix".into(),
+            show_label: true,
+            lineage: None,
+            state: "Working",
+            css_class: "task-working",
+            tooltip: "fix".into(),
+            accessible_name: "Task fix, Working".into(),
+        };
+        sidebar.set_task_chips(&[("ws".to_string(), vec![chip])].into());
+        assert!(activity(&sidebar), "chips live on that line, so it returns");
+        sidebar.set_task_chips(&Default::default());
+        assert!(!activity(&sidebar));
+    }
+
+    #[test]
+    fn only_a_bare_running_headline_is_quiet() {
+        let mut s = summary("ws", Lifecycle::Unknown, Attention::None, None);
+        assert!(quiet_headline(&s), "plain shell says only Running");
+        s.message = Some("Built the docs".into());
+        assert!(!quiet_headline(&s), "an explicit message always shows");
+        let s = summary("ws", Lifecycle::Idle, Attention::None, None);
+        assert!(!quiet_headline(&s), "agent states keep their line");
     }
 
     fn workspace() -> Workspace {

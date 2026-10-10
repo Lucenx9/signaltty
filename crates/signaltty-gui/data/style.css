@@ -70,11 +70,17 @@
   box-shadow: 0 0 0 2px alpha(var(--error-bg-color), 0.25);
 }
 
-/* Spinner stand-in for the dot while an agent is working. */
-.status-spinner {
-  min-width: 12px;
-  min-height: 12px;
-  color: var(--accent-color);
+/* Working breathes instead of spinning (t3code status-pulse): the same
+ * dot as every other state, so a row never changes shape mid-turn.
+ * ~0.6 Hz, well clear of the slow oscillations that read as unease. */
+.status-dot.lifecycle-working { background-color: var(--accent-bg-color); }
+
+@keyframes status-pulse {
+  from { opacity: 1; }
+  to { opacity: 0.35; }
+}
+.pulse {
+  animation: status-pulse 800ms cubic-bezier(0.77, 0, 0.175, 1) infinite alternate;
 }
 
 /* ---- status pill ("Approval", "Input", …) --------------------------- */
@@ -136,6 +142,19 @@
 .task-chip.task-canceled { color: alpha(currentColor, 0.62); }
 
 .workspace-tasks { margin-right: 2px; }
+
+/* ---- command palette --------------------------------------------------- */
+
+/* Denser than a settings list: commands are scanned, not read. */
+.palette-list > row > box.header {
+  min-height: 40px;
+}
+
+/* The shortcut is a quiet trailing hint, not a second line. */
+.palette-shortcut {
+  font-size: 0.82em;
+  color: alpha(currentColor, 0.55);
+}
 
 /* ---- sidebar -------------------------------------------------------- */
 
@@ -690,6 +709,9 @@ button.pill:focus-visible,
 .reduced-motion .board-card {
   transition: none;
 }
+.reduced-motion .pulse {
+  animation: none;
+}
 .reduced-motion .row-close:active,
 .reduced-motion .pane-actions button:active,
 .reduced-motion .decision-options button:active,
@@ -727,6 +749,15 @@ button.pill:focus-visible,
   --popover-bg-color: #202024;
   --dialog-bg-color: #18181c;
   --border-color: alpha(white, 0.09);
+}
+/* Floating dialogs: libadwaita's light inner outline stays; its drop
+ * shadow is tuned for grey canvases and vanishes on near-black, so the
+ * dark sheet gets a dark outer edge and a deep, soft drop instead
+ * (t3code dialog-glass, minus the blur GTK cannot draw). */
+.dark floating-sheet > sheet {
+  box-shadow:
+    0 0 0 1px alpha(black, 0.5),
+    0 24px 72px -20px alpha(black, 0.9);
 }
 .dark .sidebar-pane headerbar {
   background-color: var(--sidebar-bg-color);
