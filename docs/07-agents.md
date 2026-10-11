@@ -235,7 +235,7 @@ state = "blocked"           # working | blocked | idle | hold
 region = "bottom"           # bottom (default) | title | screen | top | prompt_box
                             # | above_prompt_box | after_last_rule
                             # | after_last_prompt | before_current_prompt
-                            # | without_current_prompt
+                            # | without_current_prompt | osc_progress
 lines = 12                  # last (top: first) non-empty lines, 1..=200;
                             # bottom and top default to 12
 regex = ['Allow\? \[y/n\]'] # any match; (?m) for per-line anchors
@@ -267,11 +267,18 @@ pane. The program is the spawn argv's basename, refreshed every 10 s from the
 deepest non-shell descendant; a `node` (`nodejs`), `bun`, `deno` or `python` runtime is
 named after the script it runs (`pane.explain` shows it as `process`).
 
+`osc_progress` reads the latest valid OSC 9;4 payload after `9;` (for example,
+`4;1;-1` or `4;0;0`). It rejects `lines` and never matches when no progress
+has been reported, even with an empty regex. Evidence belongs to the live PTY
+scanner and is dropped on exit, close, respawn or server restart. It raises no
+notification and changes no state without an applicable rule. Hooks still win.
+`pane.explain` includes this evidence as `osc_progress`.
+
 signaltty bundles rules for `pi`, `opencode`, `cursor`, `claude` and `codex`,
 and for the generic programs `gemini`, `copilot` (also `github-copilot`,
 `ghcs`), `droid`, `kilo` (`kilo-code`), `qodercli` (`qoderclicn`, `qoder`,
 `qodercn`), `muse` (`muse-code`, `muse-cli`, `muse-bin-*`) and `agy`
-(`antigravity`, `antigravity-cli`), ported from herdr (`crates/signaltty-agent/screen/`); each ends
+(`antigravity`, `antigravity-cli`), and `grok` (`grok-build`), ported from herdr (`crates/signaltty-agent/screen/`); each ends
 with an `idle_fallback` rule (priority -1000, empty regex) so a known agent
 with no working or blocked sign reads as idle. User `[[screen]]` rules replace
 the bundled ones for the panes they apply to (a kind, or for generic panes a
@@ -282,6 +289,11 @@ program); copy the bundled file to adjust it.
 Leaving `blocked`, or the first hook taking the pane over, withdraws the
 `input_required` a screen rule raised. No match changes nothing. A bad state, region, line count or regex rejects the
 manifest at load. See ADR-0024.
+
+Grok remains a generic agent with detection rules and launcher discovery.
+Visible option dialogs and permission/question hints outrank busy progress;
+visible activity outranks stale idle titles. This does not install Grok hooks
+or add native session resume support. See [ADR-0030](adr/0030-osc-progress-evidence.md).
 
 ## Live process refresh (layer 4)
 

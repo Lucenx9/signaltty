@@ -1493,12 +1493,14 @@ fn h_pane_explain(ctx: &Ctx, params: &Value) -> Handler {
     let overlays = ctx.overlays();
     let (source, rules) = overlays.screen_rules(kind, &process);
     let screen = ctx.ptys.terms().lock().unwrap().snapshot(&id);
-    let winner = signaltty_agent::screen::classify(rules.iter().copied(), &title, &screen);
+    let progress = ctx.ptys.osc_progress(&id);
+    let winner =
+        signaltty_agent::screen::classify(rules.iter().copied(), &title, &screen, &progress);
     let traced: Vec<Value> = rules
         .iter()
         .map(|r| {
             json!({"id": r.id, "state": r.state.as_str(), "priority": r.priority,
-                   "region": r.region_label(), "matched": r.matches(&title, &screen)})
+                   "region": r.region_label(), "matched": r.matches(&title, &screen, &progress)})
         })
         .collect();
     Ok((
@@ -1506,6 +1508,7 @@ fn h_pane_explain(ctx: &Ctx, params: &Value) -> Handler {
             "pane_id": id,
             "kind": kind.as_str(),
             "process": process,
+            "osc_progress": progress,
             "live": live,
             "hooked": hooked,
             "source": source,
@@ -2471,7 +2474,8 @@ pub fn classify_screens(ctx: &Ctx) -> bool {
         // ponytail: one full visible-screen snapshot per rule-carrying pane per
         // tick; skip unchanged output offsets if many such panes make it hot.
         let screen = ctx.ptys.terms().lock().unwrap().snapshot(&id);
-        if let Some(rule) = signaltty_agent::screen::classify(rules, &title, &screen) {
+        let progress = ctx.ptys.osc_progress(&id);
+        if let Some(rule) = signaltty_agent::screen::classify(rules, &title, &screen, &progress) {
             let events = ctx
                 .store
                 .write()

@@ -178,6 +178,20 @@ impl PtyManager {
         )
     }
 
+    /// Evidence belongs to the current PTY's scanner, so exit, close and
+    /// respawn cannot leak progress into another process instance.
+    pub fn osc_progress(&self, pane_id: &str) -> String {
+        let output = self
+            .handles
+            .lock()
+            .unwrap()
+            .get(pane_id)
+            .map(|h| h.output.clone());
+        output
+            .map(|o| o.lock().unwrap().progress().to_string())
+            .unwrap_or_default()
+    }
+
     pub fn mark_persist(&self) {
         self.persist_pending.store(true, Ordering::Relaxed);
     }
@@ -349,6 +363,7 @@ impl PtyManager {
 
     fn on_osc_event(&self, pane_id: &str, ev: OscEvent) {
         match ev {
+            OscEvent::Progress(_) => {} // retained by the PTY scanner, never a notification
             OscEvent::Title(title) => {
                 let title = signaltty_term::sanitize_notification_text(&title, 200);
                 let changed = {

@@ -558,3 +558,250 @@ async fn a_versioned_muse_binary_reaches_the_muse_rules() {
     assert_eq!(e["matched"]["id"], "working_esc_interrupt");
     srv.shutdown().await;
 }
+
+/// Owns only this test's fixture directory, including manifests and release files.
+struct OscFixture(std::path::PathBuf);
+
+impl OscFixture {
+    fn new() -> Self {
+        let dir = std::env::temp_dir().join(signaltty_core::ids::new_pane_id());
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+}
+
+impl Drop for OscFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[tokio::test]
+async fn progress_rules_finish_a_turn_without_creating_notifications() {
+    let fixture = OscFixture::new();
+    std::fs::write(
+        fixture.0.join("progress.toml"),
+        r#"
+[agent]
+kind = "generic"
+[[screen]]
+id = "progress_busy"
+state = "working"
+region = "osc_progress"
+regex = ['^4;1;-1$']
+[[screen]]
+id = "progress_idle"
+state = "idle"
+region = "osc_progress"
+regex = ['^4;0;0$']
+"#,
+    )
+    .unwrap();
+    let srv = TestServer::start_with_dirs(None, Some(&fixture.0)).await;
+    let mut c = srv.client().await;
+    let release = fixture.0.join("release");
+    let script = format!("printf '\\033]9;4;1;-1\\007'; while [ ! -e {} ]; do sleep 0.05; done; printf '\\033]9;4;0;0\\033\\\\'; sleep 30", release.display());
+    let id = spawn(&mut c, &script).await;
+    wait(&mut c, &id, "working", 5).await.unwrap();
+    assert_eq!(pane(&mut c, &id).await["attention"], "none");
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["osc_progress"], "4;1;-1");
+    assert_eq!(e["matched"]["id"], "progress_busy");
+    std::fs::write(&release, b"").unwrap();
+    wait(&mut c, &id, "done", 5).await.unwrap();
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["osc_progress"], "4;0;0");
+    assert_eq!(e["matched"]["id"], "progress_idle");
+    assert_eq!(pane(&mut c, &id).await["attention"], "unread");
+    srv.shutdown().await;
+}
+
+fn fake_grok(fixture: &OscFixture, body: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let path = fixture.0.join("grok");
+    std::fs::write(&path, format!("#!/usr/bin/python3\nimport sys\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+async fn spawn_grok(c: &mut TestClient, executable: &str) -> String {
+    let w = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let p = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": w["workspace"]["id"],
+        "argv": [executable]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(p["pane"]["agent"]["kind"], "generic");
+    p["pane"]["id"].as_str().unwrap().to_string()
+}
+
+async fn advance(c: &mut TestClient, id: &str) {
+    use base64::Engine;
+    c.call(
+        "pane.input",
+        json!({"pane_id": id,
+        "data_b64": base64::engine::general_purpose::STANDARD.encode(b"\n")}),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn bundled_grok_progress_blockers_and_completion_use_the_same_explain_evidence() {
+    let fixture = OscFixture::new();
+    let grok = fake_grok(
+        &fixture,
+        r#"
+print('\x1b]0;custom session\x07\x1b]9;4;1;-1\x07', end='', flush=True)
+sys.stdin.readline()
+print('\x1b[2J\x1b[H┃  2 (○) Yes, proceed', flush=True)
+sys.stdin.readline()
+print('\x1b[2J\x1b[H\x1b]9;4;1;-1\x07', end='', flush=True)
+sys.stdin.readline()
+print('\x1b]9;4;0;0\x07', end='', flush=True)
+sys.stdin.readline()
+"#,
+    );
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let id = spawn_grok(&mut c, &grok).await;
+    wait(&mut c, &id, "working", 5).await.unwrap();
+    assert_eq!(
+        explain(&mut c, &id).await.unwrap()["matched"]["id"],
+        "osc_progress_working"
+    );
+    advance(&mut c, &id).await;
+    wait(&mut c, &id, "blocked", 5).await.unwrap();
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["osc_progress"], "4;1;-1");
+    assert_eq!(e["matched"]["id"], "option_dialog_blocked");
+    assert_eq!(pane(&mut c, &id).await["attention"], "input_required");
+    advance(&mut c, &id).await;
+    wait(&mut c, &id, "working", 5).await.unwrap();
+    assert_eq!(pane(&mut c, &id).await["attention"], "none");
+    advance(&mut c, &id).await;
+    wait(&mut c, &id, "done", 5).await.unwrap();
+    assert_eq!(pane(&mut c, &id).await["attention"], "unread");
+    assert_eq!(
+        explain(&mut c, &id).await.unwrap()["matched"]["id"],
+        "osc_progress_idle"
+    );
+    advance(&mut c, &id).await;
+    wait(&mut c, &id, "exited", 5).await.unwrap();
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["osc_progress"], "");
+    assert_eq!(e["classifies"], false);
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn ordinary_terminal_progress_never_raises_attention() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let id = spawn(
+        &mut c,
+        "printf '\\033]9;4;1;-1\\007\\033]9;4;0;0\\007ready\\n'; read line",
+    )
+    .await;
+    c.call(
+        "pane.wait_for_output",
+        json!({"pane_id": id, "match": "ready", "timeout_s": 5}),
+    )
+    .await
+    .unwrap();
+    let p = pane(&mut c, &id).await;
+    assert_eq!(p["attention"], "none");
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["osc_progress"], "4;0;0");
+    assert_eq!(e["source"], "none");
+    assert_eq!(e["classifies"], false);
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn semantic_hooks_override_grok_progress_and_screen_evidence() {
+    let fixture = OscFixture::new();
+    let grok = fake_grok(
+        &fixture,
+        r#"
+print('\x1b]9;4;1;-1\x07', end='', flush=True)
+sys.stdin.readline()
+print('\x1b]9;4;1;-1\x07┃  2 (○) Yes, proceed\nready', flush=True)
+sys.stdin.readline()
+"#,
+    );
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let id = spawn_grok(&mut c, &grok).await;
+    wait(&mut c, &id, "working", 5).await.unwrap();
+    c.call(
+        "hook-event",
+        json!({"pane_id": id, "agent": "claude", "event": "Stop"}),
+    )
+    .await
+    .unwrap();
+    advance(&mut c, &id).await;
+    c.call(
+        "pane.wait_for_output",
+        json!({"pane_id": id, "match": "ready", "timeout_s": 5}),
+    )
+    .await
+    .unwrap();
+    // Give the normal classification tick a chance to contradict the hook.
+    assert!(wait(&mut c, &id, "blocked", 1).await.is_err());
+    assert_eq!(pane(&mut c, &id).await["lifecycle"], "done");
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["osc_progress"], "4;1;-1");
+    assert_eq!(e["hooked"], true);
+    assert_eq!(e["classifies"], false);
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn progress_is_cleared_on_exit_respawn_and_cold_restart() {
+    let mut srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let id = spawn(
+        &mut c,
+        "printf '\\033]9;4;1;-1\\007initial-ready\\n'; read line",
+    )
+    .await;
+    c.call(
+        "pane.wait_for_output",
+        json!({"pane_id": id, "match": "initial-ready", "timeout_s": 5}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        explain(&mut c, &id).await.unwrap()["osc_progress"],
+        "4;1;-1"
+    );
+    c.call(
+        "report-session",
+        json!({"pane_id": id, "agent": "generic", "agent_session_id": "test-progress",
+        "resume_argv": ["python3", "-c", "print('replacement-ready', flush=True); input()"]}),
+    )
+    .await
+    .unwrap();
+    advance(&mut c, &id).await;
+    wait(&mut c, &id, "exited", 5).await.unwrap();
+    assert_eq!(explain(&mut c, &id).await.unwrap()["osc_progress"], "");
+    c.call("pane.resume", json!({"pane_id": id})).await.unwrap();
+    c.call(
+        "pane.wait_for_output",
+        json!({"pane_id": id, "match": "replacement-ready", "timeout_s": 5}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(explain(&mut c, &id).await.unwrap()["osc_progress"], "");
+    srv.restart().await;
+    c = srv.client().await;
+    assert_eq!(explain(&mut c, &id).await.unwrap()["osc_progress"], "");
+    srv.shutdown().await;
+}
