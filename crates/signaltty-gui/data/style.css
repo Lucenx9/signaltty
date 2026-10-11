@@ -735,12 +735,30 @@ button.worktree-remove:not(:disabled):hover {
   min-width: 170px;
 }
 
+/* One type hierarchy for every stage: heading first, compact total
+ * second. This is the same quiet title + counter relationship found in
+ * T3 Code's sidebar controls; use semantic Adwaita colors, not copied hex. */
+.board-column-heading {
+  margin-left: 4px;
+}
 .board-column-header {
   font-weight: 600;
   font-size: 0.88em;
-  opacity: 0.75;
-  margin-bottom: 8px;
-  margin-left: 4px;
+  color: alpha(currentColor, 0.78);
+}
+.board-column-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.75em;
+  color: alpha(currentColor, 0.78);
+  background-color: alpha(currentColor, 0.08);
+}
+.board-column-count.attention-active {
+  color: var(--warning-color);
+  background-color: alpha(var(--warning-bg-color), 0.14);
+  box-shadow: inset 0 0 0 1px alpha(var(--warning-bg-color), 0.22);
 }
 
 .board-column-list {
@@ -1310,8 +1328,13 @@ button.card.appearance-card:checked.keyboard-activating {
   color: inherit;
   opacity: 1;
 }
-.high-contrast .board-column-header {
-  opacity: 1;
+.high-contrast .board-column-header,
+.high-contrast .board-column-count {
+  color: inherit;
+}
+.high-contrast .board-column-count {
+  box-shadow: inset 0 0 0 1px currentColor;
+  background-color: transparent;
 }
 
 /* Diff tags take their foreground from rooted probes so GTK resolves the
