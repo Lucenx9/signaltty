@@ -1,0 +1,19 @@
+Signaltty agent package
+
+Signaltty-authored contributions are licensed under MIT OR Apache-2.0.
+The complete package also includes Apache-2.0 Herdr detection manifests;
+its SPDX expression is (MIT OR Apache-2.0) AND Apache-2.0.
+See the accompanying LICENSE-MIT and LICENSE-APACHE texts.
+
+All 13 files in screen/ are modified from herdrdev/herdr:
+https://github.com/herdrdev/herdr/tree/2563803dca97c040beaf3dc3acdcb5a3221b4238/src/detect/manifests
+The upstream github-copilot.toml is named copilot.toml here.
+Attribution: Herdr contributors (retained from the existing port headers).
+The original contributors retain their rights in their material.
+File headers describe changes to rule syntax, regions, binary scope and
+idle fallback, and must remain with the source files. Further changes
+are recorded in those files and Signaltty's Git history.
+No project-level upstream NOTICE was present at the inspected revision.
+
+Full provenance and outstanding release checks:
+https://github.com/Lucenx9/signaltty/blob/main/THIRD_PARTY_NOTICES.md

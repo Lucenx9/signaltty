@@ -27,6 +27,7 @@ Docs index:
 - [12 — MVP roadmap & risks](12-roadmap-risks.md)
 - [13 — Plugins & workflows](13-plugins.md)
 - [14 — Product direction (cmux + herdr, t3code visual bar)](14-product-direction.md)
+- [License provenance and remaining distribution checks, 2026-10-11](research/2026-10-11-license-provenance.md)
 - [15 — Agent skills (install + phase routing)](15-agent-skills.md)
 - [16 — Visual references (Geist, Linear, Vercel)](16-visual-references.md)
 - [17 — Agent development and verification](17-agent-development.md)

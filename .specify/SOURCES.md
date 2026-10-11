@@ -6,6 +6,10 @@
 in place: adaptations live in `memory/constitution.md`, which every command
 reads before running.
 
+The upstream MIT copyright and permission notice are preserved in
+[LICENSE](LICENSE); keep that file with redistributed sources and generated
+commands.
+
 Refresh procedure: shallow-clone spec-kit, `diff -r` against these dirs, copy
 verbatim, update the rev above and the pin in `scripts/setup-agent.sh`, then run
 `scripts/setup-agent.sh commands install --agent <each>` to re-render slash

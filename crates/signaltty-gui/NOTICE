@@ -1,0 +1,23 @@
+Signaltty GUI package
+
+Signaltty-authored contributions are licensed under MIT OR Apache-2.0.
+The GUI sources also adapt MIT-licensed T3 Code visual patterns;
+the source package's SPDX expression is (MIT OR Apache-2.0) AND MIT.
+See the accompanying LICENSE-MIT, LICENSE-APACHE and licenses/t3code-MIT.txt.
+
+The GTK styles and appearance previews adapt status pulses, dialog treatments,
+theme families and preview orbs from pingdotgg/t3code, including index.css,
+themePalettes.ts and thread/status components:
+https://github.com/pingdotgg/t3code/tree/98beed1a226c42b85c52ff5ee9d5dbb67d776a77
+Copyright (c) 2026 T3 Tools Inc.
+Its full MIT copyright and permission notice is in licenses/t3code-MIT.txt.
+
+The built application additionally uses signaltty-agent's Apache-2.0
+Herdr-derived detection rules. Its AppStream expression is therefore
+(MIT OR Apache-2.0) AND Apache-2.0 AND MIT. The agent package supplies
+its own NOTICE and Apache-2.0 license text; preserve those with distributions
+that incorporate it. Rust dependencies and native libraries retain their
+own licenses and must also be reviewed for actual binary distributions.
+
+Full provenance and outstanding release checks:
+https://github.com/Lucenx9/signaltty/blob/main/THIRD_PARTY_NOTICES.md

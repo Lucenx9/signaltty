@@ -18,4 +18,6 @@ cargo build --workspace
 
 The design docs start at the [architecture index](docs/README.md).
 
-The license is MIT or Apache-2.0.
+Signaltty's own contributions are licensed under [MIT](LICENSE-MIT) or
+[Apache-2.0](LICENSE-APACHE). Incorporated third-party material retains its
+licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).
