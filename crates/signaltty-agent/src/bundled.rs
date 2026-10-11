@@ -160,6 +160,12 @@ mod tests {
             ),
             (
                 "grok",
+                "Waiting on subagent… 2.8s 13s ⇣29.7k [stop]\nShift+Tab:mode │ Ctrl+.:shortcuts",
+                ScreenState::Working,
+                "spinner_status_working",
+            ),
+            (
+                "grok",
                 "Ctrl+.:shortcuts │ Esc:cancel",
                 ScreenState::Working,
                 "esc_cancel_hints_working",

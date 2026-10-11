@@ -20,11 +20,15 @@ binaries = ["grok", "grok-build"]
 #
 # Grok also emits OSC 9;4 progress on supported terminals. Herdr retains the
 # payload after "9;": "4;1;-1" while busy and "4;0;0" when idle.
+# Grok currently gates this on Ghostty, WezTerm or recent iTerm2; signaltty
+# keeps its own terminal identity, so screen/title rules are the normal fallback.
 #
 # Working turns render one live status line directly above the prompt box:
 #   "⠧ Waiting on subagent… 2.8s   13s ⇣29.7k [stop]"
 #   "⠴ Explore /tmp/… + 1 more… 5.6s   19s ⇣29.7k [stop]"
-# with a braille spinner and a trailing [stop] chip, plus an Esc:cancel
+# Older versions use a braille spinner; 1.0.4+ can omit it. The trailing
+# [stop] chip identifies active work independently of the spinner or OSC.
+# Some versions also show an Esc:cancel
 # footer hint. Permission prompts and ask-user-question dialogs replace the
 # spinner with "◆" and draw a "┃"-guttered option list:
 #   "┃  2 (○) Yes, proceed"
@@ -110,7 +114,7 @@ state = "working"
 priority = 1160
 region = "screen"
 lines = 200
-regex = ['(?m)^[ \t]*[\x{2801}-\x{28FF}][ \t].*\[stop\][ \t]*$']
+regex = ['(?m)\[stop\][ \t]*$']
 
 [[screen]]
 id = "esc_cancel_hints_working"

@@ -294,6 +294,10 @@ Leaving `blocked`, or the first hook taking the pane over, withdraws the
 manifest at load. See ADR-0024.
 
 Grok remains a generic agent with detection rules and launcher discovery.
+Grok currently emits OSC progress only for recognized terminal brands
+(Ghostty, WezTerm and recent iTerm2). signaltty advertises its own identity,
+so Grok detection normally uses the screen/title fallback: an active trailing
+`[stop]` chip matches with or without a braille spinner. OSC remains optional.
 Visible option dialogs and permission/question hints outrank busy progress;
 visible activity outranks stale idle titles. This does not install Grok hooks
 or add native session resume support. See [ADR-0030](adr/0030-osc-progress-evidence.md).

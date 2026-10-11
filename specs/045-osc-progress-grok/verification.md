@@ -1,7 +1,8 @@
 # Verification
 
 Verified 2026-10-11 in isolated worktree `/tmp/signaltty-osc-grok`.
-Code revision: `471b9b3`. Base: `fc1a517`. Later commits update documentation only.
+Code revision: `471b9b3`. Base: `fc1a517`. Later documentation commits record publication; the bot-review correction below
+has its own full verification run.
 
 ## Test-first evidence
 
@@ -51,3 +52,26 @@ This PR adds detection, not native Grok hooks or a resume installer.
 Foreground program changes inside one shell retain the latest OSC progress until
 it is overwritten. Reset is guaranteed for managed PTY exit, close, respawn and
 cold server restart. Live accessibility/IME and notification clicks were not run.
+
+## PR #92 bot-review correction
+
+Codex reported spinnerless active status lines (P1) and Grok's terminal-brand
+OSC gate (P2). The non-OSC fallback now matches a trailing `[stop]` chip
+without requiring braille. The real PTY fixture uses `TERM_PROGRAM=signaltty`,
+`TERM=xterm-256color` and emits no OSC progress. Before the regex correction,
+it timed out waiting for working; after correction it passed working, no early
+done, blocked, resumed working and completed unread assertions.
+
+The bundled title/footer matrix also includes the upstream spinnerless fixture.
+OSC remains optional; no terminal identity spoofing was introduced. Independent
+Spec and Standards reviews of this correction each returned zero findings.
+
+Sources: [spinnerless upstream reproduction](https://github.com/herdrdev/herdr/issues/3120),
+[Grok terminal-brand gate](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/src/notifications/progress.rs).
+
+The correction passed `scripts/verify.sh full` with evidence at
+`target/verification/full-3baspa4g/summary.json` (base `b38667d`, correction dirty
+at run start). All workspace tests and 33 isolated GTK tests passed; tooling,
+formatting, architecture, Clippy/warning policy, build, server QA and refresh
+benchmark passed. Reviewed the new light/dark changes-panel renders: selection,
+text and controls remain readable.
