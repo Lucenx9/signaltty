@@ -41,5 +41,6 @@ required. No unjustified deviations; post-design gates pass.
 Registrations store the executable and stdio args, never a socket/pane value.
 Codex forwards SIGNALTTY_SOCKET/PANE with env_vars. JSON providers inherit session
 environment. Explicit provider trust/disabled settings remain untouched.
-Owned entries are identified by the signaltty executable basename and exact
-`mcp serve --managed-registration` args (the marker grants no privileges); foreign collisions fail rather than being overwritten.
+Owned entries are identified by an absolute executable path and the exact
+`mcp serve --managed-registration` args. The marker grants no privileges and
+supports renamed/moved binaries; foreign collisions fail rather than being overwritten.

@@ -43,7 +43,11 @@ fn print(report: Report, removing: bool, json: bool) {
             println!(
                 "MCP: {} ({})",
                 if removing {
-                    "removed owned registration"
+                    if mcp.changed {
+                        "removed owned registration"
+                    } else {
+                        "no owned registration removed"
+                    }
                 } else if mcp.disabled {
                     "disabled"
                 } else {

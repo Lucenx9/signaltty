@@ -430,7 +430,7 @@ not claims of authenticated tool-turn verification.
 | Harness | Configuration path and boundary | Proof in this change |
 | --- | --- | --- |
 | Codex | Automatic; MCP process outside restricted shell | Native sandbox denial before/after, real bridge worker, native config parser |
-| Claude | Automatic; MCP outside Bash sandbox; `--bare` or excluded user sources opt out | Isolated native config-location probe; configuration and managed-launch tests |
+| Claude | Automatic; MCP outside Bash sandbox; `--bare` or excluded user sources opt out | Isolated native config-location and config-acceptance probes; configuration and managed-launch tests |
 | Cursor | Automatic; approve MCP in provider settings | Configuration tests; installed CLI help; no automatic `--approve-mcps` |
 | OpenCode | Automatic local MCP; `--pure` opts out; higher-priority config may override | Configuration tests and upstream format; binary unavailable locally |
 | Pi | `pi mcp add signaltty -- /absolute/signaltty mcp serve`; `--no-mcp` opts out | Installed native help confirms built-in MCP; no live model turn |
