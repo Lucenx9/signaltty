@@ -627,3 +627,56 @@ fn mcp_notice_is_only_reported_when_the_registration_changes() {
         assert_eq!(again.notice, None, "{agent}: unchanged launches stay quiet");
     }
 }
+
+#[test]
+fn mcp_disabled_registration_is_refreshed_but_stays_disabled() {
+    let f = Fixture::new();
+    for agent in ["codex", "claude", "cursor", "opencode"] {
+        let path = f.hooks.mcp_file_for(agent).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let stale = "/old/location/signaltty";
+        if agent == "codex" {
+            fs::write(
+                &path,
+                format!("[mcp_servers.signaltty]\ncommand = \"{stale}\"\nargs = [\"mcp\", \"serve\", \"--managed-registration\"]\nenabled = false\n"),
+            )
+            .unwrap();
+        } else if agent == "opencode" {
+            fs::write(
+                &path,
+                json!({"mcp":{"signaltty":{"type":"local","command":[stale,"mcp","serve","--managed-registration"],"enabled":false}}}).to_string(),
+            )
+            .unwrap();
+        } else {
+            fs::write(
+                &path,
+                json!({"mcpServers":{"signaltty":{"type":"stdio","command":stale,"args":["mcp","serve","--managed-registration"],"disabled":true}}}).to_string(),
+            )
+            .unwrap();
+        }
+        let report = f.hooks.install(agent).unwrap();
+        let mcp = report.mcp.unwrap();
+        assert!(mcp.disabled && mcp.changed, "{agent}");
+        assert!(report.notice.unwrap().contains("left disabled"));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains(stale), "{agent}: {text}");
+        if agent == "codex" {
+            assert!(text.contains("enabled = false"), "{text}");
+            assert!(text.contains("SIGNALTTY_PANE"), "{text}");
+        } else {
+            let root: Value = serde_json::from_str(&text).unwrap();
+            let entry = if agent == "opencode" {
+                &root["mcp"]["signaltty"]
+            } else {
+                &root["mcpServers"]["signaltty"]
+            };
+            assert!(
+                entry["enabled"] == false || entry["disabled"] == true,
+                "{entry}"
+            );
+        }
+        let again = f.hooks.install(agent).unwrap();
+        assert!(!again.changed && again.mcp.unwrap().disabled, "{agent}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
+}

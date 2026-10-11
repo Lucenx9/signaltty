@@ -141,6 +141,7 @@ fn merge_json(root: &mut Value, agent: &str, reporter: &Path, remove: bool) -> R
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .ok_or_else(|| Error(format!("{} must be an object", key(agent))))?;
+    let mut disabled = false;
     if let Some(entry) = servers.get(NAME) {
         if !json_owned(entry, agent) {
             if remove {
@@ -155,9 +156,9 @@ fn merge_json(root: &mut Value, agent: &str, reporter: &Path, remove: bool) -> R
             servers.remove(NAME);
             return Ok(false);
         }
-        if entry["disabled"] == true || entry["enabled"] == false {
-            return Ok(true);
-        }
+        // Keep the user's disable, but refresh the managed command so a
+        // later re-enable does not launch a moved or removed executable.
+        disabled = entry["disabled"] == true || entry["enabled"] == false;
     } else if remove {
         return Ok(false);
     }
@@ -170,7 +171,7 @@ fn merge_json(root: &mut Value, agent: &str, reporter: &Path, remove: bool) -> R
         entry["args"] = json!(ARGS);
         entry["type"] = json!("stdio");
     }
-    Ok(false)
+    Ok(disabled)
 }
 
 fn codex_owned(entry: &Item) -> bool {
@@ -202,6 +203,7 @@ fn codex(text: &str, reporter: &Path, remove: bool) -> Result<(String, bool), Er
     let servers = doc["mcp_servers"]
         .as_table_like_mut()
         .ok_or_else(|| Error("mcp_servers must be a table".into()))?;
+    let mut disabled = false;
     if let Some(entry) = servers.get(NAME) {
         if !codex_owned(entry) {
             if remove {
@@ -216,9 +218,9 @@ fn codex(text: &str, reporter: &Path, remove: bool) -> Result<(String, bool), Er
             servers.remove(NAME);
             return Ok((doc.to_string(), false));
         }
-        if entry.get("enabled").and_then(Item::as_bool) == Some(false) {
-            return Ok((text.into(), true));
-        }
+        // `enabled = false` is preserved; command and context forwarding
+        // are still refreshed for a later re-enable.
+        disabled = entry.get("enabled").and_then(Item::as_bool) == Some(false);
     } else if remove {
         return Ok((text.into(), false));
     }
@@ -245,5 +247,5 @@ fn codex(text: &str, reporter: &Path, remove: bool) -> Result<(String, bool), Er
             env.push(*name);
         }
     }
-    Ok((doc.to_string(), false))
+    Ok((doc.to_string(), disabled))
 }
