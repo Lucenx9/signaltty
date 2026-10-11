@@ -1953,6 +1953,13 @@ async fn consume_deliver_resume<E, F: std::future::Future<Output = Result<(), E>
     Ok(())
 }
 
+/// Control-free decision text. Hook payloads are untrusted (docs/10) and
+/// `signaltty pane get` prints decisions to a terminal, so prompts and
+/// labels are cleaned like notification text; the payload cap bounds size.
+fn hook_text(text: &str) -> String {
+    signaltty_term::sanitize_notification_text(text, usize::MAX)
+}
+
 // ---- notifications ----
 
 /// Shared by `notify`, OSC pump, and `hook-event`: sanitize, store,
@@ -2088,6 +2095,13 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         }
     }
     parse_severity(&p.severity)?;
+    // Cleaned before validation: a prompt or label of only controls is empty.
+    if let Some(d) = p.decision.as_mut() {
+        d.prompt = hook_text(&d.prompt);
+        for o in &mut d.options {
+            o.label = hook_text(&o.label);
+        }
+    }
     if let Some(d) = &p.decision {
         if d.prompt.trim().is_empty()
             || d.options.is_empty()
@@ -2100,6 +2114,15 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
         let ids: std::collections::HashSet<_> = d.options.iter().map(|o| &o.id).collect();
         if ids.len() != d.options.len() {
             return Err(bad_params("decision option IDs must be unique"));
+        }
+        // IDs are echoed back verbatim to answer, so they are refused, not cleaned.
+        if std::iter::once(&d.id)
+            .chain(d.options.iter().map(|o| &o.id))
+            .any(|id| id.chars().any(char::is_control))
+        {
+            return Err(bad_params(
+                "decision IDs must not contain control characters",
+            ));
         }
     }
     let agent = p.agent;
@@ -2201,6 +2224,12 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
     let notif_draft = adapter.notification_event(&event);
     let session_id_opt = adapter.session_identity(&event);
     let mut decision = adapter.lifecycle_state(&event);
+    // The message is payload text (prompt, last answer) bound for
+    // `last_message`, which a later notification does not always rewrite.
+    decision.message = decision
+        .message
+        .map(|m| hook_text(&m))
+        .filter(|m| !m.is_empty());
 
     let is_unrecognized = decision.lifecycle.is_none()
         && decision.attention.is_none()

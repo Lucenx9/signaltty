@@ -3327,6 +3327,109 @@ async fn reviewed_turn(
     assert_eq!(p["last_message"], summary);
 }
 
+/// Decision prompts and labels reach `signaltty pane get` in the user's
+/// terminal, so escape sequences and controls are stripped at ingest like
+/// notification text (docs/10).
+#[tokio::test]
+async fn hook_decisions_are_stored_without_terminal_controls() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "codex",
+            "event": "PermissionRequest",
+            "pane_id": pane,
+            "decision": {
+                "id": "dec_1",
+                "prompt": "Run \u{1b}]52;c;Y3VybCBldmlsCg==\u{7}ls?\n\tok",
+                "options": [{"id": "opt1", "label": "\u{1b}[2JYes\u{9b}"}]
+            },
+            "payload": {"session_id": "s1"}
+        }),
+    )
+    .await
+    .unwrap();
+    let p = pane_snapshot(&mut c, &pane).await;
+    assert_eq!(p["pending_decision"]["prompt"], "Run ls?\n\tok");
+    assert_eq!(p["pending_decision"]["options"][0]["label"], "Yes");
+
+    let err = c
+        .call(
+            "hook-event",
+            json!({
+                "agent": "codex",
+                "event": "PermissionRequest",
+                "pane_id": pane,
+                "decision": {"id": "dec_2", "prompt": "\u{1b}[2J",
+                             "options": [{"id": "o", "label": "Yes"}]},
+                "payload": {"session_id": "s1"}
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with("BAD_PARAMS"),
+        "only controls is empty: {err}"
+    );
+    for (id, option) in [("dec_\u{1b}[2J", "o"), ("dec_3", "o\u{7}")] {
+        let err = c
+            .call(
+                "hook-event",
+                json!({
+                    "agent": "codex",
+                    "event": "PermissionRequest",
+                    "pane_id": pane,
+                    "decision": {"id": id, "prompt": "Allow?",
+                                 "options": [{"id": option, "label": "Yes"}]},
+                    "payload": {"session_id": "s1"}
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("BAD_PARAMS"), "control in an id: {err}");
+    }
+    srv.shutdown().await;
+}
+
+/// The adapter's lifecycle message is copied from the hook payload and
+/// becomes the pane's last message, which `signaltty attention pending`
+/// prints. It must be control-free even when no notification rewrites it:
+/// a controls-only prompt (empty notification body) or an explicit empty
+/// `message` (no notification at all).
+#[tokio::test]
+async fn hook_lifecycle_messages_are_stored_without_terminal_controls() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let evil = "\u{1b}]52;c;ZXZpbA==\u{7}\u{1b}[2J";
+
+    let cases = [
+        json!({"agent": "claude", "event": "PermissionRequest",
+               "payload": {"session_id": "s1", "prompt": evil}}),
+        json!({"agent": "codex", "event": "PermissionRequest", "message": "",
+               "payload": {"session_id": "s2", "prompt": format!("Run{evil} ls?")}}),
+        json!({"agent": "codex", "event": "Stop", "message": "",
+               "payload": {"session_id": "s2", "last_assistant_message": format!("done{evil}")}}),
+    ];
+    let mut raw = Vec::new();
+    for mut params in cases {
+        params["pane_id"] = json!(pane);
+        c.call("hook-event", params.clone()).await.unwrap();
+        let p = pane_snapshot(&mut c, &pane).await;
+        let last = p["last_message"].as_str().unwrap_or_default().to_string();
+        if last.chars().any(char::is_control) {
+            raw.push(format!("{} {}: {last:?}", params["agent"], params["event"]));
+        }
+    }
+    assert!(raw.is_empty(), "raw controls in last_message: {raw:#?}");
+    let p = pane_snapshot(&mut c, &pane).await;
+    assert_eq!(p["last_message"], "done");
+    srv.shutdown().await;
+}
+
 #[tokio::test]
 async fn reviewed_terminal_session_end_stays_done_none_and_keeps_identity() {
     let srv = TestServer::start().await;
