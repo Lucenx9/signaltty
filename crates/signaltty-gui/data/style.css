@@ -310,14 +310,14 @@ toolbarview > .top-bar headerbar button.header-tool-button:focus-visible {
  * secondary text, the place is quieter. Colour is spent only on the
  * status slot. */
 .workspace-row {
-  padding: 8px 6px 10px 8px;
+  padding: 8px;
 }
 
-/* Rows sit flush on the sidebar; the selected one lifts into a card
- * (t3code-style) instead of a tinted stripe, so depth carries focus. */
+/* Search, workspace rows and footer share one geometry. Selection is a
+ * quiet surface with a leading marker; keyboard focus has its own ring. */
 .navigation-sidebar > row {
-  margin: 1px 8px;
-  border-radius: 10px;
+  margin: 2px 8px;
+  border-radius: 8px;
 }
 .navigation-sidebar > row:hover {
   background-color: alpha(currentColor, 0.04);
@@ -475,6 +475,10 @@ toolbarview > .top-bar headerbar button.image-button:checked {
   color: alpha(currentColor, 0.8);
 }
 
+.workspace-place-icon {
+  color: alpha(currentColor, 0.65);
+}
+
 .workspace-row .workspace-meta {
   font-size: 0.82em;
   color: alpha(currentColor, 0.65);
@@ -483,7 +487,7 @@ toolbarview > .top-bar headerbar button.image-button:checked {
 .navigation-sidebar > row:selected,
 .navigation-sidebar > row:selected:hover {
   background-color: alpha(currentColor, 0.08);
-  box-shadow: inset 2px 0 alpha(currentColor, 0.5), inset 0 0 0 1px alpha(currentColor, 0.1);
+  box-shadow: inset 2px 0 alpha(currentColor, 0.5);
 }
 
 /* Status stays visible beside the independent close target. */
@@ -1428,6 +1432,7 @@ button.card.appearance-card:checked.keyboard-activating {
 }
 .high-contrast .workspace-message,
 .high-contrast .workspace-meta,
+.high-contrast .workspace-place-icon,
 .high-contrast .sidebar-section,
 .high-contrast .empty-state-shortcut,
 .high-contrast .row-status {

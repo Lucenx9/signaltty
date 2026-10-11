@@ -1323,6 +1323,43 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
     app.sidebar.set_task_chips(&Default::default());
     settings.set_gtk_font_name(Some("Sans 11"));
 
+    // Metadata and urgency must fit the minimum rail width, including with
+    // desktop text enlargement. High contrast retains selection boundaries.
+    app.set_sidebar_width(200);
+    for (font, suffix) in [("Sans 11", "compact"), ("Sans 18", "large")] {
+        settings.set_gtk_font_name(Some(font));
+        for appearance in [
+            signaltty_core::theme::Appearance::Light,
+            signaltty_core::theme::Appearance::Dark,
+        ] {
+            app.apply_preference(signaltty_core::theme::GuiPreference {
+                appearance,
+                ..Default::default()
+            });
+            app.window.add_css_class("high-contrast");
+            assert!(app.window.has_css_class("high-contrast"));
+            capture_workflow(
+                &app.window,
+                &format!("workspace-rail-{suffix}-{}", appearance.id()),
+            );
+            let place = label_with_class(app.sidebar.widget.upcast_ref(), "workspace-meta");
+            let bounds = place.compute_bounds(&app.window).unwrap();
+            let status_bounds = status.compute_bounds(&app.window).unwrap();
+            let rail = app.sidebar.widget.compute_bounds(&app.window).unwrap();
+            assert!(
+                bounds.width() > 0.0
+                    && bounds.x() + bounds.width() <= rail.x() + rail.width() + 1.0
+            );
+            assert!(
+                status_bounds.width() > 0.0
+                    && status_bounds.x() + status_bounds.width() <= rail.x() + rail.width() + 1.0
+            );
+        }
+        app.window.remove_css_class("high-contrast");
+    }
+    app.set_sidebar_width(300);
+    settings.set_gtk_font_name(Some("Sans 11"));
+
     glib::MainContext::default().block_on(app.refresh_async());
     for (page_name, title, action, accelerator) in [
         (

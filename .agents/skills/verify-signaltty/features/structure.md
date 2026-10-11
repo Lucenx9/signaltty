@@ -30,3 +30,11 @@ paint must not change terminal allocation during navigation.
 Layout replacement rearranges every owned pane exactly once; removal is explicit
 pane.close. Server integration tests also inject legacy hidden panes and prove
 closure cleans them. Never close the user's workspace during a verification run.
+
+
+Workspace refinement: `generated_bare_headlines_do_not_repeat_status_but_messages_and_durations_remain`
+covers generated versus explicit activity text. The isolated GTK test
+`row_refresh_keeps_status_and_metadata_identity_when_headline_changes` covers
+metadata icons, empty/child hiding, tooltips and retained widgets. The existing
+`shell_empty_states_explain_actions_and_fit_large_text` fixture also captures the
+200px workspace rail with enlarged text and asserted application high contrast.
