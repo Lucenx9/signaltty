@@ -30,6 +30,11 @@ cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1`:
   covers current pane activation, same-column fallback and surviving reading anchors
   when removals force GTK to clamp a nearly-bottom viewport.
 - `app::tests::task_board_explains_truncated_done_history`
+- `app::tests::task_board_fits_narrow_windows_and_reveals_last_column`
+  checks two-line titles and visible Previous/Next navigation through overflow,
+  including control bounds with enlarged high-contrast text.
+- `app::tests::preferences_preview_schemes_and_themes`
+  checks paired theme miniatures, selection persistence and wrapping at 360px.
 - `app::tests::shell_empty_states_explain_actions_and_fit_large_text`
 - `app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions`
 - `app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls`
@@ -41,7 +46,9 @@ cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1`:
 
 Set `SIGNALTTY_UI_EVIDENCE=/absolute/evidence/path` for the navigation
 test to export actual GTK window renders of palette/worktrees/changes in light
-and dark themes. Terminal search and zoom tests export their scenes to the same
+and dark themes. This fixture loads production CSS and checks branch/path
+hierarchy, compact checkout content and filtered palette group/target mapping.
+Terminal search and zoom tests export their scenes to the same
 path when supported. Inspect every saved image before accepting it.
 
 Observe shell branch/path fallback, preserved agent summary, cleared context and
