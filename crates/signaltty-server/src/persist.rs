@@ -155,6 +155,9 @@ pub fn apply(store: &SharedStore, terms: &Mutex<HeadlessBackend>, mut loaded: Lo
     loaded.snapshot.workspaces.sort_by(|a, b| a.id.cmp(&b.id));
     for ws in loaded.snapshot.workspaces {
         let mut ws = ws;
+        if ws.naming == signaltty_core::model::WorkspaceNaming::Generating {
+            ws.naming = signaltty_core::model::WorkspaceNaming::Failed;
+        }
         if ws.handle.is_empty() {
             ws.handle = crate::router::unique_handle(&s, &signaltty_core::model::slugify(&ws.name));
         }
@@ -327,6 +330,29 @@ mod tests {
             "tasks": [],
         })
         .to_string()
+    }
+
+    #[test]
+    fn restore_keeps_legacy_names_manual_and_marks_interrupted_generation_failed() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&make_snapshot_json(&["old", "in-flight"])).unwrap();
+        value["workspaces"][1]["naming"] = serde_json::json!("generating");
+        let loaded = LoadedSnapshot {
+            snapshot: serde_json::from_value(value).unwrap(),
+            tails: HashMap::new(),
+        };
+        let store = std::sync::Arc::new(std::sync::RwLock::new(crate::store::Store::new()));
+        apply(&store, &Mutex::new(HeadlessBackend::new()), loaded);
+        let store = store.read().unwrap();
+        assert_eq!(
+            store.workspaces["old"].naming,
+            signaltty_core::model::WorkspaceNaming::Manual
+        );
+        assert_eq!(
+            store.workspaces["in-flight"].naming,
+            signaltty_core::model::WorkspaceNaming::Failed
+        );
+        assert_eq!(store.workspaces["in-flight"].name, "in-flight");
     }
 
     #[test]

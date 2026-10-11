@@ -48,7 +48,7 @@ clients can `subscribe {from_seq}` to replay.
 | `server.status` | — | `{version, protocol, uptime_s, workspaces, tabs, panes, live_panes}` |
 | `server.shutdown` | `{force?}` | `{stopped}` (refuses with `PANES_ALIVE` unless force) |
 | `server.schema` | — | `{protocol, version, methods[], events[], codes[]}` (self-printing contract, same constants the router matches on) |
-| `workspace.create` | `{name?, cwd?}` | `{workspace}` |
+| `workspace.create` | `{name?, cwd?, auto_name?:bool}` | `{workspace}` |
 | `workspace.list` | — | `{workspaces:[…]}` |
 | `workspace.get` | `{workspace_id}` | `{workspace, tabs:[…]}` |
 | `workspace.rename` | `{workspace_id, name}` | `{workspace}` |
@@ -375,6 +375,13 @@ eight seconds (`TIMEOUT`); process/read failures use `IO_ERROR`. File acquisitio
 does not follow symlinks to read external content. See
 [ADR-0016](adr/0016-file-diff-review.md) and the
 [selected-file contract](../specs/014-file-diff-review/contracts/ipc.md).
+
+`workspace.create.auto_name` defaults false. When true, the first accepted
+Codex/Claude UserPromptSubmit hook with non-empty payload.prompt starts background
+AI title generation. `workspace.updated` carries naming state and the final name;
+workspace.rename switches to manual and cancels applicability of pending output.
+Handles remain immutable. Failures preserve the provisional name. No prompt is
+retained in the workspace snapshot. See [ADR-0031](adr/0031-workspace-ai-titles.md).
 
 ## Events (all carry `seq`)
 

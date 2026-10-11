@@ -12,7 +12,7 @@ with structural changes marking a pending save, plus on shutdown/SIGTERM
 and, on Linux, on logind's early shutdown notice (ADR-0028):
 
 - server: `version`, `saved_at`, `protocol`
-- workspaces: `id, name, cwd, tabs[], active_tab_id, git cache`
+- workspaces: `id, name, naming, cwd, tabs[], active_tab_id, git cache`
 - tabs: `id, workspace_id, title, layout tree, active_pane_id`
 - panes: `id, workspace_id, tab_id, title, cwd, argv, env allowlist,
   pty_size, agent{kind, agent_session_id, resume_argv, model},
@@ -99,3 +99,7 @@ evidence; state records are synced before publication. Runtime wait baselines id
 a live process instance and are invalidated by restart, never persisted in Pane. These
 guarantees do not strengthen snapshot/tail durability. See
 [IPC recovery](08-ipc.md) and [ADR-0018](adr/0018-event-recovery-and-work-baselines.md).
+
+Workspace naming state is retained without the first prompt. An interrupted
+`generating` state becomes `failed` on load; generation is never replayed from a
+snapshot (ADR-0031). Legacy snapshots default to `manual`.

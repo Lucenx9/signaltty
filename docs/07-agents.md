@@ -449,3 +449,20 @@ denied tool. The Signaltty CLI's EPERM/EACCES error points to these tools and
 setup steps instead of suggesting socket chmod.
 
 Native approval answers and provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.
+
+## Automatic workspace titles
+
+New GUI workspaces can use the first Codex/Claude UserPromptSubmit payload.prompt
+for a concise AI title. The server invokes the corresponding installed CLI's
+configured default model/account in a private temporary directory, with a bounded
+metadata request. Account quota may be used; no separate API key is needed.
+Generation does not interrupt the working pane. Claude has tools, skills, MCP and
+hooks disabled; Codex uses read-only sandboxing with executable tool features,
+apps/plugins/hooks and named MCP servers disabled. First-prompt hooks are required;
+screen-only agents/custom commands stay manually named in the GUI.
+
+The folder name remains provisional while waiting or on failure. Rename Workspace
+always overrides automatic naming. There is no automatic retry, and an interrupted
+attempt is failed on restart. For custom installations, the server environment can
+set SIGNALTTY_TITLE_CODEX_BIN or SIGNALTTY_TITLE_CLAUDE_BIN to the executable path.
+See [ADR-0031](adr/0031-workspace-ai-titles.md).

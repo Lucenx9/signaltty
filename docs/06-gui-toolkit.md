@@ -407,3 +407,17 @@ The isolated display test
 `task_board_fits_narrow_windows_and_reveals_last_column` checks narrow
 light/dark scenes, enlarged high-contrast text, scrolling to Done and
 activating its pane. `SIGNALTTY_UI_EVIDENCE` exports the native renders.
+
+Workspace panel titles occupy the name row with the project mark and close target.
+Status belongs to the activity line, keeping urgency visible without squeezing a
+long AI title. When headline and status repeat the same word, only the status is
+shown. Quiet shell headlines still collapse. Root metadata and child disclosure
+stay unchanged; full names remain available in tooltips and accessible labels.
+
+New Workspace defaults to Automatic name for installed Codex/Claude commands,
+with a provisional folder name until their first prompt. Disabling it reveals the
+native editable name row; unsupported/custom commands use manual names. The hint
+and tooltip explain first-message generation and use of the agent account.
+
+Workspace task chips occupy a separate optional line below headline/status, so
+large-text worker labels do not compete with attention pills.

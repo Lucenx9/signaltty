@@ -6,16 +6,18 @@
 //! Root row anatomy (t3code-style, three lines, mark sits inline before name):
 //!
 //! ```text
-//!  [AS] api-server            ◴ Working     mark · name · status slot
-//!  [Task Working] Bash…                     task chips, then headline
+//!  [AS] api-server                          mark · full-width name
+//!  Bash…                       ◴ Working     headline · status
+//!  [Task Working]                          optional worker chips
 //!  ▾ 2 tasks  feat/auth       Claude        disclosure · branch/dir · agents
 //! ```
 //!
 //! Child row anatomy (two compact lines, ~20px indent, mark & 3rd line hidden):
 //!
 //! ```text
-//!       api-server-worker     ◴ Working     name · status slot
-//!       [Task Working] Tests…               task chips, then headline
+//!       api-server-worker                  full-width name
+//!       Tests…                 ◴ Working    headline · status
+//!       [Task Working]                     optional worker chips
 //! ```
 //!
 //! Finished child task rows (`workspace-finished`) recede with reduced opacity
@@ -42,6 +44,7 @@ use crate::util::{tilde, time_ago};
 
 #[derive(Clone)]
 pub struct WsSummary {
+    pub naming: signaltty_core::model::WorkspaceNaming,
     pub id: String,
     pub name: String,
     /// Shown as `name · handle` only when sibling workspaces share the
@@ -96,6 +99,7 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
     agents.sort_unstable();
     agents.dedup();
     WsSummary {
+        naming: ws.naming,
         id: ws.id.clone(),
         name: ws.name.clone(),
         disambiguator: None,
@@ -139,7 +143,7 @@ impl WsSummary {
 
 /// True when the headline only restates that a plain process runs.
 fn quiet_headline(s: &WsSummary) -> bool {
-    s.message.is_none() && s.lifecycle == Lifecycle::Unknown
+    s.message.is_none() && s.lifecycle == Lifecycle::Unknown && s.attention == Attention::None
 }
 
 /// Priority order for the sidebar (docs/14 §1): groups of root workspaces
@@ -499,12 +503,14 @@ impl Row {
         let title = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         title.append(&mark);
         title.append(&name);
-        grid.attach(&title, 0, 0, 1, 1);
-        grid.attach(&status.widget, 1, 0, 1, 1);
+        grid.attach(&title, 0, 0, 2, 1);
         grid.attach(&close, 2, 0, 1, 1);
-        let activity = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        let activity = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+        let headline = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        headline.append(&message);
+        headline.append(&status.widget);
+        activity.append(&headline);
         activity.append(&tasks);
-        activity.append(&message);
         grid.attach(&activity, 0, 1, 3, 1);
         let metadata = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         metadata.append(&disclosure);
@@ -637,12 +643,40 @@ impl Row {
             Some(handle) => self.name.set_text(&format!("{} · {handle}", s.name)),
             None => self.name.set_text(&s.name),
         }
-        self.name.set_tooltip_text(Some(&self.name.text()));
+        let naming_hint = match s.naming {
+            signaltty_core::model::WorkspaceNaming::AwaitingPrompt => {
+                "Name will be generated from your first message"
+            }
+            signaltty_core::model::WorkspaceNaming::Generating => {
+                "Generating a name from your first message"
+            }
+            signaltty_core::model::WorkspaceNaming::Failed => {
+                "Could not generate a name. Use Rename Workspace to choose one"
+            }
+            _ => "",
+        };
+        let tooltip = if naming_hint.is_empty() {
+            self.name.text().to_string()
+        } else {
+            format!("{}\n{naming_hint}", self.name.text())
+        };
+        self.name.set_tooltip_text(Some(&tooltip));
+        self.row
+            .update_property(&[gtk4::accessible::Property::Description(naming_hint)]);
         set_mark(&self.mark, &self.id, &s.name);
         self.place.set_text(&s.place);
         self.place.set_tooltip_text(Some(&s.place));
-        self.agents.set_text(&s.agents);
-        self.agents.set_tooltip_text(Some(&s.agents));
+        self.agents.set_text(match s.naming {
+            signaltty_core::model::WorkspaceNaming::Generating => "Naming…",
+            signaltty_core::model::WorkspaceNaming::Failed => "Name failed",
+            _ => &s.agents,
+        });
+        self.agents
+            .set_tooltip_text(Some(if naming_hint.is_empty() {
+                &s.agents
+            } else {
+                &tooltip
+            }));
         self.close
             .set_tooltip_text(Some(&format!("Close {}", s.name)));
         self.close
@@ -741,6 +775,9 @@ impl Row {
         .join(", ");
         self.row
             .update_property(&[gtk4::accessible::Property::Label(&description)]);
+        self.message.set_visible(
+            status::row_status(s.lifecycle, s.attention).label != Some(headline.as_str()),
+        );
         if self.message.text() != headline {
             self.message.set_text(&headline);
             self.message.set_tooltip_text(Some(&headline));
@@ -1097,6 +1134,7 @@ mod tests {
         minutes_ago: Option<i64>,
     ) -> WsSummary {
         WsSummary {
+            naming: Default::default(),
             id: name.to_string(),
             name: name.to_string(),
             disambiguator: None,
@@ -1375,6 +1413,7 @@ mod tests {
     fn workspace() -> Workspace {
         let now = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
         Workspace {
+            naming: Default::default(),
             id: "ws".into(),
             name: "ws".into(),
             handle: "ws".into(),

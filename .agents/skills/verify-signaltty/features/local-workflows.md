@@ -85,3 +85,18 @@ viewport anchors, narrow focused migration, rapid event bursts, newer focus,
 original-column neighbor fallback, current pane activation, empty transitions
 and close with pending restoration. Native GTK animations are allowed to finish
 before asserting final geometry; no provider requests are made.
+
+## Automatic workspace names
+
+New Workspace defaults to a first-message AI title for Codex/Claude. Switch off
+Automatic name for the native editable name field. The folder name is provisional;
+manual Rename Workspace takes precedence, including during generation.
+
+`cargo test -p signaltty-server --test workspace_titles` uses fake metadata CLIs
+through a real isolated server: opt-in, first prompt, immediate hook response,
+stable handles, single attempt, manual rename races, failures and persistence.
+Server unit tests cover invalid output, Claude tool disabling, naming events and
+interrupted restore. The shell empty-state display test also exports
+workspace-panel and workspace-create desktop/large light/dark scenes, checks
+status is below the title, and exercises automatic/manual name validation.
+These tests do not contact paid providers or certify account/model compatibility.
