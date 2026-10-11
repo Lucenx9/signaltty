@@ -241,22 +241,25 @@ impl App {
         sidebar_page.add_top_bar(&sidebar_header);
         sidebar_page.add_top_bar(&command_strip);
         sidebar_page.set_content(Some(&sidebar.widget));
-        // A real, always-accessible destination for settings, unlike a
-        // mock status footer that would incorrectly claim connectivity.
-        let footer_button = gtk4::Button::new();
-        footer_button.add_css_class("sidebar-footer-button");
-        footer_button.set_action_name(Some("win.preferences"));
-        footer_button.set_tooltip_text(Some("Preferences (Ctrl+,)"));
-        footer_button.update_property(&[gtk4::accessible::Property::Label("Preferences")]);
-        let footer_contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 9);
-        footer_contents.append(&gtk4::Image::from_icon_name("signaltty-settings-symbolic"));
-        let footer_label = gtk4::Label::new(Some("Preferences"));
-        footer_label.set_hexpand(true);
-        footer_label.set_xalign(0.0);
-        footer_contents.append(&footer_label);
-        footer_button.set_child(Some(&footer_contents));
-        let sidebar_footer = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        // Pinned footer: tools that are not already in the content header
+        // (Task Board and Changes live there with their toggle state), plus
+        // settings. A real destination, unlike a mock status footer that
+        // would incorrectly claim connectivity.
+        let worktrees_button = crate::sidebar::nav_button(
+            "signaltty-branch-symbolic",
+            "Worktrees",
+            "Manage Git Worktrees",
+            "win.worktrees",
+        );
+        let footer_button = crate::sidebar::nav_button(
+            "signaltty-settings-symbolic",
+            "Preferences",
+            "Preferences (Ctrl+,)",
+            "win.preferences",
+        );
+        let sidebar_footer = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
         sidebar_footer.add_css_class("sidebar-footer");
+        sidebar_footer.append(&worktrees_button);
         sidebar_footer.append(&footer_button);
         sidebar_page.add_bottom_bar(&sidebar_footer);
 

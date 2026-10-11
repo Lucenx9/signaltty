@@ -811,11 +811,12 @@ pub struct Sidebar {
     menu_builder: MenuBuilderCallback,
 }
 
-// These are navigation shortcuts to existing window actions, not a
-// parallel action registry. Their handlers and keybindings stay in actions.rs.
-fn tool_button(icon: &str, title: &str, hint: &str, action: &str) -> gtk4::Button {
+/// A pinned sidebar navigation row bound to an existing window action.
+/// These are shortcuts, not a parallel action registry: handlers and
+/// keybindings stay in actions.rs.
+pub fn nav_button(icon: &str, title: &str, hint: &str, action: &str) -> gtk4::Button {
     let button = gtk4::Button::new();
-    button.add_css_class("sidebar-tool-button");
+    button.add_css_class("sidebar-nav-button");
     button.set_action_name(Some(action));
     button.set_tooltip_text(Some(hint));
     button.update_property(&[gtk4::accessible::Property::Label(title)]);
@@ -881,8 +882,9 @@ impl Sidebar {
                 }
             }));
         }
-        // Scroll the project list and tool shortcuts as one surface. The
-        // pinned Search launcher and Preferences footer remain reachable.
+        // Only the workspace list scrolls. The Search launcher and the
+        // Worktrees/Preferences footer are pinned, so a long list never
+        // buries them.
         let content = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         let workspaces_header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         workspaces_header.add_css_class("sidebar-group-header");
@@ -898,37 +900,6 @@ impl Sidebar {
         workspaces_header.append(&count);
         content.append(&workspaces_header);
         content.append(&list);
-
-        let tools_header = gtk4::Label::new(Some("TOOLS"));
-        tools_header.add_css_class("sidebar-group-label");
-        tools_header.add_css_class("sidebar-tools-header");
-        tools_header.set_xalign(0.0);
-        content.append(&tools_header);
-        let tools = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
-        tools.add_css_class("sidebar-tools");
-        for (icon, title, hint, action) in [
-            (
-                "signaltty-board-symbolic",
-                "Task Board",
-                "Open Task Board (Ctrl+Shift+B)",
-                "win.show-board",
-            ),
-            (
-                "sidebar-show-right-symbolic",
-                "Changes",
-                "Toggle Changes (Ctrl+Shift+D)",
-                "win.show-changes",
-            ),
-            (
-                "signaltty-branch-symbolic",
-                "Worktrees",
-                "Manage Git Worktrees",
-                "win.worktrees",
-            ),
-        ] {
-            tools.append(&tool_button(icon, title, hint, action));
-        }
-        content.append(&tools);
 
         let widget = gtk4::ScrolledWindow::new();
         widget.set_child(Some(&content));

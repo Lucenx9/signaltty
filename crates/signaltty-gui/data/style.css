@@ -242,50 +242,33 @@ window {
   font-size: 0.78em;
   color: alpha(currentColor, 0.64);
 }
-.sidebar-tools-header {
-  margin: 20px 15px 7px;
-}
-.sidebar-tools {
-  margin: 0 8px 16px;
-}
-.sidebar-tool-button,
-.sidebar-footer-button {
+/* Pinned footer rows (Worktrees, Preferences): flat, full-width, the
+ * same 32px height and 8px radius as the search launcher. */
+.sidebar-nav-button {
+  min-height: 32px;
+  padding: 0 10px;
   font-weight: 400;
   background: none;
   box-shadow: none;
   border-radius: 8px;
+  color: alpha(currentColor, 0.79);
 }
-.sidebar-tool-button {
-  min-height: 34px;
-  padding: 0 10px;
-}
-.sidebar-tool-button label {
-  font-size: 0.92em;
-}
-.sidebar-tool-button .sidebar-tool-icon {
+.sidebar-nav-button image {
   color: alpha(currentColor, 0.68);
 }
-.sidebar-tool-button:hover,
-.sidebar-footer-button:hover {
+.sidebar-nav-button:hover {
   background-color: alpha(currentColor, 0.065);
 }
-.sidebar-tool-button:active,
-.sidebar-footer-button:active {
+.sidebar-nav-button:active {
   background-color: alpha(currentColor, 0.10);
 }
-.sidebar-tool-button:focus-visible,
-.sidebar-footer-button:focus-visible {
+.sidebar-nav-button:focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: -2px;
 }
 .sidebar-footer {
   padding: 6px 8px;
   box-shadow: inset 0 1px alpha(currentColor, 0.085);
-}
-.sidebar-footer-button {
-  min-height: 32px;
-  padding: 0 10px;
-  color: alpha(currentColor, 0.79);
 }
 
 /* Desktop tools are discoverable without taking over the workspace
@@ -1419,8 +1402,8 @@ button.card.appearance-card:checked.keyboard-activating {
 .high-contrast .sidebar-command-launcher image,
 .high-contrast .sidebar-group-label,
 .high-contrast .sidebar-group-count,
-.high-contrast .sidebar-tool-icon,
-.high-contrast .sidebar-footer-button {
+.high-contrast .sidebar-nav-button,
+.high-contrast .sidebar-nav-button image {
   color: inherit;
 }
 .high-contrast .sidebar-footer,
