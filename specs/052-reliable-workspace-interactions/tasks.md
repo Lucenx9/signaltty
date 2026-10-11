@@ -26,7 +26,7 @@
 
 ## Delivery
 
-- [x] T013 Update docs/06-gui-toolkit.md and .agents/skills/verify-signaltty/features/ with behavioral coverage.
+- [x] T013 Update docs/06-gui-toolkit.md and .agents/skills/verify-signaltty/features/; adapt scripts/qa-gui-reliability.py to Cancel/confirm the native close dialog.
 - [ ] T014 Run full verification, inspect captures and retain selected evidence under docs/qa/reliable-workspace-interactions-2026-10-12/.
 - [ ] T015 Run independent standards/spec reviews and fix findings; record in specs/052-reliable-workspace-interactions/verification.md.
 - [ ] T016 Push branch, open/link PR and update specs/052-reliable-workspace-interactions/handoff.md.

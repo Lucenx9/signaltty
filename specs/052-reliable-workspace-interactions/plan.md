@@ -26,7 +26,7 @@ Use existing semantic foreground/error/accent tokens and system font. Keep 6px n
 
 ## Files and verification
 
-Source: `new_workspace.rs`, `app.rs`; tests: `new_workspace.rs` and `app_tests.rs`. Docs: docs06, project verification feature map, selected docs/qa evidence. Regression cases cover safe cancellation, original target, exited direct close, failure retention, invalid inputs, pending duplicate prevention, workspace-create failure and command retry without duplication, compact activation. Existing full verification includes all new ignored tests automatically.
+Source: `new_workspace.rs`, `app.rs`; tests: `new_workspace.rs` and `app_tests.rs`. Docs: docs06, project verification feature map, selected docs/qa evidence. Adapt scripts/qa-gui-reliability.py so its native close step cancels first, waits for dialog dismissal, asserts the pane remains, then confirms. Regression cases cover safe cancellation, original target, exited direct close, failure retention, invalid inputs, pending duplicate prevention, workspace-create failure and command retry without duplication, compact activation. Existing full verification includes all new ignored tests automatically.
 
 ## Complexity tracking
 

@@ -243,8 +243,17 @@ def main():
             action("split-right")
             until(lambda: len(call("workspace.get", workspace_id=other_ws)["panes"]) == 3)
             action("close-pane")
+            cancel = until(lambda: next((w for w in walk(app())
+                if "Action" in w.get_interfaces() and w.get_name() == "Cancel"), None))
+            Atspi.Action.do_action(cancel, 0)
+            until(lambda: not any(w.get_name() == "Close Terminal" for w in walk(app())))
+            assert len(call("workspace.get", workspace_id=other_ws)["panes"]) == 3
+            action("close-pane")
+            close = until(lambda: next((w for w in walk(app())
+                if "Action" in w.get_interfaces() and w.get_name() == "Close Terminal"), None))
+            Atspi.Action.do_action(close, 0)
             until(lambda: len(call("workspace.get", workspace_id=other_ws)["panes"]) == 2)
-            record("split_and_close_after_recovery", owned_panes=2)
+            record("split_and_close_after_recovery", owned_panes=2, cancelled_close_preserves=3)
 
             restored_ws = call("workspace.create", name="Restored", cwd=tmp)["workspace"]["id"]
             restored = call("pane.spawn", workspace_id=restored_ws, argv=["sleep", "600"], agent_hint="codex")["pane"]["id"]

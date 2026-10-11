@@ -46,3 +46,7 @@ checks Cancel defaults, no IPC on cancellation, original target through workspac
 navigation, VTE/tab identity on cancelled and failed closes, and direct exited,
 restored and empty closure. `SIGNALTTY_UI_EVIDENCE` captures production-CSS
 light/dark confirmations. The full runner executes it in its own display process.
+
+The desktop reliability probe now cancels its live-terminal close, waits for the
+confirmation to dismiss, verifies all three panes remain, then confirms and checks
+the resulting two panes through real IPC. This path runs in desktop mode, not full.
