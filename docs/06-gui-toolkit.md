@@ -96,7 +96,10 @@ there; the name, headline and meta step down in weight and opacity.
 Rows at warning severity or above sort first and sit under a "Needs
 you" label with a hairline below; with nothing waiting there are no
 section headers. The header's attention count is a pill tinted by the
-worst attention it counts, in the same colours.
+worst attention it counts, in the same colours. Finished child tasks
+soften only their secondary headline: the workspace name, urgency
+indicator and keyboard focus stay at full strength. Hover, selection
+and high contrast restore that headline to full opacity.
 
 The close target reserves space on the name/status line only. Activity and
 the location/agent line span the row's full width, with roomier line spacing
@@ -286,7 +289,10 @@ keeps the branch. Open, main, locked, missing and bare checkouts cannot be
 removed from this dialog; the server also refuses dirty or live-referenced paths.
 Closing a workspace leaves its checkout intact. Git operations use a dedicated
 background IPC connection with a 90-second deadline, so approvals and normal
-control traffic keep flowing. An uncertain mutation is never automatically
+control traffic keep flowing. A checkout's Open and Remove actions sit on
+one aligned row. Remove is a quiet destructive-text action, never a second
+primary button. Disabled controls have contextual accessible descriptions
+for main, locked, missing, bare and still-open checkout states. An uncertain mutation is never automatically
 replayed.
 
 Show Changes (Ctrl+Shift+D, header toggle, palette, main menu) docks a panel at
