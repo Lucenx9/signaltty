@@ -184,16 +184,18 @@ async fn generate(agent: &str, binary: &Path, prompt: &str) -> Result<String, &'
                 Ok(format!("{}={{enabled=false}}", json!(name)))
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
+        let schema_path = dir.0.join("schema.json");
+        std::fs::write(&schema_path, schema.to_string()).map_err(|_| "schema")?;
+        // Every override must follow `exec`: once the subcommand carries its
+        // own `--config` flags, Codex ignores root-level overrides, which
+        // would leave the user's MCP servers running.
         // CLI dotted overrides split on dots and retain quote characters.
         // A TOML table keeps arbitrary server names intact while merging flags.
         command
+            .arg("exec")
             .arg("--config")
-            .arg(format!("mcp_servers={{{}}}", entries.join(",")));
-        let schema_path = dir.0.join("schema.json");
-        std::fs::write(&schema_path, schema.to_string()).map_err(|_| "schema")?;
-        command
+            .arg(format!("mcp_servers={{{}}}", entries.join(",")))
             .args([
-                "exec",
                 "--ephemeral",
                 "--skip-git-repo-check",
                 "--sandbox",
@@ -413,6 +415,50 @@ printf '%s' '{"structured_output":{"title":"Improve workspace navigation"}}'
         assert_eq!(
             generate("unsupported", &binary, "hello").await,
             Err("unsupported provider")
+        );
+    }
+    #[tokio::test]
+    async fn codex_disables_user_mcp_servers_after_the_exec_subcommand() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDirectory(std::env::temp_dir().join(format!(
+            "signaltty-title-codex-{}",
+            signaltty_core::new_ws_id()
+        )));
+        std::fs::create_dir(&dir.0).unwrap();
+        let binary = dir.0.join("codex");
+        // Codex ignores root-level `--config` once `exec` carries its own,
+        // so the MCP override only counts when it follows `exec`.
+        std::fs::write(
+            &binary,
+            r##"#!/bin/sh
+if [ "$1" = mcp ]; then printf '%s' '[{"name":"github"},{"name":"a.b \"c\""}]'; exit 0; fi
+cat >/dev/null
+seen_exec=no
+mcp=no
+while [ $# -gt 0 ]; do
+ case "$1" in
+  exec) seen_exec=yes ;;
+  --config)
+   shift
+   case "$1" in
+    mcp_servers=*)
+     [ "$seen_exec" = yes ] || exit 4
+     [ "$1" = 'mcp_servers={"github"={enabled=false},"a.b \"c\""={enabled=false}}' ] || exit 5
+     mcp=yes ;;
+   esac ;;
+  --output-last-message) shift; output=$1 ;;
+ esac
+ shift
+done
+[ "$mcp" = yes ] || exit 6
+printf '%s' '{"title":"Disable user MCP servers"}' > "$output"
+"##,
+        )
+        .unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            generate("codex", &binary, "hello").await,
+            Ok("Disable user MCP servers".into())
         );
     }
     #[tokio::test]
