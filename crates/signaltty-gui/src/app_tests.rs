@@ -160,6 +160,16 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
     let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
     application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
     let (actor, mut requests) = IpcHandle::test_channel();
     let state = Arc::new(Mutex::new(BTreeMap::from([
         ("a".to_string(), fixture("a")),
@@ -225,6 +235,19 @@ fn close_workspace_confirms_the_selected_target_and_refreshes() {
     let dialog = app.close_ws_dialog.borrow().clone().expect("confirmation");
     assert!(dialog.heading().unwrap().contains('b'));
     assert_eq!(app.active_ws_id().as_deref(), Some("a"));
+    assert_eq!(dialog.default_response().as_deref(), Some("cancel"));
+    let preference = *app.preference.borrow();
+    for (appearance, name) in [
+        (signaltty_core::theme::Appearance::Light, "light"),
+        (signaltty_core::theme::Appearance::Dark, "dark"),
+    ] {
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..preference
+        });
+        capture_workflow(&app.window, &format!("workspace-close-{name}"));
+    }
+    app.apply_preference(preference);
     respond(&app, &dialog, "cancel");
     assert!(calls.lock().unwrap().is_empty());
     assert_sidebar(&app, &["a", "b"], "a");
