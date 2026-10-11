@@ -614,3 +614,16 @@ fn malformed_or_nonregular_mcp_configuration_is_not_rewritten() {
         assert!(start.elapsed() < std::time::Duration::from_secs(1));
     }
 }
+
+#[test]
+fn mcp_notice_is_only_reported_when_the_registration_changes() {
+    let f = Fixture::new();
+    for agent in ["codex", "claude", "cursor", "opencode"] {
+        let first = f.hooks.install(agent).unwrap();
+        assert!(first.mcp.unwrap().changed);
+        assert!(first.notice.unwrap().contains("Signaltty MCP"));
+        let again = f.hooks.install(agent).unwrap();
+        assert!(!again.changed);
+        assert_eq!(again.notice, None, "{agent}: unchanged launches stay quiet");
+    }
+}

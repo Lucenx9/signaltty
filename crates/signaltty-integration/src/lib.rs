@@ -166,15 +166,19 @@ impl Hooks {
         let mut report = self.update(agent, false)?;
         let mcp = self.update_mcp(agent, false)?;
         report.changed |= mcp.changed;
-        let notice = if mcp.disabled {
-            "Signaltty MCP is disabled by user configuration; it was left disabled."
-        } else {
-            "Signaltty MCP provides workspace and worker tools without enabling shell network access. Review/approve it in your harness's MCP settings; existing sessions may need a restart."
-        };
-        report.notice = Some(match report.notice {
-            Some(previous) => format!("{previous} {notice}"),
-            None => notice.into(),
-        });
+        // Launch-time setup runs on every agent spawn; only speak up when the
+        // registration was written, like the Codex hooks notice.
+        if mcp.changed {
+            let notice = if mcp.disabled {
+                "Signaltty MCP is disabled by user configuration; its registration was refreshed and left disabled."
+            } else {
+                "Signaltty MCP provides workspace and worker tools without enabling shell network access. Review/approve it in your harness's MCP settings; existing sessions may need a restart."
+            };
+            report.notice = Some(match report.notice {
+                Some(previous) => format!("{previous} {notice}"),
+                None => notice.into(),
+            });
+        }
         report.mcp = Some(mcp);
         Ok(report)
     }
