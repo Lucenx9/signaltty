@@ -1242,6 +1242,87 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
         capture_workflow(&app.window, &format!("shell-{}", appearance.id()));
     }
 
+    // AI titles need their own line, rather than competing with urgency pills.
+    let mut value = fixture("ui");
+    value["workspace"]["name"] = json!("Refine workspace keyboard navigation");
+    value["workspace"]["naming"] = json!("generated");
+    value["panes"][0]["lifecycle"] = json!("working");
+    let snapshot: crate::refresh::Snapshot = serde_json::from_value(value).unwrap();
+    app.sidebar.update(vec![crate::sidebar::summarize(
+        &snapshot.workspace,
+        &snapshot.panes,
+    )]);
+    app.sidebar.select("ui");
+    for appearance in [
+        signaltty_core::theme::Appearance::Light,
+        signaltty_core::theme::Appearance::Dark,
+    ] {
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..Default::default()
+        });
+        capture_workflow(&app.window, &format!("workspace-panel-{}", appearance.id()));
+    }
+    let name = label_with_class(app.sidebar.widget.upcast_ref(), "workspace-name");
+    let mut status = None;
+    walk_widgets(app.sidebar.widget.upcast_ref(), &mut |widget| {
+        if widget.has_css_class("row-status") {
+            status = Some(widget.clone());
+            return true;
+        }
+        false
+    });
+    let name_bounds = name.compute_bounds(&app.window).unwrap();
+    let status = status.unwrap();
+    let status_bounds = status.compute_bounds(&app.window).unwrap();
+    assert!(
+        status_bounds.y() >= name_bounds.y() + name_bounds.height(),
+        "status must leave room for the title"
+    );
+
+    let mut attention = crate::sidebar::summarize(&snapshot.workspace, &snapshot.panes);
+    attention.attention = signaltty_core::Attention::PermissionRequired;
+    app.sidebar.update(vec![attention]);
+    app.sidebar.set_task_chips(
+        &[(
+            "ui".to_string(),
+            vec![TaskChipView {
+                kind: "Task",
+                label: "keyboard-navigation".into(),
+                show_label: true,
+                lineage: None,
+                state: "Working",
+                css_class: "task-working",
+                tooltip: "keyboard-navigation".into(),
+                accessible_name: "Task keyboard-navigation, Working".into(),
+            }],
+        )]
+        .into(),
+    );
+    settings.set_gtk_font_name(Some("Sans 18"));
+    for appearance in [
+        signaltty_core::theme::Appearance::Light,
+        signaltty_core::theme::Appearance::Dark,
+    ] {
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..Default::default()
+        });
+        capture_workflow(
+            &app.window,
+            &format!("workspace-task-attention-{}", appearance.id()),
+        );
+    }
+    let task = label_with_class(app.sidebar.widget.upcast_ref(), "task-chip-state");
+    let status_bounds = status.compute_bounds(&app.window).unwrap();
+    let task_bounds = task.compute_bounds(&app.window).unwrap();
+    assert!(
+        task_bounds.y() >= status_bounds.y() + status_bounds.height(),
+        "worker chips must leave urgency its own line at large text sizes"
+    );
+    app.sidebar.set_task_chips(&Default::default());
+    settings.set_gtk_font_name(Some("Sans 11"));
+
     glib::MainContext::default().block_on(app.refresh_async());
     for (page_name, title, action, accelerator) in [
         (
@@ -1341,6 +1422,34 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
         .unwrap()
         .downcast::<adw::AlertDialog>()
         .unwrap();
+    let automatic = find_widget::<adw::SwitchRow>(dialog.upcast_ref()).unwrap();
+    let manual = find_widget::<adw::EntryRow>(dialog.upcast_ref()).unwrap();
+    assert_eq!(automatic.is_active(), automatic.is_sensitive());
+    assert_eq!(manual.is_visible(), !automatic.is_active());
+    for (width, font, suffix) in [(1280, "Sans 11", "desktop"), (360, "Sans 18", "large")] {
+        app.window.set_default_size(width, 700);
+        settings.set_gtk_font_name(Some(font));
+        for appearance in [
+            signaltty_core::theme::Appearance::Light,
+            signaltty_core::theme::Appearance::Dark,
+        ] {
+            app.apply_preference(signaltty_core::theme::GuiPreference {
+                appearance,
+                ..Default::default()
+            });
+            capture_workflow(
+                &app.window,
+                &format!("workspace-create-{suffix}-{}", appearance.id()),
+            );
+        }
+    }
+    automatic.set_active(false);
+    assert!(manual.is_visible());
+    manual.set_text("");
+    assert!(!dialog.is_response_enabled("create"));
+    manual.set_text("My workspace");
+    assert!(dialog.is_response_enabled("create"));
+    capture_workflow(&app.window, "workspace-create-manual-dark");
     respond(&app, &dialog, "cancel");
     settings.set_gtk_font_name(old_font.as_deref());
     settings.set_gtk_enable_animations(old_motion);

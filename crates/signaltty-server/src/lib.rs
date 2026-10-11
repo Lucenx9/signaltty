@@ -23,3 +23,5 @@ pub mod worktrees;
 
 pub use config::Config;
 pub use server::serve;
+
+mod workspace_titles;

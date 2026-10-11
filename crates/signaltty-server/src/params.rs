@@ -113,6 +113,8 @@ pub struct ServerShutdown {
 
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceCreate {
+    #[serde(default)]
+    pub auto_name: bool,
     pub name: Option<String>,
     pub cwd: Option<String>,
 }

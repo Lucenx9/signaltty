@@ -25,6 +25,7 @@ Usually one repo/project/task/investigation.
 |---|---|
 | `id` | opaque, e.g. `ws_…` |
 | `name` | human label, editable, non-unique |
+| `naming` | `manual` (legacy/default), `awaiting_prompt`, `generating`, `generated`, or `failed`; first-prompt AI title state (ADR-0031) |
 | `cwd` | default working directory for new panes |
 | `repo_root`, `repo_name`, `branch`, `dirty` | cached Git context (see below) |
 | `tabs` | ordered list of tab ids |

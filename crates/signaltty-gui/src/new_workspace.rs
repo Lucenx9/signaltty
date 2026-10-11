@@ -31,6 +31,7 @@ const CUSTOM_LABEL: &str = "Custom…";
 
 /// What the dialog hands back when the user confirms.
 pub struct NewWorkspaceRequest {
+    pub auto_name: bool,
     pub name: String,
     pub cwd: String,
     pub argv: Vec<String>,
@@ -87,6 +88,13 @@ pub fn available_commands() -> Vec<CommandOption> {
 
 /// Starting an agent is the product's central action, so the first
 /// installed agent is preselected; Shell when none is installed.
+fn supports_auto_name(argv: &[String]) -> bool {
+    argv.first()
+        .and_then(|s| Path::new(s).file_name())
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| matches!(s, "codex" | "claude"))
+}
+
 pub fn default_command_index(commands: &[CommandOption]) -> usize {
     if commands.len() > 1 {
         1
@@ -268,10 +276,25 @@ pub fn show_dialog(
         .text(folder_basename(&state.borrow().cwd))
         .activates_default(true)
         .build();
-    dialog.set_focus(Some(&name_row));
+    let auto_name = adw::SwitchRow::builder()
+        .title("Automatic name")
+        .subtitle(if supports_auto_name(&commands[default_index].argv) {
+            "From your first message"
+        } else {
+            "Available with Codex or Claude"
+        })
+        .active(supports_auto_name(&commands[default_index].argv))
+        .build();
+    auto_name.set_sensitive(supports_auto_name(&commands[default_index].argv));
+    auto_name.set_tooltip_text(Some(
+        "Uses your Codex or Claude account and its default model; generation may use account quota",
+    ));
+    name_row.set_visible(!auto_name.is_active());
+    dialog.set_focus(Some(&browse));
 
     let ws_group = adw::PreferencesGroup::builder().title("Workspace").build();
     ws_group.add(&folder_row);
+    ws_group.add(&auto_name);
     ws_group.add(&name_row);
 
     // ---- command group ----
@@ -310,12 +333,13 @@ pub fn show_dialog(
     let revalidate = {
         let dialog = dialog.clone();
         let name_row = name_row.clone();
+        let auto_name = auto_name.clone();
         let custom_row = custom_row.clone();
         let combo = combo.clone();
         let state = Rc::clone(&state);
         let commands = Rc::clone(&commands);
         move || {
-            let name_ok = !name_row.text().trim().is_empty();
+            let name_ok = auto_name.is_active() || !name_row.text().trim().is_empty();
             let cwd_ok = Path::new(state.borrow().cwd.as_str()).is_dir();
             let sel = combo.selected() as usize;
             let cmd_ok = if sel >= commands.len() {
@@ -334,6 +358,7 @@ pub fn show_dialog(
     let confirm = {
         let dialog = dialog.clone();
         let name_row = name_row.clone();
+        let auto_name = auto_name.clone();
         let custom_row = custom_row.clone();
         let combo = combo.clone();
         let state = Rc::clone(&state);
@@ -345,7 +370,12 @@ pub fn show_dialog(
             } else {
                 commands[sel].argv.clone()
             };
-            let name = name_row.text().trim().to_string();
+            let automatic = auto_name.is_active();
+            let name = if automatic {
+                folder_basename(&state.borrow().cwd)
+            } else {
+                name_row.text().trim().to_string()
+            };
             let cwd = state.borrow().cwd.clone();
             if name.is_empty() || argv.is_empty() || !Path::new(&cwd).is_dir() {
                 return;
@@ -353,7 +383,12 @@ pub fn show_dialog(
             // Choosing a response already dismisses the dialog; the
             // explicit close only covers entry-activated confirms.
             dialog.close();
-            on_create(NewWorkspaceRequest { name, cwd, argv });
+            on_create(NewWorkspaceRequest {
+                name,
+                cwd,
+                argv,
+                auto_name: automatic,
+            });
         }
     };
     let confirm = Rc::new(confirm);
@@ -373,6 +408,17 @@ pub fn show_dialog(
 
     // ---- wiring ----
     {
+        let name_row = name_row.clone();
+        let revalidate = Rc::clone(&revalidate);
+        auto_name.connect_active_notify(move |row| {
+            name_row.set_visible(!row.is_active());
+            if !row.is_active() {
+                name_row.grab_focus();
+            }
+            revalidate();
+        });
+    }
+    {
         let state = Rc::clone(&state);
         let revalidate = Rc::clone(&revalidate);
         name_row.connect_changed(move |_| {
@@ -388,10 +434,23 @@ pub fn show_dialog(
     }
     {
         let custom_row = custom_row.clone();
+        let auto_name = auto_name.clone();
         let commands = Rc::clone(&commands);
         let revalidate = Rc::clone(&revalidate);
         combo.connect_selected_notify(move |combo| {
             let sel = combo.selected() as usize;
+            let supported = commands
+                .get(sel)
+                .is_some_and(|command| supports_auto_name(&command.argv));
+            auto_name.set_sensitive(supported);
+            auto_name.set_subtitle(if supported {
+                "From your first message"
+            } else {
+                "Available with Codex or Claude"
+            });
+            if !supported {
+                auto_name.set_active(false);
+            }
             if sel >= commands.len() {
                 combo.set_subtitle("Type any command below");
                 // Plain visibility, no revealer: nothing animates on
@@ -584,7 +643,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let dir_s = dir.to_string_lossy().to_string();
 
-        type Captured = Rc<RefCell<Option<(String, String, Vec<String>)>>>;
+        type Captured = Rc<RefCell<Option<(String, String, Vec<String>, bool)>>>;
         let got: Captured = Rc::new(RefCell::new(None));
         let got2 = Rc::clone(&got);
         let closed = Rc::new(Cell::new(false));
@@ -593,7 +652,7 @@ mod tests {
             &window,
             Some(&dir_s),
             move |req| {
-                *got2.borrow_mut() = Some((req.name, req.cwd, req.argv));
+                *got2.borrow_mut() = Some((req.name, req.cwd, req.argv, req.auto_name));
             },
             move || closed2.set(true),
         );
@@ -609,7 +668,12 @@ mod tests {
         let expected_argv = commands[default_command_index(&commands)].argv.clone();
         assert_eq!(
             got.borrow().clone(),
-            Some(("signaltty-dialog-e2e".to_string(), dir_s, expected_argv))
+            Some((
+                "signaltty-dialog-e2e".to_string(),
+                dir_s,
+                expected_argv.clone(),
+                supports_auto_name(&expected_argv)
+            ))
         );
         assert!(closed.get());
         std::fs::remove_dir_all(&dir).unwrap();

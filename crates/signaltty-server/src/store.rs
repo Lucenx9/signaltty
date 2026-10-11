@@ -92,6 +92,50 @@ pub(crate) fn is_reviewed_terminal(pane: &Pane) -> bool {
 }
 
 impl Store {
+    pub fn begin_workspace_title(&mut self, pane_id: &str) -> Option<String> {
+        use signaltty_core::model::WorkspaceNaming;
+        let id = self.panes.get(pane_id)?.workspace_id.clone();
+        let ws = self.workspaces.get_mut(&id)?;
+        if ws.naming != WorkspaceNaming::AwaitingPrompt {
+            return None;
+        }
+        ws.naming = WorkspaceNaming::Generating;
+        ws.updated_at = Utc::now();
+        let ws = ws.clone();
+        self.emit(event::WORKSPACE_UPDATED, json!({"workspace":ws}));
+        Some(id)
+    }
+
+    pub fn finish_workspace_title(&mut self, id: &str, title: Option<String>) -> bool {
+        use signaltty_core::model::WorkspaceNaming;
+        let Some(ws) = self.workspaces.get_mut(id) else {
+            return false;
+        };
+        if ws.naming != WorkspaceNaming::Generating {
+            return false;
+        }
+        ws.naming = if let Some(title) = title {
+            ws.name = title;
+            WorkspaceNaming::Generated
+        } else {
+            WorkspaceNaming::Failed
+        };
+        ws.updated_at = Utc::now();
+        let ws = ws.clone();
+        self.emit(event::WORKSPACE_UPDATED, json!({"workspace":ws}));
+        true
+    }
+
+    pub fn rename_workspace(&mut self, id: &str, name: String) -> Option<Workspace> {
+        let ws = self.workspaces.get_mut(id)?;
+        ws.name = name;
+        ws.naming = signaltty_core::model::WorkspaceNaming::Manual;
+        ws.updated_at = Utc::now();
+        let ws = ws.clone();
+        self.emit(event::WORKSPACE_UPDATED, json!({"workspace":ws}));
+        Some(ws)
+    }
+
     pub fn new() -> Store {
         Store {
             workspaces: HashMap::new(),
