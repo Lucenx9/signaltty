@@ -292,8 +292,8 @@ background IPC connection with a 90-second deadline, so approvals and normal
 control traffic keep flowing. A checkout's Open and Remove actions sit on
 one aligned row. Remove is a quiet destructive-text action, never a second
 primary button. Disabled controls have contextual accessible descriptions
-for main, locked, missing, bare and still-open checkout states. An uncertain mutation is never automatically
-replayed.
+for main, locked, missing, bare and still-open checkout states. An uncertain
+mutation is never automatically replayed.
 
 Show Changes (Ctrl+Shift+D, header toggle, palette, main menu) docks a panel at
 the window's right edge, beside the terminals, in an end-side
