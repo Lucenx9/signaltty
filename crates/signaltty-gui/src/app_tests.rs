@@ -1137,6 +1137,228 @@ fn capture_workflow(window: &adw::ApplicationWindow, name: &str) {
 
 #[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
+fn shell_empty_states_explain_actions_and_fit_large_text() {
+    let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+    let config = std::env::temp_dir().join(format!("signaltty-shell-scene-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call { method, reply, .. } = request {
+                let value = match method.as_str() {
+                    "workspace.list" => json!({"workspaces": []}),
+                    "task.list" => json!({"tasks": []}),
+                    "test.stop" => {
+                        let _ = reply.send(Ok(Value::Null));
+                        break;
+                    }
+                    _ => Value::Null,
+                };
+                let _ = reply.send(Ok(value));
+            }
+        }
+    });
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor.clone(), ui);
+    let old_scheme = adw::StyleManager::default().color_scheme();
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let old_motion = settings.is_gtk_enable_animations();
+    settings.set_gtk_enable_animations(false);
+    app.apply_preference(signaltty_core::theme::GuiPreference::default());
+    app.present();
+    wait_ui(|| app.window.is_mapped());
+
+    // Populated comparison scene uses the real sidebar and mounted VTEs.
+    let mut summaries = Vec::new();
+    for (id, name, lifecycle, attention, message) in [
+        (
+            "api",
+            "api-service",
+            "blocked",
+            "permission_required",
+            "Review the database migration",
+        ),
+        (
+            "ui",
+            "design-system",
+            "working",
+            "none",
+            "Refining keyboard navigation",
+        ),
+        (
+            "tests",
+            "integration-tests",
+            "done",
+            "unread",
+            "All 42 integration tests passed",
+        ),
+    ] {
+        let mut value = fixture(id);
+        value["workspace"]["name"] = json!(name);
+        value["workspace"]["git"] = json!({"branch": "feature/session-recovery"});
+        value["panes"][0]["lifecycle"] = json!(lifecycle);
+        value["panes"][0]["attention"] = json!(attention);
+        value["panes"][0]["last_message"] = json!(message);
+        let snapshot: crate::refresh::Snapshot = serde_json::from_value(value).unwrap();
+        summaries.push(crate::sidebar::summarize(
+            &snapshot.workspace,
+            &snapshot.panes,
+        ));
+        app.model
+            .borrow_mut()
+            .cache
+            .snapshots
+            .insert(id.into(), snapshot);
+    }
+    app.sidebar.update(summaries);
+    app.show_workspace("ui");
+    app.sidebar.select("ui");
+    app.widgets.borrow()["pane_ui"].feed(
+        b"$ cargo test -p signaltty-gui\r\n\r\n\x1b[32mtest\x1b[0m keyboard_navigation ... ok\r\n\x1b[32mtest\x1b[0m stable_terminal_widgets ... ok\r\n\r\n42 passed; 0 failed\r\n\r\n$ git diff --stat\r\n src/app.rs      | 18 +++++++++++\r\n data/style.css  | 24 +++++++++++++\r\n",
+    );
+    for appearance in [
+        signaltty_core::theme::Appearance::Light,
+        signaltty_core::theme::Appearance::Dark,
+    ] {
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..Default::default()
+        });
+        capture_workflow(&app.window, &format!("shell-{}", appearance.id()));
+    }
+
+    glib::MainContext::default().block_on(app.refresh_async());
+    for (page_name, title, action, accelerator) in [
+        (
+            "no-workspace",
+            "Start with a project",
+            "win.new-workspace",
+            "<Control><Shift>n",
+        ),
+        (
+            "no-tabs",
+            "Open a terminal",
+            "win.new-tab",
+            "<Control><Shift>t",
+        ),
+    ] {
+        if page_name == "no-tabs" {
+            let mut value = fixture("empty");
+            value["workspace"]["name"] = json!("Project");
+            value["tabs"] = json!([]);
+            value["panes"] = json!([]);
+            app.model
+                .borrow_mut()
+                .cache
+                .snapshots
+                .insert("empty".into(), serde_json::from_value(value).unwrap());
+            app.show_workspace("empty");
+        }
+        assert_eq!(app.content.visible_child_name().as_deref(), Some(page_name));
+        let page = app
+            .content
+            .child_by_name(page_name)
+            .unwrap()
+            .downcast::<adw::StatusPage>()
+            .unwrap();
+        assert_eq!(page.title(), title);
+        let button = find_widget::<gtk4::Button>(page.upcast_ref()).unwrap();
+        assert_eq!(button.action_name().as_deref(), Some(action));
+        let shortcut = label_with_class(page.upcast_ref(), "empty-state-shortcut");
+        let (key, modifiers) = gtk4::accelerator_parse(accelerator).unwrap();
+        assert_eq!(shortcut.text(), gtk4::accelerator_get_label(key, modifiers));
+        for (width, font, suffix) in [
+            (1280, "Sans 11", "desktop"),
+            (360, "Sans 11", "narrow"),
+            (360, "Sans 18", "large"),
+        ] {
+            app.window.set_default_size(width, 700);
+            settings.set_gtk_font_name(Some(font));
+            for appearance in [
+                signaltty_core::theme::Appearance::Light,
+                signaltty_core::theme::Appearance::Dark,
+            ] {
+                app.apply_preference(signaltty_core::theme::GuiPreference {
+                    appearance,
+                    ..Default::default()
+                });
+                if suffix == "large" {
+                    app.window.add_css_class("high-contrast");
+                }
+                wait_ui(|| {
+                    app.window.width() > width - 24
+                        && app.window.width() <= width
+                        && button.is_mapped()
+                        && shortcut.is_mapped()
+                });
+                capture_workflow(
+                    &app.window,
+                    &format!("{page_name}-{suffix}-{}", appearance.id()),
+                );
+                for widget in [
+                    button.clone().upcast::<gtk4::Widget>(),
+                    shortcut.clone().upcast(),
+                ] {
+                    let bounds = widget_bounds(&widget, app.window.upcast_ref());
+                    assert!(
+                        bounds.w > 0.0
+                            && bounds.x >= 0.0
+                            && bounds.x + bounds.w <= f64::from(app.window.width()),
+                        "{page_name} {suffix} {appearance:?}: {} at x={} width={} outside {}",
+                        widget.css_name(),
+                        bounds.x,
+                        bounds.w,
+                        app.window.width()
+                    );
+                }
+                app.window.remove_css_class("high-contrast");
+            }
+        }
+    }
+    // The empty-page primary action opens the same native dialog as the header.
+    app.content.set_visible_child_name("no-workspace");
+    let page = app.content.child_by_name("no-workspace").unwrap();
+    find_widget::<gtk4::Button>(&page).unwrap().emit_clicked();
+    wait_ui(|| app.window.visible_dialog().is_some());
+    let dialog = app
+        .window
+        .visible_dialog()
+        .unwrap()
+        .downcast::<adw::AlertDialog>()
+        .unwrap();
+    respond(&app, &dialog, "cancel");
+    settings.set_gtk_font_name(old_font.as_deref());
+    settings.set_gtk_enable_animations(old_motion);
+    adw::StyleManager::default().set_color_scheme(old_scheme);
+    glib::MainContext::default()
+        .block_on(actor.call("test.stop", json!({})))
+        .unwrap();
+    worker.join().unwrap();
+    app.window.destroy();
+    match previous_config {
+        Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+        None => std::env::remove_var("XDG_CONFIG_HOME"),
+    }
+    let _ = std::fs::remove_dir_all(config);
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
 fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
     adw::init().unwrap();
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
