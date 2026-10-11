@@ -4,9 +4,9 @@
 //!
 //! ```text
 //! AdwOverlaySplitView
-//! ├─ sidebar  AdwToolbarView: [+ Workspaces] / workspace rows
+//! ├─ sidebar  AdwToolbarView: [+ Workspaces] / [Search commands] / rows
 //! └─ content  AdwToolbarView
-//!    ├─ header  [sidebar] workspace · agent      [● 2] [tab+] [menu]
+//!    ├─ header  [sidebar] workspace · agent   [● 2] [Board] [Changes] [tab+] [menu]
 //!    ├─ banner  (server connection lost)
 //!    ├─ AdwTabBar (autohides with one tab)
 //!    └─ AdwTabView → per tab: Bin.tab-page → Paned splits → pane cards
@@ -214,8 +214,32 @@ impl App {
         btn_new_ws.update_property(&[gtk4::accessible::Property::Label("New Workspace")]);
         btn_new_ws.set_action_name(Some("win.new-workspace"));
         sidebar_header.pack_end(&btn_new_ws);
+        // A visible entry point to the existing command palette. This is
+        // deliberately a button, not an editable search field: typing happens
+        // in the palette, which already supports keyboard navigation.
+        let command_launcher = gtk4::Button::new();
+        command_launcher.add_css_class("sidebar-command-launcher");
+        command_launcher.set_action_name(Some("win.command-palette"));
+        command_launcher.set_tooltip_text(Some("Search commands and workspaces (Ctrl+Shift+P)"));
+        command_launcher.update_property(&[gtk4::accessible::Property::Label(
+            "Search commands and workspaces",
+        )]);
+        let command_contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        let command_icon = gtk4::Image::from_icon_name("signaltty-search-symbolic");
+        command_contents.append(&command_icon);
+        let command_label = gtk4::Label::new(Some("Search or run a command…"));
+        command_label.set_xalign(0.0);
+        command_label.set_hexpand(true);
+        command_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        command_contents.append(&command_label);
+        command_launcher.set_child(Some(&command_contents));
+        let command_strip = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        command_strip.add_css_class("sidebar-command-strip");
+        command_strip.append(&command_launcher);
+
         let sidebar_page = adw::ToolbarView::new();
         sidebar_page.add_top_bar(&sidebar_header);
+        sidebar_page.add_top_bar(&command_strip);
         sidebar_page.set_content(Some(&sidebar.widget));
 
         let sidebar_overlay = gtk4::Overlay::new();
@@ -291,6 +315,11 @@ impl App {
         btn_changes.set_tooltip_text(Some("Changes (Ctrl+Shift+D)"));
         btn_changes.update_property(&[gtk4::accessible::Property::Label("Changes")]);
         header.pack_end(&btn_changes);
+        let btn_board = gtk4::Button::from_icon_name("signaltty-board-symbolic");
+        btn_board.set_tooltip_text(Some("Task Board (Ctrl+Shift+B)"));
+        btn_board.update_property(&[gtk4::accessible::Property::Label("Task Board")]);
+        btn_board.set_action_name(Some("win.show-board"));
+        header.pack_end(&btn_board);
         let attention = Self::attention_button();
         header.pack_end(&attention.revealer);
 
@@ -378,9 +407,11 @@ impl App {
         );
         narrow.add_setter(&split_view, "collapsed", Some(&true.to_value()));
         narrow.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
-        // The header must fit 360px (spec 024); Changes stays on its
-        // shortcut, the palette and the main menu.
+        // At 360px the terminal and breadcrumb take precedence. Board and
+        // Changes remain in the main menu and command palette, with their
+        // existing shortcuts; their icons return at wider widths.
         narrow.add_setter(&btn_changes, "visible", Some(&false.to_value()));
+        narrow.add_setter(&btn_board, "visible", Some(&false.to_value()));
         window.add_breakpoint(narrow);
 
         let toasts = adw::ToastOverlay::new();
