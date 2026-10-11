@@ -52,6 +52,12 @@ struct Model {
     panes: HashMap<String, Pane>,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum CloseTarget {
+    Pane(String),
+    Tab(String),
+}
+
 struct TabEntry {
     page: adw::TabPage,
     bin: adw::Bin,
@@ -124,10 +130,10 @@ pub struct App {
     /// Weak divider widgets keyed like the state machine; App feeds
     /// observations from these and executes its commands on them.
     paned_widgets: RefCell<PanedWidgets>,
-    /// The New Workspace dialog is single-instance: repeats of the
-    /// action (or its accelerator) while it is open are ignored.
-    new_ws_open: Cell<bool>,
+    new_ws_dialog: RefCell<Option<Rc<crate::new_workspace::NewWorkspaceDialog>>>,
     close_ws_dialog: RefCell<Option<adw::AlertDialog>>,
+    close_terminal_dialog: RefCell<Option<adw::AlertDialog>>,
+    closing_targets: RefCell<HashSet<CloseTarget>>,
     pub preference: RefCell<signaltty_core::theme::GuiPreference>,
     me: RefCell<Weak<App>>,
 }
@@ -237,10 +243,8 @@ impl App {
         sidebar_page.add_top_bar(&sidebar_header);
         sidebar_page.add_top_bar(&command_strip);
         sidebar_page.set_content(Some(&sidebar.widget));
-        // Pinned footer: tools that are not already in the content header
-        // (Task Board and Changes live there with their toggle state), plus
-        // settings. A real destination, unlike a mock status footer that
-        // would incorrectly claim connectivity.
+        // Pinned tools stay reachable when the workspace list scrolls.
+        // Compact Board/Changes entries replace the hidden header tools.
         let worktrees_button = crate::sidebar::nav_button(
             "signaltty-branch-symbolic",
             "Worktrees",
@@ -255,6 +259,25 @@ impl App {
         );
         let sidebar_footer = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
         sidebar_footer.add_css_class("sidebar-footer");
+        let compact_tools = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+        compact_tools.set_visible(false);
+        let compact_board = crate::sidebar::nav_button(
+            "signaltty-board-symbolic",
+            "Task Board",
+            "Task Board (Ctrl+Shift+B)",
+            "win.show-board",
+        );
+        let compact_changes = gtk4::ToggleButton::new();
+        compact_changes.add_css_class("sidebar-nav-button");
+        compact_changes.set_tooltip_text(Some("Changes (Ctrl+Shift+D)"));
+        compact_changes.update_property(&[gtk4::accessible::Property::Label("Changes")]);
+        compact_changes.set_child(Some(&crate::sidebar::labeled_content(
+            "sidebar-show-right-symbolic",
+            "Changes",
+        )));
+        compact_tools.append(&compact_board);
+        compact_tools.append(&compact_changes);
+        sidebar_footer.append(&compact_tools);
         sidebar_footer.append(&worktrees_button);
         sidebar_footer.append(&footer_button);
         sidebar_page.add_bottom_bar(&sidebar_footer);
@@ -446,6 +469,16 @@ impl App {
         split_view.set_max_sidebar_width(340.0);
         split_view.set_sidebar_width_fraction(0.24);
 
+        changes_split
+            .bind_property("show-sidebar", &compact_changes, "active")
+            .bidirectional()
+            .sync_create()
+            .build();
+        let compact_sidebar = split_view.clone();
+        compact_board.connect_clicked(move |_| compact_sidebar.set_show_sidebar(false));
+        let compact_sidebar = split_view.clone();
+        compact_changes.connect_clicked(move |_| compact_sidebar.set_show_sidebar(false));
+
         // Only the last matching breakpoint applies, so the wider one
         // goes first and the narrow one repeats its setters.
         // Below 1100sp the docked panel would squeeze the terminals: it
@@ -476,11 +509,11 @@ impl App {
         );
         narrow.add_setter(&split_view, "collapsed", Some(&true.to_value()));
         narrow.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
-        // At 360px the terminal and breadcrumb take precedence. Board and
-        // Changes remain in the main menu and command palette, with their
-        // existing shortcuts; their icons return at wider widths.
+        // At 360px labeled tools move to the overlay sidebar. Their
+        // original header controls return at wider widths.
         narrow.add_setter(&btn_changes, "visible", Some(&false.to_value()));
         narrow.add_setter(&btn_board, "visible", Some(&false.to_value()));
+        narrow.add_setter(&compact_tools, "visible", Some(&true.to_value()));
         window.add_breakpoint(narrow);
 
         let toasts = adw::ToastOverlay::new();
@@ -529,8 +562,10 @@ impl App {
             board_dialog: RefCell::new(None),
             dividers: crate::dividers::Dividers::new(),
             paned_widgets: RefCell::new(HashMap::new()),
-            new_ws_open: Cell::new(false),
+            new_ws_dialog: RefCell::new(None),
             close_ws_dialog: RefCell::new(None),
+            close_terminal_dialog: RefCell::new(None),
+            closing_targets: RefCell::new(HashSet::new()),
             preference: RefCell::new(crate::preferences::load_preference()),
             me: RefCell::new(Weak::new()),
         });
@@ -722,24 +757,18 @@ impl App {
                 }
             }
         });
-        // Closing a tab from the tab bar closes it on the server. Pages
-        // the reconciler removes are no longer in `tabs` by the time
-        // this runs, so they just close.
+        // Reconcile removes untracked pages directly. User close requests
+        // keep their pages mounted until the server accepts the close.
         let w = self.weak();
         self.tab_view.connect_close_page(move |view, page| {
-            let closed = w.upgrade().and_then(|a| {
-                let id = a.tab_id_of(page)?;
-                a.tabs.borrow_mut().remove(&id);
-                Some((a, id))
-            });
-            view.close_page_finish(page, true);
-            if let Some((a, id)) = closed {
-                a.run(move |app| async move {
-                    if let Err(e) = app.actor.call("tab.close", json!({"tab_id": id})).await {
-                        app.toast(&format!("Couldn't close the tab — {e}"));
-                    }
-                    app.refresh_later();
-                });
+            if let Some((app, id)) = w
+                .upgrade()
+                .and_then(|a| a.tab_id_of(page).map(|id| (a, id)))
+            {
+                view.close_page_finish(page, false);
+                app.request_close_tab(&id);
+            } else {
+                view.close_page_finish(page, true);
             }
             glib::Propagation::Stop
         });
@@ -2297,29 +2326,32 @@ impl App {
     }
 
     /// Open the New Workspace dialog (Ctrl+Shift+N, the sidebar "+"
-    /// and the empty state all land here). Creation itself happens in
-    /// `create_workspace` once the user confirms.
+    /// and the empty state all land here). Keep the draft until success.
     fn action_new_workspace(&self) {
-        if self.new_ws_open.replace(true) {
+        if self.new_ws_dialog.borrow().is_some() {
             return;
         }
         let active_cwd = self.active_ws_cwd();
         let w = self.weak();
         let w2 = self.weak();
-        crate::new_workspace::show_dialog(
+        let form = crate::new_workspace::show_dialog(
             &self.window,
             active_cwd.as_deref(),
-            move |req| {
+            move |req, form| {
                 if let Some(a) = w.upgrade() {
-                    a.create_workspace(&req.name, &req.cwd, &req.argv, req.auto_name);
+                    let navigation = a.navigate();
+                    a.run(move |app| async move {
+                        form.finish(app.create_workspace_async(req, navigation).await);
+                    });
                 }
             },
             move || {
                 if let Some(a) = w2.upgrade() {
-                    a.new_ws_open.set(false);
+                    a.new_ws_dialog.borrow_mut().take();
                 }
             },
         );
+        self.new_ws_dialog.replace(Some(form));
     }
 
     /// Context menu for a sidebar row, built when it opens so task
@@ -2581,64 +2613,58 @@ impl App {
             .map(|ws| ws.cwd.clone())
     }
 
-    /// `signaltty new` over IPC: create the workspace, spawn the first
-    /// pane in it, show it and focus the new terminal.
-    fn create_workspace(&self, name: &str, cwd: &str, argv: &[String], auto_name: bool) {
-        let name = name.to_string();
-        let cwd = cwd.to_string();
-        let argv = argv.to_vec();
-        let navigation = self.navigate();
-        self.run(move |app| async move {
-            app.create_workspace_async(&name, &cwd, &argv, navigation, auto_name)
-                .await
-        });
-    }
-
     async fn create_workspace_async(
         &self,
-        name: &str,
-        cwd: &str,
-        argv: &[String],
+        request: crate::new_workspace::NewWorkspaceRequest,
         navigation: u64,
-        auto_name: bool,
-    ) {
-        let ws_id = match self
+    ) -> Result<(), crate::new_workspace::CreationError> {
+        use crate::new_workspace::CreationError;
+        let ws_id = if let Some(id) = request.existing_workspace_id {
+            id
+        } else {
+            let value = self
+                .actor
+                .call(
+                    "workspace.create",
+                    json!({
+                        "name": request.name, "cwd": request.cwd, "auto_name": request.auto_name,
+                    }),
+                )
+                .await
+                .map_err(|e| CreationError {
+                    message: format!(
+                        "Couldn't create the workspace: {e}. Check your choices and retry."
+                    ),
+                    workspace_id: None,
+                })?;
+            value["workspace"]["id"].as_str().filter(|id| !id.is_empty())
+                .ok_or_else(|| CreationError {
+                    message: "The session server didn't return the new workspace. Check the workspace list before trying again.".into(),
+                    workspace_id: None,
+                })?.to_string()
+        };
+        match self
             .actor
             .call(
-                "workspace.create",
-                json!({"name": name, "cwd": cwd, "auto_name": auto_name}),
+                "pane.spawn",
+                json!({"workspace_id": ws_id, "argv": request.argv}),
             )
             .await
         {
-            Ok(v) => v["workspace"]["id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
-            Err(e) => {
-                self.toast(&format!("Couldn't create the workspace — {e}"));
-                return;
-            }
-        };
-        if ws_id.is_empty() {
-            self.toast("Couldn't create the workspace");
-            return;
-        }
-        // No active tab yet: pane.spawn auto-creates the "agents" tab.
-        match self
-            .actor
-            .call("pane.spawn", json!({"workspace_id": ws_id, "argv": argv}))
-            .await
-        {
-            Ok(v) => self.focus_created(&v, navigation),
-            Err(e) => {
-                self.toast(&format!("Couldn't start a terminal — {e}"));
-                return;
+            Ok(value) => self.focus_created(&value, navigation),
+            Err(error) => {
+                self.refresh_async().await;
+                return Err(CreationError {
+                    message: format!("Workspace \"{}\" exists, but its command couldn't start: {error}. Correct the command and retry, or cancel to keep the workspace.", request.name),
+                    workspace_id: Some(ws_id),
+                });
             }
         }
         self.refresh_async().await;
         if self.navigation.get() == navigation {
             self.show_workspace_internal(&ws_id, false);
         }
+        Ok(())
     }
 
     fn action_new_tab(&self) {
@@ -2733,20 +2759,104 @@ impl App {
         }
     }
 
-    fn close_pane(&self, pane_id: &str) {
-        let pane_id = pane_id.to_string();
-        self.run(move |app| async move { app.close_pane_async(&pane_id).await });
+    fn request_close_tab(&self, tab_id: &str) {
+        let model = self.model.borrow();
+        let Some(tab) = model.tabs.iter().find(|tab| tab.id == tab_id) else {
+            return;
+        };
+        let running = tab.layout.as_ref().is_some_and(|layout| {
+            layout
+                .panes()
+                .iter()
+                .any(|id| model.panes.get(id).is_none_or(Self::pane_is_running))
+        });
+        let target = CloseTarget::Tab(tab_id.to_string());
+        let title = tab.title.clone();
+        drop(model);
+        if running {
+            self.confirm_terminal_close(target, &title);
+        } else {
+            self.close_terminal(target);
+        }
     }
 
-    async fn close_pane_async(&self, pane_id: &str) {
-        if let Err(e) = self
-            .actor
-            .call("pane.close", json!({"pane_id": pane_id}))
-            .await
-        {
-            self.toast(&format!("Couldn't close the pane — {e}"));
+    fn pane_is_running(pane: &Pane) -> bool {
+        pane.live == signaltty_core::model::LiveState::Live
+            && pane.restore_state == signaltty_core::model::RestoreState::Live
+    }
+
+    fn close_pane(&self, pane_id: &str) {
+        let model = self.model.borrow();
+        let Some(pane) = model.panes.get(pane_id) else {
+            return;
+        };
+        let running = Self::pane_is_running(pane);
+        let title = pane.title.clone();
+        drop(model);
+        let target = CloseTarget::Pane(pane_id.to_string());
+        if running {
+            self.confirm_terminal_close(target, &title);
+        } else {
+            self.close_terminal(target);
         }
-        self.refresh_pane_workspace_async(pane_id).await;
+    }
+
+    fn confirm_terminal_close(&self, target: CloseTarget, title: &str) {
+        if self.close_terminal_dialog.borrow().is_some()
+            || self.closing_targets.borrow().contains(&target)
+        {
+            return;
+        }
+        let (body, label) = match &target {
+            CloseTarget::Pane(_) => ("The running terminal or agent will stop.", "Close Terminal"),
+            CloseTarget::Tab(_) => (
+                "Running terminals and agents in this tab will stop.",
+                "Close Tab",
+            ),
+        };
+        let dialog = adw::AlertDialog::builder()
+            .heading(format!("Close {title}?"))
+            .body(body)
+            .build();
+        dialog.add_css_class("signaltty-dialog");
+        dialog.add_responses(&[("cancel", "Cancel"), ("close", label)]);
+        dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let w = self.weak();
+        dialog.connect_response(Some("close"), move |_, _| {
+            if let Some(app) = w.upgrade() {
+                app.close_terminal(target.clone());
+            }
+        });
+        let w = self.weak();
+        dialog.connect_closed(move |_| {
+            if let Some(app) = w.upgrade() {
+                app.close_terminal_dialog.borrow_mut().take();
+            }
+        });
+        self.close_terminal_dialog.replace(Some(dialog.clone()));
+        dialog.present(Some(&self.window));
+    }
+
+    fn close_terminal(&self, target: CloseTarget) {
+        if !self.closing_targets.borrow_mut().insert(target.clone()) {
+            return;
+        }
+        self.run(move |app| async move {
+            let (method, params, label) = match &target {
+                CloseTarget::Pane(id) => ("pane.close", json!({"pane_id": id}), "terminal"),
+                CloseTarget::Tab(id) => ("tab.close", json!({"tab_id": id}), "tab"),
+            };
+            if let Err(e) = app.actor.call(method, params).await {
+                app.toast(&format!("Couldn't close the {label} — {e}"));
+            }
+            match &target {
+                CloseTarget::Pane(id) => app.refresh_pane_workspace_async(id).await,
+                CloseTarget::Tab(_) => app.refresh_async().await,
+            }
+            app.closing_targets.borrow_mut().remove(&target);
+        });
     }
 
     fn resume_pane(&self, pane_id: &str) {

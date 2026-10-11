@@ -93,9 +93,9 @@ indicator, where Changes keeps its toggle state. Both are
 `AdwButtonContent` buttons labeled at spacious desktop widths; below 1100sp
 the label is cleared and they take the same flat `.image-button` style as
 the other header buttons, keeping their accessible names. Below 760sp they
-hide completely; the main menu, the command palette (also reachable from
-the sidebar launcher when the overlay sidebar is opened) and the shortcuts
-remain. No new IPC, fake panes or full-width second toolbar: terminal
+move into labeled controls in the pinned overlay-sidebar footer. Changes
+keeps the same toggle state, and activating either tool dismisses the left
+overlay. The main menu, command palette and shortcuts remain available. No new IPC, fake panes or full-width second toolbar: terminal
 content and workspace context continue to own the canvas.
 
 One status vocabulary, shared by every surface
@@ -182,7 +182,7 @@ Rules that keep it calm:
 
 Starting an agent in a project — the central action — goes through
 the New Workspace dialog (`crates/signaltty-gui/src/new_workspace.rs`,
-`AdwAlertDialog` with `AdwActionRow`/`AdwEntryRow`/`AdwComboRow`):
+`AdwDialog` with native header actions and `AdwActionRow`/`AdwEntryRow`/`AdwComboRow`):
 folder (via `GtkFileDialog`, defaulting to the active workspace's
 folder or home), name (prefilled from the folder, editable) and
 first command (Shell plus every agent whose binary is on `PATH`,
@@ -192,7 +192,14 @@ runs `workspace.create` + `pane.spawn` like `signaltty new`, shows
 the workspace and focuses the new pane. The dialog is single
 instance and shared by Ctrl+Shift+N, the sidebar "+" and the empty
 state; the custom field toggles with plain visibility so nothing
-animates on keyboard navigation.
+animates on keyboard navigation. Field-local validation explains an unavailable
+folder, blank manual name or malformed custom command. Automatic name appears
+only for supported agent commands. Create/Enter starts one attempt and keeps the
+form open with progress; pending requests disable editing and dismissal rather
+than imply cancellation of a server-owned operation. Failure keeps the draft
+and offers Retry. If the workspace was created but its command failed, its
+identity is retained, workspace fields are locked, and only command startup is
+retried; cancellation then keeps the existing workspace. Dialog follows native content size inside a 440px clamp, with scrolling when constrained.
 
 Each sidebar row has a separate trailing close target, revealed instantly
 on hover or keyboard focus while the status remains visible. Its reserved
@@ -203,6 +210,13 @@ destructive confirmation that names the workspace and warns that its running
 terminals and agents will stop. Confirming calls the existing
 `workspace.close` method and refreshes the full workspace list. Cancel sends
 no request. A failed close leaves the row visible and shows a toast.
+
+Tab and pane close actions also confirm when they contain live processes,
+including idle shells. Cancel is the default and Escape cancels. Exited,
+restored and empty targets close directly. Confirmations keep the original
+identity through navigation; cancellation and failed server replies keep mounted
+terminal widgets. Tab pages are removed by reconciliation after server success,
+rather than optimistically disappearing while the request is pending.
 
 Inline approvals place the complete selectable, wrapped question above
 native `AdwWrapBox` choices. Long option labels wrap as well, so a 320px

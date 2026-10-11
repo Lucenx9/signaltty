@@ -338,6 +338,458 @@ fn assert_sidebar(app: &App, ids: &[&str], selected: &str) {
 }
 
 #[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn terminal_closures_confirm_live_targets_and_preserve_failed_tabs() {
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let state = Arc::new(Mutex::new(BTreeMap::from([
+        ("a".to_string(), fixture("a")),
+        ("b".to_string(), fixture("b")),
+    ])));
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let fail_close = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server = state.clone();
+    let recorded = calls.clone();
+    let fail = fail_close.clone();
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call {
+                method,
+                params,
+                reply,
+                ..
+            } = request
+            {
+                if method == "test.stop" {
+                    let _ = reply.send(Ok(Value::Null));
+                    break;
+                }
+                let mut state = server.lock().unwrap();
+                let result = match method.as_str() {
+                    "workspace.list" => Ok(json!({"workspaces": state.values()
+                        .map(|s| s["workspace"].clone()).collect::<Vec<_>>()})),
+                    "workspace.get" => Ok(state[params["workspace_id"].as_str().unwrap()].clone()),
+                    "task.list" | "pane.resize" => Ok(json!({})),
+                    "pane.close" | "tab.close" => {
+                        recorded
+                            .lock()
+                            .unwrap()
+                            .push((method.clone(), params.clone()));
+                        if fail.load(std::sync::atomic::Ordering::SeqCst) {
+                            Err("Session server refused the close".into())
+                        } else {
+                            let id = params[if method == "pane.close" {
+                                "pane_id"
+                            } else {
+                                "tab_id"
+                            }]
+                            .as_str()
+                            .unwrap();
+                            let workspace = id.split_once('_').unwrap().1;
+                            let snapshot = state.get_mut(workspace).unwrap();
+                            snapshot["panes"] = json!([]);
+                            snapshot["tabs"] = json!([]);
+                            snapshot["workspace"]["tabs"] = json!([]);
+                            snapshot["workspace"]["active_tab_id"] = Value::Null;
+                            Ok(json!({"closed": true}))
+                        }
+                    }
+                    _ => panic!("unexpected IPC {method}"),
+                };
+                let _ = reply.send(result);
+            }
+        }
+    });
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.present();
+    app.refresh();
+    drain_refresh(&app);
+    let original = app.widgets.borrow()["pane_a"].clone();
+    app.close_pane("pane_a");
+    drain_refresh(&app);
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "close must wait for confirmation"
+    );
+    let dialog = app
+        .window
+        .visible_dialog()
+        .unwrap()
+        .downcast::<adw::AlertDialog>()
+        .unwrap();
+    assert!(dialog.heading().unwrap().contains("pane_a"));
+    assert_eq!(dialog.default_response().as_deref(), Some("cancel"));
+    for (appearance, name) in [
+        (signaltty_core::theme::Appearance::Light, "light"),
+        (signaltty_core::theme::Appearance::Dark, "dark"),
+    ] {
+        let preference = *app.preference.borrow();
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..preference
+        });
+        capture_workflow(&app.window, &format!("terminal-close-{name}"));
+    }
+    respond(&app, &dialog, "cancel");
+    assert!(calls.lock().unwrap().is_empty());
+    assert!(Rc::ptr_eq(&original, &app.widgets.borrow()["pane_a"]));
+
+    app.close_pane("pane_a");
+    let dialog = app
+        .window
+        .visible_dialog()
+        .unwrap()
+        .downcast::<adw::AlertDialog>()
+        .unwrap();
+    app.show_workspace("b");
+    drain_refresh(&app);
+    respond(&app, &dialog, "close");
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        &[("pane.close".into(), json!({"pane_id": "pane_a"}))]
+    );
+    assert_eq!(app.active_ws_id().as_deref(), Some("b"));
+    assert!(app.widgets.borrow().contains_key("pane_b"));
+    calls.lock().unwrap().clear();
+
+    let page = app.tabs.borrow()["tab_b"].page.clone();
+    let original = app.widgets.borrow()["pane_b"].clone();
+    app.tab_view.close_page(&page);
+    assert!(calls.lock().unwrap().is_empty());
+    let dialog = app
+        .window
+        .visible_dialog()
+        .unwrap()
+        .downcast::<adw::AlertDialog>()
+        .unwrap();
+    assert!(dialog.heading().unwrap().contains("tab_b"));
+    assert_eq!(dialog.default_response().as_deref(), Some("cancel"));
+    respond(&app, &dialog, "cancel");
+    assert_eq!(app.tabs.borrow()["tab_b"].page, page);
+    assert!(Rc::ptr_eq(&original, &app.widgets.borrow()["pane_b"]));
+    fail_close.store(true, std::sync::atomic::Ordering::SeqCst);
+    app.tab_view.close_page(&page);
+    let dialog = app
+        .window
+        .visible_dialog()
+        .unwrap()
+        .downcast::<adw::AlertDialog>()
+        .unwrap();
+    respond(&app, &dialog, "close");
+    assert_eq!(app.tabs.borrow()["tab_b"].page, page);
+    assert!(Rc::ptr_eq(&original, &app.widgets.borrow()["pane_b"]));
+    assert!(has_label(
+        app.window.upcast_ref(),
+        "Couldn't close the tab — Session server refused the close"
+    ));
+
+    fail_close.store(false, std::sync::atomic::Ordering::SeqCst);
+    state.lock().unwrap().get_mut("b").unwrap()["panes"][0]["live"] =
+        json!({"state": "exited", "code": 0});
+    app.refresh();
+    drain_refresh(&app);
+    app.tab_view.close_page(&page);
+    drain_refresh(&app);
+    assert!(app.window.visible_dialog().is_none());
+    assert!(!app.tabs.borrow().contains_key("tab_b"));
+    assert_eq!(calls.lock().unwrap().len(), 2);
+    // Restored and exited terminals do not represent a running process.
+    for (id, live, restore) in [
+        ("restored", json!({"state": "live"}), "RESTORED"),
+        ("exited", json!({"state": "exited", "code": 0}), "LIVE"),
+    ] {
+        let mut snapshot = fixture(id);
+        snapshot["panes"][0]["live"] = live;
+        snapshot["panes"][0]["restore_state"] = json!(restore);
+        state.lock().unwrap().insert(id.into(), snapshot);
+        app.refresh();
+        drain_refresh(&app);
+        app.show_workspace(id);
+        app.close_pane(&format!("pane_{id}"));
+        drain_refresh(&app);
+        assert!(app.window.visible_dialog().is_none());
+        assert!(!app.widgets.borrow().contains_key(&format!("pane_{id}")));
+    }
+    let mut snapshot = fixture("empty");
+    snapshot["panes"] = json!([]);
+    snapshot["tabs"][0]["layout"] = Value::Null;
+    snapshot["tabs"][0]["active_pane_id"] = Value::Null;
+    state.lock().unwrap().insert("empty".into(), snapshot);
+    app.refresh();
+    drain_refresh(&app);
+    app.show_workspace("empty");
+    let page = app.tabs.borrow()["tab_empty"].page.clone();
+    app.tab_view.close_page(&page);
+    drain_refresh(&app);
+    assert!(app.window.visible_dialog().is_none());
+    assert!(!app.tabs.borrow().contains_key("tab_empty"));
+    glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
+    app.window.destroy();
+    worker.join().unwrap();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn workspace_creation_retains_draft_and_retries_only_the_failed_command() {
+    std::env::set_var("SIGNALTTY_NOTIFY", "0");
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded = calls.clone();
+    let (release, continue_request) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let mut state = BTreeMap::from([("a".to_string(), fixture("a"))]);
+        let mut create_attempts = 0;
+        let mut spawn_attempts = 0;
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call {
+                method,
+                params,
+                reply,
+                ..
+            } = request
+            {
+                if method == "test.stop" {
+                    let _ = reply.send(Ok(Value::Null));
+                    break;
+                }
+                let result = match method.as_str() {
+                    "workspace.list" => Ok(
+                        json!({"workspaces": state.values().map(|s| s["workspace"].clone()).collect::<Vec<_>>()}),
+                    ),
+                    "workspace.get" => Ok(state[params["workspace_id"].as_str().unwrap()].clone()),
+                    "task.list" => Ok(json!({"tasks": []})),
+                    "workspace.diff" => Ok(json!({"added": 0, "removed": 0, "files": []})),
+                    "pane.resize" | "pane.mark_seen" => Ok(json!({})),
+                    "workspace.create" => {
+                        recorded
+                            .lock()
+                            .unwrap()
+                            .push((method.clone(), params.clone()));
+                        create_attempts += 1;
+                        if create_attempts == 1 {
+                            continue_request.recv().unwrap();
+                            Err("The project is temporarily unavailable".into())
+                        } else {
+                            let mut snapshot = fixture("created");
+                            snapshot["workspace"]["name"] = params["name"].clone();
+                            snapshot["workspace"]["tabs"] = json!([]);
+                            snapshot["workspace"]["active_tab_id"] = Value::Null;
+                            snapshot["tabs"] = json!([]);
+                            snapshot["panes"] = json!([]);
+                            state.insert("created".into(), snapshot.clone());
+                            Ok(json!({"workspace": snapshot["workspace"]}))
+                        }
+                    }
+                    "pane.spawn" => {
+                        recorded
+                            .lock()
+                            .unwrap()
+                            .push((method.clone(), params.clone()));
+                        spawn_attempts += 1;
+                        if spawn_attempts == 1 {
+                            Err("The command could not be started".into())
+                        } else {
+                            let mut snapshot = fixture("created");
+                            snapshot["workspace"]["name"] =
+                                state["created"]["workspace"]["name"].clone();
+                            snapshot["panes"][0]["argv"] = params["argv"].clone();
+                            let pane = snapshot["panes"][0].clone();
+                            state.insert("created".into(), snapshot);
+                            Ok(json!({"pane": pane}))
+                        }
+                    }
+                    "pane.get" => Ok(json!({"pane": state["created"]["panes"][0]})),
+                    _ => panic!("unexpected IPC {method}"),
+                };
+                let _ = reply.send(result);
+            }
+        }
+    });
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.present();
+    app.refresh();
+    drain_refresh(&app);
+    app.action_new_workspace();
+    let form = app.new_ws_dialog.borrow().as_ref().unwrap().clone();
+    let body = form.dialog.child().unwrap();
+    let combo = find_widget::<adw::ComboRow>(&body).unwrap();
+    combo.set_selected(0); // Installed providers do not affect this shell fixture.
+    let name = find_matching_widget::<adw::EntryRow>(&body, &|row| row.title() == "Name").unwrap();
+    name.set_text("");
+    let create = button_with_label(&body, "Create").unwrap();
+    assert!(!create.is_sensitive());
+    name.emit_by_name::<()>("entry-activated", &[]);
+    assert!(calls.lock().unwrap().is_empty());
+    assert!(has_label(&body, "Enter a workspace name."));
+    name.set_text("Recoverable project");
+    combo.set_selected(combo.model().unwrap().n_items() - 1);
+    let custom =
+        find_matching_widget::<adw::EntryRow>(&body, &|row| row.title() == "Custom command")
+            .unwrap();
+    custom.set_text("/bin/sh \"unfinished");
+    assert!(!create.is_sensitive());
+    custom.emit_by_name::<()>("entry-activated", &[]);
+    assert!(calls.lock().unwrap().is_empty());
+    assert!(has_label(
+        &body,
+        "Close the quoted text or remove the trailing backslash."
+    ));
+    let preference = *app.preference.borrow();
+    for (appearance, theme) in [
+        (signaltty_core::theme::Appearance::Light, "light"),
+        (signaltty_core::theme::Appearance::Dark, "dark"),
+    ] {
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..preference
+        });
+        capture_workflow(&app.window, &format!("workspace-validation-{theme}"));
+    }
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    app.window.set_default_size(360, 700);
+    settings.set_gtk_font_name(Some("Sans 18"));
+    app.window.add_css_class("high-contrast");
+    capture_workflow(&app.window, "workspace-validation-large-high-contrast");
+    let scroll = find_widget::<gtk4::ScrolledWindow>(&body).unwrap();
+    let adjustment = scroll.vadjustment();
+    adjustment.set_value(adjustment.upper() - adjustment.page_size());
+    custom.grab_focus();
+    capture_workflow(
+        &app.window,
+        "workspace-validation-large-high-contrast-error",
+    );
+    let error = find_matching_widget::<gtk4::Label>(&body, &|label| {
+        label.text() == "Close the quoted text or remove the trailing backslash."
+    })
+    .unwrap();
+    let bounds = error.compute_bounds(&app.window).unwrap();
+    assert!(bounds.y() >= 0.0 && bounds.y() + bounds.height() <= app.window.height() as f32);
+    settings.set_gtk_font_name(old_font.as_deref());
+    app.window.remove_css_class("high-contrast");
+    app.window.set_default_size(1280, 800);
+    custom.set_text("/bin/sh --bad-option");
+    let create = find_matching_widget::<gtk4::Button>(&body, &|button| {
+        button.label().as_deref() == Some("Create")
+    })
+    .unwrap();
+    create.emit_clicked();
+    assert!(!form.dialog.can_close());
+    assert!(!create.is_sensitive());
+    app.action_new_workspace();
+    assert!(Rc::ptr_eq(
+        app.new_ws_dialog.borrow().as_ref().unwrap(),
+        &form
+    ));
+    for (appearance, theme) in [
+        (signaltty_core::theme::Appearance::Light, "light"),
+        (signaltty_core::theme::Appearance::Dark, "dark"),
+    ] {
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..preference
+        });
+        capture_workflow(&app.window, &format!("workspace-pending-{theme}"));
+    }
+    form.dialog.close();
+    assert!(
+        app.window.visible_dialog().is_some(),
+        "pending operation cannot imply cancellation"
+    );
+    release.send(()).unwrap();
+    drain_refresh(&app);
+    assert!(form.dialog.can_close());
+    assert_eq!(name.text(), "Recoverable project");
+    assert_eq!(create.label().as_deref(), Some("Retry"));
+    assert!(name.is_sensitive());
+    assert!(has_label(&body, "Couldn't create the workspace: The project is temporarily unavailable. Check your choices and retry."));
+    create.emit_clicked();
+    drain_refresh(&app);
+    assert!(
+        !name.is_sensitive(),
+        "created workspace fields must be frozen"
+    );
+    assert!(combo.is_sensitive(), "command remains correctable");
+    assert_eq!(app.model.borrow().cache.workspaces.len(), 2);
+    assert!(has_label(&body, "Workspace \"Recoverable project\" exists, but its command couldn't start: The command could not be started. Correct the command and retry, or cancel to keep the workspace."));
+    let preference = *app.preference.borrow();
+    for (appearance, theme) in [
+        (signaltty_core::theme::Appearance::Light, "light"),
+        (signaltty_core::theme::Appearance::Dark, "dark"),
+    ] {
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..preference
+        });
+        capture_workflow(&app.window, &format!("workspace-retry-{theme}"));
+    }
+    custom.set_text("/bin/sh");
+    create.emit_clicked();
+    drain_refresh(&app);
+    wait_ui(|| app.new_ws_dialog.borrow().is_none());
+    assert_eq!(app.active_ws_id().as_deref(), Some("created"));
+    assert_eq!(app.current_pane_id().as_deref(), Some("pane_created"));
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(method, _)| method == "workspace.create")
+            .count(),
+        2
+    );
+    let spawns: Vec<_> = calls
+        .iter()
+        .filter(|(method, _)| method == "pane.spawn")
+        .collect();
+    assert_eq!(spawns.len(), 2);
+    assert_eq!(spawns[0].1["workspace_id"], spawns[1].1["workspace_id"]);
+    assert_eq!(spawns[0].1["argv"], json!(["/bin/sh", "--bad-option"]));
+    assert_eq!(spawns[1].1["argv"], json!(["/bin/sh"]));
+    let terminal =
+        find_widget::<vte4::Terminal>(app.widgets.borrow()["pane_created"].root.upcast_ref())
+            .unwrap();
+    wait_ui(|| terminal.has_focus());
+    drop(calls);
+    glib::MainContext::default()
+        .block_on(app.actor.call("test.stop", json!({})))
+        .unwrap();
+    app.window.destroy();
+    worker.join().unwrap();
+}
+
+#[test]
 #[ignore = "requires a GTK display; run with dbus-run-session (or xvfb-run)"]
 fn event_batches_keep_sidebar_attention_tabs_and_notifications_consistent() {
     std::env::set_var("SIGNALTTY_NOTIFY", "0");
@@ -1485,12 +1937,8 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
     let page = app.content.child_by_name("no-workspace").unwrap();
     find_widget::<gtk4::Button>(&page).unwrap().emit_clicked();
     wait_ui(|| app.window.visible_dialog().is_some());
-    let dialog = app
-        .window
-        .visible_dialog()
-        .unwrap()
-        .downcast::<adw::AlertDialog>()
-        .unwrap();
+    let dialog = app.window.visible_dialog().unwrap();
+    let create = button_with_label(dialog.upcast_ref(), "Create").unwrap();
     let automatic = find_widget::<adw::SwitchRow>(dialog.upcast_ref()).unwrap();
     let manual = find_widget::<adw::EntryRow>(dialog.upcast_ref()).unwrap();
     assert_eq!(automatic.is_active(), automatic.is_sensitive());
@@ -1515,11 +1963,14 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
     automatic.set_active(false);
     assert!(manual.is_visible());
     manual.set_text("");
-    assert!(!dialog.is_response_enabled("create"));
+    assert!(!create.is_sensitive());
     manual.set_text("My workspace");
-    assert!(dialog.is_response_enabled("create"));
+    assert!(create.is_sensitive());
     capture_workflow(&app.window, "workspace-create-manual-dark");
-    respond(&app, &dialog, "cancel");
+    button_with_label(dialog.upcast_ref(), "Cancel")
+        .unwrap()
+        .emit_clicked();
+    wait_ui(|| app.new_ws_dialog.borrow().is_none());
     settings.set_gtk_font_name(old_font.as_deref());
     settings.set_gtk_enable_animations(old_motion);
     adw::StyleManager::default().set_color_scheme(old_scheme);
@@ -1969,6 +2420,15 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
 fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     adw::init().unwrap();
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
     let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
     application.register(None::<&gio::Cancellable>).unwrap();
     let (actor, _requests) = IpcHandle::test_channel();
@@ -1995,7 +2455,10 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
         let mut matches = 0;
         let mut stack = vec![app.window.clone().upcast::<gtk4::Widget>()];
         while let Some(widget) = stack.pop() {
-            if widget.is::<gtk4::Button>() && widget.tooltip_text().as_deref() == Some(tooltip) {
+            if widget.is::<gtk4::Button>()
+                && widget.is_mapped()
+                && widget.tooltip_text().as_deref() == Some(tooltip)
+            {
                 matches += 1;
             }
             let mut child = widget.first_child();
@@ -2049,6 +2512,60 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     app.window.set_default_size(360, 600);
     wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
     wait_ui(|| !board.is_visible());
+    app.split_view.set_show_sidebar(true);
+    wait_ui(|| app.split_view.shows_sidebar());
+    for tooltip in ["Task Board (Ctrl+Shift+B)", "Changes (Ctrl+Shift+D)"] {
+        let tool = button_with_tooltip(app.sidebar_overlay.upcast_ref(), tooltip)
+            .expect("compact sidebar must expose labeled tools");
+        wait_ui(|| tool.is_mapped());
+    }
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let preference = *app.preference.borrow();
+    for (appearance, name) in [
+        (signaltty_core::theme::Appearance::Light, "light"),
+        (signaltty_core::theme::Appearance::Dark, "dark"),
+    ] {
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..preference
+        });
+        capture_workflow(&app.window, &format!("compact-tools-{name}"));
+    }
+    settings.set_gtk_font_name(Some("Sans 18"));
+    app.window.add_css_class("high-contrast");
+    capture_workflow(&app.window, "compact-tools-large-high-contrast");
+    settings.set_gtk_font_name(old_font.as_deref());
+    app.window.remove_css_class("high-contrast");
+    let compact_board = button_with_tooltip(
+        app.sidebar_overlay.upcast_ref(),
+        "Task Board (Ctrl+Shift+B)",
+    )
+    .unwrap();
+    compact_board.grab_focus();
+    compact_board.emit_clicked();
+    wait_ui(|| app.board_dialog.borrow().is_some());
+    assert!(!app.split_view.shows_sidebar());
+    let board_dialog = app.board_dialog.borrow().as_ref().unwrap().dialog.clone();
+    board_dialog.close();
+    wait_ui(|| app.board_dialog.borrow().is_none());
+    app.split_view.set_show_sidebar(true);
+    let compact_changes =
+        find_matching_widget::<gtk4::ToggleButton>(app.sidebar_overlay.upcast_ref(), &|button| {
+            button.tooltip_text().as_deref() == Some("Changes (Ctrl+Shift+D)")
+        })
+        .unwrap();
+    wait_ui(|| compact_changes.is_mapped());
+    compact_changes.emit_clicked();
+    assert!(app.changes_split.shows_sidebar());
+    assert!(compact_changes.is_active());
+    assert!(!app.split_view.shows_sidebar());
+    app.action_show_changes();
+    assert!(!compact_changes.is_active());
+    app.window.set_default_size(1280, 800);
+    wait_ui(|| board.is_mapped());
+    assert!(!compact_board.is_mapped());
+    assert!(!compact_changes.is_mapped());
     // The overflow menu remains available at the compact breakpoint.
     let menu = find_matching_widget::<gtk4::MenuButton>(app.window.upcast_ref(), &|button| {
         button.tooltip_text().as_deref() == Some("Main Menu")
