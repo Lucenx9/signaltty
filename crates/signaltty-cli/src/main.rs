@@ -2,6 +2,7 @@ mod attach;
 mod client;
 mod daemon;
 mod integration;
+mod mcp;
 mod permission_hook;
 mod skill;
 mod worktree;
@@ -33,6 +34,11 @@ struct Args {
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Harness tools over stdin/stdout, independent of the shell's socket sandbox.
+    Mcp {
+        #[command(subcommand)]
+        op: McpOp,
+    },
     /// Ensure the session server is running (start detached if needed).
     Daemon,
     /// Server status.
@@ -184,6 +190,16 @@ enum Command {
     Attention {
         #[arg(long)]
         limit: Option<usize>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum McpOp {
+    /// Serve the Signaltty MCP tools using this pane's environment context.
+    Serve {
+        /// Installer ownership marker; does not grant additional capabilities.
+        #[arg(long, hide = true)]
+        managed_registration: bool,
     },
 }
 
@@ -613,6 +629,9 @@ async fn run(args: Args) -> Result<(), CliError> {
     let socket = socket_path(&args);
     let json = args.json;
     match args.cmd {
+        Command::Mcp {
+            op: McpOp::Serve { .. },
+        } => mcp::serve().await,
         Command::Daemon => daemon::ensure_running(&socket, json).await,
         Command::Status => {
             let mut c = Client::connect(&socket).await?;

@@ -147,7 +147,7 @@ impl PtyManager {
             || (agent == "opencode" && req.argv.iter().any(|a| a == "--pure"));
         if disabled {
             return serde_json::json!({"agent": agent, "status": "disabled", "changed": false,
-                "notice": format!("{agent}: this launch disables user hooks/plugins; status integration is unavailable.")});
+                "notice": format!("{agent}: this launch disables user hooks/plugins and managed MCP setup; integration is unavailable.")});
         }
         let outcome = reporter_executable()
             .and_then(|cli| Hooks::from_env(self.integration_home.as_deref(), cli))
@@ -160,7 +160,7 @@ impl PtyManager {
                 result
             }
             Err(e) => serde_json::json!({"agent": agent, "status": "error", "changed": false,
-                "notice": format!("{agent} status setup failed: {e}. The terminal remains available.")}),
+                "notice": format!("{agent} hooks/MCP setup failed: {e}. The terminal remains available.")}),
         }
     }
 

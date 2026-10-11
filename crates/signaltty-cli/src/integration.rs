@@ -39,6 +39,19 @@ fn print(report: Report, removing: bool, json: bool) {
             report.agent,
             report.file.display()
         );
+        if let Some(mcp) = report.mcp {
+            println!(
+                "MCP: {} ({})",
+                if removing {
+                    "removed owned registration"
+                } else if mcp.disabled {
+                    "disabled"
+                } else {
+                    "configured"
+                },
+                mcp.file.display()
+            );
+        }
         if let Some(notice) = report.notice {
             eprintln!("{notice}");
         }
@@ -79,7 +92,14 @@ pub fn status(home: Option<&Path>, agents: &[String], json: bool) -> Result<(), 
         let installed = hooks
             .installed(agent)
             .map_err(|e| CliError::Usage(e.to_string()))?;
+        let mcp_file = hooks
+            .mcp_file_for(agent)
+            .map_err(|e| CliError::Usage(e.to_string()))?;
+        let mcp_installed = hooks
+            .mcp_installed(agent)
+            .map_err(|e| CliError::Usage(e.to_string()))?;
         out[agent] = serde_json::json!({"installed": installed, "file": path,
+            "mcp": {"installed": mcp_installed, "file": mcp_file, "trust": "provider_managed"},
             "trust": if *agent == "codex" { "provider_review" } else { "provider_managed" }});
     }
     // Detection overlays (data, not code): manifests in the agents dir.
@@ -131,6 +151,15 @@ pub fn status(home: Option<&Path>, agents: &[String], json: bool) -> Result<(), 
                     "not installed"
                 },
                 e["file"].as_str().unwrap()
+            );
+            println!(
+                "  MCP: {} ({}) — approvals controlled by provider",
+                if e["mcp"]["installed"].as_bool().unwrap() {
+                    "registered"
+                } else {
+                    "not registered"
+                },
+                e["mcp"]["file"].as_str().unwrap()
             );
         }
         let manifests = out["manifests"].as_array().cloned().unwrap_or_default();

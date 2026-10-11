@@ -93,3 +93,9 @@ group (handled by `portable-pty`), then `pane.resized` event.
   to `state_dir` for post-restart context; full history is best-effort.
 - Screen model (headless VT state) maintained server-side so `pane.read`
   and automation work without any GUI attached.
+
+Harness MCP children inherit the PTY launcher context. Managed hook setup also
+registers the Signaltty stdio MCP bridge before spawning supported harnesses;
+provider opt-outs and tool approvals remain authoritative. The bridge can launch
+workers through normal pane APIs without giving the restricted shell socket
+access. See [agent integration](07-agents.md#workspace-access-from-sandboxed-harnesses).

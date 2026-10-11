@@ -391,3 +391,61 @@ process directory changes therefore cannot redirect a session resume.
 
 Legacy snapshots with a relative original executable keep the adapter command:
 they do not persist a reliable initial directory to anchor that relative path.
+
+## Workspace access from sandboxed harnesses
+
+`SIGNALTTY_SOCKET` and `SIGNALTTY_PANE` identify the pane; they do not grant a
+sandbox permission to connect. On Linux, a Codex shell may return EPERM even
+when the socket is readable. Signaltty now registers a harness-owned stdio MCP
+bridge with the same automatic setup as hooks for Codex, Claude, Cursor and
+OpenCode. Restart an existing harness after `signaltty integration install
+<agent>` and approve the tools in its own settings. `signaltty integration
+status --json` reports registration, not effective trust or tool availability.
+No network, filesystem sandbox or approval policy is relaxed.
+
+Use `signaltty_context` to find the hosting pane and `signaltty_call` for the
+[existing workspace/PTY API](08-ipc.md). A `pane.split` call can launch an agy
+worker in a server-owned PTY; shell access to agy's private socket is a separate
+permission. Streaming attach/subscribe and server shutdown are unavailable.
+A missing/stale hosting context returns an error instead of selecting a default
+server. The bridge accepts only an absolute socket from its process environment.
+
+Managed registration locations: `$CODEX_HOME/config.toml` (default
+`~/.codex/config.toml`), `~/.claude.json` (or
+`$CLAUDE_CONFIG_DIR/.claude.json`), `~/.cursor/mcp.json`, and
+`$OPENCODE_CONFIG_DIR/opencode.json` (default `$XDG_CONFIG_HOME/opencode`).
+Codex forwards the two context variables explicitly; the other clients inherit
+the launcher environment. Foreign registrations, disables and trust choices
+are preserved. Project/profile/admin configuration can override global entries;
+OpenCode's `opencode.jsonc` is left intact and can override `opencode.json`.
+See [ADR-0031](adr/0031-harness-owned-stdio-mcp.md).
+
+### Other bundled harnesses: audited support, 2026-10-11
+
+Manual registrations use an absolute executable and args `mcp serve`; launch the
+harness in a Signaltty pane so its MCP child inherits context. Do not persist a
+specific pane/socket in shared configuration. These are compatibility findings,
+not claims of authenticated tool-turn verification.
+
+| Harness | Configuration path and boundary | Proof in this change |
+| --- | --- | --- |
+| Codex | Automatic; MCP process outside restricted shell | Native sandbox denial before/after, real bridge worker, native config parser |
+| Claude | Automatic; MCP outside Bash sandbox; `--bare` or excluded user sources opt out | Isolated native config-location probe; configuration and managed-launch tests |
+| Cursor | Automatic; approve MCP in provider settings | Configuration tests; installed CLI help; no automatic `--approve-mcps` |
+| OpenCode | Automatic local MCP; `--pure` opts out; higher-priority config may override | Configuration tests and upstream format; binary unavailable locally |
+| Pi | `pi mcp add signaltty -- /absolute/signaltty mcp serve`; `--no-mcp` opts out | Installed native help confirms built-in MCP; no live model turn |
+| Grok | `grok mcp add signaltty -- /absolute/signaltty mcp serve` | Installed help confirms stdio; shared leader deployment must preserve pane context; no default leader started |
+| Antigravity (`agy`) | `agy mcp add signaltty /absolute/signaltty mcp serve` | Installed help confirms stdio; local MCP process boundary not verified in a model turn |
+| Muse | `mcpServers` in its settings; installed `muse mcp` manages OAuth | Native help; sandboxed local process behavior unverified |
+| Gemini | [MCP configuration](https://geminicli.com/docs/tools/mcp-server/); full-process sandbox can enclose MCP children | Upstream docs only; deploy host integration explicitly if the entire CLI is sandboxed |
+| Copilot | [MCP configuration](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference); local servers can report `connected (sandboxed)` | Upstream docs only; cannot assume host access from sandboxed MCP |
+| Droid | [MCP CLI](https://github.com/Factory-AI/factory/blob/main/docs/reference/cli-reference.mdx) supports stdio registration | Upstream docs only; host boundary unverified |
+| Kilo | [CLI MCP](https://kilo.ai/docs/code-with-ai/platforms/cli-reference) supports local servers | Upstream docs only; host boundary unverified |
+| QoderCLI | [MCP registration](https://docs.qoder.com/cli/mcp-servers), using the installed version's command name | Upstream docs only; host boundary unverified |
+
+If local MCP is itself denied, check the provider's sandbox/deployment and tool
+policy. Installing a registration does not bypass a container, admin rule or
+denied tool. The Signaltty CLI's EPERM/EACCES error points to these tools and
+setup steps instead of suggesting socket chmod.
+
+Provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.

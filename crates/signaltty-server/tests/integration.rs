@@ -2780,6 +2780,17 @@ async fn automatic_hooks_are_loaded_before_spawn_and_split_and_drive_states() {
         .unwrap();
     assert_eq!(result["integration"]["status"], "configured");
     assert_eq!(result["integration"]["changed"], true);
+    assert!(srv.integration_home.join(".claude.json").is_file());
+    assert_eq!(result["integration"]["mcp"]["disabled"], false);
+    let mcp: Value = serde_json::from_str(
+        &std::fs::read_to_string(srv.integration_home.join(".claude.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        mcp["mcpServers"]["signaltty"]["args"],
+        json!(["mcp", "serve", "--managed-registration"])
+    );
+
     let pane = result["pane"]["id"].as_str().unwrap();
     wait_for_text(&mut c, pane, "hooks-loaded", Duration::from_secs(5)).await;
     for (event, state) in [
