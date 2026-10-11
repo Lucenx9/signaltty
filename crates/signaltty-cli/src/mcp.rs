@@ -98,9 +98,7 @@ async fn respond(request: Value, initialized: &mut bool) -> Option<Value> {
         return Some(error(Value::Null, -32600, "invalid JSON-RPC request"));
     }
     // Notifications never execute tools or emit responses.
-    if request.get("id").is_none() {
-        return None;
-    }
+    request.get("id")?;
     let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
     if !params.is_object() {
         return Some(error(id, -32602, "params must be an object"));
