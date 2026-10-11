@@ -87,7 +87,7 @@
 
 .status-pill {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: 4px;
   font-size: 0.82em;
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -115,7 +115,7 @@
  * text. The task name ellipsizes; a short pane title does not. */
 .task-chip {
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 4px;
   font-size: 0.78em;
   font-weight: 600;
   background-color: alpha(currentColor, 0.08);
@@ -161,6 +161,18 @@
   color: alpha(currentColor, 0.65);
 }
 
+.palette-group {
+  padding: 12px 14px 6px;
+  font-size: 0.82em;
+  font-weight: 600;
+  color: alpha(currentColor, 0.78);
+}
+.high-contrast .palette-shortcut,
+.high-contrast .palette-group,
+.high-contrast .changes-dir,
+.high-contrast .changes-summary,
+.high-contrast .changes-stat .changes-tag { color: inherit; }
+
 /* ---- changes panel ----------------------------------------------------- */
 
 /* t3code's diff panel: quiet totals, directory labels opening each
@@ -180,10 +192,11 @@ window {
   color: alpha(currentColor, 0.65);
 }
 .changes-dir {
-  padding: 10px 12px 2px 12px;
+  padding: 12px 12px 5px 12px;
+  border-bottom: 1px solid var(--border-color);
   font-size: 0.82em;
   font-weight: 600;
-  color: alpha(currentColor, 0.6);
+  color: alpha(currentColor, 0.78);
 }
 .changes-list > row > box.header {
   min-height: 34px;
@@ -208,7 +221,7 @@ window {
 .sidebar-command-launcher {
   min-height: 32px;
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: 6px;
   background-color: alpha(currentColor, 0.035);
   box-shadow: inset 0 0 0 1px alpha(currentColor, 0.12);
 }
@@ -245,14 +258,14 @@ window {
 }
 
 /* Pinned footer rows (Worktrees, Preferences): flat, full-width, the
- * same 32px height and 8px radius as the search launcher. */
+ * same 32px height and 6px radius as the search launcher. */
 .sidebar-nav-button {
   min-height: 32px;
   padding: 0 10px;
   font-weight: 400;
   background: none;
   box-shadow: none;
-  border-radius: 8px;
+  border-radius: 6px;
   color: alpha(currentColor, 0.79);
 }
 .sidebar-nav-button image {
@@ -280,7 +293,7 @@ toolbarview > .top-bar headerbar button.header-tool-button {
   min-height: 28px;
   min-width: 28px;
   padding: 0 9px;
-  border-radius: 8px;
+  border-radius: 6px;
   font-weight: 500;
   font-size: 0.9em;
   background: none;
@@ -317,7 +330,7 @@ toolbarview > .top-bar headerbar button.header-tool-button:focus-visible {
  * quiet surface with a leading marker; keyboard focus has its own ring. */
 .navigation-sidebar > row {
   margin: 2px 8px;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 .navigation-sidebar > row:hover {
   background-color: alpha(currentColor, 0.04);
@@ -410,7 +423,8 @@ menubutton.crumb-button > button:disabled {
  * between them, colour only on the PR status and change counts. */
 popover.details-popover > contents {
   padding: 6px;
-  border-radius: 14px;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px alpha(black, 0.12), 0 0 0 1px var(--border-color);
 }
 .details-card {
   min-width: 300px;
@@ -456,7 +470,7 @@ toolbarview > .top-bar headerbar menubutton > button {
   min-width: 28px;
   min-height: 28px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: none;
 }
 toolbarview > .top-bar headerbar button.image-button:hover,
@@ -499,7 +513,7 @@ toolbarview > .top-bar headerbar button.image-button:checked {
   font-size: 0.9em;
   font-weight: 600;
   padding: 1px 8px 1px 6px;
-  border-radius: 999px;
+  border-radius: 4px;
 }
 
 /* Ordinary progress keeps its word and indicator, but only states that
@@ -601,7 +615,7 @@ button.worktree-remove:not(:disabled):hover {
 .attention-button {
   min-height: 24px;
   padding: 0 10px 0 9px;
-  border-radius: 999px;
+  border-radius: 6px;
   background-color: alpha(currentColor, 0.08);
   transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -646,14 +660,13 @@ button.worktree-remove:not(:disabled):hover {
 .pane {
   background-color: var(--pane-bg-color);
   color: var(--view-fg-color);
-  border-radius: 10px;
+  border-radius: 6px;
   /* Rings are inset shadows: they never change layout, so an attention
    * change never resizes the terminal underneath, and a split's GtkPaned
    * (which clips each child to its allocation) can't cut them off.
-   * --card-shade-color automatically adapts depth in light and dark modes. */
+   * Semantic borders retain contrast in light and dark modes. */
   box-shadow:
-    inset 0 0 0 1px var(--border-color),
-    0 1px 2px var(--card-shade-color);
+    inset 0 0 0 1px var(--border-color);
 }
 
 /* The header is the card's first line, not a second toolbar. */
@@ -699,7 +712,7 @@ button.worktree-remove:not(:disabled):hover {
 .resume-button {
   min-height: 24px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: 6px;
   font-size: 0.9em;
 }
 
@@ -716,8 +729,7 @@ button.worktree-remove:not(:disabled):hover {
  * what needs you outranks where you are. */
 .split .pane.focused {
   box-shadow:
-    inset 0 0 0 1.5px alpha(var(--accent-bg-color), 0.8),
-    0 1px 2px var(--card-shade-color);
+    inset 0 0 0 1.5px alpha(var(--accent-bg-color), 0.8);
 }
 .split .pane.focused .pane-header {
   background-color: alpha(var(--accent-bg-color), 0.07);
@@ -726,53 +738,45 @@ button.worktree-remove:not(:disabled):hover {
 /* Attention rings — three classes beat the two-class focus rule
  * above however they are ordered, so a focused pane still shows
  * what needs you. Weight follows severity: unread is a hairline,
- * gates get a ring + glow. Card drop elevation is preserved across all states. */
+ * gates get a ring + glow. All states remain on one flat pane plane. */
 .tab-page .pane.attention-unread {
   box-shadow:
-    inset 0 0 0 1px alpha(var(--accent-bg-color), 0.8),
-    0 1px 2px var(--card-shade-color);
+    inset 0 0 0 1px alpha(var(--accent-bg-color), 0.8);
 }
 .tab-page .pane.attention-warning {
   box-shadow:
-    inset 0 0 0 1.5px var(--warning-bg-color),
-    0 1px 2px var(--card-shade-color);
+    inset 0 0 0 1.5px var(--warning-bg-color);
 }
 .tab-page .pane.attention-input {
   box-shadow:
     inset 0 0 0 2px var(--warning-bg-color),
-    inset 0 0 14px alpha(var(--warning-bg-color), 0.2),
-    0 1px 2px var(--card-shade-color);
+    inset 0 0 14px alpha(var(--warning-bg-color), 0.2);
 }
 .tab-page .pane.attention-permission {
   box-shadow:
     inset 0 0 0 2px var(--permission-bg-color),
-    inset 0 0 16px alpha(var(--permission-bg-color), 0.22),
-    0 1px 2px var(--card-shade-color);
+    inset 0 0 16px alpha(var(--permission-bg-color), 0.22);
 }
 .tab-page .pane.attention-error {
   box-shadow:
     inset 0 0 0 2px var(--error-bg-color),
-    inset 0 0 16px alpha(var(--error-bg-color), 0.22),
-    0 1px 2px var(--card-shade-color);
+    inset 0 0 16px alpha(var(--error-bg-color), 0.22);
 }
 
 /* ---- inline decision bar ---------------------------------------------- */
 
 /* The question sits where the user already looks: below the header,
- * above the terminal. It is a card, not a flat band: an inset hairline
- * (so a clipped edge still reads) plus a soft shade drop. Margin keeps
- * that drop inside the pane, which clips overflow. The tint follows
+ * above the terminal. An inset hairline remains visible on clipped edges.
+ * Margin separates the decision from terminal output. The tint follows
  * the pane's urgency and stays on Adwaita tokens. */
 .decision-bar {
   margin: 8px 10px 4px;
   padding: 10px 12px;
   border: none;
-  border-radius: 12px;
+  border-radius: 6px;
   background-color: mix(var(--card-bg-color), var(--accent-bg-color), 0.08);
   box-shadow:
-    inset 0 0 0 1px var(--border-color),
-    0 1px 2px var(--shade-color),
-    0 6px 12px -8px var(--shade-color);
+    inset 0 0 0 1px var(--border-color);
 }
 .tab-page .pane.attention-input .decision-bar {
   background-color: mix(var(--card-bg-color), var(--warning-bg-color), 0.1);
@@ -800,12 +804,12 @@ button.worktree-remove:not(:disabled):hover {
   font-weight: 600;
   font-size: 0.9em;
 }
-/* Secondary answers stay raised surface chips. Exactly one button,
+/* Secondary answers use quiet outlined surfaces. Exactly one button,
  * Allow once, uses the accent as the suggested action. */
 .decision-options button {
   min-height: 30px;
   padding: 4px 14px;
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 0.9em;
   font-weight: 500;
 }
@@ -813,8 +817,7 @@ button.worktree-remove:not(:disabled):hover {
   background-color: var(--view-bg-color);
   color: var(--view-fg-color);
   box-shadow:
-    inset 0 0 0 1px alpha(currentColor, 0.14),
-    0 1px 2px var(--card-shade-color);
+    inset 0 0 0 1px alpha(currentColor, 0.14);
 }
 .decision-options button:not(.suggested-action):hover {
   background-color: mix(var(--view-bg-color), var(--view-fg-color), 0.05);
@@ -827,8 +830,7 @@ button.worktree-remove:not(:disabled):hover {
   background-color: var(--accent-bg-color);
   color: var(--accent-fg-color);
   box-shadow:
-    inset 0 0 0 1px alpha(var(--accent-fg-color), 0.16),
-    0 1px 2px var(--shade-color);
+    inset 0 0 0 1px alpha(var(--accent-fg-color), 0.16);
 }
 .decision-options button.suggested-action:hover {
   background-color: mix(var(--accent-bg-color), var(--window-fg-color), 0.08);
@@ -1270,34 +1272,29 @@ button.pill:focus-visible,
 .theme-iris .ws-mark.tint-2 { color: #004f8b; background-color: alpha(#4c759f, 0.22); }
 .theme-iris.dark .ws-mark.tint-2 { color: #96c9fe; background-color: alpha(#124a7b, 0.45); }
 
-/* ---- preferences cards + swatches ---------------------------------------
- * Each swatch carries its own theme-<id> class inside a window that
- * has another, so every swatch rule uses literal hexes (never the
- * variables): radial-gradient orbs. Signal has no own accent; its
- * orbs preview against the stock default blue.
- */
-.theme-swatch {
-  min-width: 34px;
-  min-height: 34px;
-  border-radius: 999px;
-  box-shadow: inset 0 0 0 1px alpha(black, 0.08);
+/* Theme miniatures use scoped preview colors so an active theme cannot tint
+ * another choice. The surfaces match the existing application palettes. */
+.theme-preview {
+  min-width: 58px;
+  min-height: 54px;
+  border-radius: 5px;
+  background-color: var(--preview-pane);
+  box-shadow: 0 0 0 1px alpha(black, 0.12);
 }
-.dark .theme-swatch {
-  box-shadow: inset 0 0 0 1px alpha(white, 0.1);
-}
-/* Orbs (t3code): the light orb is the canvas lit from the top left and
- * fading into the accent; the dark one is the accent glowing out of the
- * dark canvas. */
-.theme-swatch.theme-signal.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #ffffff 30%, #b8d3f6 72%, #3584e4 125%); }
-.theme-swatch.theme-signal.dark { background-image: radial-gradient(circle at 32% 28%, #5d9de9 0%, #1d2f49 48%, #111114 82%); }
-.theme-swatch.theme-grove.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #effdfd 30%, #9fd3d4 72%, #097e82 125%); }
-.theme-swatch.theme-grove.dark { background-image: radial-gradient(circle at 32% 28%, #2fa3a7 0%, #0b3a3b 48%, #071414 82%); }
-.theme-swatch.theme-ocean.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #f3fbff 30%, #a1d0de 72%, #097a9e 125%); }
-.theme-swatch.theme-ocean.dark { background-image: radial-gradient(circle at 32% 28%, #2f9ec2 0%, #0b3546 48%, #091318 82%); }
-.theme-swatch.theme-ember.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #fff8f5 30%, #f0bd98 72%, #bc5107 125%); }
-.theme-swatch.theme-ember.dark { background-image: radial-gradient(circle at 32% 28%, #e07a32 0%, #4a250e 48%, #180f0b 82%); }
-.theme-swatch.theme-iris.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #fbf8ff 30%, #d2bdeb 72%, #895ac3 125%); }
-.theme-swatch.theme-iris.dark { background-image: radial-gradient(circle at 32% 28%, #a77ed9 0%, #36244a 48%, #131018 82%); }
+.theme-preview-sidebar { min-width: 12px; padding: 8px 3px; background-color: var(--preview-sidebar); }
+.theme-preview-terminal { padding: 8px 5px; }
+.theme-preview-line { min-height: 3px; border-radius: 2px; background-color: var(--preview-ink); }
+.theme-preview-selection { background-color: var(--preview-accent); }
+.theme-preview.theme-signal.light { --preview-sidebar: #ebebee; --preview-pane: #fbfbfc; --preview-accent: #3584e4; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-signal.dark { --preview-sidebar: #0c0c0e; --preview-pane: #111114; --preview-accent: #3584e4; --preview-ink: alpha(white, 0.30); }
+.theme-preview.theme-grove.light { --preview-sidebar: #dceaeb; --preview-pane: #effdfd; --preview-accent: #097e82; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-grove.dark { --preview-sidebar: #040f0f; --preview-pane: #071414; --preview-accent: #097e82; --preview-ink: alpha(white, 0.30); }
+.theme-preview.theme-ocean.light { --preview-sidebar: #dde9ef; --preview-pane: #f3fbff; --preview-accent: #097a9e; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-ocean.dark { --preview-sidebar: #050e12; --preview-pane: #091318; --preview-accent: #097a9e; --preview-ink: alpha(white, 0.30); }
+.theme-preview.theme-ember.light { --preview-sidebar: #f0e4df; --preview-pane: #fff8f5; --preview-accent: #bc5107; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-ember.dark { --preview-sidebar: #130a06; --preview-pane: #180f0b; --preview-accent: #bc5107; --preview-ink: alpha(white, 0.30); }
+.theme-preview.theme-iris.light { --preview-sidebar: #e9e5f0; --preview-pane: #fbf8ff; --preview-accent: #895ac3; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-iris.dark { --preview-sidebar: #0e0a13; --preview-pane: #131018; --preview-accent: #895ac3; --preview-ink: alpha(white, 0.30); }
 
 /* Scheme previews: a miniature window per choice, in literal colours so
  * a dark window can still show what Light looks like. */
@@ -1488,6 +1485,175 @@ button.card.appearance-card:checked.keyboard-activating {
 .high-contrast .scheme-preview {
   box-shadow: 0 0 0 1px currentColor;
 }
-.high-contrast .theme-swatch {
+.high-contrast .theme-preview {
   box-shadow: inset 0 0 0 1px currentColor;
+}
+
+/* Restrained application surfaces. Scope to owned dialogs and the details
+ * popover; platform choosers and adaptive sheet behavior stay toolkit-owned. */
+dialog.signaltty-dialog floating-sheet > sheet,
+dialog.signaltty-dialog.alert floating-sheet > sheet {
+  border-radius: 10px;
+  box-shadow: 0 8px 24px alpha(black, 0.14), 0 0 0 1px var(--border-color);
+}
+dialog.signaltty-dialog bottom-sheet > sheet {
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+.signaltty-dialog headerbar { background-color: transparent; }
+.signaltty-dialog button:not(.flat):not(.circular):not(.image-button):not(.close) {
+  border-radius: 6px;
+  font-weight: 500;
+}
+.signaltty-dialog button:not(.flat):not(.circular):not(.image-button):not(.close):not(.theme-card):not(.appearance-card):not(.suggested-action):not(.destructive-action) {
+  background-image: none;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+.signaltty-dialog button:not(.flat):not(.circular):not(.image-button):not(.close):not(.theme-card):not(.appearance-card):not(.suggested-action):not(.destructive-action):hover {
+  background-color: alpha(currentColor, 0.05);
+}
+.signaltty-dialog button.suggested-action:not(.flat),
+.signaltty-dialog.alert .response-area > button.suggested-action {
+  color: var(--accent-fg-color);
+  background-color: var(--accent-bg-color);
+  box-shadow: none;
+}
+.signaltty-dialog button.destructive-action:not(.flat) {
+  background-image: none;
+  background-color: transparent;
+  color: var(--destructive-color);
+  box-shadow: inset 0 0 0 1px var(--destructive-color);
+}
+.signaltty-dialog list.boxed-list {
+  border-radius: 6px;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+.signaltty-dialog list.boxed-list > row { border-radius: 4px; }
+.signaltty-dialog list.palette-list { box-shadow: none; }
+.signaltty-dialog .palette-list > row:selected {
+  background-color: alpha(currentColor, 0.07);
+  box-shadow: inset 2px 0 var(--accent-color);
+}
+.signaltty-dialog .theme-card,
+.signaltty-dialog .appearance-card {
+  border-radius: 6px;
+  background-color: transparent;
+  box-shadow: none;
+}
+.signaltty-dialog .theme-card:hover,
+.signaltty-dialog .appearance-card:hover { background-color: alpha(currentColor, 0.03); }
+.signaltty-dialog .theme-card.selected,
+.signaltty-dialog .appearance-card.selected {
+  border-color: var(--accent-bg-color);
+  box-shadow: inset 0 0 0 1px var(--accent-bg-color);
+}
+.signaltty-dialog .theme-card:focus-visible,
+.signaltty-dialog .appearance-card:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+.signaltty-dialog .scheme-preview { border-radius: 4px; }
+.signaltty-dialog .board-card { border-radius: 6px; }
+.high-contrast .signaltty-dialog .palette-list > row:selected {
+  box-shadow: inset 3px 0 currentColor, inset 0 0 0 1px currentColor;
+}
+.high-contrast .signaltty-dialog .theme-card.selected,
+.high-contrast .signaltty-dialog .appearance-card.selected {
+  box-shadow: inset 0 0 0 2px var(--accent-color);
+}
+
+.signaltty-dialog headerbar windowcontrols button.close {
+  border-radius: 6px;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+.signaltty-dialog headerbar windowcontrols button.close > image {
+  background-color: transparent;
+  border-radius: 4px;
+}
+.signaltty-dialog headerbar windowcontrols button.close:hover > image {
+  background-color: alpha(currentColor, 0.07);
+}
+.signaltty-dialog.alert .heading-bin label { font-size: 1.15em; font-weight: 600; }
+
+/* Workspace shell controls follow the owned dialogs without replacing
+ * native sizing, focus, dragging or response semantics. */
+headerbar.workspace-header windowcontrols > button {
+  border-radius: 6px;
+}
+headerbar.workspace-header windowcontrols > button > image {
+  border-radius: 4px;
+  background: none;
+  box-shadow: none;
+}
+headerbar.workspace-header windowcontrols > button:hover > image {
+  background-color: alpha(currentColor, 0.07);
+}
+headerbar.workspace-header windowcontrols > button:active > image {
+  background-color: alpha(currentColor, 0.12);
+}
+
+.workspace-tabs tabbox > tabboxchild,
+.workspace-tabs tab {
+  border-radius: 6px;
+}
+.workspace-tabs tab:selected {
+  background-color: alpha(currentColor, 0.06);
+  box-shadow: inset 0 -2px var(--accent-color);
+}
+.workspace-tabs tab:selected:hover {
+  background-color: alpha(currentColor, 0.09);
+}
+.workspace-tabs tab button.image-button,
+.pane-actions button.pane-tool-button {
+  border-radius: 6px;
+}
+.workspace-tabs tabbox > tabboxchild:focus-within:focus-visible {
+  outline-color: var(--accent-color);
+  transition: none;
+}
+.high-contrast .workspace-tabs tab:selected {
+  box-shadow: inset 0 -3px currentColor;
+}
+
+.changes-scope {
+  border-radius: 6px;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+.changes-scope > toggle {
+  border-radius: 4px;
+  font-weight: 500;
+}
+.changes-scope > toggle:checked {
+  background-color: alpha(currentColor, 0.08);
+  box-shadow: inset 0 -2px var(--accent-color);
+}
+.high-contrast .changes-scope > toggle:checked {
+  box-shadow: inset 0 -3px currentColor;
+}
+.diff-surface {
+  border-radius: 6px;
+  background-color: var(--view-bg-color);
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+.terminal-search searchentry {
+  border-radius: 6px;
+}
+.terminal-search button {
+  border-radius: 6px;
+}
+button.empty-state-action {
+  border-radius: 6px;
+  box-shadow: none;
+}
+popover.workspace-menu > contents {
+  border-radius: 8px;
+  box-shadow: 0 6px 18px alpha(black, 0.12), 0 0 0 1px var(--border-color);
+}
+popover.workspace-menu modelbutton {
+  border-radius: 4px;
 }

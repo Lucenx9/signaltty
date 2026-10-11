@@ -68,8 +68,9 @@ class redefines the same variables per theme and variant, Signal keeping
 the desktop accent (ADR-0019, `specs/017-themes`). The choice persists in
 `$XDG_CONFIG_HOME/signaltty/gui.json`. Each appearance is previewed as a
 miniature window (System split light/dark down the middle) and each theme as
-a light and a dark orb; selection is an accent ring, never a fill
-(`specs/042-preferences-previews`).
+paired light/dark miniature sidebar and terminal surfaces; selection is an accent
+ring, never a fill. Native wrapping keeps appearance and theme choices reachable
+in narrow dialogs (`specs/049-secondary-window-polish`).
 
 ### Discoverable navigation
 
@@ -300,7 +301,8 @@ configuration does not add another status badge (ADR-0013).
 The primary menu and command/workspace palette share the action registry.
 Ctrl+Shift+P opens the palette. It filters commands and cached workspace names
 and paths immediately, so typing and pressing Enter selects the current match.
-Up/Down selects a result and scrolls just enough to keep it visible while search retains
+Workspace and command group headings follow the visible filtered results without
+adding selectable rows or changing action indices. Up/Down selects a result and scrolls just enough to keep it visible while search retains
 focus. Filtering resets to the first visible match. No matches shows a native status
 page with recovery guidance; clearing the query restores the list. Commands show
 GTK-formatted shortcuts below their titles, including accessible descriptions, without
@@ -430,3 +432,33 @@ Branch/directory metadata uses a decorative symbolic icon with the full value in
 its tooltip. Empty and child metadata hide the icon. Generated bare Working…
 headlines no longer repeat the status label; explicit agent messages and timed
 run labels remain. Refresh keeps the existing row and metadata image widgets.
+
+### Secondary surface hierarchy
+
+Task cards give the title the full width on up to two lines, with agent/context
+and state below. When the five columns overflow, Previous state / Next state
+controls move between columns; they wrap with enlarged text. Task activation and
+live row identity/scroll restoration are unchanged.
+
+Worktrees follows the natural content size with a capped scrolling list, rather
+than reserving a tall empty body. Branch is the primary label; the checkout path
+and existing availability state remain visible below, with a literal full-path
+tooltip. Directory headings in Changes use a semantic hairline and stronger
+secondary text. No server or persisted preference changes are involved.
+
+The application-owned dialogs use a restrained surface style
+(`specs/050-restrained-native-surfaces`): 6px control/card corners, 10px floating
+surfaces, flat lists with semantic hairlines, outlined secondary actions and a
+neutral palette selection with a leading marker. Primary actions retain the
+accent. The details popover follows the same lighter elevation. Native hit
+areas, focus outlines, response semantics, adaptive sheets and file choosers
+remain toolkit-owned. Overrides are scoped to explicit dialog classes rather
+than a global GTK theme. High contrast strengthens selection and borders.
+
+The workspace shell uses the same restrained geometry
+(`specs/051-restrained-workspace-shell`): 6px terminal/control corners, flat
+pane and decision surfaces, compact status badges, ghost window controls and
+native tabs with a selected bottom marker. The Changes scope selector and diff
+reader, terminal search and owned primary menu follow the same hierarchy.
+Native hit areas, focus outlines, attention priority and terminal layout remain
+unchanged; header/tab/menu overrides target explicit application classes.

@@ -188,6 +188,7 @@ impl ChangesPanel {
 
         let list_body = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
         let list_header = adw::HeaderBar::new();
+        list_header.add_css_class("workspace-header");
         let list_refresh = refresh_button(&list_header);
         let hide = gtk4::Button::from_icon_name("window-close-symbolic");
         hide.set_tooltip_text(Some("Hide Changes (Ctrl+Shift+D)"));
@@ -195,6 +196,7 @@ impl ChangesPanel {
         hide.set_action_name(Some("win.show-changes"));
         list_header.pack_start(&hide);
         let scopes = adw::ToggleGroup::new();
+        scopes.add_css_class("changes-scope");
         for (name, label, tooltip) in Scope::TOGGLES {
             let toggle = adw::Toggle::new();
             toggle.set_name(Some(name));
@@ -249,6 +251,7 @@ impl ChangesPanel {
         navigation.add(&list_page);
         let reader_body = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
         let reader_header = adw::HeaderBar::new();
+        reader_header.add_css_class("workspace-header");
         reader_header.set_show_back_button(false);
         let back = gtk4::Button::from_icon_name("go-previous-symbolic");
         back.set_tooltip_text(Some("Return to changed files (Alt+Left)"));
@@ -296,7 +299,7 @@ impl ChangesPanel {
         reader_scroll.set_margin_start(18);
         reader_scroll.set_margin_end(18);
         reader_scroll.set_margin_bottom(18);
-        reader_scroll.add_css_class("card");
+        reader_scroll.add_css_class("diff-surface");
         reader_scroll.set_child(Some(&reader));
         reader_body.append(&reader_scroll);
         let reader_page = adw::NavigationPage::new(&reader_body, "File Diff");

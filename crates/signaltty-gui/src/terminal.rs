@@ -139,7 +139,7 @@ impl PaneWidget {
         let action_button = |icon: &str, tooltip: &str, action: PaneAction| {
             let b = gtk4::Button::from_icon_name(icon);
             b.add_css_class("flat");
-            b.add_css_class("circular");
+            b.add_css_class("pane-tool-button");
             b.set_tooltip_text(Some(tooltip));
             b.update_property(&[gtk4::accessible::Property::Label(
                 tooltip.split(" (").next().unwrap_or(tooltip),
@@ -243,6 +243,7 @@ impl PaneWidget {
         root.append(&header);
         root.append(&decision_bar);
         let search_root = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+        search_root.add_css_class("terminal-search");
         let search_controls = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
         search_root.set_margin_start(8);
         search_root.set_margin_end(8);
@@ -1080,6 +1081,11 @@ mod tests {
             pane.pending_decision = Some(approval.clone());
             widget.update_meta(&pane);
             capture(&format!("approval-current-{name}"));
+            approval.options[0].id = "once".into();
+            pane.pending_decision = Some(approval.clone());
+            widget.update_meta(&pane);
+            capture(&format!("approval-primary-{name}"));
+            approval.options[0].id = "allow_current".into();
             approval.answerable = false;
             pane.pending_decision = Some(approval.clone());
             widget.update_meta(&pane);

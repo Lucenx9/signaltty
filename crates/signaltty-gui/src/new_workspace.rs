@@ -252,6 +252,7 @@ pub fn show_dialog(
         .heading("New Workspace")
         .content_width(440)
         .build();
+    dialog.add_css_class("signaltty-dialog");
     dialog.add_response(RESPONSE_CANCEL, "Cancel");
     dialog.add_response(RESPONSE_CREATE, "Create");
     dialog.set_response_appearance(RESPONSE_CREATE, adw::ResponseAppearance::Suggested);
