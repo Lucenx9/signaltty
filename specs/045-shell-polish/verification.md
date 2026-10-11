@@ -31,6 +31,14 @@ light/dark scenes. Gemini 3.8 Flash High via Antigravity also found no blocking
 static findings; its first round requested inspection of final empty-tab renders.
 The focus-outline observation was a product preference, not a defect.
 
+Gemini's second Antigravity review completed against the final native renders and
+passed gate: no blocking findings. It closed the pending P2 visual follow-up;
+“Start a shell.” eliminates clipping in the large light/dark scenes.
+Review round IDs: `signaltty-045-gemini-review-round-1` and
+`signaltty-045-gemini-review-round-2` (provider `antigravity`, model
+`gemini-3.8-flash-high`). The independent native review also accepted the final
+large-font scenes without findings.
+
 ## Final gate
 
 `scripts/verify.sh doctor` passed (`doctor-hx97dm8c`). Final
