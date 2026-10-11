@@ -136,6 +136,22 @@ startup and the last-workspace removal leave no dangling slash. Hovering the
 context exposes the complete branch and path, including when the visible
 labels ellipsize in a narrow window.
 
+Working and Done keep their indicators and text without a filled badge; fills
+belong to waiting, failed and attention states. Selected rows add a neutral inset
+leading marker (stronger in high contrast), without changing allocation. Header
+Board/Changes tools are flat at rest; the checked Changes state has a neutral
+outline. Pane elevation uses one short shadow while urgency rings keep their
+existing inset weight and glow.
+
+The two empty states use compact native `AdwStatusPage` presentation: “Start with
+a project” explains choosing a folder and starting a shell/agent; “Open a terminal”
+invites a new tab. Each primary action has a centered GTK-formatted shortcut hint.
+The display test `shell_empty_states_explain_actions_and_fit_large_text` captures
+the populated shell and both empty states in light/dark, at desktop and 360px,
+including Sans 18 with the app's high-contrast class. It checks the primary action,
+shortcut text/bounds and opening/canceling New Workspace. This class-based scene
+is not proof of a real desktop high-contrast theme or screen-reader operation.
+
 Rules that keep it calm:
 
 - Widgets are reconciled in place (rows keyed by workspace id, tab

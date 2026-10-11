@@ -30,6 +30,7 @@ cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1`:
   covers current pane activation, same-column fallback and surviving reading anchors
   when removals force GTK to clamp a nearly-bottom viewport.
 - `app::tests::task_board_explains_truncated_done_history`
+- `app::tests::shell_empty_states_explain_actions_and_fit_large_text`
 - `app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions`
 - `app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls`
 - `app::tests::palette_keyboard_selection_stays_visible_while_search_keeps_focus`
