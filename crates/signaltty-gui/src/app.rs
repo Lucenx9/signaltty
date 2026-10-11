@@ -249,7 +249,7 @@ impl App {
         footer_button.set_tooltip_text(Some("Preferences (Ctrl+,)"));
         footer_button.update_property(&[gtk4::accessible::Property::Label("Preferences")]);
         let footer_contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 9);
-        footer_contents.append(&gtk4::Image::from_icon_name("emblem-system-symbolic"));
+        footer_contents.append(&gtk4::Image::from_icon_name("signaltty-settings-symbolic"));
         let footer_label = gtk4::Label::new(Some("Preferences"));
         footer_label.set_hexpand(true);
         footer_label.set_xalign(0.0);
