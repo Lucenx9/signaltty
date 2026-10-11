@@ -1566,6 +1566,55 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
 
 #[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
+fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.present();
+    wait_ui(|| app.window.is_mapped());
+
+    let search = button_with_tooltip(
+        app.window.upcast_ref(),
+        "Search commands and workspaces (Ctrl+Shift+P)",
+    )
+    .expect("sidebar must expose the command palette");
+    assert!(search.is_mapped());
+    assert!(has_label(
+        search.upcast_ref(),
+        "Search or run a command…"
+    ));
+    search.emit_clicked();
+    wait_ui(|| app.palette_dialog.borrow().is_some());
+    app.palette_dialog.borrow().as_ref().unwrap().close();
+    wait_ui(|| app.palette_dialog.borrow().is_none());
+
+    let board = button_with_tooltip(app.window.upcast_ref(), "Task Board (Ctrl+Shift+B)")
+        .expect("header must expose the task board");
+    assert!(board.is_mapped());
+    board.emit_clicked();
+    wait_ui(|| app.board_dialog.borrow().is_some());
+    let dialog = app.board_dialog.borrow().as_ref().unwrap().dialog.clone();
+    wait_ui(|| has_label(&dialog.child().unwrap(), "No Tasks Yet"));
+    dialog.close();
+    wait_ui(|| app.board_dialog.borrow().is_none());
+
+    app.split_view.set_show_sidebar(false);
+    app.window.set_default_size(360, 600);
+    wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
+    wait_ui(|| !board.is_visible());
+    assert!(button_with_tooltip(app.window.upcast_ref(), "Main Menu").is_none());
+    // The menu is a MenuButton, not a Button: keep its fallback visible.
+    let menu = find_widget::<gtk4::MenuButton>(app.window.upcast_ref()).unwrap();
+    assert!(menu.is_mapped());
+    app.window.destroy();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
 fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
     std::env::set_var("SIGNALTTY_NOTIFY", "0");
     adw::init().unwrap();
