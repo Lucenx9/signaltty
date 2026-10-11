@@ -13,7 +13,7 @@
 
 ## Delivery
 - [x] T006 Run full verification and independent diff/visual review; document evidence in specs/048-workspace-refinement/verification.md and docs/06-gui-toolkit.md.
-- [ ] T007 Commit and open linked PR with sources and proof.
+- [x] T007 Commit and open linked PR with sources and proof.
 
 Dependencies: T001 → T002 → T003 → T004 → T005 → T006 → T007.
 Independent review can run alongside full verification after implementation.
