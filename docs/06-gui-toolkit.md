@@ -80,14 +80,21 @@ palette (`Ctrl+Shift+P`). The launcher uses bundled symbolic artwork and
 semantic Adwaita surfaces across light, dark, custom themes and high contrast.
 New Workspace remains in the sidebar header.
 
+The scrollable sidebar now distinguishes **Workspaces** (live total, selected
+project and agent status) from **Tools** (Task Board, Changes, Worktrees).
+These rows activate the existing `win.*` handlers; there is no second
+navigation state or fake dashboard behind them. The bottom Preferences entry
+stays visible while the workspaces list scrolls. It deliberately does not
+display an invented "connected" state or agent count.
+
 The content header exposes Task Board (`Ctrl+Shift+B`) alongside the
 existing Changes toggle (`Ctrl+Shift+D`), New Tab and attention indicator.
-This brings the two broad work-review surfaces out of the overflow menu
-without duplicating their handlers or creating new IPC. At the 760sp compact
-breakpoint Board and Changes controls hide; their existing menu entries,
-keyboard accelerators and palette commands remain available. The main menu
-stays the complete action catalogue. Avoid a full-width second toolbar:
-terminal content and workspace context continue to own the canvas.
+Both show labels at spacious desktop widths; below 1100sp they retain their
+icons and accessible names. Below 760sp the Board and Changes header controls
+hide completely; their sidebar/tool menu entries and shortcuts remain
+available. The main menu remains the complete action catalogue. No new IPC,
+fake panes or full-width second toolbar: terminal content and workspace
+context continue to own the canvas.
 
 One status vocabulary, shared by every surface
 (`crates/signaltty-gui/src/status.rs`, colours in `data/style.css`):
