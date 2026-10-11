@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! AdwOverlaySplitView
-//! ├─ sidebar  AdwToolbarView: [+ Workspaces] / [Search commands] / rows
+//! ├─ sidebar  AdwToolbarView: [+] / [Search commands] / Workspaces rows / [Worktrees] [Preferences]
 //! └─ content  AdwToolbarView
 //!    ├─ header  [sidebar] workspace · agent   [● 2] [Board] [Changes] [tab+] [menu]
 //!    ├─ banner  (server connection lost)
