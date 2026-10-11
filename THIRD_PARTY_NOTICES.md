@@ -5,6 +5,14 @@ in `Cargo.toml`; see [LICENSE-MIT](LICENSE-MIT) and
 [LICENSE-APACHE](LICENSE-APACHE). This choice does not replace the licenses or
 notices of third-party material. Upstream contributors retain their rights.
 
+Cargo describes complete source packages: `signaltty-agent` declares
+`(MIT OR Apache-2.0) AND Apache-2.0` for its bundled Herdr material, and
+`signaltty-gui` declares `(MIT OR Apache-2.0) AND MIT` for its T3 Code
+adaptations. The built application additionally incorporates the agent package;
+AppStream therefore declares `(MIT OR Apache-2.0) AND Apache-2.0 AND MIT`.
+The `AND` clauses preserve the incorporated terms regardless of which license
+is chosen for Signaltty's own contributions.
+
 ## Herdr detection rules — Apache-2.0
 
 The 13 TOML files in `crates/signaltty-agent/screen/` are adaptations of
@@ -62,6 +70,14 @@ Include this document, `LICENSE-MIT`, `LICENSE-APACHE`, and
 `licenses/t3code-MIT.txt` with binary distributions, because adapted screen
 rules and GUI resources are compiled into the application. Source
 distributions must also retain `.specify/LICENSE` and file-level notices.
+
+The agent and GUI crate directories each carry local `LICENSE-MIT`,
+`LICENSE-APACHE`, and `NOTICE` files so Cargo source archives include them.
+The GUI archive additionally carries `licenses/t3code-MIT.txt`. These are real
+files inside the packages, not links to files outside the package roots.
+`scripts/tests/test_license_packaging.py` checks their presence with
+`cargo package --list` and compares copied license texts with their canonical
+workspace versions. Keep both versions in sync when a license text changes.
 
 This is an inventory of known directly incorporated material, not a complete
 notice bundle for all dependencies. Rust dependencies and native libraries

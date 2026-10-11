@@ -95,6 +95,16 @@ ownership audit. README now makes third-party exceptions explicit.
 Existing port/change notices remain intact. No runtime implementation was
 removed or changed, and no published Git history was rewritten.
 
+PR review identified that prose exceptions alone did not correct inherited
+Cargo licensing metadata or include root notices in nested Cargo archives.
+The agent source package now declares `(MIT OR Apache-2.0) AND Apache-2.0`,
+the GUI source package `(MIT OR Apache-2.0) AND MIT`, and the combined
+AppStream application `(MIT OR Apache-2.0) AND Apache-2.0 AND MIT`.
+Both affected crates carry local license texts and provenance notices, including
+the T3 Code MIT text in the GUI package. Regression checks inspect the actual
+`cargo package --list` output and require those texts to match the canonical
+workspace copies. This fixes source-package notices, not binary installation.
+
 ## Remaining release work
 
 1. Make release packaging install the notice bundle alongside binaries. The

@@ -5,7 +5,7 @@
   <summary>Terminal workspaces for parallel AI coding agents</summary>
   <url type="homepage">https://github.com/Lucenx9/signaltty</url>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT OR Apache-2.0</project_license>
+  <project_license>(MIT OR Apache-2.0) AND Apache-2.0 AND MIT</project_license>
   <launchable type="desktop-id">dev.signaltty.gui.desktop</launchable>
   <developer id="dev.signaltty">
     <name>signaltty contributors</name>
