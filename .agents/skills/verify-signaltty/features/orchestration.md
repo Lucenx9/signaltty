@@ -34,6 +34,10 @@ isolated servers. Progress fixtures prove working/completion transitions,
 `pane.explain` evidence, visible Grok blockers taking priority, semantic-hook
 authority, and no attention from ordinary-terminal progress. Exit/resume/restart
 fixtures prove the evidence lifetime follows the managed PTY.
+`bundled_grok_without_osc_progress_stays_working_until_the_prompt_returns`
+uses signaltty terminal identity and no OSC progress. It proves spinnerless
+`[stop]` activity cannot finish early, blockers take priority, and completion
+raises unread only after the prompt returns.
 
 `cargo test -p signaltty-term osc::tests` covers progress framing, BEL/ST and
 split boundaries, malformed messages, and separation from notifications/bells.

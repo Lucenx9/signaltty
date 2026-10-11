@@ -701,6 +701,46 @@ sys.stdin.readline()
 }
 
 #[tokio::test]
+async fn bundled_grok_without_osc_progress_stays_working_until_the_prompt_returns() {
+    let fixture = OscFixture::new();
+    let grok = fake_grok(
+        &fixture,
+        r#"
+import os
+assert os.environ['TERM_PROGRAM'] == 'signaltty'
+assert os.environ['TERM'] == 'xterm-256color'
+print('\x1b]0;grok\x07  Waiting on subagent… 2.8s   13s ⇣29.7k [stop]\nShift+Tab:mode │ Ctrl+.:shortcuts', flush=True)
+sys.stdin.readline()
+print('\x1b[2J\x1b[HWaiting on subagent… [stop]\n┃  2 (○) Yes, proceed', flush=True)
+sys.stdin.readline()
+print('\x1b[2J\x1b[HWaiting on subagent… [stop]\nShift+Tab:mode │ Ctrl+.:shortcuts', flush=True)
+sys.stdin.readline()
+print('\x1b[2J\x1b[HShift+Tab:mode │ Ctrl+.:shortcuts', flush=True)
+sys.stdin.readline()
+"#,
+    );
+    let srv = TestServer::start_with_env(&[("TERM", "xterm-256color")]).await;
+    let mut c = srv.client().await;
+    let id = spawn_grok(&mut c, &grok).await;
+    wait(&mut c, &id, "working", 5).await.unwrap();
+    let e = explain(&mut c, &id).await.unwrap();
+    assert_eq!(e["osc_progress"], "");
+    assert_eq!(e["matched"]["id"], "spinner_status_working");
+    assert!(wait(&mut c, &id, "done", 1).await.is_err());
+    assert_eq!(pane(&mut c, &id).await["attention"], "none");
+    advance(&mut c, &id).await;
+    wait(&mut c, &id, "blocked", 5).await.unwrap();
+    assert_eq!(pane(&mut c, &id).await["attention"], "input_required");
+    advance(&mut c, &id).await;
+    wait(&mut c, &id, "working", 5).await.unwrap();
+    advance(&mut c, &id).await;
+    wait(&mut c, &id, "done", 5).await.unwrap();
+    assert_eq!(pane(&mut c, &id).await["attention"], "unread");
+    assert_eq!(explain(&mut c, &id).await.unwrap()["osc_progress"], "");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn ordinary_terminal_progress_never_raises_attention() {
     let srv = TestServer::start().await;
     let mut c = srv.client().await;
