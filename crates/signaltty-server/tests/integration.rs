@@ -3394,6 +3394,42 @@ async fn hook_decisions_are_stored_without_terminal_controls() {
     srv.shutdown().await;
 }
 
+/// The adapter's lifecycle message is copied from the hook payload and
+/// becomes the pane's last message, which `signaltty attention pending`
+/// prints. It must be control-free even when no notification rewrites it:
+/// a controls-only prompt (empty notification body) or an explicit empty
+/// `message` (no notification at all).
+#[tokio::test]
+async fn hook_lifecycle_messages_are_stored_without_terminal_controls() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let evil = "\u{1b}]52;c;ZXZpbA==\u{7}\u{1b}[2J";
+
+    let cases = [
+        json!({"agent": "claude", "event": "PermissionRequest",
+               "payload": {"session_id": "s1", "prompt": evil}}),
+        json!({"agent": "codex", "event": "PermissionRequest", "message": "",
+               "payload": {"session_id": "s2", "prompt": format!("Run{evil} ls?")}}),
+        json!({"agent": "codex", "event": "Stop", "message": "",
+               "payload": {"session_id": "s2", "last_assistant_message": format!("done{evil}")}}),
+    ];
+    let mut raw = Vec::new();
+    for mut params in cases {
+        params["pane_id"] = json!(pane);
+        c.call("hook-event", params.clone()).await.unwrap();
+        let p = pane_snapshot(&mut c, &pane).await;
+        let last = p["last_message"].as_str().unwrap_or_default().to_string();
+        if last.chars().any(char::is_control) {
+            raw.push(format!("{} {}: {last:?}", params["agent"], params["event"]));
+        }
+    }
+    assert!(raw.is_empty(), "raw controls in last_message: {raw:#?}");
+    let p = pane_snapshot(&mut c, &pane).await;
+    assert_eq!(p["last_message"], "done");
+    srv.shutdown().await;
+}
+
 #[tokio::test]
 async fn reviewed_terminal_session_end_stays_done_none_and_keeps_identity() {
     let srv = TestServer::start().await;

@@ -2224,6 +2224,12 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
     let notif_draft = adapter.notification_event(&event);
     let session_id_opt = adapter.session_identity(&event);
     let mut decision = adapter.lifecycle_state(&event);
+    // The message is payload text (prompt, last answer) bound for
+    // `last_message`, which a later notification does not always rewrite.
+    decision.message = decision
+        .message
+        .map(|m| hook_text(&m))
+        .filter(|m| !m.is_empty());
 
     let is_unrecognized = decision.lifecycle.is_none()
         && decision.attention.is_none()
