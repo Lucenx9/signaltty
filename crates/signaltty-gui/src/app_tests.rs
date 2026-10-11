@@ -1605,7 +1605,10 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     );
     search.emit_clicked();
     wait_ui(|| app.palette_dialog.borrow().is_some());
-    app.palette_dialog.borrow().as_ref().unwrap().close();
+    // Dropping the RefCell borrow before close matters: the closed
+    // callback synchronously takes the dialog from this same cell.
+    let palette = app.palette_dialog.borrow().as_ref().unwrap().clone();
+    palette.close();
     wait_ui(|| app.palette_dialog.borrow().is_none());
 
     let board = button_with_tooltip(app.window.upcast_ref(), "Task Board (Ctrl+Shift+B)")
