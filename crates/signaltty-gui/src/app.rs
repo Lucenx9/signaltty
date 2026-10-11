@@ -224,15 +224,10 @@ impl App {
         command_launcher.update_property(&[gtk4::accessible::Property::Label(
             "Search commands and workspaces",
         )]);
-        let command_contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-        let command_icon = gtk4::Image::from_icon_name("signaltty-search-symbolic");
-        command_contents.append(&command_icon);
-        let command_label = gtk4::Label::new(Some("Search or run a command…"));
-        command_label.set_xalign(0.0);
-        command_label.set_hexpand(true);
-        command_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        command_contents.append(&command_label);
-        command_launcher.set_child(Some(&command_contents));
+        command_launcher.set_child(Some(&crate::sidebar::labeled_content(
+            "signaltty-search-symbolic",
+            "Search or run a command…",
+        )));
         let command_strip = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         command_strip.add_css_class("sidebar-command-strip");
         command_strip.append(&command_launcher);
@@ -337,22 +332,22 @@ impl App {
         btn_changes.add_css_class("header-tool-button");
         btn_changes.set_tooltip_text(Some("Changes (Ctrl+Shift+D)"));
         btn_changes.update_property(&[gtk4::accessible::Property::Label("Changes")]);
-        let changes_contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 7);
-        changes_contents.append(&gtk4::Image::from_icon_name("sidebar-show-right-symbolic"));
-        let changes_label = gtk4::Label::new(Some("Changes"));
-        changes_contents.append(&changes_label);
-        btn_changes.set_child(Some(&changes_contents));
+        let changes_content = adw::ButtonContent::builder()
+            .icon_name("sidebar-show-right-symbolic")
+            .label("Changes")
+            .build();
+        btn_changes.set_child(Some(&changes_content));
         header.pack_end(&btn_changes);
         let btn_board = gtk4::Button::new();
         btn_board.add_css_class("header-tool-button");
         btn_board.set_tooltip_text(Some("Task Board (Ctrl+Shift+B)"));
         btn_board.update_property(&[gtk4::accessible::Property::Label("Task Board")]);
         btn_board.set_action_name(Some("win.show-board"));
-        let board_contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 7);
-        board_contents.append(&gtk4::Image::from_icon_name("signaltty-board-symbolic"));
-        let board_label = gtk4::Label::new(Some("Task Board"));
-        board_contents.append(&board_label);
-        btn_board.set_child(Some(&board_contents));
+        let board_content = adw::ButtonContent::builder()
+            .icon_name("signaltty-board-symbolic")
+            .label("Task Board")
+            .build();
+        btn_board.set_child(Some(&board_content));
         header.pack_end(&btn_board);
         let attention = Self::attention_button();
         header.pack_end(&attention.revealer);
@@ -434,8 +429,21 @@ impl App {
             adw::BreakpointCondition::parse("max-width: 1100sp").expect("breakpoint"),
         );
         medium.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
-        medium.add_setter(&changes_label, "visible", Some(&false.to_value()));
-        medium.add_setter(&board_label, "visible", Some(&false.to_value()));
+        // Icon-only at this width: AdwButtonContent hides an empty label,
+        // and the buttons drop the labeled pill for the same flat
+        // `.image-button` look as New Tab and the main menu.
+        medium.add_setter(&changes_content, "label", Some(&"".to_value()));
+        medium.add_setter(&board_content, "label", Some(&"".to_value()));
+        medium.add_setter(
+            &btn_changes,
+            "css-classes",
+            Some(&["toggle", "image-button"].to_value()),
+        );
+        medium.add_setter(
+            &btn_board,
+            "css-classes",
+            Some(&["image-button"].to_value()),
+        );
         window.add_breakpoint(medium);
         // Narrow windows: the sidebar overlays instead of squeezing panes.
         let narrow = adw::Breakpoint::new(

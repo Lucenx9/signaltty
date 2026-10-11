@@ -1628,13 +1628,29 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     dialog.close();
     wait_ui(|| app.board_dialog.borrow().is_none());
 
+    // Spacious widths: labeled pill. Medium widths: the label goes and the
+    // button uses the same flat icon style as the other header buttons.
+    assert!(board.has_css_class("header-tool-button"));
+    assert!(has_label(board.upcast_ref(), "Task Board"));
+    app.window.set_default_size(1000, 700);
+    wait_ui(|| board.has_css_class("image-button"));
+    assert!(!board.has_css_class("header-tool-button"));
+    assert!(!has_label(board.upcast_ref(), "Task Board"));
+    let changes = button_with_tooltip(app.window.upcast_ref(), "Changes (Ctrl+Shift+D)").unwrap();
+    assert!(changes.has_css_class("image-button") && !changes.has_css_class("header-tool-button"));
+    app.window.set_default_size(1280, 800);
+    wait_ui(|| board.has_css_class("header-tool-button"));
+
     app.split_view.set_show_sidebar(false);
     app.window.set_default_size(360, 600);
     wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
     wait_ui(|| !board.is_visible());
     // The overflow menu remains available at the compact breakpoint.
-    let menu = find_widget::<gtk4::MenuButton>(app.window.upcast_ref()).unwrap();
-    assert!(menu.is_mapped());
+    let menu = find_matching_widget::<gtk4::MenuButton>(app.window.upcast_ref(), &|button| {
+        button.tooltip_text().as_deref() == Some("Main Menu")
+    })
+    .unwrap();
+    wait_ui(|| menu.is_mapped());
     app.window.destroy();
 }
 

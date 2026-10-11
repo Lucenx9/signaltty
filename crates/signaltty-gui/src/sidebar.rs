@@ -820,17 +820,20 @@ pub fn nav_button(icon: &str, title: &str, hint: &str, action: &str) -> gtk4::Bu
     button.set_action_name(Some(action));
     button.set_tooltip_text(Some(hint));
     button.update_property(&[gtk4::accessible::Property::Label(title)]);
-    let contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
-    let image = gtk4::Image::from_icon_name(icon);
-    image.add_css_class("sidebar-tool-icon");
-    contents.append(&image);
-    let label = gtk4::Label::new(Some(title));
-    label.set_xalign(0.0);
-    label.set_hexpand(true);
-    label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    contents.append(&label);
-    button.set_child(Some(&contents));
+    button.set_child(Some(&labeled_content(icon, title)));
     button
+}
+
+/// Icon + label content for a full-width, start-aligned sidebar button.
+/// `AdwButtonContent` gives the native spacing, `.image-text-button`
+/// styling and ellipsizing when the sidebar is narrow.
+pub fn labeled_content(icon: &str, title: &str) -> libadwaita::ButtonContent {
+    libadwaita::ButtonContent::builder()
+        .icon_name(icon)
+        .label(title)
+        .can_shrink(true)
+        .halign(gtk4::Align::Start)
+        .build()
 }
 
 impl Sidebar {
