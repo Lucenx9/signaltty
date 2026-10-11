@@ -1566,6 +1566,100 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
 
 #[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
+fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.present();
+    wait_ui(|| app.window.is_mapped());
+
+    let search = button_with_tooltip(
+        app.window.upcast_ref(),
+        "Search commands and workspaces (Ctrl+Shift+P)",
+    )
+    .expect("sidebar must expose the command palette");
+    assert!(search.is_mapped());
+    assert!(has_label(search.upcast_ref(), "Search or run a command…"));
+    let heading = find_matching_widget::<gtk4::Label>(app.sidebar.widget.upcast_ref(), &|label| {
+        label.text() == "Workspaces"
+    })
+    .expect("sidebar must title the workspace list");
+    assert!(heading.has_css_class("caption-heading"));
+    // Task Board and Changes live only in the header (one entry point
+    // each, with the toggle state); the sidebar keeps no duplicate rows.
+    for tooltip in ["Task Board (Ctrl+Shift+B)", "Changes (Ctrl+Shift+D)"] {
+        let mut matches = 0;
+        let mut stack = vec![app.window.clone().upcast::<gtk4::Widget>()];
+        while let Some(widget) = stack.pop() {
+            if widget.is::<gtk4::Button>() && widget.tooltip_text().as_deref() == Some(tooltip) {
+                matches += 1;
+            }
+            let mut child = widget.first_child();
+            while let Some(next) = child {
+                child = next.next_sibling();
+                stack.push(next);
+            }
+        }
+        assert_eq!(matches, 1, "{tooltip} must have exactly one entry point");
+    }
+    // Worktrees and Preferences are pinned outside the scrolling list, so
+    // a long workspace list can never bury them.
+    for tooltip in ["Manage Git Worktrees", "Preferences (Ctrl+,)"] {
+        let button = button_with_tooltip(app.window.upcast_ref(), tooltip)
+            .unwrap_or_else(|| panic!("sidebar must expose {tooltip}"));
+        assert!(button.is_mapped());
+        assert!(!button.is_ancestor(&app.sidebar.widget));
+    }
+    search.emit_clicked();
+    wait_ui(|| app.palette_dialog.borrow().is_some());
+    // Dropping the RefCell borrow before close matters: the closed
+    // callback synchronously takes the dialog from this same cell.
+    let palette = app.palette_dialog.borrow().as_ref().unwrap().clone();
+    palette.close();
+    wait_ui(|| app.palette_dialog.borrow().is_none());
+
+    let board = button_with_tooltip(app.window.upcast_ref(), "Task Board (Ctrl+Shift+B)")
+        .expect("header must expose the task board");
+    assert!(board.is_mapped());
+    board.emit_clicked();
+    wait_ui(|| app.board_dialog.borrow().is_some());
+    let dialog = app.board_dialog.borrow().as_ref().unwrap().dialog.clone();
+    wait_ui(|| has_label(&dialog.child().unwrap(), "No Tasks Yet"));
+    dialog.close();
+    wait_ui(|| app.board_dialog.borrow().is_none());
+
+    // Spacious widths: labeled pill. Medium widths: the label goes and the
+    // button uses the same flat icon style as the other header buttons.
+    assert!(board.has_css_class("header-tool-button"));
+    assert!(has_label(board.upcast_ref(), "Task Board"));
+    app.window.set_default_size(1000, 700);
+    wait_ui(|| board.has_css_class("image-button"));
+    assert!(!board.has_css_class("header-tool-button"));
+    assert!(!has_label(board.upcast_ref(), "Task Board"));
+    let changes = button_with_tooltip(app.window.upcast_ref(), "Changes (Ctrl+Shift+D)").unwrap();
+    assert!(changes.has_css_class("image-button") && !changes.has_css_class("header-tool-button"));
+    app.window.set_default_size(1280, 800);
+    wait_ui(|| board.has_css_class("header-tool-button"));
+
+    app.split_view.set_show_sidebar(false);
+    app.window.set_default_size(360, 600);
+    wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
+    wait_ui(|| !board.is_visible());
+    // The overflow menu remains available at the compact breakpoint.
+    let menu = find_matching_widget::<gtk4::MenuButton>(app.window.upcast_ref(), &|button| {
+        button.tooltip_text().as_deref() == Some("Main Menu")
+    })
+    .unwrap();
+    wait_ui(|| menu.is_mapped());
+    app.window.destroy();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
 fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
     std::env::set_var("SIGNALTTY_NOTIFY", "0");
     adw::init().unwrap();

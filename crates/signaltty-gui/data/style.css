@@ -192,6 +192,107 @@ window {
   color: alpha(currentColor, 0.6);
 }
 
+/* ---- sidebar command entry -------------------------------------------
+ * The command palette is a first-class navigation affordance, modeled on
+ * the restrained search launchers in T3 Code/Linear. A bordered native
+ * button (not a fake GTK editable entry) opens the existing palette.
+ * Tokens stay tied to the active libadwaita theme. */
+.sidebar-command-strip {
+  padding: 2px 10px 10px;
+}
+.sidebar-command-launcher {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background-color: alpha(currentColor, 0.035);
+  box-shadow: inset 0 0 0 1px alpha(currentColor, 0.12);
+}
+.sidebar-command-launcher:hover {
+  background-color: alpha(currentColor, 0.07);
+}
+.sidebar-command-launcher:active {
+  background-color: alpha(currentColor, 0.10);
+}
+/* AdwButtonContent labels are bold in Adwaita; these rows are navigation,
+ * not primary actions, so they keep regular weight. */
+.sidebar-command-launcher label,
+.sidebar-nav-button label {
+  font-weight: 400;
+}
+.sidebar-command-launcher label {
+  font-size: 0.88em;
+  color: alpha(currentColor, 0.72);
+}
+.sidebar-command-launcher image {
+  color: alpha(currentColor, 0.68);
+}
+.sidebar-command-launcher:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+  transition: none;
+}
+
+/* Navigation hierarchy follows the workspace, not arbitrary toolbar
+ * decoration. Group captions use Adwaita's .caption-heading/.dim-label so
+ * they follow the platform type scale and high-contrast handling. */
+.sidebar-group-header {
+  padding: 10px 15px 6px;
+}
+
+/* Pinned footer rows (Worktrees, Preferences): flat, full-width, the
+ * same 32px height and 8px radius as the search launcher. */
+.sidebar-nav-button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-weight: 400;
+  background: none;
+  box-shadow: none;
+  border-radius: 8px;
+  color: alpha(currentColor, 0.79);
+}
+.sidebar-nav-button image {
+  color: alpha(currentColor, 0.68);
+}
+.sidebar-nav-button:hover {
+  background-color: alpha(currentColor, 0.065);
+}
+.sidebar-nav-button:active {
+  background-color: alpha(currentColor, 0.10);
+}
+.sidebar-nav-button:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+.sidebar-footer {
+  padding: 6px 8px;
+  box-shadow: inset 0 1px alpha(currentColor, 0.085);
+}
+
+/* Desktop tools are discoverable without taking over the workspace
+ * breadcrumb. libadwaita breakpoints hide the words before they can
+ * force a narrow terminal into a cramped layout. */
+toolbarview > .top-bar headerbar button.header-tool-button {
+  min-height: 28px;
+  min-width: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 0.9em;
+  background-color: alpha(currentColor, 0.035);
+  box-shadow: inset 0 0 0 1px alpha(currentColor, 0.09);
+}
+toolbarview > .top-bar headerbar button.header-tool-button label {
+  font-weight: 500;
+}
+toolbarview > .top-bar headerbar button.header-tool-button:hover,
+toolbarview > .top-bar headerbar button.header-tool-button:checked {
+  background-color: alpha(currentColor, 0.09);
+}
+toolbarview > .top-bar headerbar button.header-tool-button:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
 /* ---- sidebar -------------------------------------------------------- */
 
 /* Three quiet lines: the name carries weight, the headline reads as
@@ -1293,6 +1394,23 @@ button.card.appearance-card:checked.keyboard-activating {
   --border-opacity: 50%;
   --sidebar-border-color: alpha(currentColor, 0.55);
   --headerbar-shade-color: alpha(currentColor, 0.55);
+}
+.high-contrast .sidebar-command-launcher {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.high-contrast .sidebar-command-launcher label,
+.high-contrast .sidebar-command-launcher image,
+.high-contrast .sidebar-nav-button,
+.high-contrast .sidebar-nav-button image {
+  color: inherit;
+}
+/* The footer is a pinned region, not a control: a top rule only, so it
+ * never reads as a focused or selected button. */
+.high-contrast .sidebar-footer {
+  box-shadow: inset 0 1px currentColor;
+}
+.high-contrast toolbarview > .top-bar headerbar button.header-tool-button {
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 .high-contrast .workspace-message,
 .high-contrast .workspace-meta,

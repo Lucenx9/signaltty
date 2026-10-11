@@ -801,6 +801,7 @@ type ToggleCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
 
 pub struct Sidebar {
     pub widget: gtk4::ScrolledWindow,
+    count: gtk4::Label,
     list: gtk4::ListBox,
     rows: Rc<RefCell<Vec<Row>>>,
     collapsed_roots: Rc<RefCell<std::collections::HashSet<String>>>,
@@ -808,6 +809,31 @@ pub struct Sidebar {
     on_close: CloseCallback,
     on_toggle: ToggleCallback,
     menu_builder: MenuBuilderCallback,
+}
+
+/// A pinned sidebar navigation row bound to an existing window action.
+/// These are shortcuts, not a parallel action registry: handlers and
+/// keybindings stay in actions.rs.
+pub fn nav_button(icon: &str, title: &str, hint: &str, action: &str) -> gtk4::Button {
+    let button = gtk4::Button::new();
+    button.add_css_class("sidebar-nav-button");
+    button.set_action_name(Some(action));
+    button.set_tooltip_text(Some(hint));
+    button.update_property(&[gtk4::accessible::Property::Label(title)]);
+    button.set_child(Some(&labeled_content(icon, title)));
+    button
+}
+
+/// Icon + label content for a full-width, start-aligned sidebar button.
+/// `AdwButtonContent` gives the native spacing, `.image-text-button`
+/// styling and ellipsizing when the sidebar is narrow.
+pub fn labeled_content(icon: &str, title: &str) -> libadwaita::ButtonContent {
+    libadwaita::ButtonContent::builder()
+        .icon_name(icon)
+        .label(title)
+        .can_shrink(true)
+        .halign(gtk4::Align::Start)
+        .build()
 }
 
 impl Sidebar {
@@ -859,12 +885,35 @@ impl Sidebar {
                 }
             }));
         }
+        // Only the workspace list scrolls. The Search launcher and the
+        // Worktrees/Preferences footer are pinned, so a long list never
+        // buries them.
+        let content = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        let workspaces_header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        workspaces_header.add_css_class("sidebar-group-header");
+        // Adwaita's own caption heading; no hand-rolled caps or tracking.
+        let workspaces_title = gtk4::Label::new(Some("Workspaces"));
+        workspaces_title.add_css_class("caption-heading");
+        workspaces_title.add_css_class("dim-label");
+        workspaces_title.set_xalign(0.0);
+        workspaces_title.set_hexpand(true);
+        let count = gtk4::Label::new(Some("0"));
+        count.add_css_class("caption");
+        count.add_css_class("dim-label");
+        count.add_css_class("numeric");
+        count.update_property(&[gtk4::accessible::Property::Label("0 workspaces")]);
+        workspaces_header.append(&workspaces_title);
+        workspaces_header.append(&count);
+        content.append(&workspaces_header);
+        content.append(&list);
+
         let widget = gtk4::ScrolledWindow::new();
-        widget.set_child(Some(&list));
+        widget.set_child(Some(&content));
         widget.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
         widget.set_vexpand(true);
         Sidebar {
             widget,
+            count,
             list,
             rows,
             collapsed_roots,
@@ -893,6 +942,17 @@ impl Sidebar {
     /// it after: the highlight tracks the workspace, not the row index.
     /// The echo is harmless (`on_select` skips the already-active one).
     pub fn update(&self, items: Vec<WsSummary>) {
+        self.count.set_text(&items.len().to_string());
+        let noun = if items.len() == 1 {
+            "workspace"
+        } else {
+            "workspaces"
+        };
+        self.count
+            .update_property(&[gtk4::accessible::Property::Label(&format!(
+                "{} {noun}",
+                items.len()
+            ))]);
         let selected = self
             .list
             .selected_row()

@@ -71,6 +71,32 @@ miniature window (System split light/dark down the middle) and each theme as
 a light and a dark orb; selection is an accent ring, never a fill
 (`specs/042-preferences-previews`).
 
+### Discoverable navigation
+
+The sidebar shows a search-style launcher below the titlebar. It is a real
+button bound to `win.command-palette`, not an editable search entry: clicking
+or pressing Enter opens the existing keyboard-first Commands and Workspaces
+palette (`Ctrl+Shift+P`). The launcher uses bundled symbolic artwork and
+semantic Adwaita surfaces across light, dark, custom themes and high contrast.
+New Workspace remains in the sidebar header.
+
+Only the **Workspaces** list scrolls (Adwaita `.caption-heading` title,
+live total). Worktrees and Preferences are pinned in the sidebar footer, so
+a long list never buries them; they activate the existing `win.*` handlers,
+with no second navigation state or fake dashboard behind them. The footer
+deliberately does not display an invented "connected" state or agent count.
+
+Task Board (`Ctrl+Shift+B`) and Changes (`Ctrl+Shift+D`) have exactly one
+visible entry point: the content header, next to New Tab and the attention
+indicator, where Changes keeps its toggle state. Both are
+`AdwButtonContent` buttons labeled at spacious desktop widths; below 1100sp
+the label is cleared and they take the same flat `.image-button` style as
+the other header buttons, keeping their accessible names. Below 760sp they
+hide completely; the main menu, the command palette (also reachable from
+the sidebar launcher when the overlay sidebar is opened) and the shortcuts
+remain. No new IPC, fake panes or full-width second toolbar: terminal
+content and workspace context continue to own the canvas.
+
 One status vocabulary, shared by every surface
 (`crates/signaltty-gui/src/status.rs`, colours in `data/style.css`):
 

@@ -4,9 +4,9 @@
 //!
 //! ```text
 //! AdwOverlaySplitView
-//! ├─ sidebar  AdwToolbarView: [+ Workspaces] / workspace rows
+//! ├─ sidebar  AdwToolbarView: [+] / [Search commands] / Workspaces rows / [Worktrees] [Preferences]
 //! └─ content  AdwToolbarView
-//!    ├─ header  [sidebar] workspace · agent      [● 2] [tab+] [menu]
+//!    ├─ header  [sidebar] workspace · agent   [● 2] [Board] [Changes] [tab+] [menu]
 //!    ├─ banner  (server connection lost)
 //!    ├─ AdwTabBar (autohides with one tab)
 //!    └─ AdwTabView → per tab: Bin.tab-page → Paned splits → pane cards
@@ -214,9 +214,49 @@ impl App {
         btn_new_ws.update_property(&[gtk4::accessible::Property::Label("New Workspace")]);
         btn_new_ws.set_action_name(Some("win.new-workspace"));
         sidebar_header.pack_end(&btn_new_ws);
+        // A visible entry point to the existing command palette. This is
+        // deliberately a button, not an editable search field: typing happens
+        // in the palette, which already supports keyboard navigation.
+        let command_launcher = gtk4::Button::new();
+        command_launcher.add_css_class("sidebar-command-launcher");
+        command_launcher.set_action_name(Some("win.command-palette"));
+        command_launcher.set_tooltip_text(Some("Search commands and workspaces (Ctrl+Shift+P)"));
+        command_launcher.update_property(&[gtk4::accessible::Property::Label(
+            "Search commands and workspaces",
+        )]);
+        command_launcher.set_child(Some(&crate::sidebar::labeled_content(
+            "signaltty-search-symbolic",
+            "Search or run a command…",
+        )));
+        let command_strip = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        command_strip.add_css_class("sidebar-command-strip");
+        command_strip.append(&command_launcher);
+
         let sidebar_page = adw::ToolbarView::new();
         sidebar_page.add_top_bar(&sidebar_header);
+        sidebar_page.add_top_bar(&command_strip);
         sidebar_page.set_content(Some(&sidebar.widget));
+        // Pinned footer: tools that are not already in the content header
+        // (Task Board and Changes live there with their toggle state), plus
+        // settings. A real destination, unlike a mock status footer that
+        // would incorrectly claim connectivity.
+        let worktrees_button = crate::sidebar::nav_button(
+            "signaltty-branch-symbolic",
+            "Worktrees",
+            "Manage Git Worktrees",
+            "win.worktrees",
+        );
+        let footer_button = crate::sidebar::nav_button(
+            "signaltty-settings-symbolic",
+            "Preferences",
+            "Preferences (Ctrl+,)",
+            "win.preferences",
+        );
+        let sidebar_footer = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+        sidebar_footer.add_css_class("sidebar-footer");
+        sidebar_footer.append(&worktrees_button);
+        sidebar_footer.append(&footer_button);
+        sidebar_page.add_bottom_bar(&sidebar_footer);
 
         let sidebar_overlay = gtk4::Overlay::new();
         sidebar_overlay.set_child(Some(&sidebar_page));
@@ -286,11 +326,29 @@ impl App {
         btn_new_tab.update_property(&[gtk4::accessible::Property::Label("New Tab")]);
         btn_new_tab.set_action_name(Some("win.new-tab"));
         header.pack_end(&btn_new_tab);
+        // First-class tools have a label at desktop widths, and return to
+        // icon-only controls where the workspace breadcrumb needs the room.
         let btn_changes = gtk4::ToggleButton::new();
-        btn_changes.set_icon_name("sidebar-show-right-symbolic");
+        btn_changes.add_css_class("header-tool-button");
         btn_changes.set_tooltip_text(Some("Changes (Ctrl+Shift+D)"));
         btn_changes.update_property(&[gtk4::accessible::Property::Label("Changes")]);
+        let changes_content = adw::ButtonContent::builder()
+            .icon_name("sidebar-show-right-symbolic")
+            .label("Changes")
+            .build();
+        btn_changes.set_child(Some(&changes_content));
         header.pack_end(&btn_changes);
+        let btn_board = gtk4::Button::new();
+        btn_board.add_css_class("header-tool-button");
+        btn_board.set_tooltip_text(Some("Task Board (Ctrl+Shift+B)"));
+        btn_board.update_property(&[gtk4::accessible::Property::Label("Task Board")]);
+        btn_board.set_action_name(Some("win.show-board"));
+        let board_content = adw::ButtonContent::builder()
+            .icon_name("signaltty-board-symbolic")
+            .label("Task Board")
+            .build();
+        btn_board.set_child(Some(&board_content));
+        header.pack_end(&btn_board);
         let attention = Self::attention_button();
         header.pack_end(&attention.revealer);
 
@@ -371,6 +429,21 @@ impl App {
             adw::BreakpointCondition::parse("max-width: 1100sp").expect("breakpoint"),
         );
         medium.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
+        // Icon-only at this width: AdwButtonContent hides an empty label,
+        // and the buttons drop the labeled pill for the same flat
+        // `.image-button` look as New Tab and the main menu.
+        medium.add_setter(&changes_content, "label", Some(&"".to_value()));
+        medium.add_setter(&board_content, "label", Some(&"".to_value()));
+        medium.add_setter(
+            &btn_changes,
+            "css-classes",
+            Some(&["toggle", "image-button"].to_value()),
+        );
+        medium.add_setter(
+            &btn_board,
+            "css-classes",
+            Some(&["image-button"].to_value()),
+        );
         window.add_breakpoint(medium);
         // Narrow windows: the sidebar overlays instead of squeezing panes.
         let narrow = adw::Breakpoint::new(
@@ -378,9 +451,11 @@ impl App {
         );
         narrow.add_setter(&split_view, "collapsed", Some(&true.to_value()));
         narrow.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
-        // The header must fit 360px (spec 024); Changes stays on its
-        // shortcut, the palette and the main menu.
+        // At 360px the terminal and breadcrumb take precedence. Board and
+        // Changes remain in the main menu and command palette, with their
+        // existing shortcuts; their icons return at wider widths.
         narrow.add_setter(&btn_changes, "visible", Some(&false.to_value()));
+        narrow.add_setter(&btn_board, "visible", Some(&false.to_value()));
         window.add_breakpoint(narrow);
 
         let toasts = adw::ToastOverlay::new();
