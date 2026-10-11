@@ -1583,10 +1583,27 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     )
     .expect("sidebar must expose the command palette");
     assert!(search.is_mapped());
-    assert!(has_label(
-        search.upcast_ref(),
-        "Search or run a command…"
-    ));
+    assert!(has_label(search.upcast_ref(), "Search or run a command…"));
+    assert!(has_label(app.window.upcast_ref(), "WORKSPACES"));
+    assert!(has_label(app.window.upcast_ref(), "TOOLS"));
+    // The grouped tools are direct shortcuts to existing window actions.
+    let tools_board = button_with_tooltip(
+        app.window.upcast_ref(),
+        "Open Task Board (Ctrl+Shift+B)",
+    )
+    .expect("sidebar must expose Task Board");
+    assert!(tools_board.is_mapped());
+    let changes = button_with_tooltip(
+        app.window.upcast_ref(),
+        "Toggle Changes (Ctrl+Shift+D)",
+    )
+    .expect("sidebar must expose Changes");
+    assert!(changes.is_mapped());
+    assert_eq!(changes.action_name().as_deref(), Some("win.show-changes"));
+    assert!(button_with_tooltip(app.window.upcast_ref(), "Manage Git Worktrees")
+        .is_some_and(|button| button.is_mapped()));
+    assert!(button_with_tooltip(app.window.upcast_ref(), "Preferences (Ctrl+,)")
+        .is_some_and(|button| button.is_mapped()));
     search.emit_clicked();
     wait_ui(|| app.palette_dialog.borrow().is_some());
     app.palette_dialog.borrow().as_ref().unwrap().close();
