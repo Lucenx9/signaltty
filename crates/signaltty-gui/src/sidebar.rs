@@ -476,7 +476,7 @@ impl Row {
         place.set_hexpand(true);
         let place_icon = gtk4::Image::new();
         place_icon.add_css_class("workspace-place-icon");
-        place_icon.set_pixel_size(14);
+        place_icon.set_pixel_size(16);
         place_icon.set_accessible_role(gtk4::AccessibleRole::Presentation);
         let agents = label(&["workspace-meta"]);
         agents.set_halign(gtk4::Align::End);

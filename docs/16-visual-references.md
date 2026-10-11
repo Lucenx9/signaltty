@@ -92,3 +92,16 @@ Spec009 completes focus and native presentation refinement, with light,
 dark, narrow and high-contrast evidence in [UI verification](qa/ui-2026-09-29.md).
 List-specific shortcuts and a command palette remain separate feature work;
 this reference does not authorize those interactions.
+
+## Icon and placement refinement, spec053
+
+[Apple toolbar guidance](https://developer.apple.com/design/human-interface-guidelines/toolbars)
+and [GNOME header bars](https://developer.gnome.org/hig/patterns/containers/header-bars.html)
+support contextual actions, restrained groups and spacing.
+[GNOME symbolic icons](https://developer.gnome.org/hig/guidelines/ui-icons.html)
+support recognizable monochrome artwork on a 16px grid. Signaltty retains its
+original 1.5px family rather than replacing it with another icon library.
+Creation follows workspace context; Board and Changes form a view group; pane
+Close has a gap from split controls. Worktree window actions move to the header
+and checkout actions remain local. Native captures and explicit proof limits are
+recorded in [spec053 verification](../specs/053-icon-hierarchy-polish/verification.md).

@@ -88,11 +88,13 @@ with no second navigation state or fake dashboard behind them. The footer
 deliberately does not display an invented "connected" state or agent count.
 
 Task Board (`Ctrl+Shift+B`) and Changes (`Ctrl+Shift+D`) have exactly one
-visible entry point: the content header, next to New Tab and the attention
-indicator, where Changes keeps its toggle state. Both are
+visible entry point: a trailing view group in the content header, beside the attention
+indicator and separated from the menu by spacing. Changes keeps its toggle state. Both are
 `AdwButtonContent` buttons labeled at spacious desktop widths; below 1100sp
 the label is cleared and they take the same flat `.image-button` style as
-the other header buttons, keeping their accessible names. Below 760sp they
+the other header buttons, keeping their accessible names. New Tab sits after the
+workspace breadcrumb in the leading group, with a desktop label that also clears
+below 1100sp. Below 760sp they
 move into labeled controls in the pinned overlay-sidebar footer. Changes
 keeps the same toggle state, and activating either tool dismisses the left
 overlay. The main menu, command palette and shortcuts remain available. No new IPC, fake panes or full-width second toolbar: terminal
@@ -476,3 +478,19 @@ native tabs with a selected bottom marker. The Changes scope selector and diff
 reader, terminal search and owned primary menu follow the same hierarchy.
 Native hit areas, focus outlines, attention priority and terminal layout remain
 unchanged; header/tab/menu overrides target explicit application classes.
+
+## Icon roles and local action placement
+
+Changes uses an owned diff-document symbol in the header, compact footer and
+Details card. Board uses a three-column symbol in its controls and empty state.
+New Tab uses a tab-strip plus symbol; terminal/agent details use an owned prompt
+symbol. Original symbols share a 16px grid and 1.5px weight. Metadata renders at
+16px without downsampling; Details images are decorative and use full foreground
+in application high contrast. Copy Path keeps a named, flat native button.
+
+Pane Close has a logical gap after the paired split controls. Worktree Create and
+Refresh live in the dialog header; Open and Remove stay on their checkout row.
+Below 480sp the native dialog breakpoint makes Create/Open/Remove icon-only,
+restoring their labels on widening. Native shrinking content keeps their targets
+inside narrow windows with enlarged text. Action names, tooltips and server calls retain their meaning.
+See [spec053](../specs/053-icon-hierarchy-polish/spec.md) for scope and proof.

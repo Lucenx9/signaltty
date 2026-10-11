@@ -445,6 +445,9 @@ button.details-row {
 .details-icon {
   color: alpha(currentColor, 0.6);
 }
+.details-copy-button {
+  border-radius: 6px;
+}
 .details-pr-status {
   font-size: 0.85em;
   font-weight: 600;
@@ -1430,6 +1433,7 @@ button.card.appearance-card:checked.keyboard-activating {
 .high-contrast .workspace-message,
 .high-contrast .workspace-meta,
 .high-contrast .workspace-place-icon,
+.high-contrast .details-icon,
 .high-contrast .sidebar-section,
 .high-contrast .empty-state-shortcut,
 .high-contrast .row-status {

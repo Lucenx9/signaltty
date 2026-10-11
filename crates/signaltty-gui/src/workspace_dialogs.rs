@@ -64,14 +64,15 @@ pub fn rename(window: &adw::ApplicationWindow, actor: IpcHandle, workspace: &Wor
     dialog.present(Some(&parent));
 }
 
-fn dialog_body(title: &str) -> (adw::Dialog, gtk4::Box, gtk4::Label, gtk4::ListBox) {
+fn dialog_body(title: &str) -> (adw::Dialog, adw::HeaderBar, gtk4::Label, gtk4::ListBox) {
     let dialog = adw::Dialog::new();
     dialog.add_css_class("signaltty-dialog");
     dialog.set_title(title);
     dialog.set_content_width(680);
     dialog.set_follows_content_size(true);
     let body = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
-    body.append(&adw::HeaderBar::new());
+    let header = adw::HeaderBar::new();
+    body.append(&header);
     let message = gtk4::Label::new(None);
     message.set_wrap(true);
     message.set_selectable(true);
@@ -94,7 +95,7 @@ fn dialog_body(title: &str) -> (adw::Dialog, gtk4::Box, gtk4::Label, gtk4::ListB
     scroll.set_child(Some(&rows));
     body.append(&scroll);
     dialog.set_child(Some(&body));
-    (dialog, body, message, rows)
+    (dialog, header, message, rows)
 }
 
 fn clear(rows: &gtk4::ListBox) {
@@ -148,6 +149,7 @@ fn worktree_remove_blocker(worktree: &Worktree) -> Option<&'static str> {
 
 struct WorktreeDialog {
     dialog: adw::Dialog,
+    compact: adw::Breakpoint,
     window: adw::ApplicationWindow,
     rows: gtk4::ListBox,
     message: gtk4::Label,
@@ -217,7 +219,16 @@ impl WorktreeDialog {
             // doubling the height of every checkout row.
             let actions = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
             actions.set_valign(gtk4::Align::Center);
-            let open = gtk4::Button::with_label("Open");
+            let open = gtk4::Button::new();
+            open.set_child(Some(
+                &adw::ButtonContent::builder()
+                    .icon_name("signaltty-folder-symbolic")
+                    .label("Open")
+                    .can_shrink(true)
+                    .build(),
+            ));
+            self.compact
+                .add_setter(&open.child().unwrap(), "label", Some(&"".to_value()));
             let open_blocker = worktree_open_blocker(&worktree);
             let open_hint = open_blocker.unwrap_or("Open this checkout as a workspace");
             open.set_sensitive(open_blocker.is_none());
@@ -237,7 +248,16 @@ impl WorktreeDialog {
                 }
             });
             actions.append(&open);
-            let remove = gtk4::Button::with_label("Remove…");
+            let remove = gtk4::Button::new();
+            remove.set_child(Some(
+                &adw::ButtonContent::builder()
+                    .icon_name("user-trash-symbolic")
+                    .label("Remove…")
+                    .can_shrink(true)
+                    .build(),
+            ));
+            self.compact
+                .add_setter(&remove.child().unwrap(), "label", Some(&"".to_value()));
             remove.add_css_class("flat");
             remove.add_css_class("worktree-remove");
             let remove_blocker = worktree_remove_blocker(&worktree);
@@ -378,18 +398,37 @@ pub fn worktrees(
     source: &str,
     on_open: impl Fn(String) + 'static,
 ) {
-    let (dialog, body, message, rows) = dialog_body("Worktrees");
-    let controls = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    controls.set_halign(gtk4::Align::End);
-    controls.set_margin_end(18);
-    let create = gtk4::Button::with_label("Create Worktree…");
+    let (dialog, header, message, rows) = dialog_body("Worktrees");
+    dialog.set_size_request(280, 200);
+    let compact = adw::Breakpoint::new(
+        adw::BreakpointCondition::parse("max-width: 480sp").expect("breakpoint"),
+    );
+    let create = gtk4::Button::new();
+    create.set_child(Some(
+        &adw::ButtonContent::builder()
+            .icon_name("list-add-symbolic")
+            .label("Create Worktree…")
+            .can_shrink(true)
+            .build(),
+    ));
+    create.set_tooltip_text(Some("Create a separate checkout and open its workspace"));
+    create.update_property(&[gtk4::accessible::Property::Label("Create Worktree")]);
     create.add_css_class("suggested-action");
-    let refresh = gtk4::Button::with_label("Refresh");
-    controls.append(&refresh);
-    controls.append(&create);
-    body.insert_child_after(&controls, Some(&message));
+    compact.add_setter(&create.child().unwrap(), "label", Some(&"".to_value()));
+    compact.add_setter(
+        &dialog.child().unwrap(),
+        "height-request",
+        Some(&480.to_value()),
+    );
+    dialog.add_breakpoint(compact.clone());
+    let refresh = gtk4::Button::from_icon_name("view-refresh-symbolic");
+    refresh.set_tooltip_text(Some("Refresh worktrees"));
+    refresh.update_property(&[gtk4::accessible::Property::Label("Refresh worktrees")]);
+    header.pack_start(&create);
+    header.pack_end(&refresh);
     let this = Rc::new(WorktreeDialog {
         dialog: dialog.clone(),
+        compact,
         window: window.clone(),
         rows,
         message,
