@@ -219,12 +219,15 @@ window {
   padding: 6px 6px 6px 8px;
 }
 
-/* Finished child task workspace: reduced opacity until hovered or selected */
-.navigation-sidebar > row.workspace-finished {
-  opacity: 0.55;
+/* Finished task workspaces recede through secondary copy, not by
+ * fading the entire row. Names, status dots and focus rings must stay
+ * readable even when a completed task is no longer urgent. */
+.navigation-sidebar > row.workspace-finished .workspace-message {
+  opacity: 0.72;
 }
-.navigation-sidebar > row.workspace-finished:hover,
-.navigation-sidebar > row.workspace-finished:selected {
+.navigation-sidebar > row.workspace-finished:hover .workspace-message,
+.navigation-sidebar > row.workspace-finished:selected .workspace-message,
+.navigation-sidebar > row.workspace-finished:focus-within .workspace-message {
   opacity: 1;
 }
 
@@ -450,6 +453,20 @@ toolbarview > .top-bar headerbar button.image-button:checked {
 .sidebar-handle:active {
   background-color: alpha(var(--accent-bg-color), 0.25);
 }
+/* A wash alone is nearly invisible on a six-pixel keyboard target. */
+.sidebar-handle:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+/* A secondary destructive action should be recognizable without
+ * competing with the primary Open button or coloring disabled rows. */
+button.worktree-remove:not(:disabled) {
+  color: var(--error-color);
+}
+button.worktree-remove:not(:disabled):hover {
+  background-color: alpha(var(--error-bg-color), 0.09);
+}
 
 /* ---- header: "needs you" button -------------------------------------- */
 
@@ -518,6 +535,9 @@ toolbarview > .top-bar headerbar button.image-button:checked {
 .pane-header {
   min-height: 34px;
   padding: 0 8px 0 12px;
+  /* A single inset hairline separates controls from terminal output
+   * without introducing a second toolbar surface. */
+  box-shadow: inset 0 -1px alpha(currentColor, 0.08);
 }
 
 .pane-title {
@@ -715,12 +735,30 @@ toolbarview > .top-bar headerbar button.image-button:checked {
   min-width: 170px;
 }
 
+/* One type hierarchy for every stage: heading first, compact total
+ * second. This is the same quiet title + counter relationship found in
+ * T3 Code's sidebar controls; use semantic Adwaita colors, not copied hex. */
+.board-column-heading {
+  margin-left: 4px;
+}
 .board-column-header {
   font-weight: 600;
   font-size: 0.88em;
-  opacity: 0.75;
-  margin-bottom: 8px;
-  margin-left: 4px;
+  color: alpha(currentColor, 0.78);
+}
+.board-column-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.75em;
+  color: alpha(currentColor, 0.78);
+  background-color: alpha(currentColor, 0.08);
+}
+.board-column-count.attention-active {
+  color: var(--warning-color);
+  background-color: alpha(var(--warning-bg-color), 0.14);
+  box-shadow: inset 0 0 0 1px alpha(var(--warning-bg-color), 0.22);
 }
 
 .board-column-list {
@@ -773,6 +811,7 @@ button.pill:active:not(:focus-visible),
 /* Focus is immediate and inset so clipped pane edges cannot hide it. */
 headerbar button:focus-visible,
 .navigation-sidebar > row:focus-visible,
+.workspace-disclosure:focus-visible,
 .row-close:focus-visible,
 .pane-actions button:focus-visible,
 .decision-options button:focus-visible,
@@ -1261,7 +1300,8 @@ button.card.appearance-card:checked.keyboard-activating {
 .high-contrast .row-status {
   color: inherit;
 }
-.high-contrast .pane-subtitle {
+.high-contrast .pane-subtitle,
+.high-contrast .navigation-sidebar > row.workspace-finished .workspace-message {
   opacity: 1;
 }
 .high-contrast .pane-header {
@@ -1288,8 +1328,13 @@ button.card.appearance-card:checked.keyboard-activating {
   color: inherit;
   opacity: 1;
 }
-.high-contrast .board-column-header {
-  opacity: 1;
+.high-contrast .board-column-header,
+.high-contrast .board-column-count {
+  color: inherit;
+}
+.high-contrast .board-column-count {
+  box-shadow: inset 0 0 0 1px currentColor;
+  background-color: transparent;
 }
 
 /* Diff tags take their foreground from rooted probes so GTK resolves the

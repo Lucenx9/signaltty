@@ -97,6 +97,34 @@ fn has_label(widget: &gtk4::Widget, text: &str) -> bool {
     false
 }
 
+// Verify the visible stage counter belongs to its heading rather than
+// accidentally matching an unrelated task's numeric label.
+fn has_board_column_count(widget: &gtk4::Widget, title: &str, count: &str) -> bool {
+    if widget.has_css_class("board-column-heading") {
+        if let Some(heading) = widget.first_child() {
+            if heading
+                .downcast_ref::<gtk4::Label>()
+                .is_some_and(|label| label.text() == title)
+            {
+                return heading
+                    .next_sibling()
+                    .and_then(|w| w.downcast::<gtk4::Label>().ok())
+                    .is_some_and(|label| {
+                        label.has_css_class("board-column-count") && label.text() == count
+                    });
+            }
+        }
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if has_board_column_count(&current, title, count) {
+            return true;
+        }
+        child = current.next_sibling();
+    }
+    false
+}
+
 fn button_with_tooltip(widget: &gtk4::Widget, tooltip: &str) -> Option<gtk4::Button> {
     if let Some(button) = widget.downcast_ref::<gtk4::Button>() {
         if button.tooltip_text().as_deref() == Some(tooltip) {
@@ -2714,10 +2742,22 @@ fn task_board_shows_columns_and_navigates_to_pane() {
         style.set_color_scheme(scheme);
         gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-board", None).unwrap();
         let dialog = app.window.visible_dialog().unwrap();
-        wait_ui(|| has_label(&dialog.child().unwrap(), "Working · 1"));
-        assert!(has_label(&dialog.child().unwrap(), "Needs you · 1"));
-        assert!(has_label(&dialog.child().unwrap(), "In review · 1"));
-        assert!(has_label(&dialog.child().unwrap(), "Done · 1"));
+        wait_ui(|| has_board_column_count(&dialog.child().unwrap(), "Working", "1"));
+        assert!(has_board_column_count(
+            &dialog.child().unwrap(),
+            "Needs you",
+            "1"
+        ));
+        assert!(has_board_column_count(
+            &dialog.child().unwrap(),
+            "In review",
+            "1"
+        ));
+        assert!(has_board_column_count(
+            &dialog.child().unwrap(),
+            "Done",
+            "1"
+        ));
         assert!(has_label(&dialog.child().unwrap(), "Implement Task Board"));
         assert!(has_label(
             &dialog.child().unwrap(),
@@ -3211,7 +3251,7 @@ fn task_board_explains_truncated_done_history() {
             .hadjustment()
             .set_value(scroll.hadjustment().upper() - scroll.hadjustment().page_size());
         capture_workflow(&window, &format!("board-history-{name}"));
-        assert!(has_label(&done, &format!("Done · {count}")));
+        assert!(has_board_column_count(&done, "Done", &count.to_string()));
         let list = find_widget::<gtk4::ListBox>(&done).unwrap();
         assert!(list.row_at_index(19).is_some() && list.row_at_index(20).is_none());
         assert!(has_label(
