@@ -226,10 +226,11 @@ fn parse_progress(payload: &[u8]) -> Option<String> {
         return None;
     }
     if let Some(value) = parts.next() {
-        if !value.is_empty() && value != "-1" {
-            if !value.bytes().all(|b| b.is_ascii_digit()) || value.parse::<u8>().ok()? > 100 {
-                return None;
-            }
+        if !value.is_empty()
+            && value != "-1"
+            && (!value.bytes().all(|b| b.is_ascii_digit()) || value.parse::<u8>().ok()? > 100)
+        {
+            return None;
         }
     }
     if parts.next().is_some() {

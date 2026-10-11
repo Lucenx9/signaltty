@@ -32,7 +32,9 @@ discovery, user replacement rules and Store lifecycle transitions.
 Other agents can use this region in future manifests. This PR adds Grok only.
 No native Grok hooks or resume installer is implied. Progress is best-effort
 retained terminal evidence, not a completion authority. Programs started within
-an existing shell use the existing process refresh/scoping behavior.
+an existing shell use the existing process refresh/scoping behavior. They share
+retained OSC evidence until overwritten. Foreground-generation reset within one
+PTY requires a separate process-identity change and is outside this PR.
 
 Sources: [herdr Grok manifest](https://github.com/herdrdev/herdr/blob/2563803/src/detect/manifests/grok.toml),
 [ConEmu OSC reference](https://conemu.github.io/en/AnsiEscapeCodes.html#ConEmu_specific_OSC).

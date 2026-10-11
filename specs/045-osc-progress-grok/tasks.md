@@ -8,7 +8,7 @@
 - [x] T003 [US1] Red/green scanner progress, split boundaries and malformed reservation in crates/signaltty-term/src/osc.rs.
 - [x] T004 [US1] Red/green explicit osc_progress region and absent evidence in crates/signaltty-agent/src/screen.rs; migrate classifier callers.
 - [x] T005 [US1] Red/green real PTY progress retention/no notifications/explain in crates/signaltty-server/tests/screen_detection.rs and src/pty.rs, src/router.rs.
-- [x] T006 [US1] Verify reset/exit and hook authority through crates/signaltty-server/tests/screen_detection.rs.
+- [x] T006 [US1] Verify managed PTY reset/exit and hook authority through crates/signaltty-server/tests/screen_detection.rs.
 
 ## US2 — Grok
 - [x] T007 [US2] Red/green Grok scoped classification and launcher discovery in crates/signaltty-agent/src/bundled.rs and screen/grok.toml.
