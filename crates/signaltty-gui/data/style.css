@@ -213,6 +213,12 @@ window {
 .sidebar-command-launcher:active {
   background-color: alpha(currentColor, 0.10);
 }
+/* AdwButtonContent labels are bold in Adwaita; these rows are navigation,
+ * not primary actions, so they keep regular weight. */
+.sidebar-command-launcher label,
+.sidebar-nav-button label {
+  font-weight: 400;
+}
 .sidebar-command-launcher label {
   font-size: 0.88em;
   color: alpha(currentColor, 0.72);
@@ -274,6 +280,9 @@ toolbarview > .top-bar headerbar button.header-tool-button {
   font-size: 0.9em;
   background-color: alpha(currentColor, 0.035);
   box-shadow: inset 0 0 0 1px alpha(currentColor, 0.09);
+}
+toolbarview > .top-bar headerbar button.header-tool-button label {
+  font-weight: 500;
 }
 toolbarview > .top-bar headerbar button.header-tool-button:hover,
 toolbarview > .top-bar headerbar button.header-tool-button:checked {
