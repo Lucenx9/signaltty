@@ -20,7 +20,7 @@
 - [x] T011 Add native sandbox/bridge QA in scripts/qa-harness-socket.py.
 - [x] T012 Record ADR and harness support matrix in docs/07-agents.md and docs/08-ipc.md.
 - [x] T013 Run two-axis code review and full verification; record evidence in verification.md.
-- [ ] T014 Commit, push, open and link PR; record handoff.md.
+- [x] T014 Commit, push, open and link PR; record handoff.md.
 
 Dependencies: setup → US1 → US2 → delivery. Independent documentation research
 can proceed while tests build; no shared-file parallel writes are needed.

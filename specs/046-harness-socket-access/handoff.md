@@ -26,6 +26,10 @@ None in repository gates. No authenticated provider tool turn; other-harness
 runtime boundaries vary and whole-process sandboxes need host deployment.
 Native GUI accessibility/compositor behavior was not changed or re-certified.
 
+Delivery:
+PR https://github.com/Lucenx9/signaltty/pull/95 opened against main and linked
+in T3 after the Gemini review and full verification. Branch pushed.
+
 Next concrete step:
-Push this branch, open the PR against main and link it in T3. Merge requires a
-new instruction; the user authorized publishing this PR.
+Review the PR/CI results. The requested publication is complete; merge is outside
+this new PR instruction.
