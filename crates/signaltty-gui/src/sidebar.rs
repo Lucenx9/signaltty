@@ -70,6 +70,7 @@ pub struct WsSummary {
     pub attention_since: Option<DateTime<Utc>>,
     /// Branch, or the directory when not a git repo.
     pub place: String,
+    pub place_is_branch: bool,
     /// Agent display names, comma-joined; empty for plain shells.
     pub agents: String,
     pub last_activity: Option<DateTime<Utc>>,
@@ -118,6 +119,7 @@ pub fn summarize(ws: &Workspace, panes: &[Pane]) -> WsSummary {
             .min(),
         last_run_secs: lead.and_then(|p| p.last_run_secs),
         place: ws.git.branch.clone().unwrap_or_else(|| tilde(&ws.cwd)),
+        place_is_branch: ws.git.branch.is_some(),
         agents: agents.join(", "),
         last_activity: panes.iter().map(|p| p.last_activity_at).max(),
     }
@@ -138,6 +140,12 @@ impl WsSummary {
                 )
             })
             .unwrap_or_else(|| status::lifecycle_label(self.lifecycle).to_string())
+    }
+
+    fn headline_visible(&self, headline: &str) -> bool {
+        self.message.is_some()
+            || status::row_status(self.lifecycle, self.attention).label
+                != Some(headline.trim_end_matches('…'))
     }
 }
 
@@ -413,6 +421,7 @@ struct Row {
     message: gtk4::Label,
     activity: gtk4::Box,
     place: gtk4::Label,
+    place_icon: gtk4::Image,
     agents: gtk4::Label,
     metadata: gtk4::Box,
     disclosure: gtk4::Button,
@@ -465,6 +474,10 @@ impl Row {
         let place = label(&["workspace-meta"]);
         place.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
         place.set_hexpand(true);
+        let place_icon = gtk4::Image::new();
+        place_icon.add_css_class("workspace-place-icon");
+        place_icon.set_pixel_size(14);
+        place_icon.set_accessible_role(gtk4::AccessibleRole::Presentation);
         let agents = label(&["workspace-meta"]);
         agents.set_halign(gtk4::Align::End);
         let mark = mark();
@@ -514,7 +527,11 @@ impl Row {
         grid.attach(&activity, 0, 1, 3, 1);
         let metadata = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         metadata.append(&disclosure);
-        metadata.append(&place);
+        let location = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        location.set_hexpand(true);
+        location.append(&place_icon);
+        location.append(&place);
+        metadata.append(&location);
         metadata.append(&agents);
         grid.attach(&metadata, 0, 2, 3, 1);
 
@@ -589,6 +606,7 @@ impl Row {
             message,
             activity,
             place,
+            place_icon,
             agents,
             metadata,
             disclosure,
@@ -664,6 +682,12 @@ impl Row {
         self.row
             .update_property(&[gtk4::accessible::Property::Description(naming_hint)]);
         set_mark(&self.mark, &self.id, &s.name);
+        self.place_icon.set_icon_name(Some(if s.place_is_branch {
+            "signaltty-branch-symbolic"
+        } else {
+            "folder-symbolic"
+        }));
+        self.place_icon.set_visible(!s.place.is_empty());
         self.place.set_text(&s.place);
         self.place.set_tooltip_text(Some(&s.place));
         self.agents.set_text(match s.naming {
@@ -775,9 +799,9 @@ impl Row {
         .join(", ");
         self.row
             .update_property(&[gtk4::accessible::Property::Label(&description)]);
-        self.message.set_visible(
-            status::row_status(s.lifecycle, s.attention).label != Some(headline.as_str()),
-        );
+        let show_headline = s.headline_visible(&headline);
+        self.message.set_visible(show_headline);
+        self.status.widget.set_hexpand(!show_headline);
         if self.message.text() != headline {
             self.message.set_text(&headline);
             self.message.set_tooltip_text(Some(&headline));
@@ -1149,6 +1173,7 @@ mod tests {
             attention_since: None,
             last_run_secs: None,
             place: String::new(),
+            place_is_branch: false,
             agents: String::new(),
             last_activity: minutes_ago.map(|m| {
                 Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap() - chrono::Duration::minutes(m)
@@ -1358,6 +1383,45 @@ mod tests {
     }
 
     #[test]
+    fn generated_bare_headlines_do_not_repeat_status_but_messages_and_durations_remain() {
+        let now = Utc::now();
+        let mut s = summary("ws", Lifecycle::Working, Attention::None, None);
+        assert!(!s.headline_visible(&s.headline(now)), "bare Working");
+        s.lifecycle_since = Some(now - chrono::Duration::seconds(10));
+        assert_eq!(s.headline(now), "Working…");
+        assert!(!s.headline_visible(&s.headline(now)), "generated ellipsis");
+        s.lifecycle_since = Some(now - chrono::Duration::minutes(2));
+        assert!(s.headline_visible(&s.headline(now)), "duration is useful");
+        for message in ["Working", "Working…", "Working...", "Running tests"] {
+            s.message = Some(message.into());
+            assert!(s.headline_visible(&s.headline(now)), "explicit {message}");
+        }
+        s.message = None;
+        s.lifecycle_since = None;
+        s.attention = Attention::PermissionRequired;
+        assert!(
+            s.headline_visible(&s.headline(now)),
+            "approval differs from work"
+        );
+        s.attention = Attention::None;
+        s.lifecycle = Lifecycle::Done;
+        assert!(
+            s.headline_visible(&s.headline(now)),
+            "seen Done has time in status"
+        );
+        s.attention = Attention::Unread;
+        assert!(
+            !s.headline_visible(&s.headline(now)),
+            "unread Done speaks once"
+        );
+        s.message = Some("Done".into());
+        assert!(
+            s.headline_visible(&s.headline(now)),
+            "explicit completion message"
+        );
+    }
+
+    #[test]
     fn headline_prefers_message_then_run_state_then_lifecycle() {
         let now = Utc::now();
         let mut s = summary("ws", Lifecycle::Done, Attention::None, Some(0));
@@ -1366,6 +1430,57 @@ mod tests {
         assert_eq!(s.headline(now), "Worked for 2m");
         s.message = Some("Bash(cargo test)".into());
         assert_eq!(s.headline(now), "Bash(cargo test)");
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn row_refresh_keeps_status_and_metadata_identity_when_headline_changes() {
+        gtk4::init().unwrap();
+        let sidebar = Sidebar::new();
+        let mut value = summary("ws", Lifecycle::Working, Attention::None, None);
+        value.place = "feature/sidebar-refinement".into();
+        value.place_is_branch = true;
+        value.lifecycle_since = Some(Utc::now());
+        sidebar.update(vec![value.clone()]);
+        let row = sidebar.rows.borrow()[0].row.clone();
+        let icon = sidebar.rows.borrow()[0].place_icon.clone();
+        {
+            let rows = sidebar.rows.borrow();
+            assert!(!rows[0].message.get_visible());
+            assert!(rows[0].activity.get_visible());
+            assert!(rows[0].status.widget.get_visible());
+            assert!(rows[0].status.widget.hexpands());
+            assert_eq!(
+                icon.icon_name().as_deref(),
+                Some("signaltty-branch-symbolic")
+            );
+            assert!(icon.get_visible());
+            assert_eq!(icon.accessible_role(), gtk4::AccessibleRole::Presentation);
+        }
+        value.message = Some("Working…".into());
+        sidebar.update(vec![value.clone()]);
+        assert!(sidebar.rows.borrow()[0].message.get_visible());
+        assert!(!sidebar.rows.borrow()[0].status.widget.hexpands());
+        value.message = None;
+        value.place_is_branch = false;
+        value.place = "/tmp/project".into();
+        sidebar.update(vec![value.clone()]);
+        assert_eq!(sidebar.rows.borrow()[0].row, row);
+        assert_eq!(sidebar.rows.borrow()[0].place_icon, icon);
+        assert!(!sidebar.rows.borrow()[0].message.get_visible());
+        assert_eq!(icon.icon_name().as_deref(), Some("folder-symbolic"));
+        assert_eq!(
+            sidebar.rows.borrow()[0].place.tooltip_text().as_deref(),
+            Some("/tmp/project")
+        );
+        value.place.clear();
+        sidebar.update(vec![value]);
+        assert!(!icon.get_visible());
+        let mut rows = sidebar.rows.borrow_mut();
+        rows[0].set_child_mode(true);
+        assert!(!rows[0].metadata.get_visible());
+        rows[0].set_child_mode(false);
+        assert!(rows[0].metadata.get_visible());
     }
 
     #[test]

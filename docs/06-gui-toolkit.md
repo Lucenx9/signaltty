@@ -410,8 +410,8 @@ activating its pane. `SIGNALTTY_UI_EVIDENCE` exports the native renders.
 
 Workspace panel titles occupy the name row with the project mark and close target.
 Status belongs to the activity line, keeping urgency visible without squeezing a
-long AI title. When headline and status repeat the same word, only the status is
-shown. Quiet shell headlines still collapse. Root metadata and child disclosure
+long AI title. When a generated headline only repeats the status word, only the status is
+shown. Explicit messages and timed labels remain. Quiet shell headlines still collapse. Root metadata and child disclosure
 stay unchanged; full names remain available in tooltips and accessible labels.
 
 New Workspace defaults to Automatic name for installed Codex/Claude commands,
@@ -421,3 +421,12 @@ and tooltip explain first-message generation and use of the agent account.
 
 Workspace task chips occupy a separate optional line below headline/status, so
 large-text worker labels do not compete with attention pills.
+
+
+Workspace navigation uses the same 8px row radius as its search and footer
+controls. Selection has a quiet neutral fill and leading marker; keyboard focus
+keeps its distinct inset outline, and high contrast keeps a selection perimeter.
+Branch/directory metadata uses a decorative symbolic icon with the full value in
+its tooltip. Empty and child metadata hide the icon. Generated bare Working…
+headlines no longer repeat the status label; explicit agent messages and timed
+run labels remain. Refresh keeps the existing row and metadata image widgets.
