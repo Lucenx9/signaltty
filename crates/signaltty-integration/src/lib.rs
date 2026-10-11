@@ -1,4 +1,5 @@
 //! OS-facing hook configuration shared by CLI and server (ADR-0013).
+mod mcp;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -50,6 +51,8 @@ pub struct Report {
     pub changed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<mcp::Report>,
 }
 
 #[derive(Clone)]
@@ -57,6 +60,7 @@ pub struct Hooks {
     home: PathBuf,
     reporter: PathBuf,
     claude_home: PathBuf,
+    claude_mcp: PathBuf,
     codex_home: PathBuf,
     opencode_home: PathBuf,
 }
@@ -65,6 +69,7 @@ impl Hooks {
     /// Explicit roots are useful for isolated installation and tests.
     pub fn new(home: PathBuf, config_home: PathBuf, reporter: PathBuf) -> Self {
         Self {
+            claude_mcp: home.join(".claude.json"),
             claude_home: home.join(".claude"),
             codex_home: home.join(".codex"),
             opencode_home: config_home.join("opencode"),
@@ -94,6 +99,7 @@ impl Hooks {
         let mut hooks = Self::new(root, config, reporter);
         if home.is_none() {
             if let Some(p) = var("CLAUDE_CONFIG_DIR") {
+                hooks.claude_mcp = p.join(".claude.json");
                 hooks.claude_home = p;
             }
             if let Some(p) = var("CODEX_HOME") {
@@ -117,6 +123,7 @@ impl Hooks {
     ) -> Self {
         let var = |name: &str| env.get(name).filter(|v| !v.is_empty()).map(PathBuf::from);
         if let Some(p) = var("CLAUDE_CONFIG_DIR") {
+            self.claude_mcp = p.join(".claude.json");
             self.claude_home = p;
         }
         if let Some(p) = var("CODEX_HOME") {
@@ -128,6 +135,7 @@ impl Hooks {
         for root in [
             &mut self.home,
             &mut self.claude_home,
+            &mut self.claude_mcp,
             &mut self.codex_home,
             &mut self.opencode_home,
         ] {
@@ -155,11 +163,32 @@ impl Hooks {
                 self.reporter.display()
             )));
         }
-        self.update(agent, false)
+        let mut report = self.update(agent, false)?;
+        let mcp = self.update_mcp(agent, false)?;
+        report.changed |= mcp.changed;
+        // Launch-time setup runs on every agent spawn; only speak up when the
+        // registration was written, like the Codex hooks notice.
+        if mcp.changed {
+            let notice = if mcp.disabled {
+                "Signaltty MCP is disabled by user configuration; its registration was refreshed and left disabled."
+            } else {
+                "Signaltty MCP provides workspace and worker tools without enabling shell network access. Review/approve it in your harness's MCP settings; existing sessions may need a restart."
+            };
+            report.notice = Some(match report.notice {
+                Some(previous) => format!("{previous} {notice}"),
+                None => notice.into(),
+            });
+        }
+        report.mcp = Some(mcp);
+        Ok(report)
     }
 
     pub fn uninstall(&self, agent: &str) -> Result<Report, Error> {
-        self.update(agent, true)
+        let mut report = self.update(agent, true)?;
+        let mcp = self.update_mcp(agent, true)?;
+        report.changed |= mcp.changed;
+        report.mcp = Some(mcp);
+        Ok(report)
     }
 
     pub fn installed(&self, agent: &str) -> Result<bool, Error> {
@@ -323,7 +352,7 @@ impl Hooks {
 }
 
 fn report(agent: &str, file: PathBuf, changed: bool, installing: bool) -> Report {
-    Report { agent: agent.into(), file, changed,
+    Report { agent: agent.into(), file, changed, mcp: None,
         notice: (agent == "codex" && installing && changed).then(|| "Codex: review and trust the Signaltty hooks in /hooks before status events can arrive. In an ordinary shell, launch codex --no-daemon so hooks belong to this terminal.".into()) }
 }
 

@@ -55,3 +55,17 @@ numeric holes are valid. Incomplete replay sends no prefix and closes; open a fr
 subscription before fetching authoritative snapshots. State-event journal writes are
 synced and fail closed; snapshot durability remains separate. Uncertain legacy disk
 history requires snapshots; the new runtime ring can prove recent intervals.
+
+## Harness sandbox workspace access
+
+`cargo test -p signaltty-server --test mcp_bridge` drives the real CLI's stdio
+handshake, discovery, hosting context, worker PTY/output, malformed requests,
+missing/stale context, stream exclusions and oversized input. Configuration tests
+in signaltty-integration cover four provider roots, foreign entries, disables,
+idempotence, atomic writers and owned cleanup.
+`python3 scripts/qa-harness-socket.py` uses installed Codex's actual Linux
+workspace-write sandbox and an isolated server. It proves direct connect stays
+EPERM before/after a host-owned bridge starts a worker, error guidance is usable,
+and native Codex accepts the registration. It performs no authenticated model
+turn and does not prove every provider's runtime MCP child boundary. See the
+support/proof matrix in docs/07-agents.md.

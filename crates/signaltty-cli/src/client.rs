@@ -31,7 +31,14 @@ impl Client {
     pub async fn connect(socket: &std::path::Path) -> Result<Client, CliError> {
         let stream = UnixStream::connect(socket)
             .await
-            .map_err(|e| CliError::Connect(socket.display().to_string(), e.to_string()))?;
+            .map_err(|e| {
+                let message = if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    format!("{e}. The OS denied socket access (permissions or a harness sandbox). Inside an agent, use the Signaltty MCP tools signaltty_context/signaltty_call; configure them with `signaltty integration install <agent>` outside the restricted shell and restart the harness. Changing file mode alone does not fix a sandbox denial.")
+                } else {
+                    e.to_string()
+                };
+                CliError::Connect(socket.display().to_string(), message)
+            })?;
         let (read_half, writer) = stream.into_split();
         Ok(Client {
             reader: BufReader::new(read_half),

@@ -42,6 +42,115 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn mcp_install_preserves_other_tools_and_sandbox_settings() {
+    let f = Fixture::new();
+    let config = f.home.join(".codex/config.toml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let original = "# keep this comment\nsandbox_mode = \"workspace-write\"\n[mcp_servers.other]\ncommand = \"other\"\n";
+    fs::write(&config, original).unwrap();
+    f.hooks.install("codex").unwrap();
+    let installed = fs::read_to_string(&config).unwrap();
+    assert!(installed.contains("[mcp_servers.signaltty]"));
+    assert!(installed.starts_with(original));
+    assert!(installed.contains("SIGNALTTY_SOCKET"));
+    assert!(!installed.contains("network_access"));
+    assert!(!f.hooks.install("codex").unwrap().changed);
+    f.hooks.uninstall("codex").unwrap();
+    assert_eq!(fs::read_to_string(config).unwrap(), original);
+}
+
+#[test]
+fn mcp_json_harnesses_preserve_foreign_entries_and_only_remove_their_bridge() {
+    let f = Fixture::new();
+    for agent in ["claude", "cursor", "opencode"] {
+        let path = f.hooks.mcp_file_for(agent).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let key = if agent == "opencode" {
+            "mcp"
+        } else {
+            "mcpServers"
+        };
+        let original = json!({key:{"other":{"command":"other"}},"permissions":{"deny":["Shell(*)"]},"disabledMcpServers":["signaltty"]});
+        fs::write(&path, original.to_string()).unwrap();
+        f.hooks.install(agent).unwrap();
+        let installed: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(installed[key]["other"], original[key]["other"]);
+        assert_eq!(installed["permissions"], original["permissions"]);
+        assert_eq!(
+            installed["disabledMcpServers"],
+            original["disabledMcpServers"]
+        );
+        assert!(f.hooks.mcp_installed(agent).unwrap());
+        assert!(!f.hooks.install(agent).unwrap().changed);
+        f.hooks.uninstall(agent).unwrap();
+        let removed: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(removed, original);
+    }
+}
+
+#[test]
+fn mcp_foreign_and_disabled_entries_are_never_replaced_or_enabled() {
+    let f = Fixture::new();
+    for agent in ["codex", "claude", "cursor", "opencode"] {
+        f.hooks.install(agent).unwrap();
+        let path = f.hooks.mcp_file_for(agent).unwrap();
+        let mut text = fs::read_to_string(&path).unwrap();
+        if agent == "codex" {
+            text.push_str("enabled = false\n");
+        } else {
+            let mut root: Value = serde_json::from_str(&text).unwrap();
+            let key = if agent == "opencode" {
+                "mcp"
+            } else {
+                "mcpServers"
+            };
+            root[key]["signaltty"]["enabled"] = json!(false);
+            text = root.to_string();
+        }
+        fs::write(&path, &text).unwrap();
+        let report = f.hooks.install(agent).unwrap();
+        assert!(report.mcp.unwrap().disabled);
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        let foreign = if agent == "codex" {
+            "[mcp_servers.signaltty]\ncommand = \"someone-else\"\n".into()
+        } else {
+            json!({if agent == "opencode" { "mcp" } else { "mcpServers" }:{"signaltty":{"command":"someone-else"}}}).to_string()
+        };
+        fs::write(&path, &foreign).unwrap();
+        assert!(f
+            .hooks
+            .install(agent)
+            .unwrap_err()
+            .to_string()
+            .contains("not replaced"));
+        f.hooks.uninstall(agent).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), foreign);
+    }
+}
+
+#[test]
+fn mcp_honors_relative_provider_root_overrides() {
+    let f = Fixture::new();
+    let hooks = f.hooks.clone().with_overrides(
+        &std::collections::HashMap::from([
+            ("CODEX_HOME".into(), "codex-root".into()),
+            ("CLAUDE_CONFIG_DIR".into(), "claude-root".into()),
+            ("OPENCODE_CONFIG_DIR".into(), "opencode-root".into()),
+        ]),
+        &f.home,
+    );
+    for (agent, relative) in [
+        ("codex", "codex-root/config.toml"),
+        ("claude", "claude-root/.claude.json"),
+        ("opencode", "opencode-root/opencode.json"),
+    ] {
+        hooks.install(agent).unwrap();
+        assert_eq!(hooks.mcp_file_for(agent).unwrap(), f.home.join(relative));
+        assert!(hooks.mcp_installed(agent).unwrap());
+    }
+}
+
+#[test]
 fn malformed_and_wrong_shape_are_never_rewritten() {
     let f = Fixture::new();
     for text in [
@@ -479,4 +588,95 @@ fn empty_provider_overrides_keep_the_default_roots() {
         hooks.file_for("opencode").unwrap(),
         f.home.join("config/opencode/plugins/signaltty.js")
     );
+}
+
+#[test]
+fn malformed_or_nonregular_mcp_configuration_is_not_rewritten() {
+    use nix::sys::stat::Mode;
+    use nix::unistd::mkfifo;
+    for agent in ["codex", "claude", "cursor", "opencode"] {
+        let f = Fixture::new();
+        let file = f.hooks.mcp_file_for(agent).unwrap();
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "invalid configuration {").unwrap();
+        let before = fs::read(&file).unwrap();
+        assert!(f.hooks.install(agent).is_err());
+        assert_eq!(fs::read(&file).unwrap(), before);
+        fs::remove_file(&file).unwrap();
+        mkfifo(&file, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+        let start = std::time::Instant::now();
+        assert!(f
+            .hooks
+            .install(agent)
+            .unwrap_err()
+            .to_string()
+            .contains("regular file"));
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+}
+
+#[test]
+fn mcp_notice_is_only_reported_when_the_registration_changes() {
+    let f = Fixture::new();
+    for agent in ["codex", "claude", "cursor", "opencode"] {
+        let first = f.hooks.install(agent).unwrap();
+        assert!(first.mcp.unwrap().changed);
+        assert!(first.notice.unwrap().contains("Signaltty MCP"));
+        let again = f.hooks.install(agent).unwrap();
+        assert!(!again.changed);
+        assert_eq!(again.notice, None, "{agent}: unchanged launches stay quiet");
+    }
+}
+
+#[test]
+fn mcp_disabled_registration_is_refreshed_but_stays_disabled() {
+    let f = Fixture::new();
+    for agent in ["codex", "claude", "cursor", "opencode"] {
+        let path = f.hooks.mcp_file_for(agent).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let stale = "/old/location/signaltty";
+        if agent == "codex" {
+            fs::write(
+                &path,
+                format!("[mcp_servers.signaltty]\ncommand = \"{stale}\"\nargs = [\"mcp\", \"serve\", \"--managed-registration\"]\nenabled = false\n"),
+            )
+            .unwrap();
+        } else if agent == "opencode" {
+            fs::write(
+                &path,
+                json!({"mcp":{"signaltty":{"type":"local","command":[stale,"mcp","serve","--managed-registration"],"enabled":false}}}).to_string(),
+            )
+            .unwrap();
+        } else {
+            fs::write(
+                &path,
+                json!({"mcpServers":{"signaltty":{"type":"stdio","command":stale,"args":["mcp","serve","--managed-registration"],"disabled":true}}}).to_string(),
+            )
+            .unwrap();
+        }
+        let report = f.hooks.install(agent).unwrap();
+        let mcp = report.mcp.unwrap();
+        assert!(mcp.disabled && mcp.changed, "{agent}");
+        assert!(report.notice.unwrap().contains("left disabled"));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains(stale), "{agent}: {text}");
+        if agent == "codex" {
+            assert!(text.contains("enabled = false"), "{text}");
+            assert!(text.contains("SIGNALTTY_PANE"), "{text}");
+        } else {
+            let root: Value = serde_json::from_str(&text).unwrap();
+            let entry = if agent == "opencode" {
+                &root["mcp"]["signaltty"]
+            } else {
+                &root["mcpServers"]["signaltty"]
+            };
+            assert!(
+                entry["enabled"] == false || entry["disabled"] == true,
+                "{entry}"
+            );
+        }
+        let again = f.hooks.install(agent).unwrap();
+        assert!(!again.changed && again.mcp.unwrap().disabled, "{agent}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
 }

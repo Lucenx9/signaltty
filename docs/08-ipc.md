@@ -483,3 +483,20 @@ process directory changes therefore cannot redirect a session resume.
 
 Legacy snapshots with a relative original executable keep the adapter command:
 they do not persist a reliable initial directory to anchor that relative path.
+
+## Stdio MCP adapter
+
+`signaltty mcp serve` exposes `signaltty_context` (hosting pane and API schema)
+and `signaltty_call {method, params?}` using existing request/response methods.
+It is newline-delimited JSON-RPC over stdio, with MCP initialization and tool
+listing. It adds no IPC method. Shell socket permission errors direct agents to
+this harness-owned transport; provider tool approvals still apply.
+
+Explicit SIGNALTTY_SOCKET/PANE are required, with no default socket fallback.
+Each tool uses a fresh IPC connection and validates the hosting pane. Subscribe,
+attach/detach and server shutdown are excluded. Input is capped at 1 MiB and
+calls at 60 seconds; timeout does not promise cancellation of an applied mutation.
+See the [stdio contract](../specs/047-harness-socket-access/contracts/stdio.md)
+and [harness matrix](07-agents.md#workspace-access-from-sandboxed-harnesses).
+
+Native approval answers and provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.
