@@ -432,15 +432,10 @@ async fn run_hook(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let mut drain = tokio::spawn(async move {
-        async fn read_all(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> Vec<u8> {
-            use tokio::io::AsyncReadExt;
-            let mut buf = Vec::new();
-            if let Some(mut p) = pipe {
-                p.read_to_end(&mut buf).await.ok();
-            }
-            buf
-        }
-        tokio::join!(read_all(stdout), read_all(stderr))
+        tokio::join!(
+            drain_capped(stdout, 0),
+            drain_capped(stderr, STDERR_CAPTURE_BYTES)
+        )
     });
     let deadline = tokio::time::Instant::now() + timeout;
     let status = match tokio::time::timeout_at(deadline, child.wait()).await {
@@ -476,6 +471,32 @@ async fn run_hook(
         let stderr = String::from_utf8_lossy(&err_bytes);
         Err(fail(format!("exit {status}: {}", stderr.trim())))
     }
+}
+
+/// Stderr bytes kept for a failed hook's `last_error` (itself cut to 500
+/// chars). Stdout is never kept.
+const STDERR_CAPTURE_BYTES: usize = 4096;
+
+/// Read `pipe` to EOF so the hook never blocks on a full pipe, keeping only
+/// the first `cap` bytes: a chatty hook must not grow server memory for
+/// its whole timeout.
+async fn drain_capped(pipe: Option<impl tokio::io::AsyncRead + Unpin>, cap: usize) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut kept = Vec::new();
+    let Some(mut pipe) = pipe else {
+        return kept;
+    };
+    let mut chunk = [0u8; 8192];
+    loop {
+        match pipe.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let room = cap.saturating_sub(kept.len());
+                kept.extend_from_slice(&chunk[..n.min(room)]);
+            }
+        }
+    }
+    kept
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -645,6 +666,20 @@ run = ["./fanout.sh"]
         )
         .await;
         assert_eq!(r, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn hook_output_is_drained_but_only_a_bounded_prefix_is_kept() {
+        // A chatty hook (`yes`, a verbose tool) must not grow server memory
+        // for its whole timeout: every byte is read, few are kept.
+        let big = vec![b'x'; 4 * 1024 * 1024];
+        let mut pipe: &[u8] = &big;
+        let kept = drain_capped(Some(&mut pipe), STDERR_CAPTURE_BYTES).await;
+        assert_eq!(kept.len(), STDERR_CAPTURE_BYTES);
+        assert!(pipe.is_empty(), "the pipe is drained to EOF");
+        let mut pipe: &[u8] = &big;
+        assert!(drain_capped(Some(&mut pipe), 0).await.is_empty());
+        assert!(pipe.is_empty());
     }
 
     #[tokio::test]
