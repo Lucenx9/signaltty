@@ -31,7 +31,7 @@ whole-process sandboxes can enclose local MCP too.
 ## Standards review
 
 Parallel code-review reviewer found one P1: `decision.answer` could resolve a
-native provider approval and violated ADR-0031's boundary. Fixed by excluding
+native provider approval and violated ADR-0032's boundary. Fixed by excluding
 it from discovery and execution. Red test observed it in discovery; green test
 checks absence and rejection. Reviewer rechecked f1eb7a0 at c501ee9: **0 remaining
 Standards findings**, no baseline smell requiring changes.

@@ -2,7 +2,7 @@
 
 ## Setup and foundations
 - [x] T001 Reproduce the native Codex socket denial and record sources in research.md.
-- [x] T002 Specify/clarify and plan feature in specs/046-harness-socket-access/.
+- [x] T002 Specify/clarify and plan feature in specs/047-harness-socket-access/.
 
 ## US1: workspace access
 - [x] T003 [US1] Write failing real CLI/IPC bridge test in crates/signaltty-server/tests/mcp_bridge.rs.

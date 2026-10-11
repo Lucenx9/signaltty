@@ -418,7 +418,7 @@ Codex forwards the two context variables explicitly; the other clients inherit
 the launcher environment. Foreign registrations, disables and trust choices
 are preserved. Project/profile/admin configuration can override global entries;
 OpenCode's `opencode.jsonc` is left intact and can override `opencode.json`.
-See [ADR-0031](adr/0031-harness-owned-stdio-mcp.md).
+See [ADR-0032](adr/0032-harness-owned-stdio-mcp.md).
 
 ### Other bundled harnesses: audited support, 2026-10-11
 

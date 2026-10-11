@@ -1,4 +1,4 @@
-# ADR-0031: Harness-owned stdio MCP for workspace access
+# ADR-0032: Harness-owned stdio MCP for workspace access
 
 Status: accepted. Date: 2026-10-11.
 
@@ -41,7 +41,7 @@ host deployment; this bridge does not defeat that sandbox.
 
 ## Evidence
 
-See [feature research](../../specs/046-harness-socket-access/research.md), the
+See [feature research](../../specs/047-harness-socket-access/research.md), the
 real CLI/server `mcp_bridge` integration tests, and `qa-harness-socket.py`.
 The native QA does not perform an authenticated model turn.
 
