@@ -516,9 +516,12 @@ impl Board {
         for (col, view) in self.columns.iter().zip(board) {
             col.header.set_text(view.column.title());
             col.count.set_text(&view.total_count.to_string());
-            col.count.update_property(&[gtk4::accessible::Property::Label(
-                &format!("{} tasks in {}", view.total_count, view.column.title()),
-            )]);
+            col.count
+                .update_property(&[gtk4::accessible::Property::Label(&format!(
+                    "{} tasks in {}",
+                    view.total_count,
+                    view.column.title()
+                ))]);
             if view.column == BoardColumn::NeedsYou && view.total_count > 0 {
                 col.count.add_css_class("attention-active");
             } else {
