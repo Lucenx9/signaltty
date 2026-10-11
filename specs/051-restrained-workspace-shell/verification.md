@@ -17,3 +17,7 @@ Standards axis: zero remaining source or visual findings. Spec axis: zero remain
 The first shell gate was intentionally stopped after the context menu/confirmation additions; it is not passing proof. Final gate ran on the complete clean revision. Subsequent commits contain evidence/docs only.
 
 Limits: desktop screen reader, IME, on-screen keyboard, native chooser, notification clicks and paid providers not run. Approval shots use a standalone pane fixture; shell shots use the app's production icon context. No desktop accessibility certification is claimed.
+
+## Codex contrast follow-up
+
+[Contrast proof](../../docs/qa/destructive-dialog-contrast-2026-10-12/README.md) records the explicitly transparent destructive response background and new native confirmation captures. Full gate at clean `18ff1b5` passed 47 steps, including 35 GTK tests. Both follow-up review axes found zero remaining issues. The initial server stream test failure passed in isolation and in the complete fresh rerun without server edits.
