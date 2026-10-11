@@ -18,7 +18,7 @@
 - [x] T009 Record ADR-0030 and update docs/07-agents.md, docs/05-terminal-backend.md, docs/08-ipc.md.
 - [x] T010 Independent Standards and Spec reviews against the pinned base, resolve findings.
 - [x] T011 Run scripts/verify.sh full; record proof and provider limits in specs/045-osc-progress-grok/verification.md.
-- [ ] T012 Commit, push and open/link PR; verify registered link.
+- [x] T012 Commit, push and open/link PR; verify registered link.
 
 ## Dependencies and strategy
 T003 → T004 → T005 → T006; T007 needs T004; T008 needs T005/T007.

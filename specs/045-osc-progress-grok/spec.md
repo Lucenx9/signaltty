@@ -1,8 +1,8 @@
 # Feature Specification: OSC progress and Grok detection
 
-**Feature Branch**: `agent/osc-progress-grok`  
-**Created**: 2026-10-11  
-**Status**: Implemented  
+**Feature Branch**: `agent/osc-progress-grok`
+**Created**: 2026-10-11
+**Status**: Implemented
 **Input**: Add OSC 9;4 and Grok support, then submit a PR.
 
 ## User Scenarios & Testing

@@ -7,4 +7,5 @@ region/explain and generic Grok manifest/discovery. Foreground generations withi
 one shell share evidence; no native Grok hooks/resume.
 Implementation, two review axes and full verification complete.
 Proof: `target/verification/full-j0t91a9h/summary.json`, verification.md.
-Remaining: push/open/link PR and record publication completion. Paid CLI turn not run.
+PR published and linked: https://github.com/Lucenx9/signaltty/pull/92.
+All requested work complete. Paid CLI turn not run; CI results pending at publication.
