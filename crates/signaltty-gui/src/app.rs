@@ -2365,6 +2365,7 @@ impl App {
             .heading(heading)
             .body(body)
             .build();
+        dialog.add_css_class("signaltty-dialog");
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("confirm", verb);
         dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
@@ -2530,6 +2531,7 @@ impl App {
             .heading(format!("Close {name}?"))
             .body("Running terminals and agents in this workspace will stop.")
             .build();
+        dialog.add_css_class("signaltty-dialog");
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("close", "Close Workspace");
         dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);

@@ -540,6 +540,7 @@ impl Row {
         row.set_child(Some(&grid));
 
         let popover = gtk4::PopoverMenu::from_model(None::<&gio::MenuModel>);
+        popover.add_css_class("workspace-menu");
         popover.set_parent(&row);
         // Anchored at the pointer, like any context menu: no arrow.
         popover.set_has_arrow(false);

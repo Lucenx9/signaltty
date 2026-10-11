@@ -4,7 +4,7 @@ Created 2026-10-12. Accepted user direction: extend sober T3 Code styling to the
 
 ## User scenarios
 
-US1: Users navigate workspaces, tabs, terminals and Changes and see the same restrained geometry as the dialogs. Acceptance: shell headers/window controls, sidebar rows, tabs, terminal cards/actions/search, Changes scope controls, inline decisions, primary empty-state actions and owned menu use coherent compact corners and flat hierarchy.
+US1: Users navigate workspaces, tabs, terminals and Changes and see the same restrained geometry as the dialogs. Acceptance: shell headers/window controls, sidebar rows, tabs, terminal cards/actions/search, Changes scope controls, inline decisions, primary empty-state actions and owned menus and workspace confirmations use coherent compact corners and flat hierarchy.
 
 US2: Work remains identifiable and actionable. Acceptance: selected workspace/tab, focused terminal, approval/danger, disabled actions and keyboard focus stay distinguishable in light/dark, narrow, large-text and high-contrast scenes. Native hit areas, terminal identity/geometry, drag/resize, text input, popup dismissal and shortcuts retain behavior.
 
