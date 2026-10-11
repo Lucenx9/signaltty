@@ -188,7 +188,7 @@ impl WorktreeDialog {
             row.set_use_markup(false);
             row.set_title(&worktree.path);
             row.set_title_lines(0);
-            let mut detail = worktree.branch.unwrap_or_else(|| "Detached HEAD".into());
+            let mut detail = worktree.branch.as_deref().unwrap_or("Detached HEAD").to_string();
             if worktree.main {
                 detail.push_str(" · Main checkout");
             }
