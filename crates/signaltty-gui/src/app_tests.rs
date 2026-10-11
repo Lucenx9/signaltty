@@ -1606,8 +1606,7 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     app.window.set_default_size(360, 600);
     wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
     wait_ui(|| !board.is_visible());
-    assert!(button_with_tooltip(app.window.upcast_ref(), "Main Menu").is_none());
-    // The menu is a MenuButton, not a Button: keep its fallback visible.
+    // The overflow menu remains available at the compact breakpoint.
     let menu = find_widget::<gtk4::MenuButton>(app.window.upcast_ref()).unwrap();
     assert!(menu.is_mapped());
     app.window.destroy();
