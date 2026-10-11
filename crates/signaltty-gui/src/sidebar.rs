@@ -891,12 +891,15 @@ impl Sidebar {
         let content = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         let workspaces_header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         workspaces_header.add_css_class("sidebar-group-header");
-        let workspaces_title = gtk4::Label::new(Some("WORKSPACES"));
-        workspaces_title.add_css_class("sidebar-group-label");
+        // Adwaita's own caption heading; no hand-rolled caps or tracking.
+        let workspaces_title = gtk4::Label::new(Some("Workspaces"));
+        workspaces_title.add_css_class("caption-heading");
+        workspaces_title.add_css_class("dim-label");
         workspaces_title.set_xalign(0.0);
         workspaces_title.set_hexpand(true);
         let count = gtk4::Label::new(Some("0"));
-        count.add_css_class("sidebar-group-count");
+        count.add_css_class("caption");
+        count.add_css_class("dim-label");
         count.add_css_class("numeric");
         count.update_property(&[gtk4::accessible::Property::Label("0 workspaces")]);
         workspaces_header.append(&workspaces_title);

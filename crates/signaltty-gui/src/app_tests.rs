@@ -1584,7 +1584,11 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     .expect("sidebar must expose the command palette");
     assert!(search.is_mapped());
     assert!(has_label(search.upcast_ref(), "Search or run a command…"));
-    assert!(has_label(app.window.upcast_ref(), "WORKSPACES"));
+    let heading = find_matching_widget::<gtk4::Label>(app.sidebar.widget.upcast_ref(), &|label| {
+        label.text() == "Workspaces"
+    })
+    .expect("sidebar must title the workspace list");
+    assert!(heading.has_css_class("caption-heading"));
     // Task Board and Changes live only in the header (one entry point
     // each, with the toggle state); the sidebar keeps no duplicate rows.
     for tooltip in ["Task Board (Ctrl+Shift+B)", "Changes (Ctrl+Shift+D)"] {

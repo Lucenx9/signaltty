@@ -227,21 +227,12 @@ window {
 }
 
 /* Navigation hierarchy follows the workspace, not arbitrary toolbar
- * decoration. Group captions are deliberately subdued, but the action text
- * is readable at a glance in both Adwaita appearances. */
+ * decoration. Group captions use Adwaita's .caption-heading/.dim-label so
+ * they follow the platform type scale and high-contrast handling. */
 .sidebar-group-header {
   padding: 10px 15px 6px;
 }
-.sidebar-group-label {
-  font-size: 0.75em;
-  font-weight: 700;
-  letter-spacing: 0.075em;
-  color: alpha(currentColor, 0.62);
-}
-.sidebar-group-count {
-  font-size: 0.78em;
-  color: alpha(currentColor, 0.64);
-}
+
 /* Pinned footer rows (Worktrees, Preferences): flat, full-width, the
  * same 32px height and 8px radius as the search launcher. */
 .sidebar-nav-button {
@@ -1400,8 +1391,6 @@ button.card.appearance-card:checked.keyboard-activating {
 }
 .high-contrast .sidebar-command-launcher label,
 .high-contrast .sidebar-command-launcher image,
-.high-contrast .sidebar-group-label,
-.high-contrast .sidebar-group-count,
 .high-contrast .sidebar-nav-button,
 .high-contrast .sidebar-nav-button image {
   color: inherit;
