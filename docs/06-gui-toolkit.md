@@ -342,6 +342,9 @@ desktop high-contrast theme.
 ## Task Board presentation
 
 The Task Board retains its five lifecycle columns and native vertical lists.
+Each column uses a distinct heading and quiet numeric badge instead of a
+punctuated heading/count string. Only a nonempty Needs you counter takes a
+semantic warning tint; high contrast keeps counters outlined and readable.
 A horizontal GTK scroller keeps every column reachable in narrow windows,
 including by keyboard focus. Cards keep complete tooltips while labels
 ellipsize. Secondary metadata uses a single foreground treatment; high
