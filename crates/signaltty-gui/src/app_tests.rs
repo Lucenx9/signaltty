@@ -1101,7 +1101,8 @@ fn wait_ui(mut ready: impl FnMut() -> bool) {
     }
 }
 
-fn capture_workflow(window: &adw::ApplicationWindow, name: &str) {
+fn capture_workflow(window: &impl IsA<gtk4::Widget>, name: &str) {
+    let window = window.as_ref();
     let Some(directory) = std::env::var_os("SIGNALTTY_UI_EVIDENCE") else {
         return;
     };
@@ -4733,7 +4734,7 @@ fn breadcrumb_opens_the_workspace_details_card() {
     ] {
         adw::StyleManager::default().set_color_scheme(scheme);
         while glib::MainContext::default().iteration(false) {}
-        capture_workflow(&app.window, &format!("details-{name}"));
+        capture_workflow(&app.details.popover, &format!("details-{name}"));
     }
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::Default);
 
