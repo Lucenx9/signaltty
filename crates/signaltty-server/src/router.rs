@@ -613,14 +613,12 @@ fn h_workspace_rename(ctx: &Ctx, params: &Value) -> Handler {
     let raw = p.workspace_id;
     let name = p.name;
     // Handles are immutable: the name is the editable label, the handle
-    // stays the stable address.
-    let id = {
-        let s = ctx.store.read().unwrap();
-        resolve_workspace(&s, &raw)
-            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?
-    };
+    // stays the stable address. Resolve under the same write lock: a close
+    // between two acquisitions would otherwise panic with the store locked.
     let mut s = ctx.store.write().unwrap();
-    let ws = s.rename_workspace(&id, name).unwrap();
+    let ws = resolve_workspace(&s, &raw)
+        .and_then(|id| s.rename_workspace(&id, name))
+        .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?;
     drop(s);
 
     ctx.mark_persist();
@@ -694,18 +692,17 @@ pub(crate) fn h_workspace_close(ctx: &Ctx, params: &Value) -> Handler {
 
 fn h_workspace_refresh_git(ctx: &Ctx, params: &Value) -> Handler {
     let raw = decode::<params::WorkspaceId>(params)?.workspace_id;
-    let id = {
-        let s = ctx.store.read().unwrap();
-        resolve_workspace(&s, &raw)
-            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?
-    };
-    let (ws, branch_changed) = {
+    let (id, ws, branch_changed) = {
+        // One write lock: a concurrent close must yield NO_SUCH_WORKSPACE,
+        // not a panic that poisons the store.
         let mut s = ctx.store.write().unwrap();
+        let id = resolve_workspace(&s, &raw)
+            .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?;
         let ws = s.workspaces.get_mut(&id).unwrap();
         let old_branch = ws.git.branch.clone();
         ws.git = crate::git::git_info(&ws.cwd.clone());
         ws.updated_at = Utc::now();
-        (ws.clone(), old_branch != ws.git.branch)
+        (id, ws.clone(), old_branch != ws.git.branch)
     };
     ctx.emit(event::WORKSPACE_UPDATED, json!({"workspace": ws}));
     if branch_changed {
