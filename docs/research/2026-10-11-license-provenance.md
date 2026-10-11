@@ -132,6 +132,9 @@ of prior distributed artifacts.
 `cargo build --workspace` and `scripts/verify.sh fast` passed. Fast-run evidence:
 `target/verification/fast-k0x483oe/summary.json`. Local Markdown links and
 `git diff --check` passed. The three imported license texts were compared
-byte-for-byte with the pinned upstream URLs and matched. Full display/server
-QA was not run for this documentation/license-only change. These checks verify
-the edit and existing build; they do not certify legal compliance.
+byte-for-byte with the pinned upstream URLs and matched. Before opening the PR,
+`scripts/verify.sh full` also passed all 47 steps, including server QA, 35 isolated
+GTK tests and the refresh benchmark; evidence is in
+`target/verification/full-bcd_81lz/summary.json`. Representative dark and narrow
+light renders were inspected. These checks verify the edit and existing build;
+they do not certify legal compliance or complete visual acceptance.
