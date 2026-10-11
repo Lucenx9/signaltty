@@ -1,0 +1,42 @@
+
+running 1 test
+test app::tests::worker_chip_sits_with_the_pane_title ... dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.0' (uid=1000 pid=648903 comm="target/debug/deps/signaltty_gui-033da366973ed1d2 -")
+dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.1' (uid=1000 pid=648920 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.1' (uid=1000 pid=648920 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.480: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.1' (uid=1000 pid=648920 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.4' (uid=1000 pid=648944 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[648953]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=648944 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[648953]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.589: Choosing gtk.portal for org.freedesktop.impl.portal.Settings as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.590: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.591: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.591: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.592: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.593: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.593: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.598: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.599: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:648920): xdg-desktop-portal-WARNING **: 00:16:11.600: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback
+dbus-daemon[648902]: [session uid=1000 pid=648902 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.73s
+
+X connection to :100 broken (explicit kill or server shutdown).
