@@ -2743,9 +2743,21 @@ fn task_board_shows_columns_and_navigates_to_pane() {
         gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-board", None).unwrap();
         let dialog = app.window.visible_dialog().unwrap();
         wait_ui(|| has_board_column_count(&dialog.child().unwrap(), "Working", "1"));
-        assert!(has_board_column_count(&dialog.child().unwrap(), "Needs you", "1"));
-        assert!(has_board_column_count(&dialog.child().unwrap(), "In review", "1"));
-        assert!(has_board_column_count(&dialog.child().unwrap(), "Done", "1"));
+        assert!(has_board_column_count(
+            &dialog.child().unwrap(),
+            "Needs you",
+            "1"
+        ));
+        assert!(has_board_column_count(
+            &dialog.child().unwrap(),
+            "In review",
+            "1"
+        ));
+        assert!(has_board_column_count(
+            &dialog.child().unwrap(),
+            "Done",
+            "1"
+        ));
         assert!(has_label(&dialog.child().unwrap(), "Implement Task Board"));
         assert!(has_label(
             &dialog.child().unwrap(),
