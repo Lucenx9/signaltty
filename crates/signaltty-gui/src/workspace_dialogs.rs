@@ -114,6 +114,34 @@ struct Worktree {
     workspace_id: Option<String>,
 }
 
+// Keep actionable and unavailable states explicit. The row subtitle
+// reports checkout state, while action descriptions explain what to do.
+fn worktree_open_blocker(worktree: &Worktree) -> Option<&'static str> {
+    if worktree.prunable {
+        Some("This checkout no longer exists")
+    } else if worktree.bare {
+        Some("Bare repositories cannot be opened as workspaces")
+    } else {
+        None
+    }
+}
+
+fn worktree_remove_blocker(worktree: &Worktree) -> Option<&'static str> {
+    if worktree.main {
+        Some("The main checkout cannot be removed")
+    } else if worktree.locked {
+        Some("Unlock this checkout before removing it")
+    } else if worktree.prunable {
+        Some("The missing checkout cannot be removed here")
+    } else if worktree.bare {
+        Some("Bare repositories cannot be removed here")
+    } else if worktree.workspace_id.is_some() {
+        Some("Close the open workspace before removing this checkout")
+    } else {
+        None
+    }
+}
+
 struct WorktreeDialog {
     dialog: adw::Dialog,
     window: adw::ApplicationWindow,
@@ -175,10 +203,19 @@ impl WorktreeDialog {
             }
             row.set_subtitle(&detail);
             row.set_subtitle_lines(0);
-            let actions = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+            // Keep the actions on one quiet, aligned trailing line rather than
+            // doubling the height of every checkout row.
+            let actions = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
             actions.set_valign(gtk4::Align::Center);
             let open = gtk4::Button::with_label("Open");
-            open.set_sensitive(!worktree.prunable && !worktree.bare);
+            let open_blocker = worktree_open_blocker(&worktree);
+            let open_hint = open_blocker.unwrap_or("Open this checkout as a workspace");
+            open.set_sensitive(open_blocker.is_none());
+            open.set_tooltip_text(Some(open_hint));
+            open.update_property(&[
+                gtk4::accessible::Property::Label(&format!("Open {}", worktree.path)),
+                gtk4::accessible::Property::Description(open_hint),
+            ]);
             let this = Rc::downgrade(self);
             let path = worktree.path.clone();
             open.connect_clicked(move |_| {
@@ -192,13 +229,16 @@ impl WorktreeDialog {
             actions.append(&open);
             let remove = gtk4::Button::with_label("Remove…");
             remove.add_css_class("flat");
-            remove.set_sensitive(
-                !worktree.main
-                    && !worktree.locked
-                    && !worktree.prunable
-                    && !worktree.bare
-                    && worktree.workspace_id.is_none(),
-            );
+            remove.add_css_class("worktree-remove");
+            let remove_blocker = worktree_remove_blocker(&worktree);
+            let remove_hint =
+                remove_blocker.unwrap_or("Remove the clean checkout; keep its branch");
+            remove.set_sensitive(remove_blocker.is_none());
+            remove.set_tooltip_text(Some(remove_hint));
+            remove.update_property(&[
+                gtk4::accessible::Property::Label(&format!("Remove {}", worktree.path)),
+                gtk4::accessible::Property::Description(remove_hint),
+            ]);
             let this = Rc::downgrade(self);
             let path = worktree.path;
             remove.connect_clicked(move |_| {
@@ -368,4 +408,70 @@ pub fn worktrees(
     dialog.present(Some(window));
     dialog.set_focus(Some(&create));
     this.load();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn checkout() -> Worktree {
+        Worktree {
+            path: "/tmp/checkout".into(),
+            branch: Some("feature".into()),
+            main: false,
+            locked: false,
+            prunable: false,
+            bare: false,
+            workspace_id: None,
+        }
+    }
+
+    #[test]
+    fn worktree_actions_explain_unavailable_states() {
+        let mut tree = checkout();
+        assert_eq!(worktree_open_blocker(&tree), None);
+        assert_eq!(worktree_remove_blocker(&tree), None);
+
+        tree.main = true;
+        assert_eq!(
+            worktree_remove_blocker(&tree),
+            Some("The main checkout cannot be removed")
+        );
+        tree.main = false;
+
+        tree.locked = true;
+        assert_eq!(
+            worktree_remove_blocker(&tree),
+            Some("Unlock this checkout before removing it")
+        );
+        tree.locked = false;
+
+        tree.prunable = true;
+        assert_eq!(
+            worktree_open_blocker(&tree),
+            Some("This checkout no longer exists")
+        );
+        assert_eq!(
+            worktree_remove_blocker(&tree),
+            Some("The missing checkout cannot be removed here")
+        );
+        tree.prunable = false;
+
+        tree.bare = true;
+        assert_eq!(
+            worktree_open_blocker(&tree),
+            Some("Bare repositories cannot be opened as workspaces")
+        );
+        assert_eq!(
+            worktree_remove_blocker(&tree),
+            Some("Bare repositories cannot be removed here")
+        );
+        tree.bare = false;
+
+        tree.workspace_id = Some("workspace-1".into());
+        assert_eq!(
+            worktree_remove_blocker(&tree),
+            Some("Close the open workspace before removing this checkout")
+        );
+    }
 }
