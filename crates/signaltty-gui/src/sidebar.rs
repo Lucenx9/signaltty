@@ -966,9 +966,16 @@ impl Sidebar {
     /// The echo is harmless (`on_select` skips the already-active one).
     pub fn update(&self, items: Vec<WsSummary>) {
         self.count.set_text(&items.len().to_string());
-        self.count.update_property(&[gtk4::accessible::Property::Label(
-            &format!("{} workspaces", items.len()),
-        )]);
+        let noun = if items.len() == 1 {
+            "workspace"
+        } else {
+            "workspaces"
+        };
+        self.count
+            .update_property(&[gtk4::accessible::Property::Label(&format!(
+                "{} {noun}",
+                items.len()
+            ))]);
         let selected = self
             .list
             .selected_row()
