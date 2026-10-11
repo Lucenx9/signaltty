@@ -361,29 +361,46 @@ impl App {
         tab_bar.set_autohide(true);
 
         let no_workspace = adw::StatusPage::new();
+        no_workspace.add_css_class("compact");
         no_workspace.set_icon_name(Some("utilities-terminal-symbolic"));
-        no_workspace.set_title("No Workspaces");
+        no_workspace.set_title("Start with a project");
         no_workspace.set_description(Some(
-            "A workspace groups the agents working on one project. \
-             They keep running when this window closes.",
+            "Choose a folder, then start a shell or coding agent. \
+             Your sessions keep running when this window closes.",
         ));
         let btn_empty = gtk4::Button::with_label("New Workspace");
         btn_empty.add_css_class("pill");
         btn_empty.add_css_class("suggested-action");
         btn_empty.set_halign(gtk4::Align::Center);
         btn_empty.set_action_name(Some("win.new-workspace"));
-        no_workspace.set_child(Some(&btn_empty));
+        let workspace_actions = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
+        workspace_actions.append(&btn_empty);
+        let (key, modifiers) = gtk4::accelerator_parse("<Control><Shift>n").unwrap();
+        let workspace_shortcut =
+            gtk4::Label::new(Some(&gtk4::accelerator_get_label(key, modifiers)));
+        workspace_shortcut.add_css_class("empty-state-shortcut");
+        workspace_shortcut.set_halign(gtk4::Align::Center);
+        workspace_actions.append(&workspace_shortcut);
+        no_workspace.set_child(Some(&workspace_actions));
 
         let no_tabs = adw::StatusPage::new();
+        no_tabs.add_css_class("compact");
         no_tabs.set_icon_name(Some("signaltty-tab-new-symbolic"));
-        no_tabs.set_title("No Tabs");
-        no_tabs.set_description(Some("Open a tab to start a terminal in this workspace."));
+        no_tabs.set_title("Open a terminal");
+        no_tabs.set_description(Some("Start a shell."));
         let btn_no_tabs = gtk4::Button::with_label("New Tab");
         btn_no_tabs.add_css_class("pill");
         btn_no_tabs.add_css_class("suggested-action");
         btn_no_tabs.set_halign(gtk4::Align::Center);
         btn_no_tabs.set_action_name(Some("win.new-tab"));
-        no_tabs.set_child(Some(&btn_no_tabs));
+        let tab_actions = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
+        tab_actions.append(&btn_no_tabs);
+        let (key, modifiers) = gtk4::accelerator_parse("<Control><Shift>t").unwrap();
+        let tab_shortcut = gtk4::Label::new(Some(&gtk4::accelerator_get_label(key, modifiers)));
+        tab_shortcut.add_css_class("empty-state-shortcut");
+        tab_shortcut.set_halign(gtk4::Align::Center);
+        tab_actions.append(&tab_shortcut);
+        no_tabs.set_child(Some(&tab_actions));
 
         let content = gtk4::Stack::new();
         content.set_transition_type(gtk4::StackTransitionType::None);
