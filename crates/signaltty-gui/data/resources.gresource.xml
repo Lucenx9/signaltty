@@ -18,6 +18,7 @@
     <file>icons/scalable/actions/signaltty-board-symbolic.svg</file>
     <file>icons/scalable/actions/signaltty-settings-symbolic.svg</file>
     <file>icons/scalable/actions/signaltty-branch-symbolic.svg</file>
+    <file>icons/scalable/actions/signaltty-folder-symbolic.svg</file>
     <file>icons/scalable/actions/signaltty-pull-request-symbolic.svg</file>
   </gresource>
 </gresources>

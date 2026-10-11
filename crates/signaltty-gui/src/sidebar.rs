@@ -685,7 +685,7 @@ impl Row {
         self.place_icon.set_icon_name(Some(if s.place_is_branch {
             "signaltty-branch-symbolic"
         } else {
-            "folder-symbolic"
+            "signaltty-folder-symbolic"
         }));
         self.place_icon.set_visible(!s.place.is_empty());
         self.place.set_text(&s.place);
@@ -1468,7 +1468,10 @@ mod tests {
         assert_eq!(sidebar.rows.borrow()[0].row, row);
         assert_eq!(sidebar.rows.borrow()[0].place_icon, icon);
         assert!(!sidebar.rows.borrow()[0].message.get_visible());
-        assert_eq!(icon.icon_name().as_deref(), Some("folder-symbolic"));
+        assert_eq!(
+            icon.icon_name().as_deref(),
+            Some("signaltty-folder-symbolic")
+        );
         assert_eq!(
             sidebar.rows.borrow()[0].place.tooltip_text().as_deref(),
             Some("/tmp/project")

@@ -1328,7 +1328,6 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
     app.set_sidebar_width(200);
     for (font, suffix) in [("Sans 11", "compact"), ("Sans 18", "large")] {
         settings.set_gtk_font_name(Some(font));
-        app.window.add_css_class("high-contrast");
         for appearance in [
             signaltty_core::theme::Appearance::Light,
             signaltty_core::theme::Appearance::Dark,
@@ -1337,6 +1336,8 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
                 appearance,
                 ..Default::default()
             });
+            app.window.add_css_class("high-contrast");
+            assert!(app.window.has_css_class("high-contrast"));
             capture_workflow(
                 &app.window,
                 &format!("workspace-rail-{suffix}-{}", appearance.id()),
