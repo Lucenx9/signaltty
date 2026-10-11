@@ -27,6 +27,21 @@ Store/audit unit tests force replay cap/filter/retention and removed/truncated/l
 history, including loss immediately before rotation. Server Unix-pair tests prove
 exact replay/live handoff, lag-close and immediate receiver cleanup on EOF/shutdown.
 
+## Declarative progress and Grok detection
+
+`cargo test -p signaltty-server --test screen_detection` runs real PTYs against
+isolated servers. Progress fixtures prove working/completion transitions,
+`pane.explain` evidence, visible Grok blockers taking priority, semantic-hook
+authority, and no attention from ordinary-terminal progress. Exit/resume/restart
+fixtures prove the evidence lifetime follows the managed PTY.
+
+`cargo test -p signaltty-term osc::tests` covers progress framing, BEL/ST and
+split boundaries, malformed messages, and separation from notifications/bells.
+`cargo test -p signaltty-agent grok_` covers bundled priorities, title/footer
+fallbacks, splash false positives, program scoping and launcher discovery.
+These fixtures do not authenticate or execute paid Grok turns. Foreground
+program changes within one shell retain progress until overwritten.
+
 ## Gotchas
 
 Capture before input and serialize concurrent input writers when turn attribution
