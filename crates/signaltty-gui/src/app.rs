@@ -241,6 +241,24 @@ impl App {
         sidebar_page.add_top_bar(&sidebar_header);
         sidebar_page.add_top_bar(&command_strip);
         sidebar_page.set_content(Some(&sidebar.widget));
+        // A real, always-accessible destination for settings, unlike a
+        // mock status footer that would incorrectly claim connectivity.
+        let footer_button = gtk4::Button::new();
+        footer_button.add_css_class("sidebar-footer-button");
+        footer_button.set_action_name(Some("win.preferences"));
+        footer_button.set_tooltip_text(Some("Preferences (Ctrl+,)"));
+        footer_button.update_property(&[gtk4::accessible::Property::Label("Preferences")]);
+        let footer_contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 9);
+        footer_contents.append(&gtk4::Image::from_icon_name("emblem-system-symbolic"));
+        let footer_label = gtk4::Label::new(Some("Preferences"));
+        footer_label.set_hexpand(true);
+        footer_label.set_xalign(0.0);
+        footer_contents.append(&footer_label);
+        footer_button.set_child(Some(&footer_contents));
+        let sidebar_footer = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        sidebar_footer.add_css_class("sidebar-footer");
+        sidebar_footer.append(&footer_button);
+        sidebar_page.add_bottom_bar(&sidebar_footer);
 
         let sidebar_overlay = gtk4::Overlay::new();
         sidebar_overlay.set_child(Some(&sidebar_page));
@@ -310,15 +328,28 @@ impl App {
         btn_new_tab.update_property(&[gtk4::accessible::Property::Label("New Tab")]);
         btn_new_tab.set_action_name(Some("win.new-tab"));
         header.pack_end(&btn_new_tab);
+        // First-class tools have a label at desktop widths, and return to
+        // icon-only controls where the workspace breadcrumb needs the room.
         let btn_changes = gtk4::ToggleButton::new();
-        btn_changes.set_icon_name("sidebar-show-right-symbolic");
+        btn_changes.add_css_class("header-tool-button");
         btn_changes.set_tooltip_text(Some("Changes (Ctrl+Shift+D)"));
         btn_changes.update_property(&[gtk4::accessible::Property::Label("Changes")]);
+        let changes_contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 7);
+        changes_contents.append(&gtk4::Image::from_icon_name("sidebar-show-right-symbolic"));
+        let changes_label = gtk4::Label::new(Some("Changes"));
+        changes_contents.append(&changes_label);
+        btn_changes.set_child(Some(&changes_contents));
         header.pack_end(&btn_changes);
-        let btn_board = gtk4::Button::from_icon_name("signaltty-board-symbolic");
+        let btn_board = gtk4::Button::new();
+        btn_board.add_css_class("header-tool-button");
         btn_board.set_tooltip_text(Some("Task Board (Ctrl+Shift+B)"));
         btn_board.update_property(&[gtk4::accessible::Property::Label("Task Board")]);
         btn_board.set_action_name(Some("win.show-board"));
+        let board_contents = gtk4::Box::new(gtk4::Orientation::Horizontal, 7);
+        board_contents.append(&gtk4::Image::from_icon_name("signaltty-board-symbolic"));
+        let board_label = gtk4::Label::new(Some("Task Board"));
+        board_contents.append(&board_label);
+        btn_board.set_child(Some(&board_contents));
         header.pack_end(&btn_board);
         let attention = Self::attention_button();
         header.pack_end(&attention.revealer);
@@ -400,6 +431,8 @@ impl App {
             adw::BreakpointCondition::parse("max-width: 1100sp").expect("breakpoint"),
         );
         medium.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
+        medium.add_setter(&changes_label, "visible", Some(&false.to_value()));
+        medium.add_setter(&board_label, "visible", Some(&false.to_value()));
         window.add_breakpoint(medium);
         // Narrow windows: the sidebar overlays instead of squeezing panes.
         let narrow = adw::Breakpoint::new(
