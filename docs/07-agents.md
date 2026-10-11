@@ -448,4 +448,4 @@ policy. Installing a registration does not bypass a container, admin rule or
 denied tool. The Signaltty CLI's EPERM/EACCES error points to these tools and
 setup steps instead of suggesting socket chmod.
 
-Provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.
+Native approval answers and provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.

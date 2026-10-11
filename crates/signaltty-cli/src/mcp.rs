@@ -18,6 +18,7 @@ fn allowed(method: &str) -> bool {
                 | method::SERVER_SHUTDOWN
                 | method::HOOK_EVENT
                 | method::REPORT_SESSION
+                | method::DECISION_ANSWER
         )
 }
 

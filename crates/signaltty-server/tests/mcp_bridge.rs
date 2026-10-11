@@ -103,6 +103,13 @@ async fn bridge_returns_errors_and_rejects_streaming_without_corrupting_later_ca
         -32000
     );
     bridge.initialize().await;
+    let advertised = bridge.call("tools/list", json!({})).await;
+    let methods = &advertised["result"]["tools"][1]["inputSchema"]["properties"]["method"]["enum"];
+    assert!(!methods
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m == "decision.answer"));
     bridge
         .input
         .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\nnot json\n")
@@ -120,6 +127,7 @@ async fn bridge_returns_errors_and_rejects_streaming_without_corrupting_later_ca
         "server.shutdown",
         "hook-event",
         "report-session",
+        "decision.answer",
     ] {
         let denied = bridge.tool(method, json!({})).await;
         assert_eq!(denied["result"]["isError"], true);

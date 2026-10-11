@@ -14,6 +14,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from qa_evidence import preserve_logs
 
 
 def main():
@@ -123,6 +124,7 @@ def main():
                         except subprocess.TimeoutExpired:
                             server.kill()
                             server.wait(timeout=5)
+                preserve_logs(root, "harness-socket")
 
 
 if __name__ == '__main__':

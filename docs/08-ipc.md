@@ -492,4 +492,4 @@ calls at 60 seconds; timeout does not promise cancellation of an applied mutatio
 See the [stdio contract](../specs/046-harness-socket-access/contracts/stdio.md)
 and [harness matrix](07-agents.md#workspace-access-from-sandboxed-harnesses).
 
-Provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.
+Native approval answers and provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.

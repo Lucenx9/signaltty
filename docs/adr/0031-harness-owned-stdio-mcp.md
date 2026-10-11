@@ -45,4 +45,4 @@ See [feature research](../../specs/046-harness-socket-access/research.md), the
 real CLI/server `mcp_bridge` integration tests, and `qa-harness-socket.py`.
 The native QA does not perform an authenticated model turn.
 
-Provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.
+Native approval answers and provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.

@@ -44,7 +44,7 @@ messages; harness trust requirements; externally containerized harnesses.
 
 - **FR-001**: Provide a harness integration channel for existing request/response workspace, pane and orchestration APIs without relaxing shell filesystem/network restrictions.
 - **FR-002**: Bind each bridge to an explicit Signaltty socket and pane context supplied by the hosting session; never fall back to another server.
-- **FR-003**: Support initialization, tool discovery, tool execution and structured errors, with bounded input and request execution. Streaming subscriptions/terminal attachment are excluded.
+- **FR-003**: Support initialization, tool discovery, tool execution and structured errors, with bounded input and request execution. Streaming subscriptions/terminal attachment, native approval answers and provider lifecycle/session-report APIs are excluded.
 - **FR-004**: Automatically prepare bridge configuration alongside existing integrations for Codex, Claude, Cursor and OpenCode; honor provider roots and existing launch opt-outs.
 - **FR-005**: Preserve unrelated configuration, disabled choices, hook trust, approvals and foreign entries; uninstall only owned bridge entries; serialize atomic updates.
 - **FR-006**: Surface sandbox-denied CLI connections with useful integration guidance, without claiming every permission error is a sandbox.

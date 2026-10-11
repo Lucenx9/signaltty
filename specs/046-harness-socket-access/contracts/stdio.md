@@ -14,4 +14,4 @@ The bridge grants existing workspace/PTY orchestration capability, including wor
 launch; it does not execute arbitrary shell commands in place of the harness shell.
 Input at most 1 MiB and tool execution at most 60 seconds.
 
-Provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.
+Native approval answers and provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.
