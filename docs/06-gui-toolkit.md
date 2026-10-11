@@ -454,3 +454,11 @@ accent. The details popover follows the same lighter elevation. Native hit
 areas, focus outlines, response semantics, adaptive sheets and file choosers
 remain toolkit-owned. Overrides are scoped to explicit dialog classes rather
 than a global GTK theme. High contrast strengthens selection and borders.
+
+The workspace shell uses the same restrained geometry
+(`specs/051-restrained-workspace-shell`): 6px terminal/control corners, flat
+pane and decision surfaces, compact status badges, ghost window controls and
+native tabs with a selected bottom marker. The Changes scope selector and diff
+reader, terminal search and owned primary menu follow the same hierarchy.
+Native hit areas, focus outlines, attention priority and terminal layout remain
+unchanged; header/tab/menu overrides target explicit application classes.

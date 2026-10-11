@@ -205,6 +205,7 @@ impl App {
         // ---- sidebar ----
         let sidebar = Sidebar::new();
         let sidebar_header = adw::HeaderBar::new();
+        sidebar_header.add_css_class("workspace-header");
         let wordmark = gtk4::Label::new(Some("signaltty"));
         wordmark.add_css_class("wordmark");
         sidebar_header.set_title_widget(Some(&gtk4::Box::new(gtk4::Orientation::Horizontal, 0)));
@@ -295,6 +296,7 @@ impl App {
             .build();
         title_box.append(&title_context);
         let header = adw::HeaderBar::new();
+        header.add_css_class("workspace-header");
         header.set_title_widget(Some(&gtk4::Box::new(gtk4::Orientation::Horizontal, 0)));
         let btn_sidebar = gtk4::ToggleButton::new();
         btn_sidebar.set_icon_name("sidebar-show-symbolic");
@@ -320,6 +322,9 @@ impl App {
         btn_menu.update_property(&[gtk4::accessible::Property::Label("Main Menu")]);
         btn_menu.set_menu_model(Some(&crate::actions::primary_menu()));
         btn_menu.set_primary(true);
+        if let Some(popover) = btn_menu.popover() {
+            popover.add_css_class("workspace-menu");
+        }
         header.pack_end(&btn_menu);
         let btn_new_tab = gtk4::Button::from_icon_name("signaltty-tab-new-symbolic");
         btn_new_tab.set_tooltip_text(Some("New Tab (Ctrl+Shift+T)"));
@@ -357,6 +362,7 @@ impl App {
         // ---- tabs + empty states ----
         let tab_view = adw::TabView::new();
         let tab_bar = adw::TabBar::new();
+        tab_bar.add_css_class("workspace-tabs");
         tab_bar.set_view(Some(&tab_view));
         tab_bar.set_autohide(true);
 
@@ -370,6 +376,7 @@ impl App {
         ));
         let btn_empty = gtk4::Button::with_label("New Workspace");
         btn_empty.add_css_class("pill");
+        btn_empty.add_css_class("empty-state-action");
         btn_empty.add_css_class("suggested-action");
         btn_empty.set_halign(gtk4::Align::Center);
         btn_empty.set_action_name(Some("win.new-workspace"));
@@ -390,6 +397,7 @@ impl App {
         no_tabs.set_description(Some("Start a shell."));
         let btn_no_tabs = gtk4::Button::with_label("New Tab");
         btn_no_tabs.add_css_class("pill");
+        btn_no_tabs.add_css_class("empty-state-action");
         btn_no_tabs.add_css_class("suggested-action");
         btn_no_tabs.set_halign(gtk4::Align::Center);
         btn_no_tabs.set_action_name(Some("win.new-tab"));
@@ -1627,6 +1635,7 @@ impl App {
                 page.set_description(Some("Start a terminal to get going."));
                 let btn = gtk4::Button::with_label("New Terminal");
                 btn.add_css_class("pill");
+                btn.add_css_class("empty-state-action");
                 btn.add_css_class("suggested-action");
                 btn.set_halign(gtk4::Align::Center);
                 let w = self.weak();

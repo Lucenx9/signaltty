@@ -829,6 +829,14 @@ fn pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios() {
     application.set_resource_base_path(Some("/dev/signaltty/gui"));
     gtk4::IconTheme::for_display(&gtk4::gdk::Display::default().unwrap())
         .add_resource_path("/dev/signaltty/gui/icons");
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
     let app = App::new(&application, actor, ui);
     let mut snapshot: crate::refresh::Snapshot = serde_json::from_value(fixture("a")).unwrap();
     let mut sibling = snapshot.panes[0].clone();
@@ -3045,6 +3053,34 @@ fn worker_chip_sits_with_the_pane_title() {
         chip_box.x + chip_box.w <= actions_box.x + 1.0,
         "chip overlaps the header actions"
     );
+
+    // Native tab/menu evidence uses the existing populated production shell.
+    let mut tabs_scene = snapshot.clone();
+    tabs_scene.tabs[0].title = "Parser worker".into();
+    let mut notes_tab = tabs_scene.tabs[0].clone();
+    notes_tab.id = "tab_notes".into();
+    notes_tab.title = "Project notes".into();
+    notes_tab.layout = None;
+    notes_tab.active_pane_id = None;
+    tabs_scene.workspace.tabs.push(notes_tab.id.clone());
+    tabs_scene.tabs.push(notes_tab);
+    app.model
+        .borrow_mut()
+        .cache
+        .snapshots
+        .insert("fix".into(), tabs_scene);
+    app.show_workspace("fix");
+    let popover = find_widget::<gtk4::PopoverMenu>(&window).unwrap();
+    for (appearance, name) in [
+        (signaltty_core::theme::Appearance::Light, "light"),
+        (signaltty_core::theme::Appearance::Dark, "dark"),
+    ] {
+        app.set_appearance(appearance);
+        capture_workflow(&app.window, &format!("workspace-tabs-{name}"));
+        popover.popup();
+        capture_workflow(&popover, &format!("workspace-menu-{name}"));
+        popover.popdown();
+    }
 
     app.window.destroy();
     match previous_config {
