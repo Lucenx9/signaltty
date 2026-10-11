@@ -160,6 +160,47 @@ async fn bridge_returns_errors_and_rejects_streaming_without_corrupting_later_ca
 }
 
 #[tokio::test]
+async fn bridge_refuses_a_relative_socket_even_when_it_resolves_to_a_live_server() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let w = c
+        .call("workspace.create", json!({"cwd":"/tmp"}))
+        .await
+        .unwrap();
+    let p = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id":w["workspace"]["id"],"argv":["sleep","30"]}),
+        )
+        .await
+        .unwrap();
+    let mut child = tokio::process::Command::new(bin_path("signaltty"))
+        .args(["mcp", "serve"])
+        .current_dir(srv.socket.parent().unwrap())
+        .env("SIGNALTTY_SOCKET", srv.socket.file_name().unwrap())
+        .env("SIGNALTTY_PANE", p["pane"]["id"].as_str().unwrap())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut bridge = Bridge {
+        input: child.stdin.take().unwrap(),
+        output: BufReader::new(child.stdout.take().unwrap()),
+        child,
+    };
+    bridge.initialize().await;
+    let result = bridge.tool("server.status", json!({})).await;
+    assert_eq!(result["result"]["isError"], true, "{result}");
+    assert!(result["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("absolute SIGNALTTY_SOCKET"));
+    bridge.stop().await;
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn bridge_closes_oversized_input_instead_of_buffering_unbounded_data() {
     let mut bridge = Bridge::start(std::path::Path::new(""), "");
     bridge
