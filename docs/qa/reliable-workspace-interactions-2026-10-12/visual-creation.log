@@ -1,0 +1,54 @@
+
+running 1 test
+test app::tests::workspace_creation_retains_draft_and_retries_only_the_failed_command ... dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.0' (uid=1000 pid=827085 comm="target/debug/deps/signaltty_gui-033da366973ed1d2 -")
+dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.1' (uid=1000 pid=827102 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.1' (uid=1000 pid=827102 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.700: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.1' (uid=1000 pid=827102 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.4' (uid=1000 pid=827126 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[827135]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=827126 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[827135]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.816: Choosing gtk.portal for org.freedesktop.impl.portal.Settings as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.816: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.817: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.818: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.819: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.820: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.821: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.827: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.828: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827102): xdg-desktop-portal-WARNING **: 01:24:28.829: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback
+dbus-daemon[827084]: [session uid=1000 pid=827084 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+(process:827085): Gtk-WARNING **: 01:24:30.255: Trying to measure GtkLabel 0x7fd215e38db0 for width of 0, but it needs at least 36
+
+(process:827085): Gtk-WARNING **: 01:24:30.255: gtk_widget_size_allocate(): attempt to allocate GtkLabel label 0x7fd215e38db0 with width -36 and height 27
+
+(process:827085): Gtk-WARNING **: 01:24:30.305: GtkText - unexpected blinking selection. Removing
+
+(process:827085): Adwaita-WARNING **: 01:24:30.320: AdwToastOverlay 0x7fd215eaea10 exceeds AdwApplicationWindow width: requested 393 px, 350 px available
+
+(process:827085): Gtk-WARNING **: 01:24:30.555: GtkText - did not receive a focus-out event.
+If you handle this event, you must return
+GDK_EVENT_PROPAGATE so the default handler
+gets the event as well
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 148 filtered out; finished in 2.93s
+

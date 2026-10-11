@@ -1,0 +1,45 @@
+
+running 1 test
+test app::tests::terminal_closures_confirm_live_targets_and_preserve_failed_tabs ... dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.0' (uid=1000 pid=827172 comm="target/debug/deps/signaltty_gui-033da366973ed1d2 -")
+dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.1' (uid=1000 pid=827189 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.1' (uid=1000 pid=827189 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+fusermount3: failed to access mountpoint /run/user/1000/doc: Permission denied
+error: fuse init failed: Can't mount path /run/user/1000/doc
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:29.893: Document portal fuse mount point unknown: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name :1.3 was not provided by any .service files
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:29.893: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.1' (uid=1000 pid=827189 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.4' (uid=1000 pid=827212 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[827221]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=827212 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[827221]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.017: Choosing gtk.portal for org.freedesktop.impl.portal.Settings as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.018: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.018: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.019: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.020: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.021: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.022: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.027: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.028: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:827189): xdg-desktop-portal-WARNING **: 01:24:30.029: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback
+dbus-daemon[827171]: [session uid=1000 pid=827171 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 148 filtered out; finished in 1.32s
+
