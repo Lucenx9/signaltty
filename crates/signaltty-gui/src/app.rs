@@ -2339,9 +2339,12 @@ impl App {
             active_cwd.as_deref(),
             move |req, form| {
                 if let Some(a) = w.upgrade() {
+                    let deletable = a.window.is_deletable();
+                    a.window.set_deletable(false);
                     let navigation = a.navigate();
                     a.run(move |app| async move {
                         form.finish(app.create_workspace_async(req, navigation).await);
+                        app.window.set_deletable(deletable);
                     });
                 }
             },

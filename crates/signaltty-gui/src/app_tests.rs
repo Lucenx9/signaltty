@@ -707,6 +707,7 @@ fn workspace_creation_retains_draft_and_retries_only_the_failed_command() {
     .unwrap();
     create.emit_clicked();
     assert!(!form.dialog.can_close());
+    assert!(!app.window.is_deletable());
     assert!(!create.is_sensitive());
     app.action_new_workspace();
     assert!(Rc::ptr_eq(
@@ -724,6 +725,11 @@ fn workspace_creation_retains_draft_and_retries_only_the_failed_command() {
         capture_workflow(&app.window, &format!("workspace-pending-{theme}"));
     }
     form.dialog.close();
+    app.window.close();
+    assert!(
+        app.window.is_visible(),
+        "pending operation keeps its parent open"
+    );
     assert!(
         app.window.visible_dialog().is_some(),
         "pending operation cannot imply cancellation"
@@ -731,12 +737,18 @@ fn workspace_creation_retains_draft_and_retries_only_the_failed_command() {
     release.send(()).unwrap();
     drain_refresh(&app);
     assert!(form.dialog.can_close());
+    assert!(app.window.is_deletable());
     assert_eq!(name.text(), "Recoverable project");
     assert_eq!(create.label().as_deref(), Some("Retry"));
     assert!(name.is_sensitive());
     assert!(has_label(&body, "Couldn't create the workspace: The project is temporarily unavailable. Check your choices and retry."));
+    app.window.set_deletable(false);
     create.emit_clicked();
     drain_refresh(&app);
+    assert!(
+        !app.window.is_deletable(),
+        "restore prior closeability on failure"
+    );
     assert!(
         !name.is_sensitive(),
         "created workspace fields must be frozen"
@@ -755,9 +767,12 @@ fn workspace_creation_retains_draft_and_retries_only_the_failed_command() {
         });
         capture_workflow(&app.window, &format!("workspace-retry-{theme}"));
     }
+    app.window.set_deletable(true);
     custom.set_text("/bin/sh");
     create.emit_clicked();
+    assert!(!app.window.is_deletable());
     drain_refresh(&app);
+    assert!(app.window.is_deletable());
     wait_ui(|| app.new_ws_dialog.borrow().is_none());
     assert_eq!(app.active_ws_id().as_deref(), Some("created"));
     assert_eq!(app.current_pane_id().as_deref(), Some("pane_created"));
