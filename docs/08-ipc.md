@@ -381,7 +381,7 @@ Codex/Claude UserPromptSubmit hook with non-empty payload.prompt starts backgrou
 AI title generation. `workspace.updated` carries naming state and the final name;
 workspace.rename switches to manual and cancels applicability of pending output.
 Handles remain immutable. Failures preserve the provisional name. No prompt is
-retained in the workspace snapshot. See [ADR-0030](adr/0030-workspace-ai-titles.md).
+retained in the workspace snapshot. See [ADR-0031](adr/0031-workspace-ai-titles.md).
 
 ## Events (all carry `seq`)
 

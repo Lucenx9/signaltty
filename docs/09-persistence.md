@@ -102,4 +102,4 @@ guarantees do not strengthen snapshot/tail durability. See
 
 Workspace naming state is retained without the first prompt. An interrupted
 `generating` state becomes `failed` on load; generation is never replayed from a
-snapshot (ADR-0030). Legacy snapshots default to `manual`.
+snapshot (ADR-0031). Legacy snapshots default to `manual`.
