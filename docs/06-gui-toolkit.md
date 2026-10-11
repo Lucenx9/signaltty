@@ -71,6 +71,24 @@ miniature window (System split light/dark down the middle) and each theme as
 a light and a dark orb; selection is an accent ring, never a fill
 (`specs/042-preferences-previews`).
 
+### Discoverable navigation
+
+The sidebar shows a search-style launcher below the titlebar. It is a real
+button bound to `win.command-palette`, not an editable search entry: clicking
+or pressing Enter opens the existing keyboard-first Commands and Workspaces
+palette (`Ctrl+Shift+P`). The launcher uses bundled symbolic artwork and
+semantic Adwaita surfaces across light, dark, custom themes and high contrast.
+New Workspace remains in the sidebar header.
+
+The content header exposes Task Board (`Ctrl+Shift+B`) alongside the
+existing Changes toggle (`Ctrl+Shift+D`), New Tab and attention indicator.
+This brings the two broad work-review surfaces out of the overflow menu
+without duplicating their handlers or creating new IPC. At the 760sp compact
+breakpoint Board and Changes controls hide; their existing menu entries,
+keyboard accelerators and palette commands remain available. The main menu
+stays the complete action catalogue. Avoid a full-width second toolbar:
+terminal content and workspace context continue to own the canvas.
+
 One status vocabulary, shared by every surface
 (`crates/signaltty-gui/src/status.rs`, colours in `data/style.css`):
 
