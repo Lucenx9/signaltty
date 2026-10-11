@@ -1,4 +1,5 @@
 //! OSC scanner over the raw PTY byte stream. Extracts:
+//! - OSC 9;4 `<state>[;<value>]` → retained progress evidence
 //! - OSC 9 `<msg>` (iTerm2/ConEmu) → notification
 //! - OSC 99 `<meta>;<body>` (Kitty, lenient) → notification
 //! - OSC 777 `notify;<title>;<body>` (rxvt/Ghostty/WezTerm) → notification
@@ -15,6 +16,8 @@ pub enum OscEvent {
         body: String,
         source: &'static str,
     },
+    /// Payload after `9;`, kept verbatim for declarative rules.
+    Progress(String),
     Title(String),
     Bell,
 }
@@ -29,6 +32,7 @@ pub struct OscScanner {
     /// Inside an OSC too long to carry: its bytes, terminator included,
     /// are payload, never a bell.
     discarding: bool,
+    progress: String,
 }
 
 impl OscScanner {
@@ -36,7 +40,14 @@ impl OscScanner {
         OscScanner {
             pending: Vec::new(),
             discarding: false,
+            progress: String::new(),
         }
+    }
+
+    /// Latest valid OSC 9;4 payload for this scanner/PTY, empty until reported.
+    /// A new process gets a new scanner; malformed updates leave it unchanged.
+    pub fn progress(&self) -> &str {
+        &self.progress
     }
 
     /// Scan a chunk; returns events found. Handles sequences split
@@ -63,6 +74,9 @@ impl OscScanner {
                     Ok((end, term_len)) => {
                         let payload = &buf[i + 2..end];
                         if let Some(ev) = parse_osc(payload) {
+                            if let OscEvent::Progress(ref progress) = ev {
+                                self.progress.clone_from(progress);
+                            }
                             events.push(ev);
                         }
                         i = end + term_len;
@@ -135,6 +149,10 @@ fn parse_osc(payload: &[u8]) -> Option<OscEvent> {
     let pt = &payload[semi + 1..];
     let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
     match ps {
+        b"9" if pt == b"4" || pt.starts_with(b"4;") => {
+            // Progress is reserved, including malformed messages: never notify.
+            parse_progress(pt).map(OscEvent::Progress)
+        }
         b"9" => {
             let body = text(pt);
             if body.is_empty() {
@@ -196,6 +214,30 @@ fn parse_osc(payload: &[u8]) -> Option<OscEvent> {
     }
 }
 
+/// ConEmu progress states 0..4, optional percentage; -1 is Grok's busy sentinel.
+fn parse_progress(payload: &[u8]) -> Option<String> {
+    // Bound retained evidence even for a complete OSC delivered in one chunk.
+    if payload.len() > 32 {
+        return None;
+    }
+    let text = std::str::from_utf8(payload).ok()?;
+    let mut parts = text.split(';');
+    if parts.next()? != "4" || !matches!(parts.next()?, "0" | "1" | "2" | "3" | "4") {
+        return None;
+    }
+    if let Some(value) = parts.next() {
+        if !value.is_empty() && value != "-1" {
+            if !value.bytes().all(|b| b.is_ascii_digit()) || value.parse::<u8>().ok()? > 100 {
+                return None;
+            }
+        }
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(text.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +265,59 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn progress_is_not_a_notification_or_bell_at_any_chunk_boundary() {
+        let bytes = b"\x1b]9;4;1;-1\x07\x1b]9;4;0;0\x1b\\";
+        for i in 0..=bytes.len() {
+            let events = scan(&[&bytes[..i], &bytes[i..]]);
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, OscEvent::Notify { .. } | OscEvent::Bell)),
+                "boundary {i}: {events:?}"
+            );
+            assert_eq!(
+                events,
+                vec![
+                    OscEvent::Progress("4;1;-1".into()),
+                    OscEvent::Progress("4;0;0".into())
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_progress_is_ignored_and_latest_valid_evidence_is_retained() {
+        let mut scanner = OscScanner::new();
+        assert_eq!(scanner.progress(), "");
+        for payload in ["4;0;0", "4;1;-1", "4;2;100", "4;3", "4;4;", "4;1;25"] {
+            let bytes = format!("\x1b]9;{payload}\x07");
+            assert_eq!(
+                scanner.push(bytes.as_bytes()),
+                vec![OscEvent::Progress(payload.into())]
+            );
+            assert_eq!(scanner.progress(), payload);
+        }
+        for payload in [
+            "4",
+            "4;",
+            "4;9;1",
+            "4;1;101",
+            "4;1;-2",
+            "4;1;+1",
+            "4;1;no",
+            "4;1;1;extra",
+            "4;1;1\n",
+            "4;1;99999999999999999999999999999999999",
+        ] {
+            let bytes = format!("\x1b]9;{payload}\x07");
+            assert!(scanner.push(bytes.as_bytes()).is_empty(), "{payload}");
+            assert_eq!(scanner.progress(), "4;1;25");
+        }
+        assert_eq!(scanner.push(b"\x1b]9;hello\x07\x07").len(), 2);
+        assert_eq!(scanner.progress(), "4;1;25");
     }
 
     #[test]

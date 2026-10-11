@@ -428,7 +428,7 @@ regex = ['^\* ']
         let overlay = OverlayAdapter::new(parse_manifest(text).unwrap()).unwrap();
         let rules = overlay.screen_rules();
         assert_eq!(rules.len(), 2);
-        let hit = crate::screen::classify(rules, "* busy", "Allow? [y/n]").unwrap();
+        let hit = crate::screen::classify(rules, "* busy", "Allow? [y/n]", "").unwrap();
         assert_eq!(
             (hit.id.as_str(), hit.state),
             ("ask", crate::screen::ScreenState::Blocked)

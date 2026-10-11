@@ -23,6 +23,7 @@ const BUNDLED: &[&str] = &[
     include_str!("../screen/qodercli.toml"),
     include_str!("../screen/muse.toml"),
     include_str!("../screen/antigravity.toml"),
+    include_str!("../screen/grok.toml"),
 ];
 
 fn manifests() -> &'static [OverlayAdapter] {
@@ -67,7 +68,7 @@ mod tests {
     use crate::screen::{classify, ScreenState};
 
     fn state(kind: AgentKind, screen: &str) -> Option<(ScreenState, String)> {
-        classify(bundled_screen_rules(kind, ""), "", screen).map(|r| (r.state, r.id.clone()))
+        classify(bundled_screen_rules(kind, ""), "", screen, "").map(|r| (r.state, r.id.clone()))
     }
 
     /// A generic pane running `process`.
@@ -76,6 +77,7 @@ mod tests {
             bundled_screen_rules(AgentKind::Generic, process),
             "",
             screen,
+            "",
         )
         .map(|r| (r.state, r.id.clone()))
     }
@@ -97,9 +99,132 @@ mod tests {
     }
 
     #[test]
+    fn grok_progress_and_visible_blockers_have_the_expected_priorities() {
+        let hit = |process, title, screen, progress| {
+            classify(
+                bundled_screen_rules(AgentKind::Generic, process),
+                title,
+                screen,
+                progress,
+            )
+            .map(|r| (r.state, r.id.as_str()))
+        };
+        assert_eq!(
+            hit("grok", "custom title", "", "4;1;-1"),
+            Some((ScreenState::Working, "osc_progress_working"))
+        );
+        assert_eq!(
+            hit("grok-build", "custom title", "", "4;0;0"),
+            Some((ScreenState::Idle, "osc_progress_idle"))
+        );
+        assert_eq!(
+            hit("grok", "grok", "┃  2 (○) Yes, proceed", "4;1;-1"),
+            Some((ScreenState::Blocked, "option_dialog_blocked"))
+        );
+        assert!(bundled_screen_rules(AgentKind::Generic, "shell").is_empty());
+        assert!(bundled_programs().any(|p| p == ("Grok", vec!["grok", "grok-build"])));
+    }
+
+    #[test]
+    fn grok_titles_footers_and_splash_match_without_progress() {
+        let cases = [
+            (
+                "⚠ Action Required - grok",
+                "",
+                ScreenState::Blocked,
+                "osc_title_blocked",
+            ),
+            (
+                "grok",
+                "1/3:select │ Ctrl+o:yolo │ Ctrl+c:cancel",
+                ScreenState::Blocked,
+                "permission_hints_blocked",
+            ),
+            (
+                "grok",
+                "Esc:unselect │ Tab:scrollback │ Shift+x:dismiss",
+                ScreenState::Blocked,
+                "question_dialog_hints_blocked",
+            ),
+            (
+                "grok",
+                "Yes, proceed\nNo, reject\n←/→:scope",
+                ScreenState::Blocked,
+                "permission_scope_selector",
+            ),
+            (
+                "grok",
+                "⠧ Waiting on subagent… 2.8s 13s ⇣29.7k [stop]",
+                ScreenState::Working,
+                "spinner_status_working",
+            ),
+            (
+                "grok",
+                "Ctrl+.:shortcuts │ Esc:cancel",
+                ScreenState::Working,
+                "esc_cancel_hints_working",
+            ),
+            (
+                "custom",
+                "waiting for tools\nCtrl+c:cancel Ctrl+Enter:interject",
+                ScreenState::Working,
+                "waiting_tool_working",
+            ),
+            (
+                "custom",
+                "⠧ Read file",
+                ScreenState::Working,
+                "waiting_tool_working_line",
+            ),
+            (
+                "⠧ session - grok",
+                "",
+                ScreenState::Working,
+                "osc_title_working",
+            ),
+            ("session - grok", "", ScreenState::Idle, "osc_title_idle"),
+            (
+                "custom",
+                "Ctrl+.:shortcuts",
+                ScreenState::Idle,
+                "prompt_hints_idle",
+            ),
+            (
+                "custom",
+                "⠧ splash logo\nbackground subagent running",
+                ScreenState::Idle,
+                "idle_fallback",
+            ),
+        ];
+        for (title, screen, want, id) in cases {
+            let hit = classify(
+                bundled_screen_rules(AgentKind::Generic, "grok"),
+                title,
+                screen,
+                "",
+            )
+            .unwrap();
+            assert_eq!(
+                (hit.state, hit.id.as_str()),
+                (want, id),
+                "{title}: {screen}"
+            );
+        }
+        // Visible activity wins even when the retained progress says idle.
+        let hit = classify(
+            bundled_screen_rules(AgentKind::Generic, "grok"),
+            "grok",
+            "⠧ Explore repo [stop]",
+            "4;0;0",
+        )
+        .unwrap();
+        assert_eq!(hit.id, "spinner_status_working");
+    }
+
+    #[test]
     fn every_generic_program_is_launchable_by_name() {
         let programs: Vec<_> = bundled_programs().collect();
-        assert_eq!(programs.len(), 7);
+        assert_eq!(programs.len(), 8);
         for (name, bins) in &programs {
             assert!(!bins.is_empty(), "{name}");
             for bin in bins {
@@ -286,8 +411,13 @@ mod tests {
     }
 
     fn claude_title(title: &str, screen: &str) -> Option<(ScreenState, String)> {
-        classify(bundled_screen_rules(AgentKind::Claude, ""), title, screen)
-            .map(|r| (r.state, r.id.clone()))
+        classify(
+            bundled_screen_rules(AgentKind::Claude, ""),
+            title,
+            screen,
+            "",
+        )
+        .map(|r| (r.state, r.id.clone()))
     }
 
     #[test]
@@ -459,8 +589,13 @@ mod tests {
     }
 
     fn codex(title: &str, screen: &str) -> Option<(ScreenState, String)> {
-        classify(bundled_screen_rules(AgentKind::Codex, ""), title, screen)
-            .map(|r| (r.state, r.id.clone()))
+        classify(
+            bundled_screen_rules(AgentKind::Codex, ""),
+            title,
+            screen,
+            "",
+        )
+        .map(|r| (r.state, r.id.clone()))
     }
 
     #[test]
@@ -483,9 +618,9 @@ mod tests {
             .into_iter()
             .find(|r| r.id == "osc_title_idle")
             .unwrap();
-        assert!(rule.matches("codex", idle));
-        assert!(!rule.matches("⠙ codex", idle));
-        assert!(!rule.matches("Action Required", idle));
+        assert!(rule.matches("codex", idle, ""));
+        assert!(!rule.matches("⠙ codex", idle, ""));
+        assert!(!rule.matches("Action Required", idle, ""));
     }
 
     #[test]

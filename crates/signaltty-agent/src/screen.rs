@@ -61,6 +61,7 @@ enum Base {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Region {
     Title,
+    Progress,
     /// A slice of the screen, then its last (or, for `top`, first) `lines`
     /// non-empty lines.
     Lines(Base, Option<usize>, bool),
@@ -94,10 +95,10 @@ impl ScreenRule {
         };
         let name = spec.region.as_deref().unwrap_or("bottom");
         let (base, lines) = match name {
-            "title" if spec.lines.is_some() => {
-                return Err(at("lines does not apply to region title".into()))
+            "title" | "osc_progress" if spec.lines.is_some() => {
+                return Err(at("lines does not apply to title or osc_progress".into()))
             }
-            "title" => (None, None),
+            "title" | "osc_progress" => (None, None),
             "bottom" => (
                 Some(Base::Screen),
                 Some(spec.lines.unwrap_or(DEFAULT_LINES)),
@@ -118,7 +119,11 @@ impl ScreenRule {
         if lines.is_some_and(|n| !(1..=MAX_LINES).contains(&n)) {
             return Err(at(format!("lines must be 1..={MAX_LINES}")));
         }
-        let region = base.map_or(Region::Title, |b| Region::Lines(b, lines, name == "top"));
+        let region = match base {
+            Some(b) => Region::Lines(b, lines, name == "top"),
+            None if name == "osc_progress" => Region::Progress,
+            None => Region::Title,
+        };
         if spec.regex.is_empty() && spec.all.is_empty() {
             return Err(at("needs at least one regex or all".into()));
         }
@@ -145,10 +150,12 @@ impl ScreenRule {
         &self.label
     }
 
-    pub fn matches(&self, title: &str, screen: &str) -> bool {
+    pub fn matches(&self, title: &str, screen: &str, progress: &str) -> bool {
         let sliced;
         let text = match self.region {
             Region::Title => title,
+            Region::Progress if progress.is_empty() => return false,
+            Region::Progress => progress,
             Region::Lines(base, limit, from_top) => {
                 let raw: Vec<&str> = screen.lines().collect();
                 let lines: Vec<&str> = slice(base, &raw)
@@ -228,10 +235,12 @@ pub fn classify<'a>(
     rules: impl IntoIterator<Item = &'a ScreenRule>,
     title: &str,
     screen: &str,
+    progress: &str,
 ) -> Option<&'a ScreenRule> {
     let mut best: Option<&ScreenRule> = None;
     for rule in rules {
-        if best.is_none_or(|b| rule.priority > b.priority) && rule.matches(title, screen) {
+        if best.is_none_or(|b| rule.priority > b.priority) && rule.matches(title, screen, progress)
+        {
             best = Some(rule);
         }
     }
@@ -290,19 +299,37 @@ mod tests {
     fn bottom_region_sees_only_the_last_non_empty_lines() {
         let screen = "Allow? [y/n]\nold output\n\nmore output\n   \n";
         let r = rule("ask", "blocked", Some("bottom"), Some(2), &[r"Allow\?"], 0);
-        assert!(!r.matches("", screen));
+        assert!(!r.matches("", screen, ""));
         let r = rule("ask", "blocked", Some("bottom"), Some(3), &[r"Allow\?"], 0);
-        assert!(r.matches("", screen));
+        assert!(r.matches("", screen, ""));
         // Default region is bottom(12); line anchors work per line.
         let r = rule("out", "working", None, None, &[r"(?m)^more output$"], 0);
-        assert!(r.matches("", screen));
+        assert!(r.matches("", screen, ""));
+    }
+
+    #[test]
+    fn progress_region_reads_only_present_progress_and_rejects_lines() {
+        let r = rule(
+            "busy",
+            "working",
+            Some("osc_progress"),
+            None,
+            &["^4;1;-1$"],
+            1,
+        );
+        assert!(r.matches("idle", "", "4;1;-1"));
+        assert!(!r.matches("4;1;-1", "4;1;-1", ""));
+        let r = rule("any", "idle", Some("osc_progress"), None, &[""], 1);
+        assert!(!r.matches("", "", ""));
+        assert_eq!(r.region_label(), "osc_progress");
+        assert!(compile_err("working", Some("osc_progress"), Some(1), &["x"]).contains("lines"));
     }
 
     #[test]
     fn title_region_ignores_the_screen() {
         let r = rule("spin", "working", Some("title"), None, &["^[⠋⠙⠹] "], 0);
-        assert!(r.matches("⠙ thinking", "idle prompt"));
-        assert!(!r.matches("claude", "⠙ thinking"));
+        assert!(r.matches("⠙ thinking", "idle prompt", ""));
+        assert!(!r.matches("claude", "⠙ thinking", ""));
     }
 
     fn from_toml(text: &str) -> Result<ScreenRule, String> {
@@ -315,13 +342,13 @@ mod tests {
             "id = 'a'\nstate = 'blocked'\nall = ['esc dismiss', 'enter (?:confirm|submit)']\nnot = ['done']",
         )
         .unwrap();
-        assert!(r.matches("", "esc dismiss\nenter submit"));
-        assert!(!r.matches("", "esc dismiss"));
-        assert!(!r.matches("", "esc dismiss\nenter submit\ndone"));
+        assert!(r.matches("", "esc dismiss\nenter submit", ""));
+        assert!(!r.matches("", "esc dismiss", ""));
+        assert!(!r.matches("", "esc dismiss\nenter submit\ndone", ""));
         let r = from_toml("id = 'b'\nstate = 'working'\nregex = ['x', 'y']\nall = ['z']").unwrap();
-        assert!(r.matches("", "y z"));
-        assert!(!r.matches("", "y"));
-        assert!(!r.matches("", "z"));
+        assert!(r.matches("", "y z", ""));
+        assert!(!r.matches("", "y", ""));
+        assert!(!r.matches("", "z", ""));
         assert!(from_toml("id = 'c'\nstate = 'idle'\nnot = ['x']")
             .unwrap_err()
             .contains("regex"));
@@ -342,7 +369,7 @@ mod tests {
         if let Some(n) = lines {
             text.push_str(&format!("\nlines = {n}"));
         }
-        from_toml(&text).unwrap().matches("", BOXED)
+        from_toml(&text).unwrap().matches("", BOXED, "")
     }
 
     #[test]
@@ -376,7 +403,7 @@ mod tests {
                 "id = 'r'\nstate = 'idle'\nregion = '{region}'\nregex = ['{re}']"
             ))
             .unwrap()
-            .matches("", plain)
+            .matches("", plain, "")
         };
         assert!(!hit("prompt_box", "hi"));
         assert!(hit("above_prompt_box", "no rules"));
@@ -393,7 +420,7 @@ mod tests {
         if let Some(n) = lines {
             text.push_str(&format!("\nlines = {n}"));
         }
-        from_toml(&text).unwrap().matches("", screen)
+        from_toml(&text).unwrap().matches("", screen, "")
     }
 
     #[test]
@@ -470,7 +497,7 @@ mod tests {
     #[test]
     fn any_regex_matches() {
         let r = rule("two", "idle", None, None, &["^nope$", r"\$$"], 0);
-        assert!(r.matches("", "user@host $ "));
+        assert!(r.matches("", "user@host $ ", ""));
     }
 
     #[test]
@@ -481,13 +508,13 @@ mod tests {
         let screen = "Do you want to proceed?\nesc to interrupt";
         let rules = [low, high, tie];
         assert_eq!(
-            classify(&rules, "", screen).map(|r| r.id.as_str()),
+            classify(&rules, "", screen, "").map(|r| r.id.as_str()),
             Some("high")
         );
         assert_eq!(
-            classify(&rules, "", "esc to interrupt").map(|r| r.state),
+            classify(&rules, "", "esc to interrupt", "").map(|r| r.state),
             Some(ScreenState::Working)
         );
-        assert!(classify(&rules, "", "nothing here").is_none());
+        assert!(classify(&rules, "", "nothing here", "").is_none());
     }
 }

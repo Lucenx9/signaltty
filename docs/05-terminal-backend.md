@@ -75,6 +75,21 @@ trait TerminalBackend {
 Implementations: `HeadlessBackend` (Phase 1, `vt100`, in server),
 `VteBackend` (Phase 3, GUI), `GhosttyVtBackend` (future, feature-gated).
 
+## OSC progress evidence
+
+The raw-byte `OscScanner` distinguishes OSC 9;4 progress from OSC 9
+notifications. It accepts `4;<state>[;<value>]` after `9;`, with state `0..4`
+and an omitted/empty value or integer `-1..100`. The `-1` sentinel supports
+Grok's busy signal. The retained ASCII payload is limited to 32 bytes.
+Malformed reserved progress is ignored rather than displayed as a notification.
+BEL and ST terminate progress without raising a bell. Ordinary OSC 9 messages
+and bare BEL keep their previous behavior.
+
+The current PTY scanner owns the latest progress. The server's declarative
+classifier and `pane.explain` read it. This evidence is not persisted and causes
+no per-progress event or lifecycle update by itself. See
+[ADR-0030](adr/0030-osc-progress-evidence.md).
+
 ## Rendered ring (US3 reads, 018)
 
 `HeadlessBackend` keeps one rendered line ring per pane
