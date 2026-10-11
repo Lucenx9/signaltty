@@ -37,13 +37,14 @@ inspect lifecycle, attention and explain results.
 3. Given a hooked process, when progress or screen evidence disagrees,
    then semantic hooks retain authority.
 4. Given a generic program other than Grok, then Grok rules never apply to it.
-5. Given a new process in the same pane, then it never inherits previous progress.
+5. Given a managed pane respawned through `pane.resume`, then the new PTY
+   never inherits previous progress.
 
 ### Edge Cases
 - BEL and ST termination, arbitrary byte boundaries and several events per chunk.
 - Unknown progress modes, extra fields, nonnumeric or excessive progress values.
 - Stale idle titles during visibly active work; background agents at the idle prompt.
-- User overrides, process replacement, close, exit and server restart.
+- User overrides, managed PTY replacement, close, exit and server restart.
 
 ## Requirements
 
@@ -56,7 +57,7 @@ inspect lifecycle, attention and explain results.
 - **FR-004**: Bundle Grok rules for `grok` and `grok-build`, with blocked UI above
   working evidence, visible work above stale idle titles, and known-agent idle fallback.
 - **FR-005**: Hooks remain authoritative; unknown programs stay plain terminals.
-- **FR-006**: Progress is ephemeral, cleared on process replacement/exit/close,
+- **FR-006**: Progress is ephemeral, cleared on managed PTY replacement/exit/close,
   and absent after a cold server restart; it causes no persisted progress field or per-update events.
 - **FR-007**: Offer Grok through the existing bundled-program launcher discovery.
 - **FR-008**: Prove the behavior using test-first scanner/rule tests and real PTY IPC tests.
@@ -82,3 +83,12 @@ inspect lifecycle, attention and explain results.
 ## Clarification
 Requirements reviewed: no unresolved markers. Scope and existing test seams are
 already authorized by the user and repository constitution; no extra interview required.
+
+## Scope clarification from review
+
+The reset guarantee applies to server-owned PTY exit, close, resume and restart.
+A shell can run several foreground programs within one PTY. Their retained OSC
+progress is shared until overwritten, just as terminal evidence follows that PTY.
+Existing process refresh scopes which manifest applies but does not detect/reset
+all foreground process generations. Tracking those generations is outside this
+PR. Grok title/screen rules remain available when it does not emit progress.

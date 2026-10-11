@@ -272,6 +272,9 @@ named after the script it runs (`pane.explain` shows it as `process`).
 has been reported, even with an empty regex. Evidence belongs to the live PTY
 scanner and is dropped on exit, close, respawn or server restart. It raises no
 notification and changes no state without an applicable rule. Hooks still win.
+Changing the foreground program within the same shell does not reset retained
+progress. A new program can inherit it until it emits another progress signal;
+process refresh scopes rules but does not track foreground generations.
 `pane.explain` includes this evidence as `osc_progress`.
 
 signaltty bundles rules for `pi`, `opencode`, `cursor`, `claude` and `codex`,
