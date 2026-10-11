@@ -2302,7 +2302,7 @@ impl App {
             active_cwd.as_deref(),
             move |req| {
                 if let Some(a) = w.upgrade() {
-                    a.create_workspace(&req.name, &req.cwd, &req.argv);
+                    a.create_workspace(&req.name, &req.cwd, &req.argv, req.auto_name);
                 }
             },
             move || {
@@ -2572,13 +2572,13 @@ impl App {
 
     /// `signaltty new` over IPC: create the workspace, spawn the first
     /// pane in it, show it and focus the new terminal.
-    fn create_workspace(&self, name: &str, cwd: &str, argv: &[String]) {
+    fn create_workspace(&self, name: &str, cwd: &str, argv: &[String], auto_name: bool) {
         let name = name.to_string();
         let cwd = cwd.to_string();
         let argv = argv.to_vec();
         let navigation = self.navigate();
         self.run(move |app| async move {
-            app.create_workspace_async(&name, &cwd, &argv, navigation)
+            app.create_workspace_async(&name, &cwd, &argv, navigation, auto_name)
                 .await
         });
     }
@@ -2589,10 +2589,14 @@ impl App {
         cwd: &str,
         argv: &[String],
         navigation: u64,
+        auto_name: bool,
     ) {
         let ws_id = match self
             .actor
-            .call("workspace.create", json!({"name": name, "cwd": cwd}))
+            .call(
+                "workspace.create",
+                json!({"name": name, "cwd": cwd, "auto_name": auto_name}),
+            )
             .await
         {
             Ok(v) => v["workspace"]["id"]

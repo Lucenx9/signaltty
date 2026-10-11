@@ -37,7 +37,7 @@ pub struct Ctx {
     pub shutdown: Arc<tokio::sync::Notify>,
     /// Set once shutdown begins: the shutdown snapshot is final, so the
     /// debounced flusher must not overwrite it with teardown changes.
-    pub stopping: std::sync::atomic::AtomicBool,
+    pub stopping: Arc<std::sync::atomic::AtomicBool>,
     /// Serializes snapshot writes, so an in-flight flush cannot land after
     /// the final save.
     pub save_lock: std::sync::Mutex<()>,
@@ -554,6 +554,11 @@ pub(crate) fn h_workspace_create(ctx: &Ctx, params: &Value) -> Handler {
         // cannot claim the same one.
         let mut s = ctx.store.write().unwrap();
         let ws = Workspace {
+            naming: if p.auto_name {
+                signaltty_core::model::WorkspaceNaming::AwaitingPrompt
+            } else {
+                Default::default()
+            },
             id: new_ws_id(),
             handle: unique_handle(&s, &signaltty_core::model::slugify(&name)),
             name,
@@ -615,11 +620,7 @@ fn h_workspace_rename(ctx: &Ctx, params: &Value) -> Handler {
             .ok_or_else(|| (code::NO_SUCH_WORKSPACE.to_string(), raw.clone()))?
     };
     let mut s = ctx.store.write().unwrap();
-    let ws = s.workspaces.get_mut(&id).unwrap();
-    ws.name = name;
-    ws.updated_at = Utc::now();
-    let ws = ws.clone();
-    s.emit(event::WORKSPACE_UPDATED, json!({"workspace": ws}));
+    let ws = s.rename_workspace(&id, name).unwrap();
     drop(s);
 
     ctx.mark_persist();
@@ -2430,6 +2431,7 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             p.attention.as_str().to_string(),
         )
     };
+    crate::workspace_titles::schedule(ctx, &event, &pid);
     ctx.mark_persist();
     Ok((
         json!({"accepted": true, "agent": agent, "event": hook, "pane_id": pid,

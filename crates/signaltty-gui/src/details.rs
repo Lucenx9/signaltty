@@ -369,6 +369,7 @@ mod tests {
     fn workspace(git: serde_json::Value) -> Workspace {
         let now = Utc.with_ymd_and_hms(2026, 10, 10, 12, 0, 0).unwrap();
         Workspace {
+            naming: Default::default(),
             id: "ws".into(),
             name: "ws".into(),
             handle: "ws".into(),

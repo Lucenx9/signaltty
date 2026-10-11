@@ -670,8 +670,22 @@ pub fn slugify(name: &str) -> String {
     }
 }
 
+/// Automatic names are opt-in; old snapshots remain manually named.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceNaming {
+    #[default]
+    Manual,
+    AwaitingPrompt,
+    Generating,
+    Generated,
+    Failed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
+    #[serde(default)]
+    pub naming: WorkspaceNaming,
     pub id: String,
     pub name: String,
     /// Immutable unique handle (`my-api`): the stable typable address.

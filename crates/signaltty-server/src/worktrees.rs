@@ -415,6 +415,7 @@ async fn bind_workspace(
         return Ok(json!({"workspace":ws,"path":cwd,"reused":true}));
     }
     let workspace = Workspace {
+        naming: Default::default(),
         id: new_ws_id(),
         handle: unique_handle(&store, &signaltty_core::model::slugify(&name)),
         name,
