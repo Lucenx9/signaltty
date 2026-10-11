@@ -3251,7 +3251,7 @@ fn task_board_explains_truncated_done_history() {
             .hadjustment()
             .set_value(scroll.hadjustment().upper() - scroll.hadjustment().page_size());
         capture_workflow(&window, &format!("board-history-{name}"));
-        assert!(has_label(&done, &format!("Done · {count}")));
+        assert!(has_board_column_count(&done, "Done", &count.to_string()));
         let list = find_widget::<gtk4::ListBox>(&done).unwrap();
         assert!(list.row_at_index(19).is_some() && list.row_at_index(20).is_none());
         assert!(has_label(
