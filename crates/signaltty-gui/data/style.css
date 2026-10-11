@@ -161,6 +161,18 @@
   color: alpha(currentColor, 0.65);
 }
 
+.palette-group {
+  padding: 12px 14px 6px;
+  font-size: 0.82em;
+  font-weight: 600;
+  color: alpha(currentColor, 0.78);
+}
+.high-contrast .palette-shortcut,
+.high-contrast .palette-group,
+.high-contrast .changes-dir,
+.high-contrast .changes-summary,
+.high-contrast .changes-stat .changes-tag { color: inherit; }
+
 /* ---- changes panel ----------------------------------------------------- */
 
 /* t3code's diff panel: quiet totals, directory labels opening each
@@ -180,10 +192,11 @@ window {
   color: alpha(currentColor, 0.65);
 }
 .changes-dir {
-  padding: 10px 12px 2px 12px;
+  padding: 12px 12px 5px 12px;
+  border-bottom: 1px solid var(--border-color);
   font-size: 0.82em;
   font-weight: 600;
-  color: alpha(currentColor, 0.6);
+  color: alpha(currentColor, 0.78);
 }
 .changes-list > row > box.header {
   min-height: 34px;
@@ -1270,34 +1283,29 @@ button.pill:focus-visible,
 .theme-iris .ws-mark.tint-2 { color: #004f8b; background-color: alpha(#4c759f, 0.22); }
 .theme-iris.dark .ws-mark.tint-2 { color: #96c9fe; background-color: alpha(#124a7b, 0.45); }
 
-/* ---- preferences cards + swatches ---------------------------------------
- * Each swatch carries its own theme-<id> class inside a window that
- * has another, so every swatch rule uses literal hexes (never the
- * variables): radial-gradient orbs. Signal has no own accent; its
- * orbs preview against the stock default blue.
- */
-.theme-swatch {
-  min-width: 34px;
-  min-height: 34px;
-  border-radius: 999px;
-  box-shadow: inset 0 0 0 1px alpha(black, 0.08);
+/* Theme miniatures use scoped preview colors so an active theme cannot tint
+ * another choice. The surfaces match the existing application palettes. */
+.theme-preview {
+  min-width: 58px;
+  min-height: 54px;
+  border-radius: 5px;
+  background-color: var(--preview-pane);
+  box-shadow: 0 0 0 1px alpha(black, 0.12);
 }
-.dark .theme-swatch {
-  box-shadow: inset 0 0 0 1px alpha(white, 0.1);
-}
-/* Orbs (t3code): the light orb is the canvas lit from the top left and
- * fading into the accent; the dark one is the accent glowing out of the
- * dark canvas. */
-.theme-swatch.theme-signal.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #ffffff 30%, #b8d3f6 72%, #3584e4 125%); }
-.theme-swatch.theme-signal.dark { background-image: radial-gradient(circle at 32% 28%, #5d9de9 0%, #1d2f49 48%, #111114 82%); }
-.theme-swatch.theme-grove.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #effdfd 30%, #9fd3d4 72%, #097e82 125%); }
-.theme-swatch.theme-grove.dark { background-image: radial-gradient(circle at 32% 28%, #2fa3a7 0%, #0b3a3b 48%, #071414 82%); }
-.theme-swatch.theme-ocean.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #f3fbff 30%, #a1d0de 72%, #097a9e 125%); }
-.theme-swatch.theme-ocean.dark { background-image: radial-gradient(circle at 32% 28%, #2f9ec2 0%, #0b3546 48%, #091318 82%); }
-.theme-swatch.theme-ember.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #fff8f5 30%, #f0bd98 72%, #bc5107 125%); }
-.theme-swatch.theme-ember.dark { background-image: radial-gradient(circle at 32% 28%, #e07a32 0%, #4a250e 48%, #180f0b 82%); }
-.theme-swatch.theme-iris.light { background-image: radial-gradient(circle at 32% 28%, #ffffff 0%, #fbf8ff 30%, #d2bdeb 72%, #895ac3 125%); }
-.theme-swatch.theme-iris.dark { background-image: radial-gradient(circle at 32% 28%, #a77ed9 0%, #36244a 48%, #131018 82%); }
+.theme-preview-sidebar { min-width: 12px; padding: 8px 3px; background-color: var(--preview-sidebar); }
+.theme-preview-terminal { padding: 8px 5px; }
+.theme-preview-line { min-height: 3px; border-radius: 2px; background-color: var(--preview-ink); }
+.theme-preview-selection { background-color: var(--preview-accent); }
+.theme-preview.theme-signal.light { --preview-sidebar: #ebebee; --preview-pane: #fbfbfc; --preview-accent: #3584e4; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-signal.dark { --preview-sidebar: #0c0c0e; --preview-pane: #111114; --preview-accent: #3584e4; --preview-ink: alpha(white, 0.30); }
+.theme-preview.theme-grove.light { --preview-sidebar: #dceaeb; --preview-pane: #effdfd; --preview-accent: #097e82; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-grove.dark { --preview-sidebar: #040f0f; --preview-pane: #071414; --preview-accent: #097e82; --preview-ink: alpha(white, 0.30); }
+.theme-preview.theme-ocean.light { --preview-sidebar: #dde9ef; --preview-pane: #f3fbff; --preview-accent: #097a9e; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-ocean.dark { --preview-sidebar: #050e12; --preview-pane: #091318; --preview-accent: #097a9e; --preview-ink: alpha(white, 0.30); }
+.theme-preview.theme-ember.light { --preview-sidebar: #f0e4df; --preview-pane: #fff8f5; --preview-accent: #bc5107; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-ember.dark { --preview-sidebar: #130a06; --preview-pane: #180f0b; --preview-accent: #bc5107; --preview-ink: alpha(white, 0.30); }
+.theme-preview.theme-iris.light { --preview-sidebar: #e9e5f0; --preview-pane: #fbf8ff; --preview-accent: #895ac3; --preview-ink: alpha(black, 0.24); }
+.theme-preview.theme-iris.dark { --preview-sidebar: #0e0a13; --preview-pane: #131018; --preview-accent: #895ac3; --preview-ink: alpha(white, 0.30); }
 
 /* Scheme previews: a miniature window per choice, in literal colours so
  * a dark window can still show what Light looks like. */
@@ -1488,6 +1496,6 @@ button.card.appearance-card:checked.keyboard-activating {
 .high-contrast .scheme-preview {
   box-shadow: 0 0 0 1px currentColor;
 }
-.high-contrast .theme-swatch {
+.high-contrast .theme-preview {
   box-shadow: inset 0 0 0 1px currentColor;
 }

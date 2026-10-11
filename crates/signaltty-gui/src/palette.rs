@@ -117,6 +117,26 @@ pub fn present(
         .flatten()
         .any(|text| text.to_lowercase().contains(&needle))
     });
+    let groups = choices.clone();
+    list.set_header_func(move |row, before| {
+        let group = |row: &gtk4::ListBoxRow| {
+            groups
+                .get(row.index() as usize)
+                .map(|choice| match choice.target {
+                    Target::Workspace(_) => "Workspaces",
+                    Target::Action(_) => "Commands",
+                })
+        };
+        let current = group(row);
+        if current.is_some() && current != before.and_then(group) {
+            let heading = gtk4::Label::new(current);
+            heading.set_xalign(0.0);
+            heading.add_css_class("palette-group");
+            row.set_header(Some(&heading));
+        } else {
+            row.set_header(None::<&gtk4::Widget>);
+        }
+    });
     for choice in choices.iter() {
         let row = adw::ActionRow::new();
         row.set_use_markup(false);
@@ -159,6 +179,7 @@ pub fn present(
     let filtered = list.clone();
     entry.connect_changed(move |_| {
         filtered.invalidate_filter();
+        filtered.invalidate_headers();
         let first = (0..choices.len())
             .filter_map(|i| filtered.row_at_index(i as i32))
             .find(|r| r.is_child_visible());

@@ -149,6 +149,39 @@ fn scheme_preview(appearance: Appearance) -> gtk4::Box {
     preview
 }
 
+/// Paired miniature checkouts preview the sidebar selection and terminal surface.
+fn theme_preview(theme: Theme, variant: &str) -> gtk4::Box {
+    let preview = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    preview.add_css_class("theme-preview");
+    preview.add_css_class(theme.css_class());
+    preview.add_css_class(variant);
+    preview.set_direction(gtk4::TextDirection::Ltr);
+    preview.set_overflow(gtk4::Overflow::Hidden);
+    let sidebar = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    sidebar.add_css_class("theme-preview-sidebar");
+    for selected in [false, true, false] {
+        let line = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        line.add_css_class("theme-preview-line");
+        if selected {
+            line.add_css_class("theme-preview-selection");
+        }
+        sidebar.append(&line);
+    }
+    let terminal = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    terminal.add_css_class("theme-preview-terminal");
+    terminal.set_hexpand(true);
+    for width in [24, 16, 20] {
+        let line = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        line.add_css_class("theme-preview-line");
+        line.set_size_request(width, -1);
+        line.set_halign(gtk4::Align::Start);
+        terminal.append(&line);
+    }
+    preview.append(&sidebar);
+    preview.append(&terminal);
+    preview
+}
+
 /// Build the Preferences dialog with Appearance and Theme controls.
 pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
     let dialog = adw::PreferencesDialog::new();
@@ -161,8 +194,13 @@ pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
     let appearance_group = adw::PreferencesGroup::new();
     appearance_group.set_title("Appearance");
 
-    let appearance_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
-    appearance_box.set_homogeneous(true);
+    let appearance_box = adw::WrapBox::new();
+    appearance_box.set_wrap_policy(adw::WrapPolicy::Minimum);
+    appearance_box.set_natural_line_length(600);
+    appearance_box.set_child_spacing(6);
+    appearance_box.set_line_spacing(12);
+    appearance_box.set_justify(adw::JustifyMode::Fill);
+    appearance_box.set_justify_last_line(false);
     appearance_box.set_halign(gtk4::Align::Fill);
 
     let current_pref = app.preference();
@@ -211,8 +249,13 @@ pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
     let theme_group = adw::PreferencesGroup::new();
     theme_group.set_title("Theme");
 
-    let theme_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-    theme_box.set_homogeneous(true);
+    let theme_box = adw::WrapBox::new();
+    theme_box.set_wrap_policy(adw::WrapPolicy::Minimum);
+    theme_box.set_natural_line_length(600);
+    theme_box.set_child_spacing(8);
+    theme_box.set_line_spacing(12);
+    theme_box.set_justify(adw::JustifyMode::Fill);
+    theme_box.set_justify_last_line(false);
     theme_box.set_halign(gtk4::Align::Fill);
 
     let mut theme_buttons = Vec::new();
@@ -226,15 +269,10 @@ pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
         card_box.set_halign(gtk4::Align::Center);
         card_box.set_valign(gtk4::Align::Center);
 
-        // One orb per variant, light then dark (t3code theme cards).
-        let swatches_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        let swatches_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
         swatches_box.set_halign(gtk4::Align::Center);
         for variant in ["light", "dark"] {
-            let orb = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-            orb.add_css_class("theme-swatch");
-            orb.add_css_class(theme.css_class());
-            orb.add_css_class(variant);
-            swatches_box.append(&orb);
+            swatches_box.append(&theme_preview(theme, variant));
         }
 
         let label = gtk4::Label::new(Some(theme.label()));

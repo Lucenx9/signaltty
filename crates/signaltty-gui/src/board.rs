@@ -274,20 +274,25 @@ impl CardWidgets {
         let title = gtk4::Label::new(None);
         title.add_css_class("board-card-title");
         title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        title.set_wrap(true);
+        title.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+        title.set_lines(2);
         title.set_hexpand(true);
-        title.set_halign(gtk4::Align::Start);
+        title.set_xalign(0.0);
+        title.set_halign(gtk4::Align::Fill);
         let pill = gtk4::Label::new(None);
         pill.add_css_class("task-chip");
         pill.add_css_class("board-card-pill");
         pill.set_halign(gtk4::Align::End);
-        top.append(&title);
-        top.append(&pill);
-        body.append(&top);
+        body.append(&title);
         let meta = gtk4::Label::new(None);
         meta.add_css_class("board-card-meta");
         meta.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        meta.set_halign(gtk4::Align::Start);
-        body.append(&meta);
+        meta.set_xalign(0.0);
+        meta.set_hexpand(true);
+        top.append(&meta);
+        top.append(&pill);
+        body.append(&top);
         row.set_child(Some(&body));
         let widgets = Self {
             row,
@@ -765,7 +770,74 @@ pub fn present(
     let scroll = gtk4::ScrolledWindow::new();
     scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
     scroll.set_child(Some(&container));
-    stack.add_named(&scroll, Some("board"));
+    let navigation = libadwaita::WrapBox::new();
+    navigation.set_child_spacing(6);
+    navigation.set_line_spacing(6);
+    navigation.set_halign(gtk4::Align::End);
+    navigation.set_margin_start(18);
+    navigation.set_margin_end(18);
+    let previous = gtk4::Button::with_label("Previous state");
+    let next = gtk4::Button::with_label("Next state");
+    for (button, forward) in [(&previous, false), (&next, true)] {
+        let content = container.downgrade();
+        let adjustment = scroll.hadjustment();
+        button.connect_clicked(move |_| {
+            let Some(content) = content.upgrade() else {
+                return;
+            };
+            let mut child = content.first_child();
+            let mut positions = Vec::new();
+            while let Some(column) = child {
+                if let Some(bounds) = column.compute_bounds(&content) {
+                    positions.push(f64::from(bounds.x()));
+                }
+                child = column.next_sibling();
+            }
+            if let Some(origin) = positions.first().copied() {
+                for position in &mut positions {
+                    *position -= origin;
+                }
+            }
+            let current = adjustment.value();
+            let maximum = (adjustment.upper() - adjustment.page_size()).max(0.0);
+            let target = if forward {
+                positions
+                    .into_iter()
+                    .find(|x| *x > current + 1.0)
+                    .unwrap_or(maximum)
+            } else {
+                positions
+                    .into_iter()
+                    .rev()
+                    .find(|x| *x < current - 1.0)
+                    .unwrap_or(0.0)
+            };
+            adjustment.set_value(target.clamp(0.0, maximum));
+        });
+        navigation.append(button);
+    }
+    let adjustment = scroll.hadjustment();
+    let nav = navigation.downgrade();
+    let prev = previous.downgrade();
+    let following = next.downgrade();
+    let update_navigation = move |adjustment: &gtk4::Adjustment| {
+        let (Some(nav), Some(prev), Some(next)) =
+            (nav.upgrade(), prev.upgrade(), following.upgrade())
+        else {
+            return;
+        };
+        let maximum = adjustment.upper() - adjustment.page_size();
+        nav.set_visible(maximum > 1.0);
+        prev.set_sensitive(adjustment.value() > 1.0);
+        next.set_sensitive(adjustment.value() < maximum - 1.0);
+    };
+    let update = update_navigation.clone();
+    adjustment.connect_changed(move |adjustment| update(adjustment));
+    adjustment.connect_value_changed(move |adjustment| update_navigation(adjustment));
+    let board_body = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    board_body.append(&navigation);
+    board_body.append(&scroll);
+    stack.add_named(&board_body, Some("board"));
     body.append(&stack);
     let cards: Rc<RefCell<std::collections::HashMap<String, TaskCardView>>> = Rc::default();
     let chosen: Rc<RefCell<Option<String>>> = Rc::default();

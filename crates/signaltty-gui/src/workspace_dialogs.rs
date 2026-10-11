@@ -67,7 +67,7 @@ fn dialog_body(title: &str) -> (adw::Dialog, gtk4::Box, gtk4::Label, gtk4::ListB
     let dialog = adw::Dialog::new();
     dialog.set_title(title);
     dialog.set_content_width(680);
-    dialog.set_content_height(520);
+    dialog.set_follows_content_size(true);
     let body = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     body.append(&adw::HeaderBar::new());
     let message = gtk4::Label::new(None);
@@ -86,7 +86,9 @@ fn dialog_body(title: &str) -> (adw::Dialog, gtk4::Box, gtk4::Label, gtk4::ListB
     rows.set_margin_bottom(18);
     let scroll = gtk4::ScrolledWindow::new();
     scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
-    scroll.set_vexpand(true);
+    scroll.set_propagate_natural_height(true);
+    scroll.set_min_content_height(80);
+    scroll.set_max_content_height(360);
     scroll.set_child(Some(&rows));
     body.append(&scroll);
     dialog.set_child(Some(&body));
@@ -186,25 +188,27 @@ impl WorktreeDialog {
         for worktree in worktrees {
             let row = adw::ActionRow::new();
             row.set_use_markup(false);
-            row.set_title(&worktree.path);
-            row.set_title_lines(0);
-            let mut detail = worktree
-                .branch
-                .as_deref()
-                .unwrap_or("Detached HEAD")
-                .to_string();
+            row.set_title(worktree.branch.as_deref().unwrap_or("Detached HEAD"));
+            row.set_title_lines(2);
+            row.set_tooltip_text(Some(&worktree.path));
+            let mut states = Vec::new();
             if worktree.main {
-                detail.push_str(" · Main checkout");
+                states.push("Main checkout");
             }
             if worktree.locked {
-                detail.push_str(" · Locked");
+                states.push("Locked");
             }
             if worktree.prunable {
-                detail.push_str(" · Missing checkout");
+                states.push("Missing checkout");
             }
             if worktree.workspace_id.is_some() {
-                detail.push_str(" · Workspace open");
+                states.push("Workspace open");
             }
+            let detail = if states.is_empty() {
+                worktree.path.clone()
+            } else {
+                format!("{}\n{}", worktree.path, states.join(" · "))
+            };
             row.set_subtitle(&detail);
             row.set_subtitle_lines(0);
             // Keep the actions on one quiet, aligned trailing line rather than

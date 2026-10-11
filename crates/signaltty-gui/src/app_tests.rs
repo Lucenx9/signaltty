@@ -2034,6 +2034,13 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
     let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
     application.register(None::<&gio::Cancellable>).unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
     let (actor, mut requests) = IpcHandle::test_channel();
     let state = Arc::new(Mutex::new(BTreeMap::from([
         ("a".to_string(), fixture("a")),
@@ -2148,7 +2155,24 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
         let weak_list = find_widget::<gtk4::ListBox>(&dialog.child().unwrap())
             .unwrap()
             .downgrade();
+        let list = weak_list.upgrade().unwrap();
+        wait_ui(|| list.row_at_index(0).unwrap().header().is_some());
+        assert!(has_label(
+            &list.row_at_index(0).unwrap().header().unwrap(),
+            "Workspaces"
+        ));
+        entry.set_text("Show Changes");
+        wait_ui(|| {
+            list.selected_row().is_some_and(|row| {
+                row.is_child_visible() && has_label(row.upcast_ref(), "Show Changes")
+            })
+        });
+        let selected = list.selected_row().unwrap();
+        assert!(has_label(&selected.header().unwrap(), "Commands"));
+        entry.set_text("");
         capture_workflow(&app.window, &format!("palette-{theme}"));
+        drop(selected);
+        drop(list);
         entry.set_text("b");
         entry.emit_activate();
         wait_ui(|| {
@@ -2199,12 +2223,29 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
         );
         gtk4::prelude::WidgetExt::activate_action(&app.window, "win.worktrees", None).unwrap();
         let dialog = app.window.visible_dialog().unwrap();
-        wait_ui(|| has_label(&dialog.child().unwrap(), "/tmp/main <checkout>&"));
+        wait_ui(|| {
+            has_label(
+                &dialog.child().unwrap(),
+                "/tmp/main <checkout>&\nMain checkout · Workspace open",
+            )
+        });
         assert!(has_label(
             &dialog.child().unwrap(),
             "/tmp/parallel agent/feature <checkout>&"
         ));
+        let root = dialog.child().unwrap();
+        let checkout = find_matching_widget::<adw::ActionRow>(&root, &|row| row.title() == "main")
+            .expect("branch must be the primary label");
+        assert!(checkout
+            .subtitle()
+            .unwrap()
+            .contains("/tmp/main <checkout>&"));
+        assert!(checkout.subtitle().unwrap().contains("Workspace open"));
         capture_workflow(&app.window, &format!("worktrees-{theme}"));
+        assert!(
+            root.height() < 480,
+            "short checkout lists should not reserve a tall empty body"
+        );
         dialog.close();
         wait_ui(|| app.window.visible_dialog().is_none());
         app.show_workspace("a");
@@ -2244,11 +2285,8 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
             "/tmp/parallel agent/feature <checkout>&",
         )
     });
-    let row = action_row_with_title(
-        &worktrees.child().unwrap(),
-        "/tmp/parallel agent/feature <checkout>&",
-    )
-    .unwrap();
+    let row =
+        action_row_with_title(&worktrees.child().unwrap(), "feature/local-workflows").unwrap();
     button_with_label(row.upcast_ref(), "Remove…")
         .unwrap()
         .emit_clicked();
@@ -2276,7 +2314,12 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
     drain_refresh(&app);
     gtk4::prelude::WidgetExt::activate_action(&app.window, "win.worktrees", None).unwrap();
     let worktrees = app.window.visible_dialog().unwrap();
-    wait_ui(|| has_label(&worktrees.child().unwrap(), "/tmp/main <checkout>&"));
+    wait_ui(|| {
+        has_label(
+            &worktrees.child().unwrap(),
+            "/tmp/main <checkout>&\nMain checkout · Workspace open",
+        )
+    });
     button_with_label(&worktrees.child().unwrap(), "Create Worktree…")
         .unwrap()
         .emit_clicked();
@@ -3352,6 +3395,18 @@ fn task_board_fits_narrow_windows_and_reveals_last_column() {
             dialog.width()
         );
         let root = dialog.child().unwrap();
+        let title = find_matching_widget::<gtk4::Label>(&root, &|label| {
+            label.has_css_class("board-card-title")
+        })
+        .unwrap();
+        assert!(
+            title.wraps(),
+            "task titles must use the available card width"
+        );
+        assert_eq!(title.lines(), 2);
+        let next =
+            button_with_label(&root, "Next state").expect("overflow needs visible navigation");
+        assert!(next.is_mapped());
         let mut horizontal = None;
         walk_widgets(&root, &mut |widget| {
             if let Some(scroll) = widget.downcast_ref::<gtk4::ScrolledWindow>() {
@@ -3364,7 +3419,22 @@ fn task_board_fits_narrow_windows_and_reveals_last_column() {
         });
         let scroll = horizontal.expect("overflowing columns must be scrollable");
         let adjustment = scroll.hadjustment();
-        adjustment.set_value(adjustment.upper() - adjustment.page_size());
+        let previous = button_with_label(&root, "Previous state").unwrap();
+        for button in [&previous, &next] {
+            let bounds = button.compute_bounds(&root).unwrap();
+            assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= root.width() as f32);
+        }
+        next.emit_clicked();
+        wait_ui(|| adjustment.value() > 0.0);
+        previous.emit_clicked();
+        wait_ui(|| adjustment.value() <= 1.0);
+        for _ in 0..8 {
+            if !next.is_sensitive() {
+                break;
+            }
+            next.emit_clicked();
+        }
+        assert!(!next.is_sensitive());
         let done = try_descendant(&root, "board-column-done").unwrap();
         let row = find_widget::<gtk4::ListBoxRow>(&done).unwrap();
         wait_ui(|| {
@@ -4503,9 +4573,16 @@ fn preferences_preview_schemes_and_themes() {
             }
         }
     }
-    let mut orbs = Vec::new();
-    widgets_with_class(&root, "theme-swatch", &mut orbs);
-    assert_eq!(orbs.len(), 2 * signaltty_core::theme::Theme::ALL.len());
+    let mut miniatures = Vec::new();
+    widgets_with_class(&root, "theme-preview", &mut miniatures);
+    assert_eq!(
+        miniatures.len(),
+        2 * signaltty_core::theme::Theme::ALL.len()
+    );
+    for preview in &miniatures {
+        assert!(try_descendant(preview, "theme-preview-sidebar").is_some());
+        assert!(try_descendant(preview, "theme-preview-terminal").is_some());
+    }
 
     for (name, scheme) in [
         ("light", adw::ColorScheme::ForceLight),
@@ -4515,6 +4592,20 @@ fn preferences_preview_schemes_and_themes() {
         while glib::MainContext::default().iteration(false) {}
         capture_workflow(&app.window, &format!("preferences-{name}"));
     }
+    app.window.set_default_size(360, 680);
+    wait_ui(|| app.window.width() <= 360);
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    settings.set_gtk_font_name(Some("Sans 18"));
+    app.window.add_css_class("high-contrast");
+    capture_workflow(&app.window, "preferences-narrow-large-high-contrast");
+    assert!(dialog.width() <= 360);
+    for miniature in &miniatures {
+        let bounds = miniature.compute_bounds(&root).unwrap();
+        assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= dialog.width() as f32);
+    }
+    settings.set_gtk_font_name(old_font.as_deref());
+    app.window.remove_css_class("high-contrast");
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::Default);
 
     let grove = find_matching_widget::<gtk4::Button>(&root, &|button| {
