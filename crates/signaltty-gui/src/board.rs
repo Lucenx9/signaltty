@@ -751,6 +751,7 @@ pub fn present(
     on_closed: impl FnOnce(&libadwaita::Dialog, Option<String>) + 'static,
 ) -> Board {
     let dialog = libadwaita::Dialog::new();
+    dialog.add_css_class("signaltty-dialog");
     dialog.set_title("Task Board");
     dialog.set_content_width(1200);
     dialog.set_content_height(600);

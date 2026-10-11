@@ -33,6 +33,7 @@ pub fn present(
     on_closed: impl Fn() + 'static,
 ) -> adw::Dialog {
     let dialog = adw::Dialog::new();
+    dialog.add_css_class("signaltty-dialog");
     dialog.set_title("Commands and Workspaces");
     dialog.set_content_width(560);
     dialog.set_content_height(480);

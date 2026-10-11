@@ -423,7 +423,8 @@ menubutton.crumb-button > button:disabled {
  * between them, colour only on the PR status and change counts. */
 popover.details-popover > contents {
   padding: 6px;
-  border-radius: 14px;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px alpha(black, 0.12), 0 0 0 1px var(--border-color);
 }
 .details-card {
   min-width: 300px;
@@ -1499,3 +1500,91 @@ button.card.appearance-card:checked.keyboard-activating {
 .high-contrast .theme-preview {
   box-shadow: inset 0 0 0 1px currentColor;
 }
+
+/* Restrained application surfaces. Scope to owned dialogs and the details
+ * popover; platform choosers and adaptive sheet behavior stay toolkit-owned. */
+dialog.signaltty-dialog floating-sheet > sheet,
+dialog.signaltty-dialog.alert floating-sheet > sheet {
+  border-radius: 10px;
+  box-shadow: 0 8px 24px alpha(black, 0.14), 0 0 0 1px var(--border-color);
+}
+dialog.signaltty-dialog bottom-sheet > sheet {
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+.signaltty-dialog headerbar { background-color: transparent; }
+.signaltty-dialog button:not(.flat):not(.circular):not(.image-button):not(.close) {
+  border-radius: 6px;
+  font-weight: 500;
+}
+.signaltty-dialog button:not(.flat):not(.circular):not(.image-button):not(.close):not(.theme-card):not(.appearance-card):not(.suggested-action):not(.destructive-action) {
+  background-image: none;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+.signaltty-dialog button:not(.flat):not(.circular):not(.image-button):not(.close):not(.theme-card):not(.appearance-card):not(.suggested-action):not(.destructive-action):hover {
+  background-color: alpha(currentColor, 0.05);
+}
+.signaltty-dialog button.suggested-action:not(.flat),
+.signaltty-dialog.alert .response-area > button.suggested-action {
+  color: var(--accent-fg-color);
+  background-color: var(--accent-bg-color);
+  box-shadow: none;
+}
+.signaltty-dialog button.destructive-action:not(.flat) {
+  color: var(--destructive-color);
+  box-shadow: inset 0 0 0 1px var(--destructive-color);
+}
+.signaltty-dialog list.boxed-list {
+  border-radius: 6px;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+.signaltty-dialog list.boxed-list > row { border-radius: 4px; }
+.signaltty-dialog list.palette-list { box-shadow: none; }
+.signaltty-dialog .palette-list > row:selected {
+  background-color: alpha(currentColor, 0.07);
+  box-shadow: inset 2px 0 var(--accent-color);
+}
+.signaltty-dialog .theme-card,
+.signaltty-dialog .appearance-card {
+  border-radius: 6px;
+  background-color: transparent;
+  box-shadow: none;
+}
+.signaltty-dialog .theme-card:hover,
+.signaltty-dialog .appearance-card:hover { background-color: alpha(currentColor, 0.03); }
+.signaltty-dialog .theme-card.selected,
+.signaltty-dialog .appearance-card.selected {
+  border-color: var(--accent-bg-color);
+  box-shadow: inset 0 0 0 1px var(--accent-bg-color);
+}
+.signaltty-dialog .theme-card:focus-visible,
+.signaltty-dialog .appearance-card:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+.signaltty-dialog .scheme-preview { border-radius: 4px; }
+.signaltty-dialog .board-card { border-radius: 6px; }
+.high-contrast .signaltty-dialog .palette-list > row:selected {
+  box-shadow: inset 3px 0 currentColor, inset 0 0 0 1px currentColor;
+}
+.high-contrast .signaltty-dialog .theme-card.selected,
+.high-contrast .signaltty-dialog .appearance-card.selected {
+  box-shadow: inset 0 0 0 2px var(--accent-color);
+}
+
+.signaltty-dialog headerbar windowcontrols button.close {
+  border-radius: 6px;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+.signaltty-dialog headerbar windowcontrols button.close > image {
+  background-color: transparent;
+  border-radius: 4px;
+}
+.signaltty-dialog headerbar windowcontrols button.close:hover > image {
+  background-color: alpha(currentColor, 0.07);
+}
+.signaltty-dialog.alert .heading-bin label { font-size: 1.15em; font-weight: 600; }

@@ -445,3 +445,12 @@ than reserving a tall empty body. Branch is the primary label; the checkout path
 and existing availability state remain visible below, with a literal full-path
 tooltip. Directory headings in Changes use a semantic hairline and stronger
 secondary text. No server or persisted preference changes are involved.
+
+The application-owned dialogs use a restrained surface style
+(`specs/050-restrained-native-surfaces`):6px control/card corners,10px floating
+surfaces, flat lists with semantic hairlines, outlined secondary actions and a
+neutral palette selection with a leading marker. Primary actions retain the
+accent. The details popover follows the same lighter elevation. Native hit
+areas, focus outlines, response semantics, adaptive sheets and file choosers
+remain toolkit-owned. Overrides are scoped to explicit dialog classes rather
+than a global GTK theme. High contrast strengthens selection and borders.

@@ -185,6 +185,7 @@ fn theme_preview(theme: Theme, variant: &str) -> gtk4::Box {
 /// Build the Preferences dialog with Appearance and Theme controls.
 pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
     let dialog = adw::PreferencesDialog::new();
+    dialog.add_css_class("signaltty-dialog");
     dialog.set_title("Preferences");
 
     let page = adw::PreferencesPage::new();

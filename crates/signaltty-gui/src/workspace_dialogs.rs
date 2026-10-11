@@ -15,6 +15,7 @@ pub fn rename(window: &adw::ApplicationWindow, actor: IpcHandle, workspace: &Wor
         Some("Rename Workspace"),
         Some("The workspace handle stays the same."),
     );
+    dialog.add_css_class("signaltty-dialog");
     let entry = adw::EntryRow::new();
     entry.set_title("Name");
     entry.set_text(&workspace.name);
@@ -65,6 +66,7 @@ pub fn rename(window: &adw::ApplicationWindow, actor: IpcHandle, workspace: &Wor
 
 fn dialog_body(title: &str) -> (adw::Dialog, gtk4::Box, gtk4::Label, gtk4::ListBox) {
     let dialog = adw::Dialog::new();
+    dialog.add_css_class("signaltty-dialog");
     dialog.set_title(title);
     dialog.set_content_width(680);
     dialog.set_follows_content_size(true);
@@ -300,6 +302,7 @@ impl WorktreeDialog {
         group.add(&path);
         group.add(&branch);
         dialog.set_extra_child(Some(&group));
+        dialog.add_css_class("signaltty-dialog");
         dialog.add_responses(&[("cancel", "Cancel"), ("create", "Create")]);
         dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("create"));
@@ -334,6 +337,7 @@ impl WorktreeDialog {
 
     fn confirm_remove(self: &Rc<Self>, path: &str) {
         let dialog = adw::AlertDialog::new(Some("Remove Worktree?"), Some(&format!("Delete the clean checkout at {path}? Its branch will be kept. Dirty or active checkouts cannot be removed.")));
+        dialog.add_css_class("signaltty-dialog");
         dialog.add_responses(&[("cancel", "Cancel"), ("remove", "Remove")]);
         dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("cancel"));
