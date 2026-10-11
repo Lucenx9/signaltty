@@ -64,7 +64,15 @@ pub fn rename(window: &adw::ApplicationWindow, actor: IpcHandle, workspace: &Wor
     dialog.present(Some(&parent));
 }
 
-fn dialog_body(title: &str) -> (adw::Dialog, adw::HeaderBar, gtk4::Label, gtk4::ListBox) {
+fn dialog_body(
+    title: &str,
+) -> (
+    adw::Dialog,
+    adw::HeaderBar,
+    gtk4::Label,
+    gtk4::ListBox,
+    gtk4::ScrolledWindow,
+) {
     let dialog = adw::Dialog::new();
     dialog.add_css_class("signaltty-dialog");
     dialog.set_title(title);
@@ -93,9 +101,12 @@ fn dialog_body(title: &str) -> (adw::Dialog, adw::HeaderBar, gtk4::Label, gtk4::
     scroll.set_min_content_height(80);
     scroll.set_max_content_height(360);
     scroll.set_child(Some(&rows));
+    if let Some(viewport) = scroll.child().and_downcast::<gtk4::Viewport>() {
+        viewport.set_scroll_to_focus(true);
+    }
     body.append(&scroll);
     dialog.set_child(Some(&body));
-    (dialog, header, message, rows)
+    (dialog, header, message, rows, scroll)
 }
 
 fn clear(rows: &gtk4::ListBox) {
@@ -219,6 +230,8 @@ impl WorktreeDialog {
             // doubling the height of every checkout row.
             let actions = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
             actions.set_valign(gtk4::Align::Center);
+            self.compact
+                .add_setter(&actions, "valign", Some(&gtk4::Align::Start.to_value()));
             let open = gtk4::Button::new();
             open.set_child(Some(
                 &adw::ButtonContent::builder()
@@ -398,7 +411,7 @@ pub fn worktrees(
     source: &str,
     on_open: impl Fn(String) + 'static,
 ) {
-    let (dialog, header, message, rows) = dialog_body("Worktrees");
+    let (dialog, header, message, rows, scroll) = dialog_body("Worktrees");
     dialog.set_size_request(280, 200);
     let compact = adw::Breakpoint::new(
         adw::BreakpointCondition::parse("max-width: 480sp").expect("breakpoint"),
@@ -415,6 +428,7 @@ pub fn worktrees(
     create.update_property(&[gtk4::accessible::Property::Label("Create Worktree")]);
     create.add_css_class("suggested-action");
     compact.add_setter(&create.child().unwrap(), "label", Some(&"".to_value()));
+    compact.add_setter(&scroll, "min-content-height", Some(&160.to_value()));
     compact.add_setter(
         &dialog.child().unwrap(),
         "height-request",
@@ -456,8 +470,8 @@ pub fn worktrees(
             this.load();
         }
     });
-    dialog.present(Some(window));
     dialog.set_focus(Some(&create));
+    dialog.present(Some(window));
     this.load();
 }
 

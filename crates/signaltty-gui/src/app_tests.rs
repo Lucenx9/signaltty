@@ -2888,36 +2888,55 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
             "/tmp/parallel agent/feature <checkout>&",
         )
     });
-    capture_workflow(&app.window, "worktrees-narrow");
     let create = button_with_tooltip(
         &narrow.child().unwrap(),
         "Create a separate checkout and open its workspace",
     )
     .unwrap();
     let refresh = button_with_tooltip(&narrow.child().unwrap(), "Refresh worktrees").unwrap();
-    for button in [&create, &refresh] {
+    let close = find_matching_widget::<gtk4::Button>(&narrow.child().unwrap(), &|button| {
+        find_matching_widget::<gtk4::Image>(button.upcast_ref(), &|image| {
+            image.icon_name().as_deref() == Some("window-close-symbolic")
+        })
+        .is_some()
+    })
+    .expect("native dialog close remains available");
+    create.grab_focus();
+    capture_workflow(&app.window, "worktrees-narrow");
+    for button in [&create, &refresh, &close] {
         let bounds = button.compute_bounds(&app.window).unwrap();
+        assert!(button.is_mapped());
         assert!(bounds.width() >= 28.0 && bounds.height() >= 28.0);
         assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= app.window.width() as f32);
+        assert!(bounds.y() >= 0.0 && bounds.y() + bounds.height() <= app.window.height() as f32);
     }
     let settings = gtk4::Settings::default().unwrap();
     let old_font = settings.gtk_font_name();
     settings.set_gtk_font_name(Some("Sans 18"));
+    create.grab_focus();
     capture_workflow(&app.window, "worktrees-narrow-large");
-    for button in [&create, &refresh] {
+    for button in [&create, &refresh, &close] {
         let bounds = button.compute_bounds(&app.window).unwrap();
+        assert!(button.is_mapped());
         assert!(bounds.width() >= 28.0 && bounds.height() >= 28.0);
         assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= app.window.width() as f32);
+        assert!(bounds.y() >= 0.0 && bounds.y() + bounds.height() <= app.window.height() as f32);
     }
     for hint in [
         "Open this checkout as a workspace",
         "Remove the clean checkout; keep its branch",
     ] {
         let button = button_with_tooltip(&narrow.child().unwrap(), hint).unwrap();
+        assert!(button.grab_focus());
+        wait_ui(|| {
+            let bounds = button.compute_bounds(&app.window).unwrap();
+            bounds.y() >= 0.0 && bounds.y() + bounds.height() <= app.window.height() as f32
+        });
         let bounds = button.compute_bounds(&app.window).unwrap();
         assert!(bounds.width() >= 28.0 && bounds.height() >= 28.0);
         assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= app.window.width() as f32);
     }
+    capture_workflow(&app.window, "worktrees-narrow-large-row-focus");
     settings.set_gtk_font_name(old_font.as_deref());
     app.window.set_default_size(920, 680);
     wait_ui(|| has_label(create.upcast_ref(), "Create Worktree…"));

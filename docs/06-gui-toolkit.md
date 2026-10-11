@@ -492,5 +492,7 @@ Pane Close has a logical gap after the paired split controls. Worktree Create an
 Refresh live in the dialog header; Open and Remove stay on their checkout row.
 Below 480sp the native dialog breakpoint makes Create/Open/Remove icon-only,
 restoring their labels on widening. Native shrinking content keeps their targets
-inside narrow windows with enlarged text. Action names, tooltips and server calls retain their meaning.
+inside narrow windows with enlarged text. Compact content reserves height for
+wrapped guidance and a scroll viewport; row controls align with the branch, and
+native viewport scrolling keeps focused actions visible. Action names, tooltips and server calls retain their meaning.
 See [spec053](../specs/053-icon-hierarchy-polish/spec.md) for scope and proof.
