@@ -27,3 +27,16 @@ Acceptance: A leading `user@host: ` (or `user@host:` directly before a `~` or `/
 
 ## Success criteria
 `hook_event_drives_codex_lifecycle` asserts the cleared message (fails without the fix). The palette contrast and title unit tests pass. Before/after 1920×1080 captures were reviewed in light and dark. `scripts/verify.sh full` passes.
+
+## Post-merge review — 2026-10-11
+
+The original white-only palette check missed lower contrast on the tinted
+Grove/Ocean/Ember/Iris backgrounds. ANSI grey output also fell as low as 3.04:1
+on white. All 16 light inks now require at least 4.5:1 on every actual
+`Theme::pane_bg(false)` background, without grey exceptions. Five inks are
+darkened slightly; dark mode and terminal geometry stay unchanged.
+
+Host cleanup compares two fully qualified hostnames in full (case-insensitive),
+so `build.office.example` does not hide `build.production.example`. Short-name
+matching remains available when either counterpart is unqualified. Unmatched
+titles retain their original whitespace. Regression tests cover both cases.

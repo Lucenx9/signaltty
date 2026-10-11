@@ -54,10 +54,10 @@ tab), one primary menu, every command a `win.*` action with an
 accelerator. Colour comes only from libadwaita variables, so light,
 dark, the system accent and high contrast follow the desktop;
 terminals take the desktop monospace font with 1.1× leading, GNOME's
-ANSI palette on dark panes and a light palette whose inks read at 4.5:1 on
-white apart from two deliberately dim greys (unit-tested), and a pane title
+ANSI palette on dark panes and a light palette whose 16 inks read at 4.5:1 on
+every light theme background (unit-tested), and a pane title
 without the shell's `user@host:` prefix when the host is the local one (a
-remote SSH host stays visible).
+remote SSH host stays visible; different fully qualified domains never match).
 Dark mode redefines those variables (under a `.dark` window class
 mirrored from `AdwStyleManager`) into a wider lightness ladder —
 sidebar, near-black canvas, pane cards — edged by hairlines, per

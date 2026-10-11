@@ -676,12 +676,11 @@ const DARK_PALETTE: [&str; 16] = [
 ];
 
 /// Light panes need their own inks: GNOME's yellow and greens are made for
-/// dark backgrounds and vanish on white (`git log` hashes, prompts). Every
-/// colour here reads at 4.5:1 or better on white except the two greys,
-/// which stay dim on purpose.
+/// dark backgrounds and vanish on light panes (`git log` hashes, prompts).
+/// Every ink, including grey output, reads at 4.5:1 on all light theme backgrounds.
 const LIGHT_PALETTE: [&str; 16] = [
-    "#24292f", "#cf222e", "#116329", "#7d4e00", "#0969da", "#8250df", "#1b7c83", "#6e7781",
-    "#57606a", "#a40e26", "#1a7f37", "#9a6700", "#1b74d6", "#865fcc", "#2a7f93", "#8c959f",
+    "#24292f", "#cf222e", "#116329", "#7d4e00", "#0969da", "#8250df", "#1b7c83", "#656e78",
+    "#57606a", "#a40e26", "#1a7f37", "#9a6700", "#196fce", "#805ac6", "#257a8e", "#69737d",
 ];
 
 /// Leading for the terminal grid: VTE's default packs rows edge to edge.
@@ -704,12 +703,16 @@ fn display_title<'a>(title: &'a str, local_host: &str) -> &'a str {
             if !rest.is_empty()
                 && !who.contains(char::is_whitespace)
                 && who.split_once('@').is_some_and(|(user, host)| {
-                    !user.is_empty() && !host.is_empty() && short(host) == short(local_host)
+                    !user.is_empty()
+                        && !host.is_empty()
+                        && (host.eq_ignore_ascii_case(local_host)
+                            || ((!host.contains('.') || !local_host.contains('.'))
+                                && short(host) == short(local_host)))
                 }) =>
         {
             rest
         }
-        _ => trimmed,
+        _ => title,
     }
 }
 
@@ -735,31 +738,52 @@ mod tests {
             "a b@luxhole: x",
             "spaces before the colon"
         );
-        assert_eq!(t("me@luxhole: "), "me@luxhole:", "nothing after it");
+        assert_eq!(t("me@luxhole: "), "me@luxhole: ", "nothing after it");
         assert_eq!(t("me@luxhole:~/src"), "~/src", "no space before a path");
         assert_eq!(t("me@luxhole:x"), "me@luxhole:x", "no space, not a path");
+        assert_eq!(t("  vim: main.rs  "), "  vim: main.rs  ");
+        assert_eq!(
+            display_title(
+                "deploy@build.production.example: /srv",
+                "build.office.example"
+            ),
+            "deploy@build.production.example: /srv",
+            "distinct qualified hosts keep their identity"
+        );
+        assert_eq!(
+            display_title("me@BUILD.office.example: /src", "build.office.example"),
+            "/src"
+        );
+        assert_eq!(
+            display_title("me@build: /src", "build.office.example"),
+            "/src"
+        );
     }
 
-    /// WCAG relative luminance contrast against white.
-    fn contrast_on_white(hex: &str) -> f64 {
+    /// WCAG relative luminance for an opaque sRGB colour.
+    fn luminance(hex: &str) -> f64 {
         let channel = |i: usize| {
             let v = f64::from(u8::from_str_radix(&hex[i..i + 2], 16).unwrap()) / 255.0;
-            if v <= 0.03928 {
+            if v <= 0.04045 {
                 v / 12.92
             } else {
                 ((v + 0.055) / 1.055).powf(2.4)
             }
         };
-        let l = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
-        1.05 / (l + 0.05)
+        0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
     }
 
     #[test]
-    fn light_palette_inks_read_on_white() {
-        for (i, hex) in LIGHT_PALETTE.iter().enumerate() {
-            let floor = if matches!(i, 7 | 15) { 2.5 } else { 4.5 };
-            let ratio = contrast_on_white(hex);
-            assert!(ratio >= floor, "colour {i} {hex}: {ratio:.2}:1 < {floor}");
+    fn light_palette_inks_read_on_every_theme() {
+        for theme in Theme::ALL {
+            let background = luminance(theme.pane_bg(false));
+            for (i, hex) in LIGHT_PALETTE.iter().enumerate() {
+                let ratio = (background + 0.05) / (luminance(hex) + 0.05);
+                assert!(
+                    ratio >= 4.5,
+                    "{theme:?} colour {i} {hex}: {ratio:.2}:1 < 4.5"
+                );
+            }
         }
     }
     use signaltty_core::DecisionOption;

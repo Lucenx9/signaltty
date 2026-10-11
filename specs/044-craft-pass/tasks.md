@@ -6,3 +6,5 @@
 - [x] T004 1.1x terminal leading
 - [x] T005 Drop `user@host:` from pane titles (unit test)
 - [x] T006 Review fixes: keep remote hosts, accept space-less prompts, document the grey exception
+
+- [x] T007 Post-merge review: contrast on all light backgrounds, readable greys, distinct qualified hosts, literal unmatched titles
