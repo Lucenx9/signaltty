@@ -3327,6 +3327,73 @@ async fn reviewed_turn(
     assert_eq!(p["last_message"], summary);
 }
 
+/// Decision prompts and labels reach `signaltty pane get` in the user's
+/// terminal, so escape sequences and controls are stripped at ingest like
+/// notification text (docs/10).
+#[tokio::test]
+async fn hook_decisions_are_stored_without_terminal_controls() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+
+    c.call(
+        "hook-event",
+        json!({
+            "agent": "codex",
+            "event": "PermissionRequest",
+            "pane_id": pane,
+            "decision": {
+                "id": "dec_1",
+                "prompt": "Run \u{1b}]52;c;Y3VybCBldmlsCg==\u{7}ls?\n\tok",
+                "options": [{"id": "opt1", "label": "\u{1b}[2JYes\u{9b}"}]
+            },
+            "payload": {"session_id": "s1"}
+        }),
+    )
+    .await
+    .unwrap();
+    let p = pane_snapshot(&mut c, &pane).await;
+    assert_eq!(p["pending_decision"]["prompt"], "Run ls?\n\tok");
+    assert_eq!(p["pending_decision"]["options"][0]["label"], "Yes");
+
+    let err = c
+        .call(
+            "hook-event",
+            json!({
+                "agent": "codex",
+                "event": "PermissionRequest",
+                "pane_id": pane,
+                "decision": {"id": "dec_2", "prompt": "\u{1b}[2J",
+                             "options": [{"id": "o", "label": "Yes"}]},
+                "payload": {"session_id": "s1"}
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.starts_with("BAD_PARAMS"),
+        "only controls is empty: {err}"
+    );
+    for (id, option) in [("dec_\u{1b}[2J", "o"), ("dec_3", "o\u{7}")] {
+        let err = c
+            .call(
+                "hook-event",
+                json!({
+                    "agent": "codex",
+                    "event": "PermissionRequest",
+                    "pane_id": pane,
+                    "decision": {"id": id, "prompt": "Allow?",
+                                 "options": [{"id": option, "label": "Yes"}]},
+                    "payload": {"session_id": "s1"}
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("BAD_PARAMS"), "control in an id: {err}");
+    }
+    srv.shutdown().await;
+}
+
 #[tokio::test]
 async fn reviewed_terminal_session_end_stays_done_none_and_keeps_identity() {
     let srv = TestServer::start().await;
