@@ -318,6 +318,7 @@ impl CardWidgets {
 
 struct ColumnWidgets {
     header: gtk4::Label,
+    count: gtk4::Label,
     notice: gtk4::Label,
     scroll: gtk4::ScrolledWindow,
     list: gtk4::ListBox,
@@ -513,8 +514,16 @@ impl Board {
             false
         });
         for (col, view) in self.columns.iter().zip(board) {
-            col.header
-                .set_text(&format!("{} · {}", view.column.title(), view.total_count));
+            col.header.set_text(view.column.title());
+            col.count.set_text(&view.total_count.to_string());
+            col.count.update_property(&[gtk4::accessible::Property::Label(
+                &format!("{} tasks in {}", view.total_count, view.column.title()),
+            )]);
+            if view.column == BoardColumn::NeedsYou && view.total_count > 0 {
+                col.count.add_css_class("attention-active");
+            } else {
+                col.count.remove_css_class("attention-active");
+            }
             col.notice.set_visible(view.cards.len() < view.total_count);
             col.notice.set_text(&format!(
                 "Showing latest {} of {}",
@@ -774,10 +783,17 @@ pub fn present(
         }
         col.set_hexpand(true);
         col.set_vexpand(true);
-        let header = gtk4::Label::new(None);
+        let heading = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        heading.add_css_class("board-column-heading");
+        let header = gtk4::Label::new(Some(column.title()));
         header.add_css_class("board-column-header");
         header.set_halign(gtk4::Align::Start);
-        col.append(&header);
+        let count = gtk4::Label::new(Some("0"));
+        count.add_css_class("board-column-count");
+        count.add_css_class("numeric");
+        heading.append(&header);
+        heading.append(&count);
+        col.append(&heading);
         let notice = gtk4::Label::new(None);
         notice.add_css_class("board-card-meta");
         notice.set_wrap(true);
@@ -811,6 +827,7 @@ pub fn present(
         let scroll_epoch = track_adjustment(&vertical.vadjustment(), &reconciling);
         columns.push(ColumnWidgets {
             header,
+            count,
             notice,
             scroll: vertical,
             list,
