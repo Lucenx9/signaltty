@@ -11,3 +11,5 @@ Completed: icon assets and shared roles; metadata16px/decorative Details; New Ta
 One writer owns all source/test changes. No concurrent implementation. Remaining: final full verification, settled native capture inspection, independent standards/spec review, durable proof and PR publication. Desktop screen reader/OSK/IME/chooser/notification/paid-provider probes not run and not certified by isolated GTK captures.
 
 Review refinement: strengthened header checks include mapped/vertical bounds and native Close. Large wrapped content overflow was reproduced despite correct horizontal bounds. Compact body480px plus scroll viewport160px, top-aligned row actions and native scroll-to-focus fix it. The final fixture passes focusing both Open and Remove and proving they enter the window; labels restore on widening. Initial full run stopped before GTK acceptance, final run will pin the corrected clean revision.
+
+Final source: e573f55. Full accepted clean51/39 with selected durable QA evidence. Both independent review axes0 remaining findings. Remaining: push/open/link stacked PR and record URL; no source failures. Later commits are delivery docs/evidence only.

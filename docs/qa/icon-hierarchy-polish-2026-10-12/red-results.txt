@@ -1,0 +1,20 @@
+icon-red-keyboard_focus_renders_an_inactive_panes_controls.log
+thread 'terminal::tests::keyboard_focus_renders_an_inactive_panes_controls' (842337) panicked at crates/signaltty-gui/src/terminal.rs:1149:9:
+close must be visually separated from the split pair
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+icon-red-navigation_palette_fast_enter_and_git_dialogs_use_native_controls.log
+thread 'app::tests::navigation_palette_fast_enter_and_git_dialogs_use_native_controls' (842341) panicked at crates/signaltty-gui/src/app_tests.rs:2811:9:
+window action belongs in its header
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+icon-red-owned_icon_roles_resolve_and_render_without_external_themes.log
+thread 'app::tests::owned_icon_roles_resolve_and_render_without_external_themes' (842320) panicked at crates/signaltty-gui/src/app_tests.rs:5397:9:
+owned role must resolve: signaltty-changes-symbolic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+icon-red-visible_workspace_tools_open_palette_and_board_without_main_menu.log
+thread 'app::tests::visible_workspace_tools_open_palette_and_board_without_main_menu' (842328) panicked at crates/signaltty-gui/src/app_tests.rs:2448:5:
+desktop creation should have a readable label
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+

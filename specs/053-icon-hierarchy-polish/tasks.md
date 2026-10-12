@@ -28,8 +28,8 @@
 ## Delivery
 
 - [x] T014 Update docs06/16 and .agents/skills/verify-signaltty/features/ for icon/position proof.
-- [ ] T015 Run scripts/verify.sh full, inspect native scenes and commit selected docs/qa/icon-hierarchy-polish-2026-10-12/ evidence.
-- [ ] T016 Run independent code-review standards/spec axes and fix accepted findings; record specs/053-icon-hierarchy-polish/verification.md.
+- [x] T015 Run scripts/verify.sh full, inspect native scenes and commit selected docs/qa/icon-hierarchy-polish-2026-10-12/ evidence.
+- [x] T016 Run independent code-review standards/spec axes and fix accepted findings; record specs/053-icon-hierarchy-polish/verification.md.
 - [ ] T017 Push and open/link stacked PR above #100; close specs/053-icon-hierarchy-polish/handoff.md.
 
 ## Dependencies
