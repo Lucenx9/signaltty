@@ -50,3 +50,6 @@ light/dark confirmations. The full runner executes it in its own display process
 The desktop reliability probe now cancels its live-terminal close, waits for the
 confirmation to dismiss, verifies all three panes remain, then confirms and checks
 the resulting two panes through real IPC. This path runs in desktop mode, not full.
+
+`terminal::tests::keyboard_focus_renders_an_inactive_panes_controls` also asserts
+a logical visual gap between the paired splits and Close, preserving 28px targets.

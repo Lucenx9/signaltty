@@ -164,11 +164,13 @@ impl PaneWidget {
             "Split Down (Ctrl+Shift+O)",
             PaneAction::SplitDown,
         ));
-        actions.append(&action_button(
+        let close = action_button(
             "window-close-symbolic",
             "Close Pane (Ctrl+Shift+W)",
             PaneAction::Close,
-        ));
+        );
+        close.set_margin_start(6);
+        actions.append(&close);
         let resume = gtk4::Button::with_label("Resume");
         resume.add_css_class("suggested-action");
         resume.add_css_class("resume-button");
@@ -1142,6 +1144,15 @@ mod tests {
         let header = pane.root.first_child().unwrap();
         let actions = header.last_child().unwrap();
         let control = actions.first_child().unwrap();
+        let split_down = control.next_sibling().unwrap();
+        let close = actions.last_child().unwrap();
+        let split_bounds = split_down.compute_bounds(&pane.root).unwrap();
+        let close_bounds = close.compute_bounds(&pane.root).unwrap();
+        assert!(
+            close_bounds.x() - split_bounds.x() - split_bounds.width() >= 8.0,
+            "close must be visually separated from the split pair"
+        );
+        assert!(close.width() >= 28 && close.height() >= 28);
         let bounds = actions.compute_bounds(&pane.root).unwrap();
         let pixels = || {
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(60);

@@ -127,3 +127,12 @@ checks wide header entry points, labeled compact sidebar controls, actual Board
 activation and Changes toggle synchronization. Exports 360px light/dark and
 large-text/high-contrast compact controls. These are isolated GTK scenes, not proof
 of screen-reader/OSK/IME or a real folder chooser.
+
+Icon/placement acceptance: `owned_icon_roles_resolve_and_render_without_external_themes`
+resolves bundled symbolic roles with external search paths disabled and exports
+native 16/32px light/dark sheets. The toolbar test also checks New Tab compact
+bounds, RTL group order and keyboard focus. Worktree navigation captures narrow
+enlarged text and asserts Create/Refresh targets stay inside the window. The
+Details fixture checks decorative roles and still proves Copy Path and Changes
+handoff. Run the icon, toolbar and Details fixtures with
+`ADW_DEBUG_HIGH_CONTRAST=1` for native high-contrast sheets/scenes.

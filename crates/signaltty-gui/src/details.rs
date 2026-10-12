@@ -106,6 +106,8 @@ struct DiffTotals {
 fn row(icon: &str, activatable: bool) -> (gtk4::Widget, gtk4::Label, gtk4::Box) {
     let image = gtk4::Image::from_icon_name(icon);
     image.add_css_class("details-icon");
+    image.set_pixel_size(16);
+    image.set_accessible_role(gtk4::AccessibleRole::Presentation);
     let text = gtk4::Label::new(None);
     text.set_xalign(0.0);
     text.set_hexpand(true);
@@ -160,16 +162,16 @@ impl DetailsCard {
         let place = section();
         let (branch_row, branch, _) = row("signaltty-branch-symbolic", false);
         place.append(&branch_row);
-        let (path_row, path, path_trailing) = row("folder-symbolic", false);
+        let (path_row, path, path_trailing) = row("signaltty-folder-symbolic", false);
         path.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
         let copy = gtk4::Button::from_icon_name("edit-copy-symbolic");
         copy.add_css_class("flat");
-        copy.add_css_class("circular");
+        copy.add_css_class("details-copy-button");
         copy.set_tooltip_text(Some("Copy Path"));
         copy.update_property(&[gtk4::accessible::Property::Label("Copy Path")]);
         path_trailing.append(&copy);
         place.append(&path_row);
-        let (agents_row, agents, _) = row("utilities-terminal-symbolic", false);
+        let (agents_row, agents, _) = row("signaltty-terminal-symbolic", false);
         place.append(&agents_row);
         content.append(&place);
 
@@ -184,7 +186,7 @@ impl DetailsCard {
         content.append(&task_section);
 
         let actions = section();
-        let (changes_row, changes_text, stat) = row("document-edit-symbolic", true);
+        let (changes_row, changes_text, stat) = row("signaltty-changes-symbolic", true);
         changes_text.set_text("Changes");
         stat.add_css_class("changes-stat");
         changes_row

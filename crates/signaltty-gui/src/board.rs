@@ -760,7 +760,7 @@ pub fn present(
     let stack = gtk4::Stack::new();
     stack.set_vexpand(true);
     let empty = libadwaita::StatusPage::new();
-    empty.set_icon_name(Some("view-list-bullet-symbolic"));
+    empty.set_icon_name(Some("signaltty-board-symbolic"));
     empty.set_title("No Tasks Yet");
     empty.set_description(Some("Tasks run by agents will appear here."));
     stack.add_named(&empty, Some("empty"));

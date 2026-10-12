@@ -272,7 +272,7 @@ impl App {
         compact_changes.set_tooltip_text(Some("Changes (Ctrl+Shift+D)"));
         compact_changes.update_property(&[gtk4::accessible::Property::Label("Changes")]);
         compact_changes.set_child(Some(&crate::sidebar::labeled_content(
-            "sidebar-show-right-symbolic",
+            "signaltty-changes-symbolic",
             "Changes",
         )));
         compact_tools.append(&compact_board);
@@ -349,23 +349,27 @@ impl App {
             popover.add_css_class("workspace-menu");
         }
         header.pack_end(&btn_menu);
-        let btn_new_tab = gtk4::Button::from_icon_name("signaltty-tab-new-symbolic");
+        let btn_new_tab = gtk4::Button::new();
+        btn_new_tab.add_css_class("header-tool-button");
         btn_new_tab.set_tooltip_text(Some("New Tab (Ctrl+Shift+T)"));
         btn_new_tab.update_property(&[gtk4::accessible::Property::Label("New Tab")]);
         btn_new_tab.set_action_name(Some("win.new-tab"));
-        header.pack_end(&btn_new_tab);
-        // First-class tools have a label at desktop widths, and return to
-        // icon-only controls where the workspace breadcrumb needs the room.
+        let new_tab_content = adw::ButtonContent::builder()
+            .icon_name("signaltty-tab-new-symbolic")
+            .label("New Tab")
+            .build();
+        btn_new_tab.set_child(Some(&new_tab_content));
+        header.pack_start(&btn_new_tab);
         let btn_changes = gtk4::ToggleButton::new();
         btn_changes.add_css_class("header-tool-button");
         btn_changes.set_tooltip_text(Some("Changes (Ctrl+Shift+D)"));
         btn_changes.update_property(&[gtk4::accessible::Property::Label("Changes")]);
         let changes_content = adw::ButtonContent::builder()
-            .icon_name("sidebar-show-right-symbolic")
+            .icon_name("signaltty-changes-symbolic")
             .label("Changes")
             .build();
         btn_changes.set_child(Some(&changes_content));
-        header.pack_end(&btn_changes);
+
         let btn_board = gtk4::Button::new();
         btn_board.add_css_class("header-tool-button");
         btn_board.set_tooltip_text(Some("Task Board (Ctrl+Shift+B)"));
@@ -376,7 +380,13 @@ impl App {
             .label("Task Board")
             .build();
         btn_board.set_child(Some(&board_content));
-        header.pack_end(&btn_board);
+
+        let views = gtk4::Box::new(gtk4::Orientation::Horizontal, 2);
+        views.add_css_class("workspace-view-tools");
+        views.set_margin_end(8);
+        views.append(&btn_board);
+        views.append(&btn_changes);
+        header.pack_end(&views);
         let attention = Self::attention_button();
         header.pack_end(&attention.revealer);
 
@@ -391,7 +401,7 @@ impl App {
 
         let no_workspace = adw::StatusPage::new();
         no_workspace.add_css_class("compact");
-        no_workspace.set_icon_name(Some("utilities-terminal-symbolic"));
+        no_workspace.set_icon_name(Some("signaltty-terminal-symbolic"));
         no_workspace.set_title("Start with a project");
         no_workspace.set_description(Some(
             "Choose a folder, then start a shell or coding agent. \
@@ -492,6 +502,12 @@ impl App {
         // `.image-button` look as New Tab and the main menu.
         medium.add_setter(&changes_content, "label", Some(&"".to_value()));
         medium.add_setter(&board_content, "label", Some(&"".to_value()));
+        medium.add_setter(&new_tab_content, "label", Some(&"".to_value()));
+        medium.add_setter(
+            &btn_new_tab,
+            "css-classes",
+            Some(&["image-button"].to_value()),
+        );
         medium.add_setter(
             &btn_changes,
             "css-classes",
@@ -513,6 +529,13 @@ impl App {
         // original header controls return at wider widths.
         narrow.add_setter(&btn_changes, "visible", Some(&false.to_value()));
         narrow.add_setter(&btn_board, "visible", Some(&false.to_value()));
+        narrow.add_setter(&views, "visible", Some(&false.to_value()));
+        narrow.add_setter(&new_tab_content, "label", Some(&"".to_value()));
+        narrow.add_setter(
+            &btn_new_tab,
+            "css-classes",
+            Some(&["image-button"].to_value()),
+        );
         narrow.add_setter(&compact_tools, "visible", Some(&true.to_value()));
         window.add_breakpoint(narrow);
 

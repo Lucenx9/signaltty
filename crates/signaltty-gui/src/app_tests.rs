@@ -1548,7 +1548,7 @@ fn find_widget<T: glib::object::IsA<gtk4::Widget> + glib::types::StaticType>(
 
 fn button_with_label(root: &gtk4::Widget, label: &str) -> Option<gtk4::Button> {
     if let Some(button) = root.downcast_ref::<gtk4::Button>() {
-        if button.label().as_deref() == Some(label) {
+        if button.label().as_deref() == Some(label) || has_label(button.upcast_ref(), label) {
             return Some(button.clone());
         }
     }
@@ -2459,6 +2459,18 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     .expect("sidebar must expose the command palette");
     assert!(search.is_mapped());
     assert!(has_label(search.upcast_ref(), "Search or run a command…"));
+    let new_tab = button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
+    assert!(
+        has_label(new_tab.upcast_ref(), "New Tab"),
+        "desktop creation should have a readable label"
+    );
+    let changes_icon = find_widget::<adw::ButtonContent>(
+        button_with_tooltip(app.window.upcast_ref(), "Changes (Ctrl+Shift+D)")
+            .unwrap()
+            .upcast_ref(),
+    )
+    .unwrap();
+    assert_eq!(changes_icon.icon_name(), "signaltty-changes-symbolic");
     let heading = find_matching_widget::<gtk4::Label>(app.sidebar.widget.upcast_ref(), &|label| {
         label.text() == "Workspaces"
     })
@@ -2518,6 +2530,8 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     wait_ui(|| board.has_css_class("image-button"));
     assert!(!board.has_css_class("header-tool-button"));
     assert!(!has_label(board.upcast_ref(), "Task Board"));
+    assert!(!has_label(new_tab.upcast_ref(), "New Tab"));
+    assert!(new_tab.is_mapped());
     let changes = button_with_tooltip(app.window.upcast_ref(), "Changes (Ctrl+Shift+D)").unwrap();
     assert!(changes.has_css_class("image-button") && !changes.has_css_class("header-tool-button"));
     app.window.set_default_size(1280, 800);
@@ -2527,6 +2541,20 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     app.window.set_default_size(360, 600);
     wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
     wait_ui(|| !board.is_visible());
+    assert!(!has_label(new_tab.upcast_ref(), "New Tab"));
+    wait_ui(|| {
+        let bounds = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
+        bounds.w > 0.0 && bounds.x >= 0.0 && bounds.x + bounds.w <= f64::from(app.window.width())
+    });
+    capture_workflow(&app.window, "toolbar-position-narrow");
+    let bounds = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
+    assert!(
+        bounds.x >= 0.0 && bounds.x + bounds.w <= f64::from(app.window.width()),
+        "New Tab x={} width={}, window {}",
+        bounds.x,
+        bounds.w,
+        app.window.width()
+    );
     app.split_view.set_show_sidebar(true);
     wait_ui(|| app.split_view.shows_sidebar());
     for tooltip in ["Task Board (Ctrl+Shift+B)", "Changes (Ctrl+Shift+D)"] {
@@ -2587,6 +2615,32 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     })
     .unwrap();
     wait_ui(|| menu.is_mapped());
+    new_tab.grab_focus();
+    assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
+    assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
+        .is_some_and(|focus| focus == board.clone().upcast::<gtk4::Widget>()));
+    assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
+    assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
+        .is_some_and(|focus| focus == changes.clone().upcast::<gtk4::Widget>()));
+    let old_direction = gtk4::Widget::default_direction();
+    gtk4::Widget::set_default_direction(gtk4::TextDirection::Rtl);
+    let context = app.crumb_button.clone().upcast::<gtk4::Widget>();
+    wait_ui(|| {
+        let creation = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
+        let crumb = widget_bounds(&context, app.window.upcast_ref());
+        creation.x + creation.w <= crumb.x
+    });
+    let creation = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
+    let board_bounds = widget_bounds(board.upcast_ref(), app.window.upcast_ref());
+    let changes_bounds = widget_bounds(changes.upcast_ref(), app.window.upcast_ref());
+    assert!(changes_bounds.x + changes_bounds.w <= board_bounds.x);
+    assert!(board_bounds.x + board_bounds.w < creation.x);
+    new_tab.grab_focus();
+    assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
+        .is_some_and(|focus| focus == new_tab.clone().upcast::<gtk4::Widget>()));
+    assert_eq!(new_tab.action_name().as_deref(), Some("win.new-tab"));
+    capture_workflow(&app.window, "toolbar-position-rtl");
+    gtk4::Widget::set_default_direction(old_direction);
     app.window.destroy();
 }
 
@@ -2805,6 +2859,16 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
             .unwrap()
             .contains("/tmp/main <checkout>&"));
         assert!(checkout.subtitle().unwrap().contains("Workspace open"));
+        let create = button_with_tooltip(
+            &dialog.child().unwrap(),
+            "Create a separate checkout and open its workspace",
+        )
+        .unwrap();
+        wait_ui(|| has_label(create.upcast_ref(), "Create Worktree…"));
+        assert!(
+            create.ancestor(adw::HeaderBar::static_type()).is_some(),
+            "window action belongs in its header"
+        );
         capture_workflow(&app.window, &format!("worktrees-{theme}"));
         assert!(
             root.height() < 480,
@@ -2824,9 +2888,63 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
             "/tmp/parallel agent/feature <checkout>&",
         )
     });
+    let create = button_with_tooltip(
+        &narrow.child().unwrap(),
+        "Create a separate checkout and open its workspace",
+    )
+    .unwrap();
+    let refresh = button_with_tooltip(&narrow.child().unwrap(), "Refresh worktrees").unwrap();
+    let close = find_matching_widget::<gtk4::Button>(&narrow.child().unwrap(), &|button| {
+        find_matching_widget::<gtk4::Image>(button.upcast_ref(), &|image| {
+            image.icon_name().as_deref() == Some("window-close-symbolic")
+        })
+        .is_some()
+    })
+    .expect("native dialog close remains available");
+    create.grab_focus();
     capture_workflow(&app.window, "worktrees-narrow");
+    for button in [&create, &refresh, &close] {
+        let bounds = button.compute_bounds(&app.window).unwrap();
+        assert!(button.is_mapped());
+        assert!(bounds.width() >= 28.0 && bounds.height() >= 28.0);
+        assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= app.window.width() as f32);
+        assert!(bounds.y() >= 0.0 && bounds.y() + bounds.height() <= app.window.height() as f32);
+    }
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    settings.set_gtk_font_name(Some("Sans 18"));
+    create.grab_focus();
+    capture_workflow(&app.window, "worktrees-narrow-large");
+    for button in [&create, &refresh, &close] {
+        let bounds = button.compute_bounds(&app.window).unwrap();
+        assert!(button.is_mapped());
+        assert!(bounds.width() >= 28.0 && bounds.height() >= 28.0);
+        assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= app.window.width() as f32);
+        assert!(bounds.y() >= 0.0 && bounds.y() + bounds.height() <= app.window.height() as f32);
+    }
+    for hint in [
+        "Open this checkout as a workspace",
+        "Remove the clean checkout; keep its branch",
+    ] {
+        let button = button_with_tooltip(&narrow.child().unwrap(), hint).unwrap();
+        assert!(button.grab_focus());
+        wait_ui(|| {
+            let bounds = button.compute_bounds(&app.window).unwrap();
+            bounds.y() >= 0.0 && bounds.y() + bounds.height() <= app.window.height() as f32
+        });
+        let bounds = button.compute_bounds(&app.window).unwrap();
+        assert!(bounds.width() >= 28.0 && bounds.height() >= 28.0);
+        assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= app.window.width() as f32);
+    }
+    capture_workflow(&app.window, "worktrees-narrow-large-row-focus");
+    settings.set_gtk_font_name(old_font.as_deref());
+    app.window.set_default_size(920, 680);
+    wait_ui(|| has_label(create.upcast_ref(), "Create Worktree…"));
+    assert!(has_label(&narrow.child().unwrap(), "Open"));
+    assert!(has_label(&narrow.child().unwrap(), "Remove…"));
     narrow.close();
     wait_ui(|| app.window.visible_dialog().is_none());
+    app.window.set_default_size(360, 680);
     gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-changes", None).unwrap();
     // Narrow windows overlay the panel rather than squeezing panes.
     wait_ui(|| app.changes_split.is_collapsed());
@@ -2851,9 +2969,12 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
     });
     let row =
         action_row_with_title(&worktrees.child().unwrap(), "feature/local-workflows").unwrap();
-    button_with_label(row.upcast_ref(), "Remove…")
-        .unwrap()
-        .emit_clicked();
+    button_with_tooltip(
+        row.upcast_ref(),
+        "Remove the clean checkout; keep its branch",
+    )
+    .unwrap()
+    .emit_clicked();
     let confirmation = app
         .window
         .visible_dialog()
@@ -2871,7 +2992,7 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
         &worktrees.child().unwrap(),
         "/tmp/parallel agent/feature <checkout>&"
     ));
-    button_with_label(row.upcast_ref(), "Open")
+    button_with_tooltip(row.upcast_ref(), "Open this checkout as a workspace")
         .unwrap()
         .emit_clicked();
     wait_ui(|| app.window.visible_dialog().is_none() && app.active_ws_id().as_deref() == Some("b"));
@@ -2884,9 +3005,12 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
             "/tmp/main <checkout>&\nMain checkout · Workspace open",
         )
     });
-    button_with_label(&worktrees.child().unwrap(), "Create Worktree…")
-        .unwrap()
-        .emit_clicked();
+    button_with_tooltip(
+        &worktrees.child().unwrap(),
+        "Create a separate checkout and open its workspace",
+    )
+    .unwrap()
+    .emit_clicked();
     let creation = app
         .window
         .visible_dialog()
@@ -5319,6 +5443,14 @@ fn breadcrumb_opens_the_workspace_details_card() {
     ));
     assert!(has_label(&card, "Task fix-parser · Working"));
     assert!(has_label(&card, "#77") && has_label(&card, "Checks passing"));
+    for role in ["signaltty-folder-symbolic", "signaltty-changes-symbolic"] {
+        let icon = find_matching_widget::<gtk4::Image>(&card, &|image| {
+            image.icon_name().as_deref() == Some(role)
+        })
+        .expect("details must use the same recognizable role as the main UI");
+        assert_eq!(icon.accessible_role(), gtk4::AccessibleRole::Presentation);
+        assert_eq!(icon.pixel_size(), 16);
+    }
     for (name, scheme) in [
         ("light", adw::ColorScheme::ForceLight),
         ("dark", adw::ColorScheme::ForceDark),
@@ -5359,4 +5491,74 @@ fn breadcrumb_opens_the_workspace_details_card() {
         Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
         None => std::env::remove_var("XDG_CONFIG_HOME"),
     }
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn owned_icon_roles_resolve_and_render_without_external_themes() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let theme = gtk4::IconTheme::new();
+    theme.set_theme_name(Some("Adwaita"));
+    theme.set_search_path(&[]);
+    theme.add_resource_path("/dev/signaltty/gui/icons");
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let window = adw::ApplicationWindow::new(&application);
+    let body = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
+    for (label, name) in [
+        ("Changes", "signaltty-changes-symbolic"),
+        ("Task Board", "signaltty-board-symbolic"),
+        ("New Tab", "signaltty-tab-new-symbolic"),
+        ("Split Right", "signaltty-split-right-symbolic"),
+        ("Split Down", "signaltty-split-down-symbolic"),
+        ("Search", "signaltty-search-symbolic"),
+        ("Preferences", "signaltty-settings-symbolic"),
+        ("Folder", "signaltty-folder-symbolic"),
+        ("Branch", "signaltty-branch-symbolic"),
+        ("Pull Request", "signaltty-pull-request-symbolic"),
+        ("Terminal", "signaltty-terminal-symbolic"),
+    ] {
+        assert!(theme.has_icon(name), "owned role must resolve: {name}");
+        let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 20);
+        let title = gtk4::Label::new(Some(label));
+        title.set_xalign(0.0);
+        title.set_width_chars(16);
+        row.append(&title);
+        for size in [16, 32] {
+            let icon = theme.lookup_icon(
+                name,
+                &[],
+                size,
+                1,
+                gtk4::TextDirection::Ltr,
+                gtk4::IconLookupFlags::FORCE_SYMBOLIC,
+            );
+            assert!(icon.is_symbolic());
+            assert!(icon.file().unwrap().uri().starts_with("resource://"));
+            let image = gtk4::Image::from_paintable(Some(&icon));
+            image.set_pixel_size(size);
+            image.set_accessible_role(gtk4::AccessibleRole::Presentation);
+            row.append(&image);
+        }
+        body.append(&row);
+    }
+    body.set_margin_top(20);
+    body.set_margin_bottom(20);
+    body.set_margin_start(20);
+    body.set_margin_end(20);
+    window.set_content(Some(&body));
+    window.set_default_size(440, 540);
+    window.present();
+    let style = adw::StyleManager::default();
+    let original = style.color_scheme();
+    for (scheme, name) in [
+        (adw::ColorScheme::ForceLight, "light"),
+        (adw::ColorScheme::ForceDark, "dark"),
+    ] {
+        style.set_color_scheme(scheme);
+        capture_workflow(&window, &format!("owned-icons-{name}"));
+    }
+    style.set_color_scheme(original);
+    window.destroy();
 }
