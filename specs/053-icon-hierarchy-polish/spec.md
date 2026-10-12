@@ -70,4 +70,4 @@ No model changes. Existing workspace, tab, pane, checkout and UI icon roles are 
 
 ## Assumptions
 
-Keep the accepted restrained T3-like direction and native GTK interaction patterns. Use original monochrome SVGs in the existing icon bundle; no icon/font library or copied Apple symbol artwork. Common native system symbols stay native. The audit does not authorize model/IPC changes, toolbar customization, new navigation destinations or decorative icons on every row. This PR is stacked on the still-open #100 so its review diff contains only this polish.
+Keep the accepted restrained T3-like direction and native GTK interaction patterns. Use original monochrome SVGs in the existing icon bundle; no icon/font library or copied Apple symbol artwork. Common native system symbols stay native. The audit does not authorize model/IPC changes, toolbar customization, new navigation destinations or decorative icons on every row. PR100 merged during delivery. This PR now targets main745f72f after rebasing only the polish commits; it retains the parent's final pending-window close guard.

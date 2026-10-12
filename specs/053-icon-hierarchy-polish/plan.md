@@ -1,6 +1,6 @@
 # Implementation plan: Icon hierarchy polish
 
-Branch `gui/icon-hierarchy-polish`, stacked base `637779bde0e9f41c11142f16ccb32ce72f6a8fec` from open PR100. Spec: [spec.md](spec.md). Native Rust/GTK4/libadwaita/VTE, existing versions/toolchain. No dependencies or protocol changes.
+Branch `gui/icon-hierarchy-polish`, delivery base `745f72f` from merged PR100. Original implementation/baseline base was `637779bde0e9f41c11142f16ccb32ce72f6a8fec`; polish commits rebased without conflicts. Spec: [spec.md](spec.md). Native Rust/GTK4/libadwaita/VTE, existing versions/toolchain. No dependencies or protocol changes.
 
 ## Constitution check
 

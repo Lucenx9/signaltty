@@ -25,6 +25,10 @@ Native test renders use production CSS/widgets and isolated IPC seams; full also
 
 ## Final acceptance
 
-`scripts/verify.sh full --output /tmp/icon-hierarchy-verification-accepted`: passed51 steps,39 GTK tests on clean e573f55. All workspace tests, architecture/warning policy, real server QA and benchmark passed. Native high-contrast icon and Worktree fixtures passed at the same revision. Light/dark, enlarged/narrow, RTL, pane focus/targets, retained VTE and feature052 safe closure/retry tests passed. Selected actual before/after renders and test-first red excerpts are committed with the runner summary.
+`scripts/verify.sh full --output /tmp/icon-hierarchy-verification-accepted`: passed 51 steps, 39 GTK tests on clean e573f55. All workspace tests, architecture/warning policy, real server QA and benchmark passed. Native high-contrast icon and Worktree fixtures passed at the same revision. Light/dark, enlarged/narrow, RTL, pane focus/targets, retained VTE and feature052 safe closure/retry tests passed. Selected actual before/after renders and test-first red excerpts are committed with the runner summary.
 
-Standards axis:0 documented violations and0 actionable smells. Spec/UX axis:0 remaining findings. A mistaken missing Refresh/Close observation was withdrawn after the reviewer inspected current exact-head normal/high-contrast images. No code change was justified by that observation. The earlier interrupted full run is excluded from completion evidence. Subsequent documentation-only commits do not alter the tested code.
+Standards axis: 0 documented violations and 0 actionable smells. Spec/UX axis: 0 remaining findings. A mistaken missing Refresh/Close observation was withdrawn after the reviewer inspected current exact-head normal/high-contrast images. No code change was justified by that observation. The earlier interrupted full run is excluded from completion evidence. Subsequent documentation-only commits do not alter the tested code.
+
+## Base update during delivery
+
+PR100 merged while this task ran. Its final source adds a pending-operation parent-window close guard and15 regression lines. Rebase onto main745f72f was conflict-free and imports that fix. Original51/39 evidence remains historical; a clean final full run against the rebased revision will replace the delivery summary. Review diff against main contains only this polish.
