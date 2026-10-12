@@ -5520,6 +5520,24 @@ fn owned_icon_roles_resolve_and_render_without_external_themes() {
         ("Terminal", "signaltty-terminal-symbolic"),
     ] {
         assert!(theme.has_icon(name), "owned role must resolve: {name}");
+        let resource_path = format!("/dev/signaltty/gui/icons/scalable/actions/{name}.svg");
+        if let Ok(bytes) =
+            gio::resources_lookup_data(&resource_path, gio::ResourceLookupFlags::NONE)
+        {
+            let content = std::str::from_utf8(&bytes).unwrap();
+            assert!(
+                !content.contains("stroke="),
+                "symbolic icon {name} must not rely on stroked outlines"
+            );
+            assert!(
+                !content.contains("fill=\"none\""),
+                "symbolic icon {name} must not use fill=\"none\""
+            );
+            assert!(
+                content.contains("fill-rule=\"evenodd\"") || content.contains("fill=\"#222\""),
+                "symbolic icon {name} must define filled geometry"
+            );
+        }
         let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 20);
         let title = gtk4::Label::new(Some(label));
         title.set_xalign(0.0);
