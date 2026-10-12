@@ -8,7 +8,9 @@ sidebar reading hierarchy and pane focus/attention chrome.
 ## How to get to it (user POV)
 
 Create a workspace/tab, split with Ctrl+Shift+E or Ctrl+Shift+O and close a pane
-with Ctrl+Shift+W. Workspace close presents a destructive confirmation.
+with Ctrl+Shift+W. Workspace close presents a destructive confirmation. Tab and
+pane close also confirm for live processes, including idle shells; exited and
+restored terminals and empty tabs close directly.
 
 ## Driving it with real IPC/GTK
 
@@ -38,3 +40,13 @@ covers generated versus explicit activity text. The isolated GTK test
 metadata icons, empty/child hiding, tooltips and retained widgets. The existing
 `shell_empty_states_explain_actions_and_fit_large_text` fixture also captures the
 200px workspace rail with enlarged text and asserted application high contrast.
+
+`app::tests::terminal_closures_confirm_live_targets_and_preserve_failed_tabs`
+checks Cancel defaults, no IPC on cancellation, original target through workspace
+navigation, VTE/tab identity on cancelled and failed closes, and direct exited,
+restored and empty closure. `SIGNALTTY_UI_EVIDENCE` captures production-CSS
+light/dark confirmations. The full runner executes it in its own display process.
+
+The desktop reliability probe now cancels its live-terminal close, waits for the
+confirmation to dismiss, verifies all three panes remain, then confirms and checks
+the resulting two panes through real IPC. This path runs in desktop mode, not full.

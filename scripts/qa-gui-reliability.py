@@ -83,8 +83,10 @@ class Relay:
 def walk(widget):
     widget.clear_cache()
     yield widget
-    for child in widget:
-        yield from walk(child)
+    for index in range(widget.get_child_count()):
+        child = widget.get_child_at_index(index)
+        if child:
+            yield from walk(child)
 
 
 def main():
@@ -131,8 +133,10 @@ def main():
                 return False
 
         def app():
-            for item in Atspi.get_desktop(0):
-                if item.get_process_id() == gui.pid:
+            desktop = Atspi.get_desktop(0)
+            for index in range(desktop.get_child_count()):
+                item = desktop.get_child_at_index(index)
+                if item and item.get_process_id() == gui.pid:
                     return item
             return None
 
@@ -191,11 +195,11 @@ def main():
             gui = subprocess.Popen([str(binaries / "signaltty-gui"), "--socket", str(proxy)],
                 stdout=gui_log, stderr=gui_log, env=dict(os.environ, SIGNALTTY_NOTIFY="0", SIGNALTTY_REFRESH_METRICS="1"))
             until(lambda: app() and "QASTART" in terminal_text())
-            before = len(app())
+            before = app().get_child_count()
             subprocess.run([str(binaries / "signaltty-gui"), "--socket", str(proxy)],
                            stdout=gui_log, stderr=gui_log, timeout=5, check=True)
             time.sleep(0.2)
-            after = len(app())
+            after = app().get_child_count()
             assert before == after == 1, (before, after)
             record("single_window_activation", before=before, after=after)
 
@@ -243,8 +247,17 @@ def main():
             action("split-right")
             until(lambda: len(call("workspace.get", workspace_id=other_ws)["panes"]) == 3)
             action("close-pane")
+            cancel = until(lambda: next((w for w in walk(app())
+                if "Action" in w.get_interfaces() and w.get_name() == "Cancel"), None))
+            Atspi.Action.do_action(cancel, 0)
+            until(lambda: not any(w.get_name() == "Close Terminal" for w in walk(app())))
+            assert len(call("workspace.get", workspace_id=other_ws)["panes"]) == 3
+            action("close-pane")
+            close = until(lambda: next((w for w in walk(app())
+                if "Action" in w.get_interfaces() and w.get_name() == "Close Terminal"), None))
+            Atspi.Action.do_action(close, 0)
             until(lambda: len(call("workspace.get", workspace_id=other_ws)["panes"]) == 2)
-            record("split_and_close_after_recovery", owned_panes=2)
+            record("split_and_close_after_recovery", owned_panes=2, cancelled_close_preserves=3)
 
             restored_ws = call("workspace.create", name="Restored", cwd=tmp)["workspace"]["id"]
             restored = call("pane.spawn", workspace_id=restored_ws, argv=["sleep", "600"], agent_hint="codex")["pane"]["id"]

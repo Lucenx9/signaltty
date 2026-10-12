@@ -107,3 +107,23 @@ interrupted restore. The shell empty-state display test also exports
 workspace-panel and workspace-create desktop/large light/dark scenes, checks
 status is below the title, and exercises automatic/manual name validation.
 These tests do not contact paid providers or certify account/model compatibility.
+
+## Reliable creation and compact tools
+
+`app::tests::workspace_creation_retains_draft_and_retries_only_the_failed_command`
+drives production form actions against deterministic actor failures: invalid
+manual name/custom command cannot submit, pending draft cannot dismiss or submit
+twice, workspace-create failure retains editable choices, startup failure preserves
+the created id and freezes its folder/name, corrected command retries without a
+duplicate workspace, and success focuses the VTE. Exports light/dark validation,
+pending and partial-failure renders plus enlarged narrow/high-contrast validation.
+
+`new_workspace::tests::dialog_validation_explains_invalid_folder` checks a missing
+folder's visible guidance. `dialog_confirm_emits_validated_request` checks retained
+draft, pending state and explicit completion/retry at the form seam.
+
+`app::tests::visible_workspace_tools_open_palette_and_board_without_main_menu`
+checks wide header entry points, labeled compact sidebar controls, actual Board
+activation and Changes toggle synchronization. Exports 360px light/dark and
+large-text/high-contrast compact controls. These are isolated GTK scenes, not proof
+of screen-reader/OSK/IME or a real folder chooser.

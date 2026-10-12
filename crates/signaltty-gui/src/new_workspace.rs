@@ -1,18 +1,7 @@
-//! "New Workspace" dialog: folder, name and first command.
-//!
-//! The dialog is an [`adw::AlertDialog`] so Enter confirms, Esc
-//! cancels and the primary response gets the suggested style for
-//! free. Rows are [`adw::ActionRow`]/[`adw::EntryRow`]/[`adw::ComboRow`];
-//! the folder picker is [`gtk4::FileDialog`] in folder mode.
-//!
-//! Agent choices come from the adapter registry
-//! (`signaltty_agent::adapter_for_kind`) and the bundled generic screen
-//! manifests (`bundled::bundled_programs`): only agents whose binary is
-//! on `PATH` are offered, so the GUI and the server's argv detection
-//! can never disagree. Pure helpers (PATH lookup, argv splitting,
-//! defaults) are toolkit-free and unit-tested below.
+//! New Workspace action dialog: editable draft, validation and async retry.
+//! App owns IPC; the form stays mounted until creation succeeds.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -25,12 +14,11 @@ use signaltty_core::model::AgentKind;
 
 use crate::util::tilde;
 
-const RESPONSE_CREATE: &str = "create";
-const RESPONSE_CANCEL: &str = "cancel";
 const CUSTOM_LABEL: &str = "Custom…";
 
 /// What the dialog hands back when the user confirms.
 pub struct NewWorkspaceRequest {
+    pub existing_workspace_id: Option<String>,
     pub auto_name: bool,
     pub name: String,
     pub cwd: String,
@@ -231,286 +219,424 @@ struct State {
     setting_name: bool,
 }
 
-/// Show the dialog. `on_create` runs once per confirmation with the
-/// validated request; `on_close` runs whenever the dialog goes away
-/// (used to re-arm the action). Returns the dialog for tests.
+pub struct CreationError {
+    pub message: String,
+    pub workspace_id: Option<String>,
+}
+
+pub struct NewWorkspaceDialog {
+    pub dialog: adw::Dialog,
+    pending: Cell<bool>,
+    existing_workspace_id: RefCell<Option<String>>,
+    workspace_fields: gtk4::Box,
+    command_fields: adw::PreferencesGroup,
+    cancel: gtk4::Button,
+    create: gtk4::Button,
+    spinner: adw::Spinner,
+    feedback: gtk4::Label,
+    folder_row: adw::ActionRow,
+    folder_error: gtk4::Label,
+    name_row: adw::EntryRow,
+    name_error: gtk4::Label,
+    auto_name: adw::SwitchRow,
+    combo: adw::ComboRow,
+    custom_row: adw::EntryRow,
+    command_error: gtk4::Label,
+    state: RefCell<State>,
+    commands: Vec<CommandOption>,
+}
+
+fn error_label() -> gtk4::Label {
+    let label = gtk4::Label::builder()
+        .wrap(true)
+        .xalign(0.0)
+        .visible(false)
+        .build();
+    label.add_css_class("error");
+    label.set_margin_start(12);
+    label.set_margin_end(12);
+    label
+}
+
+fn field_error(row: &impl IsA<gtk4::Widget>, label: &gtk4::Label, message: &str) {
+    label.set_text(message);
+    label.set_visible(!message.is_empty());
+    if message.is_empty() {
+        row.remove_css_class("error");
+    } else {
+        row.add_css_class("error");
+    }
+    row.as_ref()
+        .update_property(&[gtk4::accessible::Property::Description(message)]);
+}
+
+impl NewWorkspaceDialog {
+    fn validate(&self) -> bool {
+        let folder_error = if Path::new(&self.state.borrow().cwd).is_dir() {
+            ""
+        } else {
+            "Choose an existing project folder."
+        };
+        let name_error = if self.auto_name.is_active() || !self.name_row.text().trim().is_empty() {
+            ""
+        } else {
+            "Enter a workspace name."
+        };
+        let command_error = if self.combo.selected() as usize >= self.commands.len() {
+            match split_argv(self.custom_row.text().trim()) {
+                Some(argv) if !argv.is_empty() && !argv[0].is_empty() => "",
+                Some(_) => "Enter a command to start the terminal.",
+                None => "Close the quoted text or remove the trailing backslash.",
+            }
+        } else {
+            ""
+        };
+        field_error(&self.folder_row, &self.folder_error, folder_error);
+        field_error(&self.name_row, &self.name_error, name_error);
+        field_error(&self.custom_row, &self.command_error, command_error);
+        let valid = folder_error.is_empty() && name_error.is_empty() && command_error.is_empty();
+        self.create.set_sensitive(valid && !self.pending.get());
+        valid
+    }
+
+    fn request(&self) -> Option<NewWorkspaceRequest> {
+        if self.pending.get() || !self.validate() {
+            return None;
+        }
+        let sel = self.combo.selected() as usize;
+        let argv = if sel >= self.commands.len() {
+            split_argv(self.custom_row.text().trim())?
+        } else {
+            self.commands[sel].argv.clone()
+        };
+        let automatic = self.auto_name.is_active();
+        let request = NewWorkspaceRequest {
+            existing_workspace_id: self.existing_workspace_id.borrow().clone(),
+            name: if automatic {
+                folder_basename(&self.state.borrow().cwd)
+            } else {
+                self.name_row.text().trim().to_string()
+            },
+            cwd: self.state.borrow().cwd.clone(),
+            argv,
+            auto_name: automatic,
+        };
+        self.pending.set(true);
+        self.dialog.set_can_close(false);
+        self.workspace_fields.set_sensitive(false);
+        self.command_fields.set_sensitive(false);
+        self.cancel.set_sensitive(false);
+        self.create.set_sensitive(false);
+        self.create.set_label("Creating…");
+        self.spinner.set_visible(true);
+        self.feedback.remove_css_class("error");
+        self.feedback
+            .set_text(if request.existing_workspace_id.is_some() {
+                "Starting the command in the existing workspace…"
+            } else {
+                "Creating the workspace and starting its first command…"
+            });
+        self.feedback.set_visible(true);
+        Some(request)
+    }
+
+    pub fn finish(&self, result: Result<(), CreationError>) {
+        if !self.pending.replace(false) {
+            return;
+        }
+        self.dialog.set_can_close(true);
+        self.spinner.set_visible(false);
+        match result {
+            Ok(()) => {
+                self.dialog.close();
+            }
+            Err(error) => {
+                self.existing_workspace_id.replace(error.workspace_id);
+                self.workspace_fields
+                    .set_sensitive(self.existing_workspace_id.borrow().is_none());
+                self.command_fields.set_sensitive(true);
+                self.cancel.set_sensitive(true);
+                self.create.set_label("Retry");
+                self.feedback.add_css_class("error");
+                self.feedback.set_text(&error.message);
+                self.validate();
+                self.create.grab_focus();
+            }
+        }
+    }
+}
+
+/// Keep this form alive until its closed callback fires. Submission starts one
+/// attempt; the owner reports its result with `finish`, including partial creation.
 pub fn show_dialog(
     parent: &adw::ApplicationWindow,
     active_ws_cwd: Option<&str>,
-    on_create: impl Fn(NewWorkspaceRequest) + 'static,
+    on_create: impl Fn(NewWorkspaceRequest, Rc<NewWorkspaceDialog>) + 'static,
     on_close: impl Fn() + 'static,
-) -> adw::AlertDialog {
-    let commands = Rc::new(available_commands());
+) -> Rc<NewWorkspaceDialog> {
+    let commands = available_commands();
     let default_index = default_command_index(&commands);
-    let state = Rc::new(RefCell::new(State {
-        cwd: default_cwd(active_ws_cwd),
-        name_edited: false,
-        setting_name: false,
-    }));
-
-    let dialog = adw::AlertDialog::builder()
-        .heading("New Workspace")
+    let cwd = default_cwd(active_ws_cwd);
+    let dialog = adw::Dialog::builder()
+        .title("New Workspace")
         .content_width(440)
+        .follows_content_size(true)
         .build();
     dialog.add_css_class("signaltty-dialog");
-    dialog.add_response(RESPONSE_CANCEL, "Cancel");
-    dialog.add_response(RESPONSE_CREATE, "Create");
-    dialog.set_response_appearance(RESPONSE_CREATE, adw::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some(RESPONSE_CREATE));
-    dialog.set_close_response(RESPONSE_CANCEL);
-
-    // ---- workspace group ----
+    let cancel = gtk4::Button::with_label("Cancel");
+    let create = gtk4::Button::with_label("Create");
+    create.add_css_class("suggested-action");
+    let header = adw::HeaderBar::builder()
+        .show_start_title_buttons(false)
+        .show_end_title_buttons(false)
+        .build();
+    header.pack_start(&cancel);
+    header.pack_end(&create);
     let folder_row = adw::ActionRow::builder()
         .title("Folder")
-        .subtitle(tilde(&state.borrow().cwd))
+        .subtitle(tilde(&cwd))
+        .use_markup(false)
+        .subtitle_lines(2)
         .activatable(true)
         .build();
-    folder_row.set_tooltip_text(Some("The project folder the first command runs in"));
     let browse = gtk4::Button::from_icon_name("folder-open-symbolic");
     browse.set_tooltip_text(Some("Choose a folder"));
+    browse.update_property(&[gtk4::accessible::Property::Label("Choose a project folder")]);
     browse.add_css_class("flat");
     browse.set_valign(gtk4::Align::Center);
     folder_row.add_suffix(&browse);
-
     let name_row = adw::EntryRow::builder()
         .title("Name")
-        .text(folder_basename(&state.borrow().cwd))
+        .text(folder_basename(&cwd))
         .activates_default(true)
         .build();
+    let automatic = supports_auto_name(&commands[default_index].argv);
     let auto_name = adw::SwitchRow::builder()
         .title("Automatic name")
-        .subtitle(if supports_auto_name(&commands[default_index].argv) {
+        .subtitle(if automatic {
             "From your first message"
         } else {
             "Available with Codex or Claude"
         })
-        .active(supports_auto_name(&commands[default_index].argv))
+        .active(automatic)
+        .sensitive(automatic)
+        .visible(automatic)
         .build();
-    auto_name.set_sensitive(supports_auto_name(&commands[default_index].argv));
     auto_name.set_tooltip_text(Some(
         "Uses your Codex or Claude account and its default model; generation may use account quota",
     ));
-    name_row.set_visible(!auto_name.is_active());
-    dialog.set_focus(Some(&browse));
+    name_row.set_visible(!automatic);
+    let folder_group = adw::PreferencesGroup::builder().title("Workspace").build();
+    folder_group.add(&folder_row);
+    let name_group = adw::PreferencesGroup::new();
+    name_group.add(&auto_name);
+    name_group.add(&name_row);
+    let folder_error = error_label();
+    let name_error = error_label();
+    let workspace_fields = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    workspace_fields.append(&folder_group);
+    workspace_fields.append(&folder_error);
+    workspace_fields.append(&name_group);
+    workspace_fields.append(&name_error);
 
-    let ws_group = adw::PreferencesGroup::builder().title("Workspace").build();
-    ws_group.add(&folder_row);
-    ws_group.add(&auto_name);
-    ws_group.add(&name_row);
-
-    // ---- command group ----
-    let labels: Vec<String> = commands
+    let labels: Vec<&str> = commands
         .iter()
-        .map(|c| c.label.to_string())
-        .chain(std::iter::once(CUSTOM_LABEL.to_string()))
+        .map(|command| command.label)
+        .chain(std::iter::once(CUSTOM_LABEL))
         .collect();
-    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     let combo = adw::ComboRow::builder()
         .title("Command")
-        .model(&gtk4::StringList::new(&refs))
+        .use_markup(false)
+        .subtitle_lines(2)
+        .model(&gtk4::StringList::new(&labels))
         .selected(default_index as u32)
         .build();
     combo.set_subtitle(&commands[default_index].argv.join(" "));
-    // Only installed agents are listed, so no per-row availability marks.
-    combo.set_tooltip_text(Some("The first command to run in the new workspace"));
-
     let custom_row = adw::EntryRow::builder()
         .title("Custom command")
         .activates_default(true)
+        .visible(false)
         .build();
     custom_row.set_tooltip_text(Some("Example: claude --model opus"));
-    custom_row.set_visible(false);
+    let command_fields = adw::PreferencesGroup::builder().title("Command").build();
+    command_fields.add(&combo);
+    command_fields.add(&custom_row);
+    let command_error = error_label();
+    let feedback = gtk4::Label::builder()
+        .wrap(true)
+        .xalign(0.0)
+        .visible(false)
+        .selectable(true)
+        .max_width_chars(48)
+        .accessible_role(gtk4::AccessibleRole::Status)
+        .build();
+    let spinner = adw::Spinner::new();
+    spinner.set_size_request(20, 20);
+    spinner.set_valign(gtk4::Align::Start);
+    spinner.set_visible(false);
+    let progress = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    progress.append(&spinner);
+    progress.append(&feedback);
+    feedback.set_hexpand(true);
+    let body = gtk4::Box::new(gtk4::Orientation::Vertical, 16);
+    body.set_margin_top(12);
+    body.set_margin_bottom(20);
+    body.set_margin_start(20);
+    body.set_margin_end(20);
+    body.append(&workspace_fields);
+    body.append(&command_fields);
+    body.append(&command_error);
+    body.append(&progress);
+    let scroll = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .propagate_natural_height(true)
+        .child(&body)
+        .build();
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&scroll));
+    let clamp = adw::Clamp::builder()
+        .maximum_size(440)
+        .tightening_threshold(400)
+        .child(&toolbar)
+        .build();
+    dialog.set_child(Some(&clamp));
+    dialog.set_default_widget(Some(&create));
+    dialog.set_focus(Some(&browse));
 
-    let cmd_group = adw::PreferencesGroup::builder().title("Command").build();
-    cmd_group.add(&combo);
-    cmd_group.add(&custom_row);
-
-    let body = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
-    body.append(&ws_group);
-    body.append(&cmd_group);
-    dialog.set_extra_child(Some(&body));
-
-    // ---- validation ----
-    let revalidate = {
-        let dialog = dialog.clone();
-        let name_row = name_row.clone();
-        let auto_name = auto_name.clone();
-        let custom_row = custom_row.clone();
-        let combo = combo.clone();
-        let state = Rc::clone(&state);
-        let commands = Rc::clone(&commands);
-        move || {
-            let name_ok = auto_name.is_active() || !name_row.text().trim().is_empty();
-            let cwd_ok = Path::new(state.borrow().cwd.as_str()).is_dir();
-            let sel = combo.selected() as usize;
-            let cmd_ok = if sel >= commands.len() {
-                split_argv(custom_row.text().trim()).is_some_and(|v| !v.is_empty())
-            } else {
-                true
-            };
-            dialog.set_response_enabled(RESPONSE_CREATE, name_ok && cwd_ok && cmd_ok);
-        }
-    };
-    let revalidate = Rc::new(revalidate);
-    revalidate();
-
-    // ---- confirm ----
-    let on_create = Rc::new(on_create);
-    let confirm = {
-        let dialog = dialog.clone();
-        let name_row = name_row.clone();
-        let auto_name = auto_name.clone();
-        let custom_row = custom_row.clone();
-        let combo = combo.clone();
-        let state = Rc::clone(&state);
-        let commands = Rc::clone(&commands);
-        move || {
-            let sel = combo.selected() as usize;
-            let argv = if sel >= commands.len() {
-                split_argv(custom_row.text().trim()).unwrap_or_default()
-            } else {
-                commands[sel].argv.clone()
-            };
-            let automatic = auto_name.is_active();
-            let name = if automatic {
-                folder_basename(&state.borrow().cwd)
-            } else {
-                name_row.text().trim().to_string()
-            };
-            let cwd = state.borrow().cwd.clone();
-            if name.is_empty() || argv.is_empty() || !Path::new(&cwd).is_dir() {
-                return;
+    let form = Rc::new(NewWorkspaceDialog {
+        dialog,
+        pending: Cell::new(false),
+        existing_workspace_id: RefCell::new(None),
+        workspace_fields,
+        command_fields,
+        cancel,
+        create,
+        spinner,
+        feedback,
+        folder_row,
+        folder_error,
+        name_row,
+        name_error,
+        auto_name,
+        combo,
+        custom_row,
+        command_error,
+        state: RefCell::new(State {
+            cwd,
+            name_edited: false,
+            setting_name: false,
+        }),
+        commands,
+    });
+    let weak = Rc::downgrade(&form);
+    let submit = Rc::new(move || {
+        if let Some(form) = weak.upgrade() {
+            if let Some(request) = form.request() {
+                on_create(request, form);
             }
-            // Choosing a response already dismisses the dialog; the
-            // explicit close only covers entry-activated confirms.
-            dialog.close();
-            on_create(NewWorkspaceRequest {
-                name,
-                cwd,
-                argv,
-                auto_name: automatic,
-            });
         }
-    };
-    let confirm = Rc::new(confirm);
-
-    {
-        let confirm = Rc::clone(&confirm);
-        dialog.connect_response(Some(RESPONSE_CREATE), move |_, _| {
-            confirm();
-        });
-    }
-    // EntryRow consumes Enter itself; forward it to the same path so
-    // Invio always confirms (Esc is handled by close_response).
-    for row in [&name_row, &custom_row] {
-        let confirm = Rc::clone(&confirm);
+    });
+    let confirm = submit.clone();
+    form.create.connect_clicked(move |_| confirm());
+    for row in [&form.name_row, &form.custom_row] {
+        let confirm = submit.clone();
         row.connect_entry_activated(move |_| confirm());
     }
-
-    // ---- wiring ----
-    {
-        let name_row = name_row.clone();
-        let revalidate = Rc::clone(&revalidate);
-        auto_name.connect_active_notify(move |row| {
-            name_row.set_visible(!row.is_active());
+    let weak = Rc::downgrade(&form);
+    form.cancel.connect_clicked(move |_| {
+        if let Some(form) = weak.upgrade() {
+            form.dialog.close();
+        }
+    });
+    let weak = Rc::downgrade(&form);
+    form.auto_name.connect_active_notify(move |row| {
+        if let Some(form) = weak.upgrade() {
+            form.name_row.set_visible(!row.is_active());
             if !row.is_active() {
-                name_row.grab_focus();
+                form.name_row.grab_focus();
             }
-            revalidate();
-        });
-    }
-    {
-        let state = Rc::clone(&state);
-        let revalidate = Rc::clone(&revalidate);
-        name_row.connect_changed(move |_| {
-            if !state.borrow().setting_name {
-                state.borrow_mut().name_edited = true;
+            form.validate();
+        }
+    });
+    let weak = Rc::downgrade(&form);
+    form.name_row.connect_changed(move |_| {
+        if let Some(form) = weak.upgrade() {
+            if !form.state.borrow().setting_name {
+                form.state.borrow_mut().name_edited = true;
             }
-            revalidate();
-        });
-    }
-    {
-        let revalidate = Rc::clone(&revalidate);
-        custom_row.connect_changed(move |_| revalidate());
-    }
-    {
-        let custom_row = custom_row.clone();
-        let auto_name = auto_name.clone();
-        let commands = Rc::clone(&commands);
-        let revalidate = Rc::clone(&revalidate);
-        combo.connect_selected_notify(move |combo| {
+            form.validate();
+        }
+    });
+    let weak = Rc::downgrade(&form);
+    form.custom_row.connect_changed(move |_| {
+        if let Some(form) = weak.upgrade() {
+            form.validate();
+        }
+    });
+    let weak = Rc::downgrade(&form);
+    form.combo.connect_selected_notify(move |combo| {
+        if let Some(form) = weak.upgrade() {
             let sel = combo.selected() as usize;
-            let supported = commands
+            let supported = form
+                .commands
                 .get(sel)
                 .is_some_and(|command| supports_auto_name(&command.argv));
-            auto_name.set_sensitive(supported);
-            auto_name.set_subtitle(if supported {
+            form.auto_name.set_sensitive(supported);
+            form.auto_name.set_visible(supported);
+            form.auto_name.set_subtitle(if supported {
                 "From your first message"
             } else {
                 "Available with Codex or Claude"
             });
             if !supported {
-                auto_name.set_active(false);
+                form.auto_name.set_active(false);
             }
-            if sel >= commands.len() {
-                combo.set_subtitle("Type any command below");
-                // Plain visibility, no revealer: nothing animates on
-                // keyboard navigation.
-                custom_row.set_visible(true);
-            } else {
-                combo.set_subtitle(&commands[sel].argv.join(" "));
-                custom_row.set_visible(false);
-            }
-            revalidate();
-        });
-    }
-    let browse_action = {
-        let parent = parent.clone();
-        let folder_row = folder_row.clone();
-        let name_row = name_row.clone();
-        let state = Rc::clone(&state);
-        let revalidate = Rc::clone(&revalidate);
-        move || {
-            let initial = gio::File::for_path(state.borrow().cwd.clone());
-            let picker = gtk4::FileDialog::builder()
-                .title("Choose a Project Folder")
-                .initial_folder(&initial)
-                .build();
-            let folder_row = folder_row.clone();
-            let name_row = name_row.clone();
-            let state = Rc::clone(&state);
-            let revalidate = Rc::clone(&revalidate);
-            picker.select_folder(Some(&parent), None::<&gio::Cancellable>, move |result| {
-                let Ok(folder) = result else {
-                    return; // dismissed
-                };
-                let Some(path) = folder.path().map(|p| p.to_string_lossy().to_string()) else {
+            form.custom_row.set_visible(sel >= form.commands.len());
+            combo.set_subtitle(&form.commands.get(sel).map_or_else(
+                || "Type any command below".to_string(),
+                |command| command.argv.join(" "),
+            ));
+            form.validate();
+        }
+    });
+    let weak = Rc::downgrade(&form);
+    let picker_parent = parent.clone();
+    let browse_action = Rc::new(move || {
+        let Some(form) = weak.upgrade() else { return };
+        let picker = gtk4::FileDialog::builder()
+            .title("Choose a Project Folder")
+            .initial_folder(&gio::File::for_path(&form.state.borrow().cwd))
+            .build();
+        let weak = Rc::downgrade(&form);
+        picker.select_folder(
+            Some(&picker_parent),
+            None::<&gio::Cancellable>,
+            move |result| {
+                let Some(form) = weak.upgrade() else { return };
+                let Ok(folder) = result else { return };
+                let Some(path) = folder.path().map(|path| path.to_string_lossy().to_string())
+                else {
                     return;
                 };
-                state.borrow_mut().cwd = path.clone();
-                folder_row.set_subtitle(&tilde(&path));
-                if !state.borrow().name_edited {
-                    state.borrow_mut().setting_name = true;
-                    name_row.set_text(&folder_basename(&path));
-                    state.borrow_mut().setting_name = false;
+                form.state.borrow_mut().cwd = path.clone();
+                form.folder_row.set_subtitle(&tilde(&path));
+                if !form.state.borrow().name_edited {
+                    form.state.borrow_mut().setting_name = true;
+                    form.name_row.set_text(&folder_basename(&path));
+                    form.state.borrow_mut().setting_name = false;
                 }
-                revalidate();
-            });
-        }
-    };
-    let browse_action = Rc::new(browse_action);
-    {
-        let browse_action = Rc::clone(&browse_action);
-        folder_row.connect_activated(move |_| browse_action());
-    }
-    {
-        let browse_action = Rc::clone(&browse_action);
-        browse.connect_clicked(move |_| browse_action());
-    }
-
-    dialog.connect_closed(move |_| on_close());
-    dialog.present(Some(parent));
-    dialog
+                form.validate();
+            },
+        );
+    });
+    let pick = browse_action.clone();
+    form.folder_row.connect_activated(move |_| pick());
+    browse.connect_clicked(move |_| browse_action());
+    form.dialog.connect_closed(move |_| on_close());
+    form.validate();
+    form.dialog.present(Some(parent));
+    form
 }
 
 #[cfg(test)]
@@ -630,6 +756,48 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn dialog_validation_explains_invalid_folder() {
+        adw::init().unwrap();
+        let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+        application.register(None::<&gio::Cancellable>).unwrap();
+        let window = adw::ApplicationWindow::new(&application);
+        window.present();
+        let dialog = show_dialog(
+            &window,
+            Some("/signaltty-missing-project-folder"),
+            |_, _| panic!("invalid form submitted"),
+            || {},
+        );
+        fn has_label(widget: &gtk4::Widget, text: &str) -> bool {
+            if widget
+                .downcast_ref::<gtk4::Label>()
+                .is_some_and(|label| label.text() == text)
+            {
+                return true;
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                if has_label(&widget, text) {
+                    return true;
+                }
+                child = widget.next_sibling();
+            }
+            false
+        }
+        assert!(has_label(
+            dialog.dialog.upcast_ref(),
+            "Choose an existing project folder."
+        ));
+        assert!(!dialog.create.is_sensitive());
+        dialog.create.emit_clicked();
+        dialog.name_row.emit_by_name::<()>("entry-activated", &[]);
+        assert!(!dialog.pending.get());
+        dialog.dialog.close();
+        window.destroy();
+    }
+
+    #[test]
     #[ignore = "requires a GTK display; run with dbus-run-session (or xvfb-run)"]
     fn dialog_confirm_emits_validated_request() {
         use std::cell::Cell;
@@ -647,22 +815,20 @@ mod tests {
         type Captured = Rc<RefCell<Option<(String, String, Vec<String>, bool)>>>;
         let got: Captured = Rc::new(RefCell::new(None));
         let got2 = Rc::clone(&got);
+        let submissions = Rc::new(Cell::new(0));
+        let submitted = submissions.clone();
         let closed = Rc::new(Cell::new(false));
         let closed2 = Rc::clone(&closed);
         let dialog = show_dialog(
             &window,
             Some(&dir_s),
-            move |req| {
+            move |req, _form| {
+                submitted.set(submitted.get() + 1);
                 *got2.borrow_mut() = Some((req.name, req.cwd, req.argv, req.auto_name));
             },
             move || closed2.set(true),
         );
-        // Same emission as pressing Enter on the default response.
-        dialog.emit_by_name_with_details::<()>(
-            "response",
-            glib::Quark::from_str(RESPONSE_CREATE),
-            &[&RESPONSE_CREATE],
-        );
+        dialog.create.emit_clicked();
         while glib::MainContext::default().iteration(false) {}
 
         let commands = available_commands();
@@ -676,7 +842,30 @@ mod tests {
                 supports_auto_name(&expected_argv)
             ))
         );
+        assert!(
+            !closed.get(),
+            "the form must remain open until creation succeeds"
+        );
+        assert!(dialog.pending.get());
+        assert!(!dialog.dialog.can_close());
+        dialog.create.emit_clicked();
+        dialog.name_row.emit_by_name::<()>("entry-activated", &[]);
+        dialog.cancel.emit_clicked();
+        assert_eq!(submissions.get(), 1);
+        assert!(!closed.get());
+        dialog.finish(Err(CreationError {
+            message: "Try again".into(),
+            workspace_id: None,
+        }));
+        assert!(dialog.dialog.can_close());
+        assert_eq!(dialog.create.label().as_deref(), Some("Retry"));
+        assert_eq!(dialog.name_row.text(), "signaltty-dialog-e2e");
+        dialog.create.emit_clicked();
+        assert_eq!(submissions.get(), 2);
+        dialog.finish(Ok(()));
+        while glib::MainContext::default().iteration(false) {}
         assert!(closed.get());
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
