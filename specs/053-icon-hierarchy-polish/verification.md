@@ -31,4 +31,6 @@ Standards axis: 0 documented violations and 0 actionable smells. Spec/UX axis: 0
 
 ## Base update during delivery
 
-PR100 merged while this task ran. Its final source adds a pending-operation parent-window close guard and15 regression lines. Rebase onto main745f72f was conflict-free and imports that fix. Original51/39 evidence remains historical; a clean final full run against the rebased revision will replace the delivery summary. Review diff against main contains only this polish.
+PR100 merged while this task ran. Its final source adds a pending-operation parent-window close guard and15 regression lines. Rebase onto main745f72f was conflict-free and imports that fix. Original 51/39 evidence remains historical; a clean final full run against the rebased revision will replace the delivery summary. Review diff against main contains only this polish.
+
+Final delivery gate: clean a3f022b against main745f72f passed 51 steps/39 GTK via `/tmp/icon-hierarchy-main-verification`. Refreshed QA captures and summary are committed. Both review axes reconfirmed 0 findings after rebase. The parent pending-close fix is preserved; later commits contain evidence/documentation only.

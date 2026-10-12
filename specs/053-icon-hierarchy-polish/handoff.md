@@ -8,4 +8,4 @@ Code complete: shared semantic assets/16px/decorative roles, desktop/compact New
 
 Original clean sourcee573f55 passed full51 steps/39 GTK and both independent review axes0 remaining findings. PR100 then merged with an additional pending-operation parent-window close guard and its regression; only polish commits rebased onto main without conflicts. Final full run after rebase is required before publication. Current source commits350f4d3/0e95fd2, docs973f21e; pending new documentation commit records rebased base.
 
-Remaining: clean full gate on rebased revision, refreshed summary/proof, publish/link PR against main and record URL. Manual desktop screen reader/OSK/IME/chooser/notifications/paid-provider sessions not run. One writer; no uncommitted implementation or concurrent mutation.
+Final: clean a3f022b passed 51 steps/39 GTK on main745f72f, refreshed summary/captures retained. Both independent axes reconfirmed 0 findings. Remaining only push/open/link PR against main and record its URL. Desktop screen reader/OSK/IME/chooser/notifications/paid-provider probes not run. One writer, no source failures.

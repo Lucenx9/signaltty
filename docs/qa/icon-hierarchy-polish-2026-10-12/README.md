@@ -1,8 +1,8 @@
 # Icon hierarchy polish, 2026-10-12
 
-Verified code `e573f551134b96d6225df87f5e62c9b773c434c9`, base `637779bde0e9f41c11142f16ccb32ce72f6a8fec` from PR100. Later delivery commits contain documentation/evidence only.
+Verified final code `a3f022ba019e48ae38eba351f491aa7b3c4ea208`, base main745f72f from merged PR100. Baseline scenes were captured at637779b before the parent's final close guard. Later delivery commits contain documentation/evidence only.
 
-`scripts/verify.sh full --output /tmp/icon-hierarchy-verification-accepted` passed on a clean checkout: 51 steps, including all39 isolated GTK tests, warning/architecture policy, workspace tests, real server QA and refresh benchmark. [Summary](summary.json) records exact commands, outcomes and tool versions.
+`scripts/verify.sh full --output /tmp/icon-hierarchy-main-verification` passed on a clean checkout: 51 steps, including all 39 isolated GTK tests, warning/architecture policy, workspace tests, real server QA and refresh benchmark. [Summary](summary.json) records exact commands, outcomes and tool versions.
 
 The test-first [red excerpts](red-results.txt) precede production changes. Baseline captures come from unchanged parent native worker/Details/navigation fixtures; after captures are production GTK widgets/CSS from the clean full run. No mocked UI or retouched images.
 
@@ -23,3 +23,5 @@ Additional native `ADW_DEBUG_HIGH_CONTRAST=1` passes: icon sheet, Worktree navig
 Independent Standards review: 0 breaches, 0 actionable smells. Independent Spec/UX review: 0 remaining findings. A provisional missing-header-controls image objection was withdrawn after reopening exact-head captures; the buttons are visible and their mapped/vertical bounds pass. Review does not replace the full gate.
 
 Manual desktop screen reader/spoken order, OSK, IME, folder chooser, notification clicks and paid-provider sessions: not run. Isolated GTK keyboard/focus/accessibility-role checks are not desktop assistive-technology certification. Native snapshot/temporary overflow diagnostics during other fixture resize transitions are retained in ephemeral full logs; settled target captures and all assertions passed.
+
+After the parent merged, both review axes confirmed 0 findings against745f72f...a3f022b and the full 51/39 gate passed again on that clean revision. Production polish commits are identical under git range-diff; final after captures and summary above come from the rebased run.
