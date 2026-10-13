@@ -60,7 +60,7 @@ As someone working in a terminal, I can identify the current workspace and branc
 
 ### Measurable Outcomes
 
-- **SC-001**: A fixed ten-workspace quiet fixture occupies less sidebar height than the same fixture before this change, with names and states visible.
+- **SC-001**: The seven ordinary unselected rows in an identical ten-workspace mixed fixture occupy less sidebar height than before this change, with names and states visible. The other three rows exercise selected, approval and unread presentation.
 - **SC-002**: All attention and task fixtures retain their state and useful content when unselected.
 - **SC-003**: Switching selection changes preview visibility without replacing the workspace rows or terminal content.
 - **SC-004**: Full workspace name and location remain retrievable with long-name and long-path fixtures in light/dark and narrow/large-text layouts.
