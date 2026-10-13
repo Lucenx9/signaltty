@@ -21,3 +21,9 @@ The first integrated gate failed the pre-existing server backpressure test's exp
 ## Final test-only parent update
 
 After the full gate, parent PR #106 advanced to f7de184 with a test-only allocation guard in visible_workspace_tools. Integrated as 720b321. Production code, SVG assets and install helper are identical to gated source ec3b4d7; only app_tests.rs changed. The exact updated native test, cargo fmt and GUI all-target Clippy passed. `parent-focus-test-recheck.log` and `final-gui-clippy.log` retain those checks. The full report honestly remains tied to ec3b4d7.
+
+## Final merge preparation
+
+PR #106 was squash-merged as `51757f9`. Integration `5c20759` preserves its final focus-test preparation and narrow-window allocation check, removing the superseded allocation guard. The complete local gate passed again on that integration: 55 steps, all 43 isolated GTK tests and refresh benchmark. Evidence remains in `/home/simone/code/signaltty-pr106-build/verification-pr108/summary.json`. The focus regression also passed with Ubuntu 26.04 GTK in an isolated runtime container. Independent Standards and Spec reviews found no actionable defects; native light/dark images were inspected.
+
+PR #107 was subsequently merged into main as `c7c8a02` and integrated without conflicts. This adds its separately reviewed and CI-passing report retry behavior; sidebar production sources and tests remain identical to `5c20759`. The final PR CI verifies the combined source. Existing manual proof limits remain unchanged.
