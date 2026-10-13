@@ -8,10 +8,12 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use chrono::Utc;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use signaltty_core::model::{
     parse_review_decision, rollup_status_checks, AgentKind, Disposition, DispositionOutcome,
-    LiveState, PrChecks, PrReview, PrState, Relationship, Task, TaskPr, TaskResult,
+    LiveState, PrChecks, PrMergeState, PrMergeability, PrReview, PrState, Relationship, Task,
+    TaskPr, TaskResult,
 };
 use signaltty_core::state::{Attention, Lifecycle, TaskState};
 use signaltty_core::{new_context_id, new_task_id};
@@ -770,6 +772,12 @@ pub(crate) fn spawn_background_submit(
     });
 }
 
+fn task_view(task: &Task, now: chrono::DateTime<Utc>) -> Value {
+    let mut view = json!(task);
+    view["stage"] = json!(signaltty_core::task_stage(task, now));
+    view
+}
+
 pub fn h_task_get(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
     let p: params::TaskGet = match decode(params) {
         Ok(p) => p,
@@ -778,7 +786,7 @@ pub fn h_task_get(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEf
     let s = ctx.store.read().unwrap();
     match s.tasks.get(&p.task_id) {
         Some(task) => (
-            Response::ok(&req.id, json!({ "task": task })),
+            Response::ok(&req.id, json!({ "task": task_view(task, Utc::now()) })),
             ConnEffect::default(),
         ),
         None => (
@@ -821,8 +829,10 @@ pub fn h_task_list(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnE
     let limit = p.limit.unwrap_or(100).min(1000);
     tasks.truncate(limit);
 
+    let now = Utc::now();
+    let views: Vec<_> = tasks.iter().map(|task| task_view(task, now)).collect();
     (
-        Response::ok(&req.id, json!({ "tasks": tasks })),
+        Response::ok(&req.id, json!({ "tasks": views })),
         ConnEffect::default(),
     )
 }
@@ -2168,6 +2178,7 @@ pub async fn h_task_pr_open(ctx: &Ctx, req: &Request, params: &Value) -> (Respon
         checks: PrChecks::None,
         review: PrReview::None,
         checked_at: None,
+        ..TaskPr::default()
     };
 
     let task = {
@@ -2184,12 +2195,109 @@ pub async fn h_task_pr_open(ctx: &Ctx, req: &Request, params: &Value) -> (Respon
     )
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhPrObservation {
+    state: String,
+    review_decision: String,
+    #[serde(deserialize_with = "deserialize_check_rollup")]
+    status_check_rollup: Vec<Value>,
+    head_ref_oid: String,
+    is_draft: bool,
+    mergeable: String,
+    merge_state_status: String,
+}
+
+fn deserialize_check_rollup<'de, D>(deserializer: D) -> Result<Vec<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<Vec<Value>>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
+#[derive(Deserialize)]
+struct GhCheck {
+    status: Option<String>,
+    conclusion: Option<String>,
+    state: Option<String>,
+}
+
+fn decode_pr_observation(bytes: &[u8], pr: &mut TaskPr) -> Result<(), String> {
+    let view: GhPrObservation =
+        serde_json::from_slice(bytes).map_err(|e| format!("invalid gh pr view response: {e}"))?;
+    let state = PrState::parse_gh(&view.state)
+        .ok_or_else(|| format!("unknown PR state '{}'", view.state))?;
+    if view.head_ref_oid.trim().is_empty() {
+        return Err("gh pr view returned an empty headRefOid".into());
+    }
+    if !matches!(
+        view.review_decision.as_str(),
+        "" | "APPROVED" | "REVIEW_REQUIRED" | "CHANGES_REQUESTED"
+    ) {
+        return Err(format!(
+            "unknown review decision '{}'",
+            view.review_decision
+        ));
+    }
+    let mut unknown_check = false;
+    for item in &view.status_check_rollup {
+        let check: GhCheck =
+            serde_json::from_value(item.clone()).map_err(|e| format!("invalid PR check: {e}"))?;
+        if item.get("status").is_some() {
+            let status = check.status.ok_or("PR check has no run status")?;
+            if check.state.is_some() || item.get("conclusion").is_none() {
+                return Err("PR check has an incomplete or ambiguous run shape".into());
+            }
+            if status == "COMPLETED" {
+                let conclusion = check
+                    .conclusion
+                    .filter(|value| !value.is_empty())
+                    .ok_or("completed PR check has no conclusion")?;
+                unknown_check |= !matches!(
+                    conclusion.as_str(),
+                    "SUCCESS"
+                        | "NEUTRAL"
+                        | "SKIPPED"
+                        | "FAILURE"
+                        | "ERROR"
+                        | "CANCELLED"
+                        | "TIMED_OUT"
+                        | "ACTION_REQUIRED"
+                        | "STARTUP_FAILURE"
+                );
+            } else {
+                unknown_check = true;
+            }
+        } else {
+            let state = check.state.ok_or("PR check has no context state")?;
+            unknown_check |= !matches!(
+                state.as_str(),
+                "SUCCESS" | "FAILURE" | "ERROR" | "PENDING" | "EXPECTED"
+            );
+        }
+    }
+    let checks = rollup_status_checks(&view.status_check_rollup);
+    pr.state = state;
+    pr.review = parse_review_decision(&view.review_decision);
+    pr.checks = if unknown_check && checks != PrChecks::Failing {
+        PrChecks::Pending
+    } else {
+        checks
+    };
+    pr.head_sha = Some(view.head_ref_oid);
+    pr.draft = Some(view.is_draft);
+    pr.mergeability = PrMergeability::parse_gh(&view.mergeable);
+    pr.merge_state = PrMergeState::parse_gh(&view.merge_state_status);
+    Ok(())
+}
+
 pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnEffect) {
     let p: params::TaskPrRefresh = match decode(params) {
         Ok(p) => p,
         Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
     };
 
+    let attempted_at = Utc::now();
     // 1. Gather target tasks: (task_id, source_repo, existing_pr)
     let targets = {
         let s = ctx.store.read().unwrap();
@@ -2236,97 +2344,68 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
         }
     };
 
-    if targets.is_empty() {
-        return (
-            Response::ok(&req.id, json!({ "tasks": [] })),
-            ConnEffect::default(),
-        );
-    }
-
     let is_single = p.task_id.is_some();
-    let mut refreshed_pairs = Vec::new();
+    let mut successful = Vec::new();
+    let mut errors = Vec::new();
     for (tid, src_repo, mut pr) in targets {
-        let gh_out = match run_cli(
-            "gh",
-            &src_repo,
-            &[
-                "pr",
-                "view",
-                &pr.url,
-                "--json",
-                "state,reviewDecision,statusCheckRollup",
-            ],
-        )
-        .await
-        {
-            Ok(o) => o,
-            Err((c, m, details)) => {
-                if is_single {
-                    return if details.is_null() {
-                        (Response::err(&req.id, &c, m), ConnEffect::default())
-                    } else {
-                        (
-                            Response::err_with_details(&req.id, &c, m, details),
-                            ConnEffect::default(),
-                        )
-                    };
-                } else {
-                    continue;
-                }
+        pr.refresh_attempted_at = Some(attempted_at);
+        let observation = run_cli(
+            "gh", &src_repo,
+            &["pr", "view", &pr.url, "--json",
+                "state,reviewDecision,statusCheckRollup,headRefOid,isDraft,mergeable,mergeStateStatus"],
+        ).await.and_then(|out| {
+            decode_pr_observation(&out.stdout, &mut pr)
+                .map_err(|message| (code::IO_ERROR.to_string(), message, Value::Null))
+        });
+        match &observation {
+            Ok(()) => {
+                pr.checked_at = Some(attempted_at);
+                pr.refresh_error = None;
             }
+            Err((_, message, _)) => pr.refresh_error = Some(message.clone()),
+        }
+        let updated = {
+            let mut store = ctx.store.write().unwrap();
+            write_refreshed_prs(&mut store, vec![(tid.clone(), pr)])
         };
-
-        let view_json: Value = match serde_json::from_slice(&gh_out.stdout) {
-            Ok(v) => v,
-            Err(e) => {
-                if is_single {
-                    return (
-                        Response::err(
-                            &req.id,
-                            code::IO_ERROR,
-                            format!("failed to parse gh pr view JSON output: {e}"),
-                        ),
-                        ConnEffect::default(),
-                    );
+        if !updated.is_empty() {
+            ctx.mark_persist();
+        }
+        match observation {
+            Ok(()) => successful.extend(
+                updated
+                    .into_iter()
+                    .filter_map(|task| task.pr.map(|pr| (task.id, pr.url))),
+            ),
+            Err((c, message, details)) if is_single => {
+                let response = if details.is_null() {
+                    Response::err(&req.id, &c, message)
                 } else {
-                    continue;
-                }
+                    Response::err_with_details(&req.id, &c, message, details)
+                };
+                return (response, ConnEffect::default());
             }
-        };
-
-        if let Some(state_str) = view_json.get("state").and_then(|v| v.as_str()) {
-            if let Some(st) = PrState::parse_gh(state_str) {
-                pr.state = st;
+            Err((c, message, _)) => {
+                errors.push(json!({"task_id": tid, "code": c, "message": message}))
             }
         }
-
-        if let Some(rd_str) = view_json.get("reviewDecision").and_then(|v| v.as_str()) {
-            pr.review = parse_review_decision(rd_str);
-        } else {
-            pr.review = PrReview::None;
-        }
-
-        if let Some(checks_arr) = view_json
-            .get("statusCheckRollup")
-            .and_then(|v| v.as_array())
-        {
-            pr.checks = rollup_status_checks(checks_arr);
-        } else {
-            pr.checks = PrChecks::None;
-        }
-
-        pr.checked_at = Some(Utc::now());
-        refreshed_pairs.push((tid, pr));
     }
-
-    let refreshed_tasks = {
-        let mut s = ctx.store.write().unwrap();
-        write_refreshed_prs(&mut s, refreshed_pairs)
+    let views: Vec<_> = {
+        let store = ctx.store.read().unwrap();
+        let now = Utc::now();
+        successful
+            .iter()
+            .filter_map(|(id, url)| {
+                store
+                    .tasks
+                    .get(id)
+                    .filter(|task| task.pr.as_ref().is_some_and(|pr| &pr.url == url))
+                    .map(|task| task_view(task, now))
+            })
+            .collect()
     };
-    ctx.mark_persist();
-
     (
-        Response::ok(&req.id, json!({ "tasks": refreshed_tasks })),
+        Response::ok(&req.id, json!({ "tasks": views, "errors": errors })),
         ConnEffect::default(),
     )
 }
@@ -2336,9 +2415,20 @@ fn write_refreshed_prs(store: &mut Store, refreshed: Vec<(String, TaskPr)>) -> V
     let mut tasks = Vec::new();
     for (tid, pr) in refreshed {
         let current_pr = store.tasks.get(&tid).and_then(|task| task.pr.as_ref());
-        if current_pr.is_none_or(|current| current.url != pr.url) {
+        if current_pr.is_none_or(|current| {
+            current.url != pr.url || current.refresh_attempted_at > pr.refresh_attempted_at
+        }) {
             continue;
         }
+        let pr = if pr.refresh_error.is_some() {
+            TaskPr {
+                refresh_attempted_at: pr.refresh_attempted_at,
+                refresh_error: pr.refresh_error,
+                ..current_pr.unwrap().clone()
+            }
+        } else {
+            pr
+        };
         if store.task_set_pr(&tid, pr).is_ok() {
             if let Some(task) = store.tasks.get(&tid) {
                 tasks.push(task.clone());
@@ -2469,6 +2559,61 @@ mod tests {
             }
         }
         assert!(write_refreshed_prs(&mut Store::new(), vec![(original.id, refreshed)]).is_empty());
+    }
+
+    #[test]
+    fn pr_refresh_orders_attempts_and_preserves_latest_success_on_error() {
+        let now = Utc::now();
+        let task: Task = serde_json::from_value(json!({
+            "id":"task_order", "context_id":"ctx_order", "label":"Order",
+            "contract":{"objective":"Refresh PR"}, "source_repo":"/tmp/repo",
+            "worktree_path":"/tmp/task", "branch":"task", "base_ref":"main",
+            "base_sha":"abc", "state":"completed", "created_at":now, "updated_at":now,
+            "pr":{"number":1,"url":"https://github.com/o/r/pull/1",
+                "head_sha":"old", "checked_at":now, "refresh_attempted_at":now}
+        }))
+        .unwrap();
+        let id = task.id.clone();
+        let original = task.pr.clone().unwrap();
+        let mut store = Store::new();
+        store.task_create(task);
+        let newer = TaskPr {
+            head_sha: Some("new".into()),
+            checks: PrChecks::Passing,
+            checked_at: Some(now + chrono::Duration::seconds(1)),
+            refresh_attempted_at: Some(now + chrono::Duration::seconds(1)),
+            ..original.clone()
+        };
+        write_refreshed_prs(&mut store, vec![(id.clone(), newer.clone())]);
+        let stale_failure = TaskPr {
+            refresh_error: Some("old failure".into()),
+            ..original.clone()
+        };
+        assert!(write_refreshed_prs(&mut store, vec![(id.clone(), stale_failure)]).is_empty());
+        assert_eq!(store.tasks[&id].pr.as_ref(), Some(&newer));
+
+        // This later request took its snapshot before the successful response arrived.
+        let latest_failure = TaskPr {
+            refresh_error: Some("network failure".into()),
+            refresh_attempted_at: Some(now + chrono::Duration::seconds(2)),
+            ..original
+        };
+        write_refreshed_prs(&mut store, vec![(id.clone(), latest_failure)]);
+        let observed = store.tasks[&id].pr.as_ref().unwrap();
+        assert_eq!(observed.head_sha, newer.head_sha);
+        assert_eq!(observed.checked_at, newer.checked_at);
+        assert_eq!(observed.checks, newer.checks);
+        assert_eq!(observed.refresh_error.as_deref(), Some("network failure"));
+        assert!(write_refreshed_prs(&mut store, vec![(id.clone(), newer)]).is_empty());
+        assert_eq!(
+            store.tasks[&id]
+                .pr
+                .as_ref()
+                .unwrap()
+                .refresh_error
+                .as_deref(),
+            Some("network failure")
+        );
     }
 
     #[test]

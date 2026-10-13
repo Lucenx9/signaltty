@@ -173,12 +173,19 @@ tasks). IDs are opaque `task_…` / `tctx_…` strings.
 | `state` | lifecycle below |
 | `result?` | structured handoff, set once by report (`status` completed\|failed\|rejected, `summary` 1 … 8 KiB, `artifacts` ≤ 32 `{name, path, version?}`, `evidence?`, `reported_at`) |
 | `disposition` | `{outcome: none\|merged\|discarded, target_ref?, merged_sha?, branch_deleted?, at?}` — review outcome, not lifecycle |
-| `pr?` | `{number, url, state: open\|merged\|closed, checks: none\|pending\|passing\|failing, review: none\|review_required\|approved\|changes_requested, checked_at?}` — GitHub pull request associated with the task |
+| `pr?` | `{number, url, state: open\|merged\|closed, checks: none\|pending\|passing\|failing, review: none\|review_required\|approved\|changes_requested, checked_at?}, head_sha?, draft?, mergeability: unknown\|mergeable\|conflicting, merge_state: unknown\|clean\|blocked\|behind\|dirty\|draft\|has_hooks\|unstable, refresh_attempted_at?, refresh_error?}` — GitHub pull request associated with the task |
 | `status_reason?` | A2A-style evidence: `{stage, …}` for background/startup failures, `{reason: turn_ended_without_report, last_message?}`, `{reason: worker_silent, timeout_s}`, `{reason: decision_required, decision_id}` |
 | `finish_error?` | conflict files, or `{cleanup_error}` when removal fails after a disposition is recorded. A later finish retries cleanup while the worktree path remains |
 | `worker_pid?`, `worker_cmd?` | crash-vs-recycle evidence |
 | `client_request_id?` | caller idempotency key from `task.start` (persisted) |
 | `created_at`, `updated_at` | timestamps |
+
+PR readiness uses one successful observation younger than five minutes. It requires
+a known head, non-draft status, mergeable and clean GitHub merge facts, passing or
+absent checks, and approved or absent review. A failed refresh retains facts but
+withdraws readiness. Older attempts and results for replaced PRs are ignored.
+Task get/list/refresh views add a computed `stage`; snapshots store facts only.
+See [ADR-0034](adr/0034-verified-pr-readiness.md).
 
 ### TaskState
 

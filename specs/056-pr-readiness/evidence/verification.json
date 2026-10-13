@@ -1,0 +1,338 @@
+{
+  "mode": "full",
+  "revision": "d957d93f128686b599a9cce6573fb62e9b996e3f",
+  "dirty": true,
+  "versions": {
+    "gtk4": "4.18.6",
+    "libadwaita-1": "1.7.6",
+    "vte-2.91-gtk4": "0.80.1",
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "clippy": "clippy 0.1.94 (4a4ef493e3 2026-03-02)"
+  },
+  "steps": [
+    {
+      "name": "tooling-tests",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 2.169
+    },
+    {
+      "name": "fmt",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.966
+    },
+    {
+      "name": "metadata",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.265
+    },
+    {
+      "name": "architecture",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.069
+    },
+    {
+      "name": "clippy",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 8.978
+    },
+    {
+      "name": "warning-policy",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.064
+    },
+    {
+      "name": "build",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 9.611
+    },
+    {
+      "name": "workspace-tests",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 312.247
+    },
+    {
+      "name": "server-qa",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.114
+    },
+    {
+      "name": "gui-build",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.215
+    },
+    {
+      "name": "gui-list-0",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.064
+    },
+    {
+      "name": "gtk-01",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.968
+    },
+    {
+      "name": "gtk-02",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.716
+    },
+    {
+      "name": "gtk-03",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.068
+    },
+    {
+      "name": "gtk-04",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.465
+    },
+    {
+      "name": "gtk-05",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.419
+    },
+    {
+      "name": "gtk-06",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.618
+    },
+    {
+      "name": "gtk-07",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.465
+    },
+    {
+      "name": "gtk-08",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.52
+    },
+    {
+      "name": "gtk-09",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.468
+    },
+    {
+      "name": "gtk-10",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.515
+    },
+    {
+      "name": "gtk-11",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.58
+    },
+    {
+      "name": "gtk-12",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.949
+    },
+    {
+      "name": "gtk-13",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.92
+    },
+    {
+      "name": "gtk-14",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 2.328
+    },
+    {
+      "name": "gtk-15",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.716
+    },
+    {
+      "name": "gtk-16",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.403
+    },
+    {
+      "name": "gtk-17",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.167
+    },
+    {
+      "name": "gtk-18",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.272
+    },
+    {
+      "name": "gtk-19",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 6.097
+    },
+    {
+      "name": "gtk-20",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.723
+    },
+    {
+      "name": "gtk-21",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.326
+    },
+    {
+      "name": "gtk-22",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.692
+    },
+    {
+      "name": "gtk-23",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 2.57
+    },
+    {
+      "name": "gtk-24",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.621
+    },
+    {
+      "name": "gtk-25",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.467
+    },
+    {
+      "name": "gtk-26",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.219
+    },
+    {
+      "name": "gtk-27",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.517
+    },
+    {
+      "name": "gtk-28",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.523
+    },
+    {
+      "name": "gtk-29",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 2.673
+    },
+    {
+      "name": "gtk-30",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 3.085
+    },
+    {
+      "name": "gtk-31",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.367
+    },
+    {
+      "name": "gtk-32",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.017
+    },
+    {
+      "name": "gtk-33",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.016
+    },
+    {
+      "name": "gtk-34",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.215
+    },
+    {
+      "name": "gtk-35",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.215
+    },
+    {
+      "name": "gtk-36",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.215
+    },
+    {
+      "name": "gtk-37",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 1.268
+    },
+    {
+      "name": "gtk-38",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.418
+    },
+    {
+      "name": "gtk-39",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.668
+    },
+    {
+      "name": "gtk-40",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.767
+    },
+    {
+      "name": "gtk-41",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 0.571
+    },
+    {
+      "name": "refresh-benchmark",
+      "status": "passed",
+      "exit_code": 0,
+      "seconds": 7.968
+    }
+  ],
+  "errors": [],
+  "limits": [
+    "Screenshots require visual review; automated success is not visual approval.",
+    "IME, folder chooser, notification clicks and paid provider sessions require manual checks.",
+    "Native accessibility QA runs only in desktop mode; Xvfb does not certify a compositor."
+  ]
+}

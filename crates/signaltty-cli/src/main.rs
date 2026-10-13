@@ -1799,9 +1799,10 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
             let r = c.call("task.get", json!({"task_id": id})).await?;
             let t = &r["task"];
             let human = format!(
-                "{} state={} repo={} branch={}",
+                "{} state={} stage={} repo={} branch={}",
                 t["id"].as_str().unwrap_or("?"),
                 t["state"].as_str().unwrap_or("?"),
+                t["stage"].as_str().unwrap_or("?"),
                 t["source_repo"].as_str().unwrap_or("?"),
                 t["branch"].as_str().unwrap_or("?"),
             );
@@ -1831,9 +1832,10 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
             }
             for t in &tasks {
                 human.push_str(&format!(
-                    "{} state={} label={} context={}\n",
+                    "{} state={} stage={} label={} context={}\n",
                     t["id"].as_str().unwrap_or("?"),
                     t["state"].as_str().unwrap_or("?"),
+                    t["stage"].as_str().unwrap_or("?"),
                     t["label"].as_str().unwrap_or("?"),
                     t["context_id"].as_str().unwrap_or("?"),
                 ));
@@ -2051,6 +2053,14 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
                             "\n  task {tid}: #{num} [{state}] (checks: {checks}, review: {review})"
                         ));
                     }
+                }
+            }
+            if let Some(errors) = r["errors"].as_array().filter(|errors| !errors.is_empty()) {
+                summary.push_str(&format!("\n{} PR refresh failures", errors.len()));
+                for error in errors {
+                    let tid = error["task_id"].as_str().unwrap_or("?");
+                    let message = error["message"].as_str().unwrap_or("refresh failed");
+                    summary.push_str(&format!("\n  task {tid}: {message}"));
                 }
             }
             emit(json, &r, summary);

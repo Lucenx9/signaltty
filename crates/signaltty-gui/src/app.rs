@@ -853,6 +853,7 @@ impl App {
         glib::timeout_add_seconds_local(30, move || match w.upgrade() {
             Some(a) => {
                 a.sidebar.refresh_times();
+                a.refresh_open_board();
                 glib::ControlFlow::Continue
             }
             None => glib::ControlFlow::Break,
@@ -1275,7 +1276,8 @@ impl App {
                 let mut summary = sidebar::summarize(&snapshot.workspace, &snapshot.panes);
                 summary.parent = parents.get(&ws.id).cloned();
                 if let Some(task) = child_tasks.get(&ws.id) {
-                    summary.finished = board::board_column(task) == board::BoardColumn::Done;
+                    summary.finished = signaltty_core::task_stage(task, chrono::Utc::now())
+                        == board::BoardColumn::Done;
                 }
                 items.push(summary);
                 needing.extend(
@@ -2579,9 +2581,10 @@ impl App {
             .keys()
             .filter(|child| {
                 resolve_root(child, &parents) == root_ws_id
-                    && child_tasks
-                        .get(*child)
-                        .is_some_and(|t| board::board_column(t) == board::BoardColumn::Done)
+                    && child_tasks.get(*child).is_some_and(|t| {
+                        signaltty_core::task_stage(t, chrono::Utc::now())
+                            == board::BoardColumn::Done
+                    })
             })
             .cloned()
             .collect()
