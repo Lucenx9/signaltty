@@ -302,9 +302,11 @@ impl App {
         let title = gtk4::Label::new(Some("signaltty"));
         title.add_css_class("crumb-title");
         title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        title.set_max_width_chars(32);
         let title_context = gtk4::Label::new(None);
         title_context.add_css_class("crumb-context");
         title_context.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        title_context.set_max_width_chars(22);
         title_context.set_visible(false);
         let title_mark = sidebar::mark();
         title_mark.set_visible(false);
@@ -314,12 +316,14 @@ impl App {
         title_box.append(&title);
         let crumb_sep = gtk4::Label::new(Some("/"));
         crumb_sep.add_css_class("crumb-sep");
-        title_box.append(&crumb_sep);
+        let context_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        context_box.append(&crumb_sep);
         title_context
             .bind_property("visible", &crumb_sep, "visible")
             .sync_create()
             .build();
-        title_box.append(&title_context);
+        context_box.append(&title_context);
+        title_box.append(&context_box);
         let header = adw::HeaderBar::new();
         header.add_css_class("workspace-header");
         header.set_title_widget(Some(&gtk4::Box::new(gtk4::Orientation::Horizontal, 0)));
@@ -532,6 +536,7 @@ impl App {
         narrow.add_setter(&btn_changes, "visible", Some(&false.to_value()));
         narrow.add_setter(&btn_board, "visible", Some(&false.to_value()));
         narrow.add_setter(&views, "visible", Some(&false.to_value()));
+        narrow.add_setter(&context_box, "visible", Some(&false.to_value()));
         narrow.add_setter(&new_tab_content, "label", Some(&"".to_value()));
         narrow.add_setter(
             &btn_new_tab,
@@ -1236,8 +1241,13 @@ impl App {
                 }
                 self.render_tabs();
                 self.title.set_text("signaltty");
+                self.title.set_tooltip_text(None);
                 self.title_mark.set_visible(false);
                 self.crumb_button.set_sensitive(false);
+                self.crumb_button
+                    .set_tooltip_text(Some("Workspace Details"));
+                self.crumb_button
+                    .update_property(&[gtk4::accessible::Property::Label("Workspace Details")]);
                 self.details.popover.popdown();
                 self.title_context.set_text("");
                 self.title_context.set_visible(false);
@@ -1486,21 +1496,43 @@ impl App {
             self.navigate();
         }
         self.title.set_text(&self.display_title(&ws));
+        self.title.set_tooltip_text(Some(&self.display_title(&ws)));
         self.follow_changes();
         sidebar::set_mark(&self.title_mark, &ws.id, &ws.name);
         self.title_mark.set_visible(true);
         self.crumb_button.set_sensitive(true);
-        // Agent workspaces show their agents; shells show their location.
         let agents = sidebar::summarize(&ws, &snapshot.panes).agents;
         let place = tilde(&ws.cwd);
-        let tooltip = match ws.git.branch.as_deref().filter(|b| !b.trim().is_empty()) {
-            Some(branch) => format!("{branch} · {place}"),
-            None => place,
+        let branch = if ws.git.detached {
+            Some("Detached HEAD")
+        } else {
+            ws.git.branch.as_deref().filter(|b| !b.trim().is_empty())
         };
-        let context = if agents.is_empty() { &tooltip } else { &agents };
+        let tooltip = match branch {
+            Some(branch) => format!("{branch} · {place}"),
+            None => place.clone(),
+        };
+        let folder = place.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+        let context = branch.unwrap_or_else(|| {
+            if !agents.is_empty() {
+                &agents
+            } else if place == "/" {
+                "/"
+            } else {
+                folder
+            }
+        });
         self.title_context.set_text(context);
         self.title_context.set_visible(!context.is_empty());
         self.title_context.set_tooltip_text(Some(&tooltip));
+        let details_label = format!(
+            "Workspace Details for {}\n{tooltip}\n{agents}",
+            self.display_title(&ws)
+        );
+        self.crumb_button
+            .set_tooltip_text(Some(details_label.trim()));
+        self.crumb_button
+            .update_property(&[gtk4::accessible::Property::Label(details_label.trim())]);
         let has_tabs = !snapshot.tabs.is_empty();
         {
             let mut m = self.model.borrow_mut();

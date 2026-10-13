@@ -3,25 +3,25 @@
 //! updated in place — refreshes never rebuild them, so selection,
 //! scroll position and status transitions survive every server event.
 //!
-//! Root row anatomy (t3code-style, three lines, mark sits inline before name):
+//! Ordinary rows keep identity/state and location; useful previews expand
+//! for selection or attention. Native wrapping protects long names.
 //!
 //! ```text
-//!  [AS] api-server                          mark · full-width name
-//!  Bash…                       ◴ Working     headline · status
-//!  [Task Working]                          optional worker chips
-//!  ▾ 2 tasks  feat/auth       Claude        disclosure · branch/dir · agents
+//!  [AS] api-server             ◴ Working    identity · state, wrapping
+//!  Bash…                                   selected/attention preview
+//!  [Task Working]                          always retained worker chips
+//!  ▾ 2 tasks  feat/auth       Claude        location · selected agents
 //! ```
 //!
-//! Child row anatomy (two compact lines, ~20px indent, mark & 3rd line hidden):
+//! Child rows retain indentation, with mark and metadata hidden:
 //!
 //! ```text
-//!       api-server-worker                  full-width name
-//!       Tests…                 ◴ Working    headline · status
+//!       api-server-worker      ◴ Working    identity · state, wrapping
+//!       Tests…                              selected/attention preview
 //!       [Task Working]                     optional worker chips
 //! ```
 //!
-//! Finished child task rows (`workspace-finished`) recede with reduced opacity
-//! until hovered or selected. Finished children sort after unfinished siblings
+//! Finished child previews recede until hovered or selected. Finished children sort after unfinished siblings
 //! within their group.
 //!
 //! Close has a separate trailing target, revealed on hover or keyboard
@@ -465,6 +465,8 @@ impl Row {
         };
         let name = label(&["workspace-name"]);
         name.set_hexpand(true);
+        name.set_width_chars(1);
+        name.set_max_width_chars(20);
         let message = label(&["workspace-message"]);
         message.set_hexpand(true);
         let tasks = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
@@ -513,15 +515,20 @@ impl Row {
         grid.set_column_spacing(8);
         grid.set_row_spacing(4);
         grid.add_css_class("workspace-row");
-        let title = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-        title.append(&mark);
-        title.append(&name);
+        let identity = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        identity.set_hexpand(true);
+        identity.append(&mark);
+        identity.append(&name);
+        let title = libadwaita::WrapBox::new();
+        title.set_child_spacing(8);
+        title.set_line_spacing(4);
+        title.append(&identity);
+        title.append(&status.widget);
         grid.attach(&title, 0, 0, 2, 1);
         grid.attach(&close, 2, 0, 1, 1);
         let activity = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
         let headline = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         headline.append(&message);
-        headline.append(&status.widget);
         activity.append(&headline);
         activity.append(&tasks);
         grid.attach(&activity, 0, 1, 3, 1);
@@ -624,8 +631,7 @@ impl Row {
         }
     }
 
-    /// Reconcile worker chips on this row. Hidden when the workspace
-    /// has no task panes, so ordinary rows keep their three lines.
+    /// Reconcile worker chips in place, independently of row selection.
     fn set_chips(&mut self, views: &[TaskChipView]) {
         while self.chips.len() < views.len() {
             let chip = TaskChipWidget::new();
@@ -795,18 +801,33 @@ impl Row {
         .join(", ");
         self.row
             .update_property(&[gtk4::accessible::Property::Label(&description)]);
-        let show_headline = s.headline_visible(&headline);
+        self.row.set_tooltip_text(Some(&description));
+        let expanded = self.row.is_selected()
+            || s.attention != Attention::None
+            || matches!(s.lifecycle, Lifecycle::Blocked | Lifecycle::Failed);
+        let show_headline = expanded && s.headline_visible(&headline) && !quiet_headline(s);
         self.message.set_visible(show_headline);
-        self.status.widget.set_hexpand(!show_headline);
         if self.message.text() != headline {
             self.message.set_text(&headline);
             self.message.set_tooltip_text(Some(&headline));
         }
-        // A plain shell's headline is the bare "Running": nothing a
-        // second line should spend height on, so the row drops to name
-        // and place (spec 039).
         self.activity
-            .set_visible(!quiet_headline(s) || self.tasks.get_visible());
+            .set_visible(show_headline || self.tasks.get_visible());
+        self.agents.set_visible(
+            !self.agents.text().is_empty()
+                && (self.row.is_selected()
+                    || matches!(
+                        s.naming,
+                        signaltty_core::model::WorkspaceNaming::Generating
+                            | signaltty_core::model::WorkspaceNaming::Failed
+                    )),
+        );
+        self.metadata.set_visible(
+            !self.row.has_css_class("workspace-child")
+                && (!s.place.is_empty()
+                    || self.disclosure.get_visible()
+                    || self.agents.get_visible()),
+        );
         let time = s.last_activity.map(time_ago).unwrap_or_default();
         // Attention dates from when it was raised; lifecycle from its change.
         let began = if s.attention == Attention::None {
@@ -959,6 +980,7 @@ impl Sidebar {
             if sidebar.reconciling.get() {
                 return;
             }
+            sidebar.refresh_times();
             if let Some(row) = row {
                 let id = row.widget_name().to_string();
                 sidebar.selected_id.replace(Some(id.clone()));
@@ -1135,6 +1157,7 @@ impl Sidebar {
             }
         }
         self.reconciling.set(false);
+        self.refresh_times();
         // Section membership can change without a move.
         self.list.invalidate_headers();
     }
@@ -1203,6 +1226,7 @@ impl Sidebar {
             self.list.unselect_all();
         }
         self.reconciling.set(false);
+        self.refresh_times();
     }
 }
 
@@ -1508,9 +1532,8 @@ mod tests {
         {
             let rows = sidebar.rows.borrow();
             assert!(!rows[0].message.get_visible());
-            assert!(rows[0].activity.get_visible());
+            assert!(!rows[0].activity.get_visible());
             assert!(rows[0].status.widget.get_visible());
-            assert!(rows[0].status.widget.hexpands());
             assert_eq!(
                 icon.icon_name().as_deref(),
                 Some("signaltty-branch-symbolic")
@@ -1520,15 +1543,19 @@ mod tests {
         }
         value.message = Some("Working…".into());
         sidebar.update(vec![value.clone()]);
+        assert!(!sidebar.rows.borrow()[0].message.get_visible());
+        sidebar.select("ws");
         assert!(sidebar.rows.borrow()[0].message.get_visible());
-        assert!(!sidebar.rows.borrow()[0].status.widget.hexpands());
         value.message = None;
         value.place_is_branch = false;
         value.place = "/tmp/project".into();
         sidebar.update(vec![value.clone()]);
         assert_eq!(sidebar.rows.borrow()[0].row, row);
         assert_eq!(sidebar.rows.borrow()[0].place_icon, icon);
-        assert!(!sidebar.rows.borrow()[0].message.get_visible());
+        assert!(
+            !sidebar.rows.borrow()[0].message.get_visible(),
+            "a duplicate status word does not need a preview"
+        );
         assert_eq!(
             icon.icon_name().as_deref(),
             Some("signaltty-folder-symbolic")
@@ -1630,6 +1657,111 @@ mod tests {
         sidebar.apply_scope();
         assert!(external.is_visible());
         assert!(external.has_css_class("workspace-child"));
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn workspace_previews_follow_selection_without_hiding_attention_or_tasks() {
+        gtk4::init().unwrap();
+        let sidebar = Sidebar::new();
+        let mut one = summary("one", Lifecycle::Working, Attention::None, None);
+        one.message = Some("Checking session expiry".into());
+        let mut two = summary("two", Lifecycle::Idle, Attention::None, None);
+        two.message = Some("Updated the API guide".into());
+        let items = vec![one.clone(), two.clone()];
+        sidebar.update(items.clone());
+        let row = |id: &str| {
+            sidebar
+                .rows
+                .borrow()
+                .iter()
+                .find(|row| row.id == id)
+                .unwrap()
+                .row
+                .clone()
+        };
+        let preview = |id: &str| {
+            sidebar
+                .rows
+                .borrow()
+                .iter()
+                .find(|row| row.id == id)
+                .unwrap()
+                .message
+                .get_visible()
+        };
+        let original = row("one");
+        assert!(
+            !preview("one"),
+            "unselected ordinary workspaces stay compact"
+        );
+        sidebar.select("one");
+        assert!(preview("one"));
+        assert!(!preview("two"));
+        sidebar.select("two");
+        assert!(!preview("one"), "previous selection contracts immediately");
+        assert!(preview("two"));
+        sidebar.restore_selection("one");
+        assert!(
+            preview("one"),
+            "programmatic restoration reveals the preview"
+        );
+        assert!(!preview("two"));
+        sidebar.update(items);
+        assert!(preview("one"), "refresh retains selected presentation");
+        assert_eq!(
+            row("one"),
+            original,
+            "selection/refresh preserve row identity"
+        );
+        sidebar.select("two");
+        for attention in [
+            Attention::Unread,
+            Attention::InputRequired,
+            Attention::PermissionRequired,
+            Attention::Warning,
+            Attention::Error,
+        ] {
+            one.attention = attention;
+            sidebar.update(vec![one.clone(), two.clone()]);
+            assert!(
+                preview("one"),
+                "attention content stays visible without selection"
+            );
+        }
+        one.attention = Attention::None;
+        one.lifecycle = Lifecycle::Blocked;
+        sidebar.update(vec![one.clone(), two.clone()]);
+        assert!(
+            preview("one"),
+            "blocked work keeps its preview even without an attention event"
+        );
+        one.lifecycle = Lifecycle::Working;
+        sidebar.update(vec![one, two]);
+        assert!(!preview("one"));
+        let chip = TaskChipView {
+            kind: "Task",
+            label: "session".into(),
+            show_label: true,
+            lineage: None,
+            state: "Working",
+            css_class: "task-working",
+            tooltip: "session".into(),
+            accessible_name: "Task session, Working".into(),
+        };
+        sidebar.set_task_chips(&[("one".into(), vec![chip])].into());
+        let rows = sidebar.rows.borrow();
+        let one = rows.iter().find(|row| row.id == "one").unwrap();
+        assert!(one.activity.get_visible() && one.tasks.get_visible());
+        assert!(
+            !one.message.get_visible(),
+            "chips do not force an unrelated preview open"
+        );
+        assert!(one
+            .row
+            .tooltip_text()
+            .unwrap()
+            .contains("Checking session expiry"));
     }
 
     #[test]

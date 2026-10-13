@@ -142,7 +142,7 @@ and high contrast restore that headline to full opacity.
 
 The close target reserves space on the name/status line only. Activity and
 the location/agent line span the row's full width, with roomier line spacing
-and readable secondary text. Workspace header context shows the agent summary when agents are present.
+and readable secondary text. Workspace header context prefers branch or Detached HEAD, then agents, then a directory basename. Full path and workspace identity remain in Details, tooltips and the named details button. The overlay header hides secondary context to reserve room for identity.
 For shell workspaces it puts the branch before the directory, or shows the
 directory alone without a branch. The separator follows context visibility;
 startup and the last-workspace removal leave no dangling slash. Hovering the
@@ -436,11 +436,15 @@ The isolated display test
 light/dark scenes, enlarged high-contrast text, scrolling to Done and
 activating its pane. `SIGNALTTY_UI_EVIDENCE` exports the native renders.
 
-Workspace panel titles occupy the name row with the project mark and close target.
-Status belongs to the activity line, keeping urgency visible without squeezing a
-long AI title. When a generated headline only repeats the status word, only the status is
-shown. Explicit messages and timed labels remain. Quiet shell headlines still collapse. Root metadata and child disclosure
-stay unchanged; full names remain available in tooltips and accessible labels.
+Workspace rows place name and textual state together in a native `AdwWrapBox`.
+When width or enlarged text would squeeze the name, the state wraps below it.
+Ordinary unselected rows retain a quiet branch/directory line; useful activity
+previews appear for selection, unread/attention or blocked/failed agents.
+Task chips and child collapse controls remain available regardless of selection.
+Agent metadata is visible for the selected root or naming feedback; full hidden
+context stays in the row tooltip and accessible name. Selection changes and
+background restoration synchronize presentation in place, retaining keyed rows
+and terminal widgets. Child indentation and scoped grouping remain unchanged.
 
 New Workspace defaults to Automatic name for installed Codex/Claude commands,
 with a provisional folder name until their first prompt. Disabling it reveals the
