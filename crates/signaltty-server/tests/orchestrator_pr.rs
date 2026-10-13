@@ -21,6 +21,9 @@ struct TestEnv {
     gh_fixture: PathBuf,
     _gh_counter: PathBuf,
     gh_fail_url: PathBuf,
+    gh_fail_next: PathBuf,
+    gh_pause: PathBuf,
+    gh_paused: PathBuf,
     bare_repo: PathBuf,
 }
 
@@ -34,6 +37,9 @@ impl TestEnv {
         let gh_fixture = base.join("gh_fixture.json");
         let _gh_counter = base.join("gh_counter.txt");
         let gh_fail_url = base.join("gh_fail_url.txt");
+        let gh_fail_next = base.join("gh_fail_next");
+        let gh_pause = base.join("gh_pause");
+        let gh_paused = base.join("gh_paused");
         let bare_repo = base.join("bare.git");
 
         // Init bare git repo
@@ -62,14 +68,27 @@ if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
     exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+    if [ -f "{fail_next}" ]; then
+        rm "{fail_next}"
+        echo "simulated first observation failure" >&2
+        exit 1
+    fi
     if [ -f "{fail_url}" ] && [ "$3" = "$(cat "{fail_url}")" ]; then
         echo "simulated pr view failure for $3" >&2
         exit 1
     fi
+    if [ -f "{pause}" ]; then
+        if [ "$(cat "{pause}")" = "after-one-success" ]; then
+            echo hold > "{pause}"
+        else
+            touch "{paused}"
+            while [ -f "{pause}" ]; do sleep 0.01; done
+        fi
+    fi
     if [ -f "{fixture}" ]; then
         cat "{fixture}"
     else
-        echo '{{"state":"OPEN","reviewDecision":"APPROVED","statusCheckRollup":[]}}'
+        echo '{{"state":"OPEN","reviewDecision":"APPROVED","statusCheckRollup":[],"headRefOid":"abcdef0123456789","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}}'
     fi
     exit 0
 fi
@@ -80,6 +99,9 @@ exit 2
             fixture = gh_fixture.display(),
             counter = _gh_counter.display(),
             fail_url = gh_fail_url.display(),
+            fail_next = gh_fail_next.display(),
+            pause = gh_pause.display(),
+            paused = gh_paused.display(),
         );
 
         let gh_path = fake_bin.join("gh");
@@ -94,6 +116,9 @@ exit 2
             gh_fixture,
             _gh_counter,
             gh_fail_url,
+            gh_fail_next,
+            gh_pause,
+            gh_paused,
             bare_repo,
         }
     }
@@ -404,6 +429,8 @@ async fn test_task_pr_refresh_mapping() {
         json!({
             "state": "OPEN",
             "reviewDecision": "CHANGES_REQUESTED",
+            "headRefOid": "abcdef0123456789", "isDraft": false,
+            "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED",
             "statusCheckRollup": [
                 {"status": "COMPLETED", "conclusion": "FAILURE"}
             ]
@@ -430,6 +457,10 @@ async fn test_task_pr_refresh_mapping() {
         json!({
             "state": "OPEN",
             "reviewDecision": "APPROVED",
+            "headRefOid": "abcdef0123456789",
+            "isDraft": false,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
             "statusCheckRollup": [
                 {"status": "COMPLETED", "conclusion": "SUCCESS"}
             ]
@@ -444,12 +475,205 @@ async fn test_task_pr_refresh_mapping() {
     let pr2 = &tasks2[0]["pr"];
     assert_eq!(pr2["checks"], "passing");
     assert_eq!(pr2["review"], "approved");
+    assert_eq!(pr2["head_sha"], "abcdef0123456789");
+    assert_eq!(pr2["draft"], false);
+    assert_eq!(pr2["mergeability"], "mergeable");
+    assert_eq!(pr2["merge_state"], "clean");
+    assert_eq!(tasks2[0]["stage"], "ready_to_merge");
+    let ready = c
+        .call("task.get", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(ready["task"]["stage"], "ready_to_merge");
+
+    // A failed observation preserves evidence but withdraws the ready stage.
+    fs::write(&env.gh_fixture, "{}").unwrap();
+    let malformed = c
+        .call("task.pr_refresh", json!({"task_id": &task_id}))
+        .await
+        .unwrap_err();
+    assert!(malformed.starts_with(code::IO_ERROR), "{malformed}");
+    let failed = c
+        .call("task.get", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(failed["task"]["stage"], "in_review");
+    assert_eq!(
+        failed["task"]["pr"]["head_sha"],
+        ready["task"]["pr"]["head_sha"]
+    );
+    assert_eq!(
+        failed["task"]["pr"]["checked_at"],
+        ready["task"]["pr"]["checked_at"]
+    );
+    assert!(failed["task"]["pr"]["refresh_error"].is_string());
+
+    for (head, draft, mergeable, merge_state, status, expected) in [
+        (
+            "original",
+            true,
+            "MERGEABLE",
+            "CLEAN",
+            "COMPLETED",
+            "in_review",
+        ),
+        (
+            "original",
+            false,
+            "CONFLICTING",
+            "DIRTY",
+            "COMPLETED",
+            "needs_you",
+        ),
+        (
+            "original",
+            false,
+            "UNKNOWN",
+            "UNKNOWN",
+            "COMPLETED",
+            "in_review",
+        ),
+        (
+            "original",
+            false,
+            "MERGEABLE",
+            "BLOCKED",
+            "COMPLETED",
+            "in_review",
+        ),
+        (
+            "new-head",
+            false,
+            "MERGEABLE",
+            "CLEAN",
+            "IN_PROGRESS",
+            "in_review",
+        ),
+        (
+            "new-head",
+            false,
+            "MERGEABLE",
+            "CLEAN",
+            "COMPLETED",
+            "ready_to_merge",
+        ),
+    ] {
+        fs::write(
+            &env.gh_fixture,
+            json!({
+                "state":"OPEN", "reviewDecision":"APPROVED", "headRefOid":head,
+                "isDraft":draft, "mergeable":mergeable, "mergeStateStatus":merge_state,
+                "statusCheckRollup":[{"status":status,"conclusion":"SUCCESS"}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let refreshed = c
+            .call("task.pr_refresh", json!({"task_id": &task_id}))
+            .await
+            .unwrap();
+        assert_eq!(refreshed["tasks"][0]["stage"], expected);
+        assert_eq!(refreshed["tasks"][0]["pr"]["head_sha"], head);
+        assert!(refreshed["tasks"][0]["pr"].get("refresh_error").is_none());
+        let got = c
+            .call("task.get", json!({"task_id": &task_id}))
+            .await
+            .unwrap();
+        assert_eq!(got["task"]["stage"], expected);
+        let listed = c.call("task.list", json!({})).await.unwrap();
+        assert_eq!(listed["tasks"][0]["stage"], expected);
+    }
+
+    fs::write(
+        &env.gh_fixture,
+        json!({
+            "state":"OPEN", "reviewDecision":"APPROVED", "headRefOid":"unknown-check-head",
+            "isDraft":false, "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN",
+            "statusCheckRollup":[{"status":"completed","conclusion":"NEW_VALUE"}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let unknown = c
+        .call("task.pr_refresh", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(unknown["tasks"][0]["stage"], "in_review");
+    assert_eq!(unknown["tasks"][0]["pr"]["checks"], "pending");
+
+    for malformed_check in [
+        json!({"status":7,"state":"SUCCESS"}),
+        json!({"status":"COMPLETED"}),
+        json!({"status":"COMPLETED","conclusion":null}),
+        json!({}),
+    ] {
+        fs::write(
+            &env.gh_fixture,
+            json!({
+                "state":"OPEN", "reviewDecision":"APPROVED", "headRefOid":"malformed-check-head",
+                "isDraft":false, "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN",
+                "statusCheckRollup":[malformed_check]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let error = c
+            .call("task.pr_refresh", json!({"task_id": &task_id}))
+            .await
+            .unwrap_err();
+        assert!(error.starts_with(code::IO_ERROR), "{error}");
+        let stored = c
+            .call("task.get", json!({"task_id": &task_id}))
+            .await
+            .unwrap();
+        assert_eq!(stored["task"]["stage"], "in_review");
+        assert_eq!(stored["task"]["pr"]["head_sha"], "unknown-check-head");
+        assert!(stored["task"]["pr"]["refresh_error"].is_string());
+    }
+
+    // gh can export null when the rollup has no nodes.
+    fs::write(
+        &env.gh_fixture,
+        json!({
+            "state":"OPEN", "reviewDecision":"", "headRefOid":"no-check-head",
+            "isDraft":false, "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN",
+            "statusCheckRollup":null
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let no_checks = c
+        .call("task.pr_refresh", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(no_checks["tasks"][0]["stage"], "ready_to_merge");
+    assert_eq!(no_checks["tasks"][0]["pr"]["checks"], "none");
+
+    fs::write(
+        &env.gh_fixture,
+        json!({
+            "state":"OPEN", "reviewDecision":"", "headRefOid":"missing-check-head",
+            "isDraft":false, "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let missing_rollup = c
+        .call("task.pr_refresh", json!({"task_id": &task_id}))
+        .await
+        .unwrap_err();
+    assert!(
+        missing_rollup.starts_with(code::IO_ERROR),
+        "{missing_rollup}"
+    );
 
     // 3. Refresh with state MERGED
     fs::write(
         &env.gh_fixture,
         json!({
             "state": "MERGED",
+            "headRefOid": "abcdef0123456789", "isDraft": false,
+            "mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN",
             "reviewDecision": "APPROVED",
             "statusCheckRollup": [
                 {"status": "COMPLETED", "conclusion": "SUCCESS"}
@@ -671,6 +895,104 @@ async fn test_task_pr_refresh_all_skips_failing_pr() {
     let pr2_url = pr2_res["task"]["pr"]["url"].as_str().unwrap().to_string();
     assert_eq!(pr2_url, "https://github.com/o/r/pull/8");
 
+    let ready = c.call("task.pr_refresh", json!({})).await.unwrap();
+    assert_eq!(ready["tasks"].as_array().unwrap().len(), 2);
+    let timestamp = |value: &serde_json::Value| {
+        chrono::DateTime::parse_from_rfc3339(value.as_str().unwrap()).unwrap()
+    };
+    assert!(
+        timestamp(&ready["tasks"][1]["pr"]["refresh_attempted_at"])
+            > timestamp(&ready["tasks"][0]["pr"]["checked_at"]),
+        "each PR observation must start its own freshness clock"
+    );
+
+    fs::write(&env.gh_fail_next, "fail once").unwrap();
+    fs::write(&env.gh_pause, "hold the remaining observation").unwrap();
+    let mut batch_client = srv.client().await;
+    let batch = tokio::spawn(async move { batch_client.call("task.pr_refresh", json!({})).await });
+    let paused = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !env.gh_paused.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    let during = c.call("task.list", json!({})).await.unwrap();
+    let released_at = chrono::Utc::now();
+    fs::remove_file(&env.gh_pause).unwrap();
+    let completed = batch.await.unwrap().unwrap();
+    assert!(
+        paused.is_ok(),
+        "the second observation never reached the pause"
+    );
+    assert_eq!(completed["errors"].as_array().unwrap().len(), 1);
+    assert!(
+        timestamp(&completed["tasks"][0]["pr"]["checked_at"]) > released_at,
+        "a successful observation must be dated after the command completes"
+    );
+    let failed_during = during["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["pr"]["refresh_error"].is_string());
+    assert!(
+        failed_during.is_some(),
+        "failed observation must publish before the batch finishes"
+    );
+    assert_eq!(failed_during.unwrap()["stage"], "in_review");
+    c.call("task.pr_refresh", json!({})).await.unwrap();
+
+    let before = c.call("task.list", json!({})).await.unwrap();
+    fs::remove_file(&env.gh_paused).unwrap();
+    fs::write(&env.gh_pause, "after-one-success").unwrap();
+    let mut batch_client = srv.client().await;
+    let batch = tokio::spawn(async move { batch_client.call("task.pr_refresh", json!({})).await });
+    let paused = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !env.gh_paused.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    if paused.is_err() {
+        fs::remove_file(&env.gh_pause).unwrap();
+        batch.await.unwrap().unwrap();
+        panic!("the second observation never reached the pause");
+    }
+    let during = c.call("task.list", json!({})).await.unwrap();
+    let succeeded = during["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| {
+            let previous = before["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|previous| previous["id"] == task["id"])
+                .unwrap();
+            task["pr"]["checked_at"] != previous["pr"]["checked_at"]
+        })
+        .unwrap();
+    fs::write(&env.gh_fail_url, succeeded["pr"]["url"].as_str().unwrap()).unwrap();
+    let newer_error = c
+        .call("task.pr_refresh", json!({"task_id":succeeded["id"]}))
+        .await;
+    fs::remove_file(&env.gh_pause).unwrap();
+    let completed = batch.await.unwrap().unwrap();
+    assert!(newer_error.unwrap_err().starts_with(code::IO_ERROR));
+    let returned = completed["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["id"] == succeeded["id"])
+        .unwrap();
+    assert_eq!(
+        returned["stage"], "in_review",
+        "batch must return the newer observed facts"
+    );
+    assert!(returned["pr"]["refresh_error"].is_string());
+    fs::remove_file(&env.gh_fail_url).unwrap();
+    c.call("task.pr_refresh", json!({})).await.unwrap();
+
     // Make fake gh fail pr view for task 1's URL, succeed for task 2
     fs::write(&env.gh_fail_url, &pr1_url).unwrap();
 
@@ -685,6 +1007,15 @@ async fn test_task_pr_refresh_all_skips_failing_pr() {
     assert_eq!(refreshed_tasks[0]["id"], task2_id);
     assert_eq!(refreshed_tasks[0]["pr"]["url"], pr2_url);
     assert!(refreshed_tasks[0]["pr"]["checked_at"].is_string());
+    assert_eq!(ref_all_res["errors"][0]["task_id"], task1_id);
+    assert_eq!(ref_all_res["errors"][0]["code"], code::IO_ERROR);
+    let failed = c
+        .call("task.get", json!({"task_id": &task1_id}))
+        .await
+        .unwrap();
+    assert_eq!(failed["task"]["stage"], "in_review");
+    assert!(failed["task"]["pr"]["checked_at"].is_string());
+    assert!(failed["task"]["pr"]["refresh_error"].is_string());
 
     // Explicit task_id for the failing PR still returns the error
     let fail_err = c

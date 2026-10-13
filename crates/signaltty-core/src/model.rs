@@ -949,8 +949,60 @@ pub enum PrReview {
     ChangesRequested,
 }
 
+/// Whether GitHub can merge the observed PR head without conflicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrMergeability {
+    Mergeable,
+    Conflicting,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+impl PrMergeability {
+    pub fn parse_gh(value: &str) -> Self {
+        match value {
+            "MERGEABLE" => Self::Mergeable,
+            "CONFLICTING" => Self::Conflicting,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// GitHub's merge requirements for the observed head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrMergeState {
+    Clean,
+    Blocked,
+    Behind,
+    Dirty,
+    Draft,
+    HasHooks,
+    Unstable,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+impl PrMergeState {
+    pub fn parse_gh(value: &str) -> Self {
+        match value {
+            "CLEAN" => Self::Clean,
+            "BLOCKED" => Self::Blocked,
+            "BEHIND" => Self::Behind,
+            "DIRTY" => Self::Dirty,
+            "DRAFT" => Self::Draft,
+            "HAS_HOOKS" => Self::HasHooks,
+            "UNSTABLE" => Self::Unstable,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Forge pull request associated with an orchestrated task.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskPr {
     pub number: u64,
     pub url: String,
@@ -962,6 +1014,18 @@ pub struct TaskPr {
     pub review: PrReview,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+    #[serde(default)]
+    pub mergeability: PrMergeability,
+    #[serde(default)]
+    pub merge_state: PrMergeState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_attempted_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_error: Option<String>,
 }
 
 /// Parse a GitHub GraphQL reviewDecision string into `PrReview`.
@@ -1818,6 +1882,7 @@ mod tests {
             checks: PrChecks::Passing,
             review: PrReview::Approved,
             checked_at: None,
+            ..TaskPr::default()
         };
         let mut task_with_pr = task.clone();
         task_with_pr.pr = Some(pr);

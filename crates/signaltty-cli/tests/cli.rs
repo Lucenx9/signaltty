@@ -706,11 +706,17 @@ async fn cli_task_orchestration() {
     // 2. task get
     let get = cli_json(&srv.socket, &["task", "get", &task_id]);
     assert_eq!(get["task"]["id"], task_id);
+    assert_eq!(get["task"]["stage"], "working");
+    let (ok, text) = cli(&srv.socket, &["task", "get", &task_id]);
+    assert!(ok && text.contains("stage=working"), "{text}");
 
     // 3. task list
     let list = cli_json(&srv.socket, &["task", "list", "--context", "ctx_cli_1"]);
     assert_eq!(list["tasks"].as_array().unwrap().len(), 1);
     assert_eq!(list["tasks"][0]["id"], task_id);
+    assert_eq!(list["tasks"][0]["stage"], "working");
+    let (ok, text) = cli(&srv.socket, &["task", "list", "--context", "ctx_cli_1"]);
+    assert!(ok && text.contains("stage=working"), "{text}");
 
     // 4. task cancel
     let cancel = cli_json(&srv.socket, &["task", "cancel", &task_id]);

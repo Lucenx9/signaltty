@@ -98,8 +98,8 @@ through the ordinary Store transition. No additional project IPC method is neede
 | `wait` | `{pane_id, until: string\|string[], after?: wait_baseline, timeout_s?}` | `{satisfied, outcome, transition_seq, lifecycle, attention}` or `TIMEOUT` / `IDENTITY_CHANGED` |
 | `focus.next_unread` | — | `{pane_id?}` (severity→recency order) |
 | `task.start` | `{repo, contract: {objective, constraints?, output_format?, acceptance_criteria?}, agent?, label?, parent_pane_id?, context_id?, client_request_id?, base_ref?, fetch_first?, branch?, path?, ready_timeout_s?, stall_timeout_s?, submit_delay_ms?, argv?}` | `{task, pane}` (starts worker at `pending`; background ready-wait and prompt submit transitions to `working`; objective over 32 KiB, or a composed prompt over 32 KiB plus the fixed preamble, is `BAD_PARAMS` and creates no worktree; the same `client_request_id` returns the existing task and pane instead of creating another; `repo` and `path` must be absolute, and the task exists before its worker starts, so an immediate report finds it) |
-| `task.get` | `{task_id}` | `{task}` |
-| `task.list` | `{context_id?, state?, limit?}` | `{tasks: [...]}` |
+| `task.get` | `{task_id}` | `{task}` (includes computed `task.stage`) |
+| `task.list` | `{context_id?, state?, limit?}` | `{tasks: [...]}` (each task includes computed `stage`) |
 | `task.wait` | `{task_id?, context_id?, until?: string\|string[], timeout_s?}` | `{satisfied, tasks: [...]}` (default `until: settled`) |
 | `task.cancel` | `{task_id}` | `{task}` |
 | `task.report` | `{task_id?, pane_id?, status: completed\|failed\|rejected, summary, artifacts?, evidence?}` (task resolved via explicit `task_id`, else the task owning `pane_id`; one of the two is required) | `{task}` (stores the result, emits `task.result` + `task.updated`; report on a terminal task → `BAD_PARAMS`) |
@@ -107,7 +107,7 @@ through the ordinary Store transition. No additional project IPC method is neede
 | `task.file_diff` | `{task_id, path}` | `{task_id, path, untracked, content}` (same `content` shapes as `workspace.file_diff`) |
 | `task.finish` | `{task_id, mode: merge\|discard, target_ref?, delete_branch?, ignore_dirty?}` | `{task, merge?: {target, sha}, cleanup_error?}` (the outcome is `task.disposition.outcome` (`merged`/`discarded`), while `task.state` keeps its A2A value; a merge deletes the task branch unless `delete_branch: false`, discard keeps it unless `delete_branch: true`, and a pre-existing branch is never deleted; merge needs a `completed` task and a clean target; a failed `git status` is `IO_ERROR`, never "clean"; conflicts abort leaving the target clean → `MERGE_CONFLICT`, or `IO_ERROR` with `details.target_dirty` when abort fails; the merge runs in its own process group under a deadline (default 120 s, `SIGNALTTY_MERGE_TIMEOUT_MS`) and expiry kills it, restores the target and returns `TIMEOUT`, or `IO_ERROR` when it cannot; a merge git refuses without conflicts (hook, unrelated histories) is `IO_ERROR` carrying git's message; both modes kill and reap the worker's process group first, and once the worktree is gone the workspaces rooted at it close; an explicit `path` on `task.start` must be absolute) |
 | `task.pr_open` | `{task_id, title?, body?, draft?}` | `{task}` (pushes task branch to origin, opens GitHub PR via `gh pr create`, records `task.pr: {number, url, state: open, checks: none, review: none}`; requires completed task with no disposition or PR; each `git`/`gh` call runs in its own process group with prompts disabled under a 60 s deadline → `TIMEOUT`, missing `gh` → `SPAWN_FAILED`, non-zero exit → `IO_ERROR` with `details.stderr`; nothing is recorded on failure) |
-| `task.pr_refresh` | `{task_id?}` | `{tasks: [...]}` (refreshes PR state, reviewDecision, and CI statusCheckRollup via `gh pr view` for the given task (errors as `task.pr_open`) or all open PRs, where a failing PR is skipped and keeps its stored state; returns refreshed tasks) |
+| `task.pr_refresh` | `{task_id?}` | `{tasks: [...], errors: [{task_id, code, message}]}` (observes PR state, head, draft, mergeability, merge state, review, and checks via `gh pr view`; successful observations return current task views with computed `stage`; failed observations retain previous facts and store `refresh_error`, withdrawing readiness; a single failure returns its existing typed error after invalidation; batch errors identify skipped tasks; older attempts and responses for replaced PRs are ignored) |
 | `attention.pending` | `{limit?}` (default 50, max 500) | `{panes: [{pane_id, workspace_id, tab_id, label?, task_id?, lifecycle, attention, last_message?, attention_since?}]}` ranked by severity then recency; panes with `attention: none` excluded |
 | `plugin.list` | — | `{dir, plugins[], failures[]}` (hooks with runs/errors/last_error; see 13) |
 | `plugin.reload` | — | same as `plugin.list` after re-scan (stats reset) |
@@ -505,3 +505,12 @@ See the [stdio contract](../specs/047-harness-socket-access/contracts/stdio.md)
 and [harness matrix](07-agents.md#workspace-access-from-sandboxed-harnesses).
 
 Native approval answers and provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.
+
+### Task stage and PR freshness
+
+`task.get`, `task.list`, and `task.pr_refresh` task views include `stage`:
+`working`, `needs_you`, `in_review`, `ready_to_merge`, or `done`. The core derives
+this projection at read time. It is separate from persisted task lifecycle.
+A positive PR observation expires after five minutes; the exact expiry boundary,
+future timestamps, unknown facts, and refresh failures cannot establish readiness.
+Ready is advisory and does not authorize a merge. See [ADR-0034](adr/0034-verified-pr-readiness.md).
