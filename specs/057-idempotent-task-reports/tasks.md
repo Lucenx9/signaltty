@@ -22,6 +22,6 @@
 
 - [x] T010 Run the full gate and record actual proof and limits in `specs/057-idempotent-task-reports/verification.md`.
 - [x] T011 Review Standards and Spec, then final Gemini 3.8 Flash High on Antigravity; record findings and responses in `specs/057-idempotent-task-reports/verification.md`.
-- [ ] T012 Commit and open a linked PR; update `specs/057-idempotent-task-reports/handoff.md`.
+- [x] T012 Commit and open a linked PR; update `specs/057-idempotent-task-reports/handoff.md`.
 
 Dependencies: T001 → T002 → T003 → T004 → T005 → T006 → T007 → T008 → T009 → T010 → T011 → T012. US1 is the MVP; US2 locks down refusals before delivery. Tests precede each implementation slice. Documentation and read-only review can run independently after implementation; source edits have one owner.
