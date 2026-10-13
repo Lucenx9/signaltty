@@ -910,11 +910,12 @@ impl Store {
         }))
     }
 
+    /// Accept report content; an identical retry has no event pair.
     pub fn task_report(
         &mut self,
         task_id: &str,
         result: TaskResult,
-    ) -> Result<(StoredEvent, StoredEvent), (String, String)> {
+    ) -> Result<Option<(StoredEvent, StoredEvent)>, (String, String)> {
         let (task_clone, prev_state) = {
             let task = self.tasks.get_mut(task_id).ok_or_else(|| {
                 (
@@ -924,12 +925,15 @@ impl Store {
             })?;
             let prev_state = task.state;
             let now = Utc::now();
-            task.apply_report(result.clone(), now).map_err(|e| {
+            let changed = task.apply_report(result.clone(), now).map_err(|e| {
                 (
                     code::BAD_PARAMS.to_string(),
                     format!("failed to apply task report: {e}"),
                 )
             })?;
+            if !changed {
+                return Ok(None);
+            }
             (task.clone(), prev_state)
         };
         let result_ev = self.emit(
@@ -941,7 +945,7 @@ impl Store {
             }),
         );
         let update_ev = self.emit_task_updated(&task_clone, Some(prev_state));
-        Ok((result_ev, update_ev))
+        Ok(Some((result_ev, update_ev)))
     }
 
     pub fn task_cancel(&mut self, task_id: &str) -> Result<StoredEvent, (String, String)> {
@@ -1781,7 +1785,7 @@ mod tests {
             evidence: None,
             reported_at: Utc::now(),
         };
-        let (res_ev, upd_ev) = store.task_report(&task_id, result).unwrap();
+        let (res_ev, upd_ev) = store.task_report(&task_id, result).unwrap().unwrap();
         assert_eq!(res_ev.name, "task.result");
         assert_eq!(upd_ev.name, "task.updated");
         assert_eq!(store.tasks[&task_id].state, TaskState::Completed);

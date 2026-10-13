@@ -929,6 +929,218 @@ async fn task_start_in_workspace_without_tabs_does_not_panic() {
 }
 
 #[tokio::test]
+async fn task_report_retries_preserve_results_without_duplicate_events() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    for status in ["completed", "failed", "rejected"] {
+        let mut c = srv.client().await;
+        let start = c
+            .call(
+                "task.start",
+                json!({
+                    "repo": repo.path().to_string_lossy(),
+                    "contract": {"objective": "Report retry"},
+                    "argv": ["sh"],
+                }),
+            )
+            .await
+            .unwrap();
+        let task_id = start["task"]["id"].as_str().unwrap();
+        let pane_id = start["pane"]["id"].as_str().unwrap();
+        let mut params = json!({
+            "task_id": task_id,
+            "status": status,
+            "summary": "Accepted report",
+        });
+        if status == "completed" {
+            params["artifacts"] = json!([
+                {"name":"patch", "path":"fix.patch", "version":"1"},
+                {"name":"log", "path":"checks.log"},
+            ]);
+            params["evidence"] = json!({"test":"passed", "count":2});
+        }
+        let accepted = c.call("task.report", params.clone()).await.unwrap();
+        assert_eq!(accepted["task"]["state"], status);
+        drop(c);
+        let mut c = srv.client().await;
+        if status != "completed" {
+            params["artifacts"] = json!([]);
+            params["evidence"] = serde_json::Value::Null;
+        }
+        for _ in 0..10 {
+            let retry = c.call("task.report", params.clone()).await.unwrap();
+            assert_eq!(retry, accepted);
+        }
+        params.as_object_mut().unwrap().remove("task_id");
+        params["pane_id"] = json!(pane_id);
+        let retry = c.call("task.report", params.clone()).await.unwrap();
+        assert_eq!(retry, accepted);
+        c.call("pane.close", json!({"pane_id":pane_id}))
+            .await
+            .unwrap();
+        let retry = c.call("task.report", params.clone()).await.unwrap();
+        assert_eq!(retry, accepted);
+        params.as_object_mut().unwrap().remove("pane_id");
+        params["task_id"] = json!(task_id);
+        let retry = c.call("task.report", params).await.unwrap();
+        assert_eq!(retry, accepted);
+
+        let events = replayed_task_report_events(&srv, task_id).await;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|ev| ev["event"] == "task.result")
+                .count(),
+            1,
+            "a retried acknowledgment must not publish another result"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(
+                    |ev| ev["event"] == "task.updated" && ev["payload"]["task"]["state"] == status
+                )
+                .count(),
+            1
+        );
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn task_report_concurrent_retries_survive_restore_and_refuse_changed_content() {
+    let repo = TempGitRepo::new();
+    let mut srv = TestServer::start().await;
+    let mut first = srv.client().await;
+    let start = first
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Concurrent report"},
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    let params = json!({
+        "task_id":task_id, "status":"completed", "summary":"Accepted report",
+        "artifacts":[{"name":"patch", "path":"fix.patch", "version":"1"}],
+        "evidence":{"checked":true},
+    });
+    let mut second = srv.client().await;
+    let (a, b) = tokio::join!(
+        first.call("task.report", params.clone()),
+        second.call("task.report", params.clone()),
+    );
+    let accepted = a.unwrap();
+    assert_eq!(accepted, b.unwrap());
+    let events = replayed_task_report_events(&srv, task_id).await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|ev| ev["event"] == "task.result")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(
+                |ev| ev["event"] == "task.updated" && ev["payload"]["task"]["state"] == "completed"
+            )
+            .count(),
+        1
+    );
+    for (field, value) in [
+        ("status", json!("failed")),
+        ("summary", json!("Different report")),
+        ("artifacts", json!([])),
+        ("evidence", json!({"checked":false})),
+    ] {
+        let mut changed = params.clone();
+        changed[field] = value;
+        let err = first.call("task.report", changed).await.unwrap_err();
+        assert!(
+            err.starts_with(signaltty_proto::code::BAD_PARAMS),
+            "{field}: {err}"
+        );
+    }
+    let retry = first.call("task.report", params.clone()).await.unwrap();
+    assert_eq!(retry, accepted);
+    assert_eq!(replayed_task_report_events(&srv, task_id).await, events);
+    drop(first);
+    drop(second);
+
+    srv.restart().await;
+    let mut c = srv.client().await;
+    let restored = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    let mut restored_task = restored["task"].clone();
+    restored_task.as_object_mut().unwrap().remove("stage");
+    assert_eq!(restored_task["result"], accepted["task"]["result"]);
+    let before_retry = replayed_task_report_events(&srv, task_id).await;
+    let retry = c.call("task.report", params.clone()).await.unwrap();
+    assert_eq!(retry["task"], restored_task);
+    assert_eq!(
+        replayed_task_report_events(&srv, task_id).await,
+        before_retry
+    );
+
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo":repo.path().to_string_lossy(),
+                "contract":{"objective":"Canceled report"},
+                "argv":["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let canceled_id = start["task"]["id"].as_str().unwrap();
+    c.call("task.cancel", json!({"task_id":canceled_id}))
+        .await
+        .unwrap();
+    let mut canceled_report = params;
+    canceled_report["task_id"] = json!(canceled_id);
+    let err = c.call("task.report", canceled_report).await.unwrap_err();
+    assert!(err.starts_with(signaltty_proto::code::BAD_PARAMS));
+    let canceled = c
+        .call("task.get", json!({"task_id":canceled_id}))
+        .await
+        .unwrap();
+    assert_eq!(canceled["task"]["state"], "canceled");
+    assert!(canceled["task"]["result"].is_null());
+    srv.shutdown().await;
+}
+
+async fn replayed_task_report_events(srv: &TestServer, task_id: &str) -> Vec<serde_json::Value> {
+    let mut observer = srv.client().await;
+    let replay = observer
+        .call(
+            "subscribe",
+            json!({
+                "events": ["task.result", "task.updated"],
+                "task_ids": [task_id],
+                "from_seq": 0,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay["replay"]["status"], "complete");
+    observer
+        .read_events(
+            replay["replay"]["returned"].as_u64().unwrap() as usize,
+            Duration::from_secs(5),
+        )
+        .await
+}
+
+#[tokio::test]
 async fn test_task_report_lifecycle_and_result() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;
