@@ -14,7 +14,12 @@ search/filter, storage, full-row projection, selected-folder default and explici
 navigation are implemented. GTK checks cover row/terminal identity and scoped task
 collapse, with owned captures in /tmp/project-sidebar-after.
 
-One writer owns repository changes. Remaining: final targeted native/high-contrast
-run, clean full verification, independent Standards and Gemini Spec/UX reviews,
-selected durable evidence and published/linked PR. Desktop screen-reader/OSK/IME,
-folder chooser, desktop notification clicks and paid provider sessions are not run.
+Final source is 64ab310. Clean full verification passed all 53 steps and 41 GTK
+tests. Final Standards review found no documented breach; final Gemini Spec/UX
+review has no remaining findings. Retained QA is under
+`docs/qa/project-workspace-sidebar-2026-10-13`. One inherited synchronous Git
+metadata hardening judgment is deferred outside this sidebar scope.
+
+One writer owns repository changes. Remaining: publish/link the PR against main
+and record its URL. Desktop screen-reader/OSK/IME, folder chooser, desktop
+notification clicks and paid provider sessions are not run.
