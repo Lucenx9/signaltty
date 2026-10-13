@@ -105,3 +105,19 @@ Creation follows workspace context; Board and Changes form a view group; pane
 Close has a gap from split controls. Worktree window actions move to the header
 and checkout actions remain local. Native captures and explicit proof limits are
 recorded in [spec053 verification](../specs/053-icon-hierarchy-polish/verification.md).
+
+
+## Top bar refinement, spec057
+
+[GNOME header bars](https://developer.gnome.org/hig/patterns/containers/header-bars.html)
+recommend start/title/end grouping, few contextual controls, spacing between
+functional groups and blank drag space. [Apple toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars)
+prioritize frequent actions and clear separation of mixed symbols and labels.
+The native HeaderBar title lane gives identity the remaining space; Sidebar and
+New Tab lead, attention/views/menu trail. A concealed counter's Revealer reserved
+35px in the baseline, so the counter now hides directly. Compact toolbar mode
+follows allocated content width rather than total window width, protecting the
+title when Changes is docked. New Tab, Board and Changes stay labeled in the
+compact sidebar. Native measurement, light/dark/RTL/enlarged-text/high-contrast
+proof and compositor limits are recorded in
+[spec057 verification](../specs/057-top-bar-polish/verification.md).

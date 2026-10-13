@@ -414,9 +414,6 @@ toolbarview > .top-bar headerbar button.header-tool-button:focus-visible {
 .dark .ws-mark.tint-3 { color: var(--light-2); background-color: alpha(var(--light-3), 0.22); }
 
 /* Header breadcrumb: the name carries weight, context recedes. */
-.crumb {
-  margin-left: 6px;
-}
 .crumb-title {
   font-weight: 600;
 }

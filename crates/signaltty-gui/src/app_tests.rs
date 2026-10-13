@@ -2082,7 +2082,13 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
 #[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
 fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
+    let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+    let config = std::env::temp_dir().join(format!("signaltty-topbar-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
     adw::init().unwrap();
+    if std::env::var("ADW_DEBUG_HIGH_CONTRAST").as_deref() == Ok("1") {
+        assert!(adw::StyleManager::default().is_high_contrast());
+    }
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
     let provider = gtk4::CssProvider::new();
     provider.load_from_resource("/dev/signaltty/gui/style.css");
@@ -2103,6 +2109,7 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
                 let value = match method.as_str() {
                     "workspace.list" => json!({"workspaces": []}),
                     "task.list" => json!({"tasks": []}),
+                    "workspace.diff" => json!({"files": [], "added": 0, "removed": 0}),
                     "test.stop" => {
                         let _ = reply.send(Ok(Value::Null));
                         break;
@@ -2250,9 +2257,11 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
         capture_workflow(&app.window, name);
         for widget in [
             app.title.clone().upcast::<gtk4::Widget>(),
-            button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)")
-                .unwrap()
-                .upcast(),
+            find_matching_widget::<gtk4::MenuButton>(app.window.upcast_ref(), &|button| {
+                button.tooltip_text().as_deref() == Some("Main Menu")
+            })
+            .unwrap()
+            .upcast(),
         ] {
             let bounds = widget_bounds(&widget, app.window.upcast_ref());
             assert!(
@@ -2265,12 +2274,26 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
             "narrow headers reserve space for workspace identity"
         );
         let title_bounds = widget_bounds(app.title.upcast_ref(), app.window.upcast_ref());
+        eprintln!(
+            "top bar {font}: title width {}px, window {}px",
+            title_bounds.w,
+            app.window.width()
+        );
+        let drag = try_descendant(app.window.upcast_ref(), "workspace-drag-space").unwrap();
+        assert!(drag.width() >= 12 && !drag.is_focusable());
+        assert!(
+            !app.attention.button.is_mapped(),
+            "an empty attention slot must give its width back to workspace identity"
+        );
         let new_tab =
             button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
-        let new_tab_bounds = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
         assert!(
-            title_bounds.x + title_bounds.w <= new_tab_bounds.x,
-            "workspace name overlaps New Tab"
+            !new_tab.is_mapped(),
+            "compact creation moves to labeled sidebar tools"
+        );
+        assert!(
+            title_bounds.w >= 80.0,
+            "compact header must retain useful title width with {font}"
         );
         assert!(app.title.layout().is_ellipsized() || app.title_context.layout().is_ellipsized());
         assert_eq!(app.title_context.tooltip_text().as_deref(), Some("feature/a-very-long-branch-name · /tmp/an/extremely/long/path/that/must/ellipsize/inside/the/header"));
@@ -2289,6 +2312,138 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
         let bounds = widget_bounds(menu.upcast_ref(), app.window.upcast_ref());
         assert!(menu.is_mapped() && bounds.x + bounds.w <= width);
     }
+    let original_vte =
+        find_widget::<vte4::Terminal>(app.widgets.borrow()["pane_shell"].root.upcast_ref())
+            .unwrap();
+    {
+        let mut model = app.model.borrow_mut();
+        let snapshot = model.cache.snapshots.get_mut("shell").unwrap();
+        snapshot.panes[0].attention = Attention::PermissionRequired;
+        snapshot.panes[0].lifecycle = Lifecycle::Blocked;
+        let workspace = snapshot.workspace.clone();
+        model.cache.workspaces = vec![workspace];
+    }
+    app.show_workspace("shell");
+    app.refresh_sidebar();
+    let old_direction = gtk4::Widget::default_direction();
+    for (width, font, direction, scheme, name) in [
+        (
+            360,
+            "Sans 18",
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceDark,
+            "top-bar-narrow-attention-dark",
+        ),
+        (
+            1280,
+            "Sans 11",
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceLight,
+            "top-bar-desktop-attention-light",
+        ),
+        (
+            1280,
+            "Sans 11",
+            gtk4::TextDirection::Rtl,
+            adw::ColorScheme::ForceDark,
+            "top-bar-desktop-rtl-dark",
+        ),
+    ] {
+        gtk4::Widget::set_default_direction(direction);
+        settings.set_gtk_font_name(Some(font));
+        style.set_color_scheme(scheme);
+        app.window.set_default_size(width, 600);
+        app.changes_split.set_show_sidebar(width != 360);
+        wait_ui(|| {
+            (width == 360 && app.window.width() <= 360)
+                || (width == 1280 && app.window.width() >= 1200)
+        });
+        capture_workflow(&app.window, name);
+        assert!(app.attention.button.is_mapped());
+        if width != 360 {
+            assert!(app.changes_split.shows_sidebar() && !app.changes_split.is_collapsed());
+            let board =
+                button_with_tooltip(app.window.upcast_ref(), "Task Board (Ctrl+Shift+B)").unwrap();
+            assert!(
+                !has_label(board.upcast_ref(), "Task Board"),
+                "docked panels adapt labels to actual content width"
+            );
+        }
+        let title = widget_bounds(app.title.upcast_ref(), app.window.upcast_ref());
+        eprintln!(
+            "{name}: title {}, attention {} count {}, lane {}, newtab {:?}",
+            title.w,
+            app.attention.button.width(),
+            app.attention.count.text(),
+            try_descendant(app.window.upcast_ref(), "workspace-title-lane")
+                .unwrap()
+                .width(),
+            button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)")
+                .unwrap()
+                .is_mapped()
+        );
+        assert!(
+            title.w >= 48.0,
+            "attention cannot obscure workspace identity"
+        );
+        let drag = try_descendant(app.window.upcast_ref(), "workspace-drag-space").unwrap();
+        assert!(drag.width() >= if width == 360 { 12 } else { 24 });
+        assert!(!drag.is_focusable());
+        let new_tab =
+            button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
+        let creation = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
+        let identity = widget_bounds(app.crumb_button.upcast_ref(), app.window.upcast_ref());
+        if width != 360 {
+            assert!(if direction == gtk4::TextDirection::Ltr {
+                creation.x + creation.w <= identity.x
+            } else {
+                identity.x + identity.w <= creation.x
+            });
+        } else {
+            assert!(!new_tab.is_mapped());
+        }
+        if width != 360 && direction == gtk4::TextDirection::Ltr {
+            new_tab.grab_focus();
+            assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
+            let focus = gtk4::prelude::GtkWindowExt::focus(&app.window).unwrap();
+            assert!(
+                focus == app.crumb_button.clone().upcast::<gtk4::Widget>()
+                    || focus.is_ancestor(&app.crumb_button),
+                "active Details follows creation in keyboard order"
+            );
+            assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
+            assert!(gtk4::prelude::GtkWindowExt::focus(&app.window).is_some_and(
+                |focus| focus == app.attention.button.clone().upcast::<gtk4::Widget>()
+            ));
+        }
+        for widget in [
+            app.crumb_button.upcast_ref(),
+            app.attention.button.upcast_ref(),
+        ] {
+            let bounds = widget_bounds(widget, app.window.upcast_ref());
+            assert!(
+                bounds.w > 0.0
+                    && bounds.x >= 0.0
+                    && bounds.x + bounds.w <= f64::from(app.window.width())
+            );
+        }
+        assert_eq!(
+            find_widget::<vte4::Terminal>(app.widgets.borrow()["pane_shell"].root.upcast_ref())
+                .unwrap(),
+            original_vte
+        );
+    }
+    gtk4::Widget::set_default_direction(old_direction);
+    app.update_attention_button(&[]);
+    app.crumb_button.grab_focus();
+    app.crumb_button.popup();
+    wait_ui(|| app.details.popover.is_mapped());
+    assert!(has_label(
+        app.details.popover.upcast_ref(),
+        "/tmp/an/extremely/long/path/that/must/ellipsize/inside/the/header"
+    ));
+    app.details.popover.popdown();
+    wait_ui(|| !app.details.popover.is_mapped());
     settings.set_gtk_font_name(original_font.as_deref());
     style.set_color_scheme(original_scheme);
     glib::MainContext::default().block_on(app.refresh_async());
@@ -2301,6 +2456,11 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
         .unwrap();
     worker.join().unwrap();
     app.window.destroy();
+    match previous_config {
+        Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+        None => std::env::remove_var("XDG_CONFIG_HOME"),
+    }
+    let _ = std::fs::remove_dir_all(config);
 }
 
 #[test]
@@ -2535,7 +2695,11 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
 #[test]
 #[ignore = "requires a GTK display; run with dbus-run-session"]
 fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
+    let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+    let config = std::env::temp_dir().join(format!("signaltty-topbar-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
     adw::init().unwrap();
+
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
     let display = gtk4::gdk::Display::default().unwrap();
     let provider = gtk4::CssProvider::new();
@@ -2637,29 +2801,58 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     let changes = button_with_tooltip(app.window.upcast_ref(), "Changes (Ctrl+Shift+D)").unwrap();
     assert!(changes.has_css_class("image-button") && !changes.has_css_class("header-tool-button"));
     app.window.set_default_size(1280, 800);
+    wait_ui(|| app.window.width() >= 1200);
+    // Close the docked panel before expecting spacious content labels.
+    app.changes_split.set_show_sidebar(false);
     wait_ui(|| board.has_css_class("header-tool-button"));
+
+    // Both docked panels can leave a compact content header in a wide window.
+    app.set_sidebar_width(560);
+    app.split_view.set_show_sidebar(true);
+    app.changes_split.set_show_sidebar(true);
+    wait_ui(|| !board.is_visible());
+    assert!(!app.split_view.is_collapsed());
+    assert!(!app.changes_split.is_collapsed());
+    for tooltip in [
+        "New Tab (Ctrl+Shift+T)",
+        "Task Board (Ctrl+Shift+B)",
+        "Changes (Ctrl+Shift+D)",
+    ] {
+        let tool = button_with_tooltip(app.sidebar_overlay.upcast_ref(), tooltip).unwrap();
+        wait_ui(|| tool.is_mapped());
+        tool.emit_clicked();
+        assert!(
+            app.split_view.shows_sidebar(),
+            "{tooltip} must preserve the docked workspace sidebar"
+        );
+        let dialog = app.board_dialog.borrow().as_ref().map(|b| b.dialog.clone());
+        if let Some(dialog) = dialog {
+            dialog.close();
+        }
+        wait_ui(|| app.board_dialog.borrow().is_none());
+        let form = app.new_ws_dialog.borrow().as_ref().cloned();
+        if let Some(form) = form {
+            form.dialog.close();
+            wait_ui(|| app.new_ws_dialog.borrow().is_none());
+        }
+    }
+    app.changes_split.set_show_sidebar(false);
+    app.set_sidebar_width(300);
 
     app.split_view.set_show_sidebar(false);
     app.window.set_default_size(360, 600);
     wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
     wait_ui(|| !board.is_visible());
     assert!(!has_label(new_tab.upcast_ref(), "New Tab"));
-    wait_ui(|| {
-        let bounds = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
-        bounds.w > 0.0 && bounds.x >= 0.0 && bounds.x + bounds.w <= f64::from(app.window.width())
-    });
+    assert!(!new_tab.is_mapped());
     capture_workflow(&app.window, "toolbar-position-narrow");
-    let bounds = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
-    assert!(
-        bounds.x >= 0.0 && bounds.x + bounds.w <= f64::from(app.window.width()),
-        "New Tab x={} width={}, window {}",
-        bounds.x,
-        bounds.w,
-        app.window.width()
-    );
     app.split_view.set_show_sidebar(true);
     wait_ui(|| app.split_view.shows_sidebar());
-    for tooltip in ["Task Board (Ctrl+Shift+B)", "Changes (Ctrl+Shift+D)"] {
+    for tooltip in [
+        "New Tab (Ctrl+Shift+T)",
+        "Task Board (Ctrl+Shift+B)",
+        "Changes (Ctrl+Shift+D)",
+    ] {
         let tool = button_with_tooltip(app.sidebar_overlay.upcast_ref(), tooltip)
             .expect("compact sidebar must expose labeled tools");
         wait_ui(|| tool.is_mapped());
@@ -2682,6 +2875,15 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     capture_workflow(&app.window, "compact-tools-large-high-contrast");
     settings.set_gtk_font_name(old_font.as_deref());
     app.window.remove_css_class("high-contrast");
+    let compact_new_tab =
+        button_with_tooltip(app.sidebar_overlay.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
+    compact_new_tab.emit_clicked();
+    assert!(!app.split_view.shows_sidebar());
+    let form = app.new_ws_dialog.borrow().as_ref().unwrap().clone();
+    form.dialog.close();
+    wait_ui(|| app.new_ws_dialog.borrow().is_none());
+    app.split_view.set_show_sidebar(true);
+
     let compact_board = button_with_tooltip(
         app.sidebar_overlay.upcast_ref(),
         "Task Board (Ctrl+Shift+B)",
@@ -2707,8 +2909,13 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     assert!(!app.split_view.shows_sidebar());
     app.action_show_changes();
     assert!(!compact_changes.is_active());
+    // Closing changes the toggle before the panel's controls leave focus traversal.
+    wait_ui(|| !app.changes.widget.is_mapped());
     app.window.set_default_size(1280, 800);
-    wait_ui(|| board.is_mapped());
+    wait_ui(|| app.window.width() >= 1200 && !app.changes_split.is_collapsed());
+    // Uncollapsing reopens the native utility pane; test header focus with it closed.
+    app.changes_split.set_show_sidebar(false);
+    wait_ui(|| !app.changes.widget.is_mapped() && board.is_mapped());
     assert!(!compact_board.is_mapped());
     assert!(!compact_changes.is_mapped());
     // The overflow menu remains available at the compact breakpoint.
@@ -2717,10 +2924,25 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     })
     .unwrap();
     wait_ui(|| menu.is_mapped());
-    new_tab.grab_focus();
-    assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
+    assert!(new_tab.grab_focus());
     assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
-        .is_some_and(|focus| focus == board.clone().upcast::<gtk4::Widget>()));
+        .is_some_and(|focus| focus == new_tab.clone().upcast::<gtk4::Widget>()));
+    assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
+    let focus = gtk4::prelude::GtkWindowExt::focus(&app.window);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|focus| focus == board.upcast_ref::<gtk4::Widget>()),
+        "expected Board after New Tab, got {:?}; font {:?}; window {}px; board classes {:?}",
+        focus.map(|widget| (
+            widget.type_().name(),
+            widget.tooltip_text(),
+            widget.css_classes()
+        )),
+        settings.gtk_font_name(),
+        app.window.width(),
+        board.css_classes(),
+    );
     assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
     assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
         .is_some_and(|focus| focus == changes.clone().upcast::<gtk4::Widget>()));
@@ -2730,7 +2952,7 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     wait_ui(|| {
         let creation = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
         let crumb = widget_bounds(&context, app.window.upcast_ref());
-        creation.x + creation.w <= crumb.x
+        crumb.x + crumb.w <= creation.x
     });
     let creation = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
     let board_bounds = widget_bounds(board.upcast_ref(), app.window.upcast_ref());
@@ -2744,6 +2966,11 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     capture_workflow(&app.window, "toolbar-position-rtl");
     gtk4::Widget::set_default_direction(old_direction);
     app.window.destroy();
+    match previous_config {
+        Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+        None => std::env::remove_var("XDG_CONFIG_HOME"),
+    }
+    let _ = std::fs::remove_dir_all(config);
 }
 
 #[test]
@@ -3047,6 +3274,7 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
     narrow.close();
     wait_ui(|| app.window.visible_dialog().is_none());
     app.window.set_default_size(360, 680);
+    wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
     gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-changes", None).unwrap();
     // Narrow windows overlay the panel rather than squeezing panes.
     wait_ui(|| app.changes_split.is_collapsed());
