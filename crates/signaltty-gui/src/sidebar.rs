@@ -29,7 +29,7 @@
 //! displays a context menu. When rows (or any child in a group) need you,
 //! they sit under a "Needs you" label with a hairline below.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use chrono::{DateTime, Utc};
@@ -754,11 +754,6 @@ impl Row {
         self.render_disclosure();
     }
 
-    fn set_collapsed(&mut self, is_collapsed: bool) {
-        self.is_collapsed = is_collapsed;
-        self.render_disclosure();
-    }
-
     fn render_disclosure(&self) {
         if let Some(label) = disclosure_label(
             self.child_count,
@@ -863,6 +858,10 @@ type ToggleCallback = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
 
 pub struct Sidebar {
     pub widget: gtk4::ScrolledWindow,
+    pub project: Rc<crate::project_scope::ProjectPicker>,
+    items: RefCell<Vec<WsSummary>>,
+    reconciling: Cell<bool>,
+    selected_id: RefCell<Option<String>>,
     count: gtk4::Label,
     list: gtk4::ListBox,
     rows: Rc<RefCell<Vec<Row>>>,
@@ -899,7 +898,7 @@ pub fn labeled_content(icon: &str, title: &str) -> libadwaita::ButtonContent {
 }
 
 impl Sidebar {
-    pub fn new() -> Sidebar {
+    pub fn new() -> Rc<Sidebar> {
         let list = gtk4::ListBox::new();
         list.add_css_class("navigation-sidebar");
         list.set_selection_mode(gtk4::SelectionMode::Single);
@@ -911,42 +910,6 @@ impl Sidebar {
         let rows: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
         let collapsed_roots: Rc<RefCell<std::collections::HashSet<String>>> =
             Rc::new(RefCell::new(std::collections::HashSet::new()));
-        {
-            let on_select = Rc::clone(&on_select);
-            list.connect_row_selected(move |_, row| {
-                if let (Some(row), Some(cb)) = (row, on_select.borrow().as_ref()) {
-                    cb(row.widget_name().to_string());
-                }
-            });
-        }
-        {
-            let rows = Rc::clone(&rows);
-            let collapsed_roots = Rc::clone(&collapsed_roots);
-            let list_weak = list.downgrade();
-            *on_toggle.borrow_mut() = Some(Box::new(move |root_id: String| {
-                let is_collapsed = {
-                    let mut collapsed = collapsed_roots.borrow_mut();
-                    if collapsed.contains(&root_id) {
-                        collapsed.remove(&root_id);
-                        false
-                    } else {
-                        collapsed.insert(root_id.clone());
-                        true
-                    }
-                };
-                for r in rows.borrow_mut().iter_mut() {
-                    if r.parent.as_deref() == Some(&root_id) {
-                        r.row.set_visible(!is_collapsed);
-                    }
-                    if r.id == root_id {
-                        r.set_collapsed(is_collapsed);
-                    }
-                }
-                if let Some(list) = list_weak.upgrade() {
-                    list.invalidate_headers();
-                }
-            }));
-        }
         // Only the workspace list scrolls. The Search launcher and the
         // Worktrees/Preferences footer are pinned, so a long list never
         // buries them.
@@ -973,8 +936,12 @@ impl Sidebar {
         widget.set_child(Some(&content));
         widget.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
         widget.set_vexpand(true);
-        Sidebar {
+        let sidebar = Rc::new(Sidebar {
             widget,
+            project: crate::project_scope::ProjectPicker::new(),
+            items: RefCell::new(Vec::new()),
+            reconciling: Cell::new(false),
+            selected_id: RefCell::new(None),
             count,
             list,
             rows,
@@ -983,7 +950,37 @@ impl Sidebar {
             on_close,
             on_toggle,
             menu_builder,
-        }
+        });
+        let weak = Rc::downgrade(&sidebar);
+        sidebar.list.connect_row_selected(move |_, row| {
+            let Some(sidebar) = weak.upgrade() else {
+                return;
+            };
+            if sidebar.reconciling.get() {
+                return;
+            }
+            if let Some(row) = row {
+                let id = row.widget_name().to_string();
+                sidebar.selected_id.replace(Some(id.clone()));
+                if let Some(callback) = sidebar.on_select.borrow().as_ref() {
+                    callback(id);
+                }
+            }
+        });
+        let weak = Rc::downgrade(&sidebar);
+        *sidebar.on_toggle.borrow_mut() = Some(Box::new(move |root_id| {
+            let Some(sidebar) = weak.upgrade() else {
+                return;
+            };
+            {
+                let mut collapsed = sidebar.collapsed_roots.borrow_mut();
+                if !collapsed.remove(&root_id) {
+                    collapsed.insert(root_id);
+                }
+            }
+            sidebar.render();
+        }));
+        sidebar
     }
 
     pub fn set_menu_builder<F: Fn(&str) -> gio::Menu + 'static>(&self, cb: F) {
@@ -1002,23 +999,54 @@ impl Sidebar {
     /// place. Moves remove + re-insert rows, which drops GTK's selection
     /// on the moved row — so snapshot the selected workspace and restore
     /// it after: the highlight tracks the workspace, not the row index.
-    /// The echo is harmless (`on_select` skips the already-active one).
+    /// Reconcile suppresses selection callbacks while restoring the active row.
     pub fn update(&self, items: Vec<WsSummary>) {
-        self.count.set_text(&items.len().to_string());
-        let noun = if items.len() == 1 {
-            "workspace"
-        } else {
-            "workspaces"
-        };
+        self.items.replace(items);
+        self.render();
+    }
+
+    pub fn apply_scope(&self) {
+        self.render();
+    }
+
+    fn render(&self) {
+        self.reconciling.set(true);
+        let scope = self.project.scope();
+        let catalog = self.project.catalog.borrow();
+        let all = self.items.borrow();
+        let mut items: Vec<_> = all
+            .iter()
+            .filter(|item| catalog.includes_workspace(&scope, &item.id))
+            .cloned()
+            .collect();
+        let included: std::collections::HashSet<_> =
+            items.iter().map(|item| item.id.clone()).collect();
+        for item in &mut items {
+            if item
+                .parent
+                .as_ref()
+                .is_some_and(|id| !included.contains(id))
+            {
+                item.parent = None;
+            }
+        }
+        sort_summaries(&mut items);
+        let count = items.len();
+        items.extend(
+            all.iter()
+                .filter(|item| !included.contains(&item.id))
+                .cloned(),
+        );
+        self.count.set_text(&count.to_string());
         self.count
             .update_property(&[gtk4::accessible::Property::Label(&format!(
-                "{} {noun}",
-                items.len()
+                "{count} workspaces"
             ))]);
-        let selected = self
-            .list
-            .selected_row()
-            .map(|r| r.widget_name().to_string());
+        let selected = self.selected_id.borrow().clone();
+        let parent_ids: std::collections::HashSet<_> =
+            all.iter().filter_map(|item| item.parent.clone()).collect();
+        drop(all);
+        drop(catalog);
         let mut rows = self.rows.borrow_mut();
         rows.retain(|r| {
             let keep = items.iter().any(|s| s.id == r.id);
@@ -1058,7 +1086,7 @@ impl Sidebar {
             std::collections::HashMap::new();
         let mut child_finished_counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
-        for item in &items {
+        for item in items.iter().filter(|item| included.contains(&item.id)) {
             if let Some(parent_id) = &item.parent {
                 if item.finished {
                     *child_finished_counts.entry(parent_id.clone()).or_default() += 1;
@@ -1073,7 +1101,7 @@ impl Sidebar {
 
         self.collapsed_roots
             .borrow_mut()
-            .retain(|id| child_counts.contains_key(id) || child_finished_counts.contains_key(id));
+            .retain(|id| parent_ids.contains(id));
 
         let collapsed = self.collapsed_roots.borrow();
         for row in rows.iter_mut() {
@@ -1081,9 +1109,10 @@ impl Sidebar {
             row.set_child_mode(is_child);
             if let Some(parent_id) = &row.parent {
                 let is_hidden = collapsed.contains(parent_id);
-                row.row.set_visible(!is_hidden);
+                row.row
+                    .set_visible(included.contains(&row.id) && !is_hidden);
             } else {
-                row.row.set_visible(true);
+                row.row.set_visible(included.contains(&row.id));
                 let count = child_counts.get(&row.id).copied().unwrap_or(0);
                 let needs = child_needs_counts.get(&row.id).copied().unwrap_or(0);
                 let finished = child_finished_counts.get(&row.id).copied().unwrap_or(0);
@@ -1094,11 +1123,18 @@ impl Sidebar {
         drop(collapsed);
         drop(rows);
 
+        self.list.unselect_all();
         if let Some(id) = selected {
-            if self.rows.borrow().iter().any(|r| r.id == id) {
-                self.select(&id);
+            if let Some(row) = self
+                .rows
+                .borrow()
+                .iter()
+                .find(|r| r.id == id && r.row.get_visible())
+            {
+                self.list.select_row(Some(&row.row));
             }
         }
+        self.reconciling.set(false);
         // Section membership can change without a move.
         self.list.invalidate_headers();
     }
@@ -1122,27 +1158,51 @@ impl Sidebar {
         }
     }
 
-    pub fn select(&self, ws_id: &str) {
-        let mut rows = self.rows.borrow_mut();
-        if let Some(pos) = rows.iter().position(|r| r.id == ws_id) {
-            if let Some(parent_id) = rows[pos].parent.clone() {
-                if self.collapsed_roots.borrow().contains(&parent_id) {
-                    self.collapsed_roots.borrow_mut().remove(&parent_id);
-                    for r in rows.iter_mut() {
-                        if r.parent.as_deref() == Some(&parent_id) {
-                            r.row.set_visible(true);
-                        }
-                        if r.id == parent_id {
-                            r.set_collapsed(false);
-                        }
-                    }
-                    self.list.invalidate_headers();
-                }
-            }
-            if !rows[pos].row.is_selected() {
-                self.list.select_row(Some(&rows[pos].row));
-            }
+    pub fn reveal_workspace(&self, ws_id: &str) {
+        self.project.reveal_workspace(ws_id);
+        self.expand_parent(ws_id);
+    }
+
+    fn expand_parent(&self, ws_id: &str) {
+        if !self
+            .project
+            .catalog
+            .borrow()
+            .includes_workspace(&self.project.scope(), ws_id)
+        {
+            return;
         }
+        let parent = self
+            .rows
+            .borrow()
+            .iter()
+            .find(|row| row.id == ws_id)
+            .and_then(|row| row.parent.clone());
+        let expanded =
+            parent.is_some_and(|parent| self.collapsed_roots.borrow_mut().remove(&parent));
+        if expanded {
+            self.render();
+        }
+    }
+
+    pub fn select(&self, ws_id: &str) {
+        self.expand_parent(ws_id);
+        self.restore_selection(ws_id);
+    }
+
+    pub fn restore_selection(&self, ws_id: &str) {
+        self.selected_id.replace(Some(ws_id.to_owned()));
+        self.reconciling.set(true);
+        let rows = self.rows.borrow();
+        if let Some(row) = rows
+            .iter()
+            .find(|row| row.id == ws_id && row.row.get_visible())
+        {
+            self.list.select_row(Some(&row.row));
+        } else {
+            self.list.unselect_all();
+        }
+        self.reconciling.set(false);
     }
 }
 
@@ -1485,6 +1545,91 @@ mod tests {
         assert!(!rows[0].metadata.get_visible());
         rows[0].set_child_mode(false);
         assert!(rows[0].metadata.get_visible());
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn project_projection_retains_collapsed_groups_and_shows_external_parent_children() {
+        use signaltty_core::project::{CatalogAuthority, ProjectCatalog, ProjectId, ProjectScope};
+        gtk4::init().unwrap();
+        let sidebar = Sidebar::new();
+        let mut workspaces = Vec::new();
+        let mut items = Vec::new();
+        for (id, cwd, parent) in [
+            ("root", "/one", None),
+            ("child", "/one", Some("root")),
+            ("external-child", "/two", Some("root")),
+            ("other", "/two", None),
+        ] {
+            let mut ws = workspace();
+            ws.id = id.into();
+            ws.cwd = cwd.into();
+            workspaces.push(ws);
+            let mut item = summary(id, Lifecycle::Working, Attention::None, None);
+            item.parent = parent.map(str::to_owned);
+            items.push(item);
+        }
+        sidebar.project.set_catalog(
+            ProjectCatalog::derive(&workspaces),
+            CatalogAuthority::Complete,
+        );
+        sidebar.update(items.clone());
+        let row = |id: &str| {
+            sidebar
+                .rows
+                .borrow()
+                .iter()
+                .find(|row| row.id == id)
+                .unwrap()
+                .row
+                .clone()
+        };
+        let child = row("child");
+        let external = row("external-child");
+        let disclosure = sidebar
+            .rows
+            .borrow()
+            .iter()
+            .find(|row| row.id == "root")
+            .unwrap()
+            .disclosure
+            .clone();
+        disclosure.emit_clicked();
+        assert!(!child.is_visible());
+        assert!(!external.is_visible());
+        sidebar.project.set_scope(
+            ProjectScope::Project(ProjectId::new("/two")),
+            crate::project_scope::ScopeChange::User,
+        );
+        sidebar.apply_scope();
+        assert!(
+            external.is_visible(),
+            "included child becomes root when parent is excluded"
+        );
+        assert!(!external.has_css_class("workspace-child"));
+        assert!(!child.is_visible());
+        sidebar.project.set_scope(
+            ProjectScope::Project(ProjectId::new("/one")),
+            crate::project_scope::ScopeChange::User,
+        );
+        sidebar.apply_scope();
+        assert!(!external.is_visible());
+        assert!(!child.is_visible(), "collapse survives switching projects");
+        disclosure.emit_clicked();
+        assert!(child.is_visible());
+        assert!(
+            !external.is_visible(),
+            "expanding cannot leak another project"
+        );
+        sidebar.update(items);
+        assert_eq!(row("child"), child);
+        assert_eq!(row("external-child"), external);
+        sidebar
+            .project
+            .set_scope(ProjectScope::All, crate::project_scope::ScopeChange::User);
+        sidebar.apply_scope();
+        assert!(external.is_visible());
+        assert!(external.has_css_class("workspace-child"));
     }
 
     #[test]

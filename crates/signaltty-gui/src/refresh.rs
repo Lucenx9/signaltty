@@ -17,6 +17,7 @@ pub struct Snapshot {
 #[derive(Clone, Default)]
 pub struct WorkspaceCache {
     pub workspaces: Vec<Workspace>,
+    pub catalog_authority: signaltty_core::project::CatalogAuthority,
     pub snapshots: HashMap<String, Snapshot>,
     pane_workspaces: HashMap<String, String>,
     tab_workspaces: HashMap<String, String>,
@@ -151,6 +152,7 @@ impl WorkspaceCache {
         F: FnMut(&'static str, Value) -> Fut,
         Fut: std::future::Future<Output = Result<Value, String>>,
     {
+        self.catalog_authority = signaltty_core::project::CatalogAuthority::Retained;
         let mut errors = Vec::new();
         if pending.full {
             let list = call("workspace.list", json!({})).await.and_then(|v| {
@@ -172,6 +174,7 @@ impl WorkspaceCache {
                 self.remove(&id);
             }
             self.workspaces = list;
+            self.catalog_authority = signaltty_core::project::CatalogAuthority::Complete;
         } else {
             for id in pending.unknown_panes {
                 if let Ok(v) = call("pane.get", json!({"pane_id": id})).await {
@@ -393,10 +396,15 @@ pub(crate) mod tests {
     #[test]
     fn failed_reads_preserve_cached_state_and_retry_on_next_event() {
         let mut cache = cache();
+        cache.catalog_authority = signaltty_core::project::CatalogAuthority::Complete;
         let (_, errors) =
             refresh_cache(&mut cache, PendingRefresh::full(), |_, _| Err("eof".into()));
         assert_eq!(errors, ["eof"]);
         assert_eq!(cache.workspaces.len(), 2);
+        assert_eq!(
+            cache.catalog_authority,
+            signaltty_core::project::CatalogAuthority::Retained
+        );
         let mut pending = PendingRefresh::default();
         pending.on_event(&cache, event::PANE_UPDATED, &json!({"pane_id": "pane_b"}));
         let (_, errors) = refresh_cache(&mut cache, pending, |_, _| Err("eof".into()));
@@ -405,6 +413,25 @@ pub(crate) mod tests {
         let mut pending = PendingRefresh::default();
         pending.on_event(&cache, event::PANE_UPDATED, &json!({"pane_id": "pane_b"}));
         assert_eq!(pending.workspaces, HashSet::from(["b".into()]));
+    }
+
+    #[test]
+    fn successful_list_is_authoritative_even_when_detail_reads_fail() {
+        let mut cache = cache();
+        let (changed, errors) = refresh_cache(&mut cache, PendingRefresh::full(), |method, _| {
+            if method == "workspace.list" {
+                Ok(json!({"workspaces":[fixture("a")["workspace"]]}))
+            } else {
+                Err("detail failed".into())
+            }
+        });
+        assert!(changed.is_empty());
+        assert_eq!(errors, ["detail failed"]);
+        assert_eq!(cache.workspaces.len(), 1);
+        assert_eq!(
+            cache.catalog_authority,
+            signaltty_core::project::CatalogAuthority::Complete
+        );
     }
 
     #[test]

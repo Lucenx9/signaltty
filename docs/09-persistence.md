@@ -92,6 +92,14 @@ Git worktree association is recovered from the persisted workspace cwd and
 Git's registrations. Closing or restoring a workspace never removes a checkout.
 Terminal search and pane zoom are client view state, not saved layout changes.
 
+The GUI persists project scope separately in
+`$XDG_CONFIG_HOME/signaltty/project-scope.json`, using an atomic rename. Missing,
+invalid or empty values fall back to All projects. A saved project absent from an
+incomplete or disconnected catalog is retained; only a complete successful
+`workspace.list` can reset a removed project. Legacy checkout scope keys migrate
+to the primary root when unambiguous metadata becomes available. Appearance
+preferences stay in `gui.json`; project scope does not change server session state.
+
 ## Event continuity
 
 The event journal has separate durable sequence reservations and retained-history
@@ -103,3 +111,7 @@ guarantees do not strengthen snapshot/tail durability. See
 Workspace naming state is retained without the first prompt. An interrupted
 `generating` state becomes `failed` on load; generation is never replayed from a
 snapshot (ADR-0031). Legacy snapshots default to `manual`.
+
+Revealing a newly created workspace whose ID is absent from an incomplete catalog
+also preserves the current project scope. Only an authoritative complete catalog
+permits an unknown navigation target to fall back to All projects.

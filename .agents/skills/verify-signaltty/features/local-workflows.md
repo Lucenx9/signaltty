@@ -5,6 +5,20 @@
 Command/workspace palette, workspace rename, literal terminal search, pane zoom,
 worktree create/open/remove, working-tree change summaries and per-file diff review.
 
+Project scope: open Choose Project below Search, search by name/path and choose
+one project or All projects. Scope filters the workspace list while global attention
+and the palette still reach all workspaces. New Workspace proposes the scoped folder.
+
+`app::tests::project_scope_filters_without_rebuilding_workspaces` checks the native
+selector, search/no-match/activation/focus, persisted scope, global attention count,
+explicit navigation, creation default, passive refresh and row/terminal identity.
+It emits light/dark, duplicate/long-name, 360px, enlarged-text and RTL renders.
+`sidebar::tests::project_projection_retains_collapsed_groups_and_shows_external_parent_children`
+checks cross-project task children and retained collapse. Core project tests cover
+authority and legacy migration; real Git worktree tests cover canonical membership
+and persisted metadata backfill after restart. Native high contrast is also run
+with `ADW_DEBUG_HIGH_CONTRAST=1`; CSS-class scenes alone do not certify native HIG.
+
 ## How to get to it (user POV)
 
 Use Ctrl+Shift+P for the palette, Ctrl+Shift+R to rename, Ctrl+Shift+F to search

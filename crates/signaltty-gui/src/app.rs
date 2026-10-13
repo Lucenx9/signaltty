@@ -101,7 +101,8 @@ pub struct App {
     title_mark: gtk4::Label,
     crumb_button: gtk4::MenuButton,
     details: Rc<crate::details::DetailsCard>,
-    sidebar: Sidebar,
+    sidebar: Rc<Sidebar>,
+    project_scope_file: RefCell<Option<std::path::PathBuf>>,
     tab_view: adw::TabView,
     content: gtk4::Stack,
     attention: AttentionButton,
@@ -238,6 +239,7 @@ impl App {
         let command_strip = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         command_strip.add_css_class("sidebar-command-strip");
         command_strip.append(&command_launcher);
+        command_strip.append(&sidebar.project.button);
 
         let sidebar_page = adw::ToolbarView::new();
         sidebar_page.add_top_bar(&sidebar_header);
@@ -591,8 +593,20 @@ impl App {
             closing_targets: RefCell::new(HashSet::new()),
             preference: RefCell::new(crate::preferences::load_preference()),
             me: RefCell::new(Weak::new()),
+            project_scope_file: RefCell::new(None),
         });
         app.me.replace(Rc::downgrade(&app));
+        let weak = app.weak();
+        app.sidebar.project.set_on_change(move |scope, reason| {
+            let Some(app) = weak.upgrade() else { return };
+            if reason == crate::project_scope::ScopeChange::User {
+                app.navigate();
+            }
+            app.sidebar.apply_scope();
+            if let Some(path) = app.project_scope_file.borrow().as_ref() {
+                crate::project_scope::save(path, &scope);
+            };
+        });
         let keys = gtk4::EventControllerKey::new();
         let w = app.weak();
         keys.connect_key_pressed(move |_, key, _, _| {
@@ -1301,9 +1315,24 @@ impl App {
         (items, needing)
     }
 
+    pub fn configure_project_scope(&self, path: std::path::PathBuf) {
+        let scope = crate::project_scope::load(&path);
+        self.project_scope_file.replace(Some(path));
+        self.sidebar
+            .project
+            .set_scope(scope, crate::project_scope::ScopeChange::Reconcile);
+    }
+
     fn refresh_sidebar(&self) {
-        let (mut items, needing) = self.build_sidebar_items();
-        sidebar::sort_summaries(&mut items);
+        let catalog = {
+            let model = self.model.borrow();
+            (
+                signaltty_core::project::ProjectCatalog::derive(&model.cache.workspaces),
+                model.cache.catalog_authority,
+            )
+        };
+        self.sidebar.project.set_catalog(catalog.0, catalog.1);
+        let (items, needing) = self.build_sidebar_items();
         self.sidebar.update(items);
         self.update_attention_button(&needing);
     }
@@ -1441,12 +1470,19 @@ impl App {
         let snapshot = self.model.borrow().cache.snapshots.get(ws_id).cloned();
         let Some(snapshot) = snapshot else { return };
         let ws = snapshot.workspace;
+        let scope_changed = if user_navigation {
+            let before = self.sidebar.project.scope();
+            self.sidebar.reveal_workspace(ws_id);
+            self.sidebar.project.scope() != before
+        } else {
+            false
+        };
         if self.active_ws_id().as_deref() != Some(ws_id) {
             self.zoom.borrow_mut().take();
             // The card describes one workspace; a switch closes it.
             self.details.popover.popdown();
         }
-        if user_navigation && self.active_ws_id().as_deref() != Some(ws_id) {
+        if user_navigation && (scope_changed || self.active_ws_id().as_deref() != Some(ws_id)) {
             self.navigate();
         }
         self.title.set_text(&self.display_title(&ws));
@@ -1479,7 +1515,11 @@ impl App {
         self.render_tabs();
         self.content
             .set_visible_child_name(if has_tabs { "tabs" } else { "no-tabs" });
-        self.sidebar.select(ws_id);
+        if user_navigation {
+            self.sidebar.select(ws_id);
+        } else {
+            self.sidebar.restore_selection(ws_id);
+        }
     }
 
     // ---- layout rendering ----
@@ -2024,6 +2064,7 @@ impl App {
         }
         // Bind first: an if-condition borrow would live into the body.
         let same_ws = self.model.borrow().active_ws.as_deref() == Some(pane.workspace_id.as_str());
+        self.sidebar.reveal_workspace(&pane.workspace_id);
         if !same_ws {
             self.show_workspace_internal(&pane.workspace_id, false);
         }
@@ -2235,6 +2276,7 @@ impl App {
                         app.refresh_later();
                         app.refresh_async().await;
                         if app.navigation.get() == navigation {
+                            app.sidebar.reveal_workspace(&ws);
                             app.show_workspace_internal(&ws, false);
                         }
                     }
@@ -2354,7 +2396,13 @@ impl App {
         if self.new_ws_dialog.borrow().is_some() {
             return;
         }
-        let active_cwd = self.active_ws_cwd();
+        let active_cwd = self
+            .sidebar
+            .project
+            .scope()
+            .directory()
+            .map(str::to_owned)
+            .or_else(|| self.active_ws_cwd());
         let w = self.weak();
         let w2 = self.weak();
         let form = crate::new_workspace::show_dialog(
@@ -2688,6 +2736,7 @@ impl App {
         }
         self.refresh_async().await;
         if self.navigation.get() == navigation {
+            self.sidebar.reveal_workspace(&ws_id);
             self.show_workspace_internal(&ws_id, false);
         }
         Ok(())

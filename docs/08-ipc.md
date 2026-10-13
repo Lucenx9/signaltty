@@ -43,6 +43,11 @@ clients can `subscribe {from_seq}` to replay.
 
 ## Methods
 
+Workspace Git metadata adds optional `git.primary_root`, the main registered
+checkout used to group linked worktrees. `git.root` keeps its current-checkout
+meaning. Old snapshots omit the new field; enrichment emits `workspace.updated`
+through the ordinary Store transition. No additional project IPC method is needed.
+
 | Method | Params | Result |
 |---|---|---|
 | `server.status` | — | `{version, protocol, uptime_s, workspaces, tabs, panes, live_panes}` |

@@ -384,6 +384,58 @@ fn untracked_line_stats(path: &std::path::Path) -> (u64, bool) {
     (lines, false)
 }
 
+/// The primary worktree is Git's first NUL-delimited record; paths remain literal.
+pub(crate) fn primary_root_from_porcelain(bytes: &[u8]) -> Option<String> {
+    let field = bytes.split(|byte| *byte == 0).next()?;
+    let path = std::str::from_utf8(field).ok()?.strip_prefix("worktree ")?;
+    (!path.is_empty()).then(|| path.to_owned())
+}
+
+pub fn primary_root(cwd: &str) -> Option<String> {
+    primary_root_from_porcelain(&git_bytes(cwd, &["worktree", "list", "--porcelain", "-z"])?)
+}
+
+/// Upgrade saved Git workspaces after the listener is ready, with one bounded probe at a time.
+pub(crate) fn spawn_primary_root_backfill(ctx: std::sync::Arc<crate::router::Ctx>) {
+    let pending: Vec<_> = ctx
+        .store
+        .read()
+        .unwrap()
+        .workspaces
+        .values()
+        .filter(|ws| ws.git.primary_root.is_none() && ws.git.root.is_some())
+        .map(|ws| (ws.id.clone(), ws.cwd.clone()))
+        .collect();
+    tokio::spawn(async move {
+        for (id, cwd) in pending {
+            let mut command = tokio::process::Command::new("git");
+            command
+                .arg("-C")
+                .arg(&cwd)
+                .args(["worktree", "list", "--porcelain", "-z"])
+                .kill_on_drop(true);
+            let result =
+                tokio::time::timeout(std::time::Duration::from_secs(2), command.output()).await;
+            let Some(primary) = result
+                .ok()
+                .and_then(Result::ok)
+                .filter(|out| out.status.success())
+                .and_then(|out| primary_root_from_porcelain(&out.stdout))
+            else {
+                continue;
+            };
+            let changed = ctx
+                .store
+                .write()
+                .unwrap()
+                .set_workspace_primary_root_if_missing(&id, &cwd, primary);
+            if changed {
+                ctx.mark_persist();
+            }
+        }
+    });
+}
+
 pub fn git_info(cwd: &str) -> GitInfo {
     let root = git(cwd, &["rev-parse", "--show-toplevel"]);
     if root.is_none() {
@@ -399,6 +451,7 @@ pub fn git_info(cwd: &str) -> GitInfo {
     let dirty =
         git(cwd, &["status", "--porcelain=v1", "--untracked-files=no"]).map(|s| !s.is_empty());
     GitInfo {
+        primary_root: primary_root(cwd),
         root: Some(root),
         name,
         branch,
@@ -1078,5 +1131,24 @@ mod tests {
         assert!(wt_str.contains("feature-foo"));
 
         std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod primary_project_tests {
+    use super::*;
+    #[test]
+    fn primary_record_paths_are_literal_and_nul_delimited() {
+        let bytes = b"worktree /repo/line\nname\0HEAD abc\0\0worktree /linked\0HEAD abc\0";
+        assert_eq!(
+            primary_root_from_porcelain(bytes).as_deref(),
+            Some("/repo/line\nname")
+        );
+        assert_eq!(
+            primary_root_from_porcelain(b"worktree /bare\0bare\0").as_deref(),
+            Some("/bare")
+        );
+        assert_eq!(primary_root_from_porcelain(b"worktree \0"), None);
+        assert_eq!(primary_root_from_porcelain(b"not worktree\0"), None);
     }
 }

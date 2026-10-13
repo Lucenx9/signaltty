@@ -13,6 +13,7 @@ mod new_workspace;
 mod notif;
 mod palette;
 mod preferences;
+mod project_scope;
 mod refresh;
 mod sidebar;
 mod status;
@@ -61,6 +62,7 @@ fn main() {
         let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel();
         let actor = actor::spawn(socket.clone(), ui_tx.clone());
         let gui = app::App::new(application, actor, ui_tx);
+        gui.configure_project_scope(signaltty_core::paths::config_dir().join("project-scope.json"));
         let gui_events = gui.clone();
         gtk4::glib::MainContext::default().spawn_local(async move {
             while let Some(ev) = ui_rx.recv().await {

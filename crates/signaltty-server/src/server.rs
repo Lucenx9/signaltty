@@ -102,6 +102,8 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         overlays,
     });
 
+    crate::git::spawn_primary_root_backfill(ctx.clone());
+
     // Plugin event hooks: every broadcast event (except high-volume
     // pty.data) is offered to matching hooks as JSON on stdin.
     spawn_plugin_event_hooks(ctx.clone());
