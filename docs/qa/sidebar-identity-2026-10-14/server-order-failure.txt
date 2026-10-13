@@ -1,0 +1,5 @@
+thread 'stalled_pane_input_keeps_other_panes_and_signals_available' (4132065) panicked at crates/signaltty-server/tests/pty_input_backpressure.rs:136:5:
+assertion `left == right` failed: concurrent same-pane writes must not interleave
+  left: [70, 79, 76, 76, 79, 87, 95, 85, 80, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,  ...  120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120] [long byte array shortened]
+ right: [120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 1 ... 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 70, 79, 76, 76, 79, 87, 95, 85, 80] [long byte array shortened]
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.51s

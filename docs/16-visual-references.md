@@ -121,3 +121,17 @@ title when Changes is docked. New Tab, Board and Changes stay labeled in the
 compact sidebar. Native measurement, light/dark/RTL/enlarged-text/high-contrast
 proof and compositor limits are recorded in
 [spec057 verification](../specs/057-top-bar-polish/verification.md).
+
+
+## Sidebar app identity, spec058
+
+[GNOME app icons](https://developer.gnome.org/hig/guidelines/app-icons.html)
+recommend a unique domain metaphor, limited detail at small sizes and a matching
+symbolic variant. [Apple app icons](https://developer.apple.com/design/human-interface-guidelines/app-icons?changes=latest_maj_4_7&language=objc)
+recommend a simple core concept and consistent identity across contexts.
+Signaltty's original prompt with two parallel rails combines terminal input and
+parallel work. The static sidebar lockup uses a 20px monochrome mark and 600-weight
+system wordmark; launcher artwork uses a quiet solid tile and one brand hue.
+No extra tagline, hover/click treatment or branding animation is added. Native
+minimum-rail/enlarged/RTL/high-contrast and size-matrix proof is recorded in
+[spec058 verification](../specs/058-sidebar-identity/verification.md).
