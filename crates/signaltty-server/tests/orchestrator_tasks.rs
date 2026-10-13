@@ -973,6 +973,15 @@ async fn task_report_retries_preserve_results_without_duplicate_events() {
         }
         params.as_object_mut().unwrap().remove("task_id");
         params["pane_id"] = json!(pane_id);
+        let retry = c.call("task.report", params.clone()).await.unwrap();
+        assert_eq!(retry, accepted);
+        c.call("pane.close", json!({"pane_id":pane_id}))
+            .await
+            .unwrap();
+        let retry = c.call("task.report", params.clone()).await.unwrap();
+        assert_eq!(retry, accepted);
+        params.as_object_mut().unwrap().remove("pane_id");
+        params["task_id"] = json!(task_id);
         let retry = c.call("task.report", params).await.unwrap();
         assert_eq!(retry, accepted);
 

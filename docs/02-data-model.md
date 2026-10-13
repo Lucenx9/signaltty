@@ -159,7 +159,7 @@ tasks). IDs are opaque `task_…` / `tctx_…` strings.
 | `id` | opaque, e.g. `task_…` |
 | `context_id` | collaboration id (`tctx_…`); refinements are new tasks, same context |
 | `parent_task_id?` | refinement link (currently always unset — reserved) |
-| `pane_id?` | worker pane; absent before spawn / after pane removal |
+| `pane_id?` | worker pane association; absent before spawn, may remain after pane removal |
 | `parent_pane_id?`, `root_pane_id?` | lineage written at start |
 | `relationship` | `fork`\|`subagent`, default `subagent` |
 | `label` | human label |

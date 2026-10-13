@@ -14,6 +14,6 @@ Core reports whether a mutation occurred. Store holds the write lock for matchin
 
 ## Consequences
 
-Workers can retry identical content after reconnecting or after the accepted result is restored. Task lifecycle and review disposition remain immutable during retries. Pane lookup still depends on current ownership; retain the task ID when the pane may be removed.
+Workers can retry identical content after reconnecting or after the accepted result is restored. Task lifecycle and review disposition remain immutable during retries. Pane lookup uses the task's retained association and can survive pane closure. Retain the task ID as the stable selector.
 
 This acknowledgment describes current or restored server state. It does not add a synchronous snapshot flush, coordinator delivery, automatic retry loop, or a reopened execution. See [spec 057](../../specs/057-idempotent-task-reports/spec.md).

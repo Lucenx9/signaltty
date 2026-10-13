@@ -36,7 +36,7 @@ A coordinator can trust that retry handling never replaces the worker's accepted
 - Omitted optional content and its existing decoded default are equivalent.
 - Evidence object key order is irrelevant; artifact order and string contents are significant.
 - Server-assigned report time is excluded from content matching.
-- A removed worker pane cannot resolve a task. A retry by retained task ID remains available.
+- Pane selection uses the task's retained association, which can survive pane closure. Explicit task ID remains the stable selector.
 - Malformed reports and missing task identities retain existing validation errors.
 
 ## Requirements

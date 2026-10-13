@@ -10,7 +10,19 @@ The IPC regression then reproduced twelve `task.result` events where one was exp
 
 ## Delivery gate and reviews
 
-Full verification and independent reviews are pending. The final reviewer is Gemini 3.8 Flash High on Antigravity, as requested. Gate commands, actual revisions, outcomes, and review findings will be recorded before PR completion.
+Full verification and final reviews are pending. The initial run `full-e1iet8yc` passed Clippy and warning policy, then was deliberately stopped before updating a review regression. It is not a passing delivery gate.
+
+### Standards
+
+Initial review: zero findings. Pure core matching, Store event pairing, typed IPC, and conservative scope conform to repository standards.
+
+### Spec
+
+Initial review: one mismatch in the new specification's removed-pane assumption. The existing task retains its pane association after closure. FR-008 requires preserving existing selectors, so the spec and contract now describe that retained association. A close-then-retry IPC case verifies both pane selection and explicit task ID. No routing change was introduced. Follow-up Spec review is pending.
+
+### Final reviewer
+
+Gemini 3.8 Flash High on Antigravity is the requested final reviewer. Its task, reviewed revision, findings, and responses will be recorded before PR completion.
 
 ## Limits
 

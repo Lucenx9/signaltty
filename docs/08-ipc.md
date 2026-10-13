@@ -161,7 +161,8 @@ for both the background first prompt and a follow-up.
 `task.report` retries compare status, exact summary, ordered artifact values, and
 decoded evidence after optional-field defaults. Server-assigned `reported_at` is
 excluded. The original result, timestamps, and current review disposition survive
-an identical retry. Retain the task ID to retry after its pane is removed. Success
+an identical retry. Pane selection uses the task's retained association and can
+survive pane closure; retain the task ID for stable later retries. Success
 confirms current or restored state, without adding a synchronous snapshot-flush or
 coordinator-delivery guarantee. See [ADR-0035](adr/0035-idempotent-task-reports.md).
 

@@ -1,6 +1,6 @@
 # task.report retry contract
 
-Params and result remain unchanged: `{task_id?, pane_id?, status, summary, artifacts?, evidence?}` returns `{task}`. Explicit task ID takes precedence over current pane ownership. Removed panes cannot resolve their former task; use the task ID for later retries.
+Params and result remain unchanged: `{task_id?, pane_id?, status, summary, artifacts?, evidence?}` returns `{task}`. Explicit task ID takes precedence. Pane lookup uses the task's retained `pane_id` association, even after pane closure while that association remains. Retain the task ID for stable later retries.
 
 An identical accepted result succeeds with the current stored task, preserving original `result.reported_at` and current `updated_at`, without events or a new persistence request. Changed status, summary, artifact values/order, or evidence returns `BAD_PARAMS`. A terminal task without an accepted result remains `BAD_PARAMS`; an unknown task remains `NO_SUCH_TASK`. Mistyped params and invalid summary/artifact limits retain existing errors.
 
