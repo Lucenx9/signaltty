@@ -5885,6 +5885,29 @@ fn project_scope_filters_without_rebuilding_workspaces() {
         signaltty_core::project::CatalogAuthority::Retained,
     );
     assert!(other_row.is_visible());
+    app.sidebar.reveal_workspace("created-after-failed-refresh");
+    assert_eq!(
+        app.sidebar.project.scope().directory(),
+        Some("/two/api"),
+        "an unknown navigation target cannot discard a retained scope"
+    );
+    assert_eq!(
+        crate::project_scope::load(&config).directory(),
+        Some("/two/api"),
+        "the persisted selection survives an incomplete refresh"
+    );
+    app.sidebar.reveal_workspace("api");
+    assert_eq!(
+        app.sidebar.project.scope().directory(),
+        Some("/one/api"),
+        "known navigation targets still reveal their project in a retained catalog"
+    );
+    app.sidebar.project.set_scope(
+        signaltty_core::project::ProjectScope::Project(signaltty_core::project::ProjectId::new(
+            "/two/api",
+        )),
+        crate::project_scope::ScopeChange::User,
+    );
     app.sidebar.project.set_catalog(
         Default::default(),
         signaltty_core::project::CatalogAuthority::Complete,
@@ -5896,6 +5919,21 @@ fn project_scope_filters_without_rebuilding_workspaces() {
     app.sidebar
         .project
         .set_catalog(catalog, signaltty_core::project::CatalogAuthority::Complete);
+    app.sidebar.project.set_scope(
+        signaltty_core::project::ProjectScope::Project(signaltty_core::project::ProjectId::new(
+            "/two/api",
+        )),
+        crate::project_scope::ScopeChange::User,
+    );
+    app.sidebar.reveal_workspace("unknown-in-complete-catalog");
+    assert_eq!(
+        app.sidebar.project.scope(),
+        signaltty_core::project::ProjectScope::All
+    );
+    assert_eq!(
+        crate::project_scope::load(&config),
+        signaltty_core::project::ProjectScope::All
+    );
     app.window.set_default_size(360, 800);
     app.split_view.set_collapsed(true);
     app.split_view.set_show_sidebar(true);

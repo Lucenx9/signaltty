@@ -1,6 +1,6 @@
 //! Native project scope control. Selection filters navigation, never PTYs.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 
@@ -25,6 +25,7 @@ pub struct ProjectPicker {
     empty: gtk4::Label,
     choices: RefCell<Vec<(ProjectScope, gtk4::ListBoxRow, gtk4::Image)>>,
     pub catalog: RefCell<ProjectCatalog>,
+    authority: Cell<CatalogAuthority>,
     scope: RefCell<ProjectScope>,
     changed: Changed,
 }
@@ -84,6 +85,7 @@ impl ProjectPicker {
             empty,
             choices: RefCell::new(Vec::new()),
             catalog: RefCell::new(ProjectCatalog::default()),
+            authority: Cell::new(CatalogAuthority::Retained),
             scope: RefCell::new(ProjectScope::All),
             changed: RefCell::new(None),
         });
@@ -197,6 +199,7 @@ impl ProjectPicker {
         let next = catalog.reconcile_scope(&self.catalog.borrow(), &self.scope(), authority);
         let changed = catalog.projects() != self.catalog.borrow().projects();
         self.catalog.replace(catalog);
+        self.authority.set(authority);
         if changed {
             self.rebuild_choices();
         }
@@ -204,16 +207,18 @@ impl ProjectPicker {
         self.update_label();
     }
 
+    /// Reveal known targets; an incomplete catalog cannot invalidate the saved scope.
     pub fn reveal_workspace(&self, id: &str) {
         let scope = self.scope();
         let catalog = self.catalog.borrow();
         if catalog.includes_workspace(&scope, id) {
             return;
         }
-        let target = catalog
-            .project_for_workspace(id)
-            .map(|project| ProjectScope::Project(project.id.clone()))
-            .unwrap_or(ProjectScope::All);
+        let target = match catalog.project_for_workspace(id) {
+            Some(project) => ProjectScope::Project(project.id.clone()),
+            None if self.authority.get() == CatalogAuthority::Complete => ProjectScope::All,
+            None => return,
+        };
         drop(catalog);
         self.set_scope(target, ScopeChange::Reconcile);
     }

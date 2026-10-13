@@ -33,3 +33,14 @@ Final reports are retained in the working session under
 `/tmp/project-sidebar-design/final-{standards,spec-gemini}-round3.md`.
 These reviews complement the gate; manual desktop accessibility/IME/chooser,
 notification-daemon and paid-provider paths remain unverified as documented in QA.
+
+## PR review correction
+
+CodeRabbit [discussion 4262282558](https://github.com/Lucenx9/signaltty/pull/103#discussion_r4262282558)
+identified an unknown navigation target resetting scope after a failed creation
+refresh. The native regression reproduced the loss of the selected project.
+ProjectPicker now retains the latest catalog authority: unknown targets preserve
+scope under Retained, while known targets still reveal their project and a complete
+catalog keeps the previous All fallback. The regression also checks the saved file.
+Targeted red/green logs: `/tmp/pr103-catalog-{red,green}.log`. Full verification and
+GitHub checks are required before the newly authorized merge.

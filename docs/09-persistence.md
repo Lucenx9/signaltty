@@ -111,3 +111,7 @@ guarantees do not strengthen snapshot/tail durability. See
 Workspace naming state is retained without the first prompt. An interrupted
 `generating` state becomes `failed` on load; generation is never replayed from a
 snapshot (ADR-0031). Legacy snapshots default to `manual`.
+
+Revealing a newly created workspace whose ID is absent from an incomplete catalog
+also preserves the current project scope. Only an authoritative complete catalog
+permits an unknown navigation target to fall back to All projects.
