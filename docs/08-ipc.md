@@ -102,7 +102,7 @@ through the ordinary Store transition. No additional project IPC method is neede
 | `task.list` | `{context_id?, state?, limit?}` | `{tasks: [...]}` (each task includes computed `stage`) |
 | `task.wait` | `{task_id?, context_id?, until?: string\|string[], timeout_s?}` | `{satisfied, tasks: [...]}` (default `until: settled`) |
 | `task.cancel` | `{task_id}` | `{task}` |
-| `task.report` | `{task_id?, pane_id?, status: completed\|failed\|rejected, summary, artifacts?, evidence?}` (task resolved via explicit `task_id`, else the task owning `pane_id`; one of the two is required) | `{task}` (stores the result, emits `task.result` + `task.updated`; report on a terminal task → `BAD_PARAMS`) |
+| `task.report` | `{task_id?, pane_id?, status: completed\|failed\|rejected, summary, artifacts?, evidence?}` (task resolved via explicit `task_id`, else the task owning `pane_id`; one of the two is required) | `{task}` (first report stores the result and emits `task.result` + `task.updated`; identical accepted-content retries return the current task without mutation or events; other terminal reports → `BAD_PARAMS`) |
 | `task.diff` | `{task_id}` | `{task_id, base_sha, branch, files[...], dirs[...], added, removed, merge_preview}` (`merge_preview: {target, clean, conflicted[]}` previews merging the committed branch tip into the recorded target, `null` when git cannot tell; worktree-vs-recorded-base, tracked + untracked; no index mutation; untracked reads are capped, `O_NOFOLLOW`, and off the runtime thread — symlinks, fifos, and files over 512 KiB are binary with zero counts) |
 | `task.file_diff` | `{task_id, path}` | `{task_id, path, untracked, content}` (same `content` shapes as `workspace.file_diff`) |
 | `task.finish` | `{task_id, mode: merge\|discard, target_ref?, delete_branch?, ignore_dirty?}` | `{task, merge?: {target, sha}, cleanup_error?}` (the outcome is `task.disposition.outcome` (`merged`/`discarded`), while `task.state` keeps its A2A value; a merge deletes the task branch unless `delete_branch: false`, discard keeps it unless `delete_branch: true`, and a pre-existing branch is never deleted; merge needs a `completed` task and a clean target; a failed `git status` is `IO_ERROR`, never "clean"; conflicts abort leaving the target clean → `MERGE_CONFLICT`, or `IO_ERROR` with `details.target_dirty` when abort fails; the merge runs in its own process group under a deadline (default 120 s, `SIGNALTTY_MERGE_TIMEOUT_MS`) and expiry kills it, restores the target and returns `TIMEOUT`, or `IO_ERROR` when it cannot; a merge git refuses without conflicts (hook, unrelated histories) is `IO_ERROR` carrying git's message; both modes kill and reap the worker's process group first, and once the worktree is gone the workspaces rooted at it close; an explicit `path` on `task.start` must be absolute) |
@@ -157,6 +157,14 @@ recovery applies. The pane's decision remains unanswered. If a decision arrives
 after Enter but before submit confirmation,
 the task commit preserves `input_required` and its `decision_required` evidence,
 for both the background first prompt and a follow-up.
+
+`task.report` retries compare status, exact summary, ordered artifact values, and
+decoded evidence after optional-field defaults. Server-assigned `reported_at` is
+excluded. The original result, timestamps, and current review disposition survive
+an identical retry. Pane selection uses the task's retained association and can
+survive pane closure; retain the task ID for stable later retries. Success
+confirms current or restored state, without adding a synchronous snapshot-flush or
+coordinator-delivery guarantee. See [ADR-0035](adr/0035-idempotent-task-reports.md).
 
 `task.wait` takes exactly one of `task_id` / `context_id` (both or neither
 → `BAD_PARAMS`); `until` accepts task states plus the pseudo-states

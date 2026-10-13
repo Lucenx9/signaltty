@@ -1215,14 +1215,25 @@ impl Task {
         Ok(())
     }
 
+    /// Accept a new report, or return false for identical accepted content.
     pub fn apply_report(
         &mut self,
         result: TaskResult,
         now: DateTime<Utc>,
-    ) -> Result<(), CoreError> {
+    ) -> Result<bool, CoreError> {
         result.validate()?;
         let target_state = result.status.to_state();
         if self.state.is_terminal() {
+            if self.state == target_state
+                && self.result.as_ref().is_some_and(|accepted| {
+                    accepted.status == result.status
+                        && accepted.summary == result.summary
+                        && accepted.artifacts == result.artifacts
+                        && accepted.evidence == result.evidence
+                })
+            {
+                return Ok(false);
+            }
             return Err(CoreError::InvalidTaskTransition(self.state, target_state));
         }
         if !self.state.can_transition_to(target_state) {
@@ -1231,7 +1242,7 @@ impl Task {
         self.state = target_state;
         self.result = Some(result);
         self.updated_at = now;
-        Ok(())
+        Ok(true)
     }
 
     pub fn apply_turn_ended_without_report(
@@ -1739,6 +1750,111 @@ mod tests {
 
         // Terminal state is immutable
         assert!(task.transition_to(TaskState::Working, now).is_err());
+    }
+
+    #[test]
+    fn task_report_retries_preserve_the_accepted_task() {
+        let now = Utc::now();
+        for status in [
+            TaskResultStatus::Completed,
+            TaskResultStatus::Failed,
+            TaskResultStatus::Rejected,
+        ] {
+            let mut task = Task {
+                id: crate::ids::new_task_id(),
+                context_id: crate::ids::new_context_id(),
+                parent_task_id: None,
+                pane_id: None,
+                parent_pane_id: None,
+                root_pane_id: None,
+                relationship: Relationship::Subagent,
+                label: "retry".into(),
+                contract: Contract::new("Report outcome").unwrap(),
+                agent: None,
+                source_repo: PathBuf::from("/tmp/repo"),
+                target_branch: None,
+                worktree_path: PathBuf::from("/tmp/worktree"),
+                branch: "task-retry".into(),
+                preexisting_branch: false,
+                base_ref: "main".into(),
+                base_sha: "abcdef".into(),
+                state: TaskState::Working,
+                result: None,
+                disposition: Disposition::default(),
+                pr: None,
+                status_reason: None,
+                finish_error: None,
+                worker_pid: None,
+                worker_cmd: None,
+                client_request_id: None,
+                created_at: now,
+                updated_at: now,
+            };
+            let mut result = TaskResult {
+                status,
+                summary: "Result accepted".into(),
+                artifacts: vec![
+                    Artifact {
+                        name: "patch".into(),
+                        path: "fix.patch".into(),
+                        version: Some("1".into()),
+                    },
+                    Artifact {
+                        name: "log".into(),
+                        path: "checks.log".into(),
+                        version: None,
+                    },
+                ],
+                evidence: Some(serde_json::json!({"checks": ["passed"]})),
+                reported_at: now,
+            };
+            task.apply_report(result.clone(), now).unwrap();
+            task.disposition.outcome = DispositionOutcome::Discarded;
+            task.updated_at = now + chrono::Duration::seconds(1);
+            let accepted = serde_json::to_value(&task).unwrap();
+            for attempt in 2..12 {
+                let later = now + chrono::Duration::seconds(attempt);
+                result.reported_at = later;
+                task.apply_report(result.clone(), later).unwrap();
+                assert_eq!(serde_json::to_value(&task).unwrap(), accepted);
+            }
+            for field in [
+                "status", "summary", "name", "path", "version", "order", "evidence",
+            ] {
+                let mut changed = result.clone();
+                match field {
+                    "status" => {
+                        changed.status = if status == TaskResultStatus::Completed {
+                            TaskResultStatus::Failed
+                        } else {
+                            TaskResultStatus::Completed
+                        };
+                    }
+                    "summary" => changed.summary.push(' '),
+                    "name" => changed.artifacts[0].name.push('x'),
+                    "path" => changed.artifacts[0].path.push('x'),
+                    "version" => changed.artifacts[0].version = None,
+                    "order" => changed.artifacts.reverse(),
+                    "evidence" => changed.evidence = None,
+                    _ => unreachable!(),
+                }
+                assert!(task.apply_report(changed, now).is_err(), "{field}");
+                assert_eq!(serde_json::to_value(&task).unwrap(), accepted);
+            }
+            for state in [
+                TaskState::Completed,
+                TaskState::Failed,
+                TaskState::Rejected,
+                TaskState::Canceled,
+            ] {
+                let mut unreported = task.clone();
+                unreported.state = state;
+                unreported.result = None;
+                let original = serde_json::to_value(&unreported).unwrap();
+                assert!(unreported.apply_report(result.clone(), now).is_err());
+                assert_eq!(serde_json::to_value(&unreported).unwrap(), original);
+            }
+        }
     }
 
     #[test]
