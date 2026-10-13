@@ -2912,7 +2912,10 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     // Closing changes the toggle before the panel's controls leave focus traversal.
     wait_ui(|| !app.changes.widget.is_mapped());
     app.window.set_default_size(1280, 800);
-    wait_ui(|| board.is_mapped());
+    wait_ui(|| app.window.width() >= 1200 && !app.changes_split.is_collapsed());
+    // Uncollapsing reopens the native utility pane; test header focus with it closed.
+    app.changes_split.set_show_sidebar(false);
+    wait_ui(|| !app.changes.widget.is_mapped() && board.is_mapped());
     assert!(!compact_board.is_mapped());
     assert!(!compact_changes.is_mapped());
     // The overflow menu remains available at the compact breakpoint.
