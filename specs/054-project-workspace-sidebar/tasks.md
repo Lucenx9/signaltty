@@ -30,7 +30,7 @@
 - [x] T014 Update docs 02/06/08/09 and verification feature map; retain handoff and reviewed native before/after QA evidence.
 - [x] T015 Run clean scripts/verify.sh full and native high contrast; inspect light/dark/360px/Sans18/long/duplicate/RTL scenes.
 - [x] T016 Final Gemini 3.8 Flash High Spec/UX and independent Standards review in full-access; fix findings and record verification.md.
-- [ ] T017 Publish/link PR against main, ensure clean checkout and close delivery handoff.
+- [x] T017 Publish/link PR against main, ensure clean checkout and close delivery handoff.
 
 ## Dependencies and ownership
 

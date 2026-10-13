@@ -20,6 +20,8 @@ review has no remaining findings. Retained QA is under
 `docs/qa/project-workspace-sidebar-2026-10-13`. One inherited synchronous Git
 metadata hardening judgment is deferred outside this sidebar scope.
 
-One writer owns repository changes. Remaining: publish/link the PR against main
-and record its URL. Desktop screen-reader/OSK/IME, folder chooser, desktop
-notification clicks and paid provider sessions are not run.
+Published and linked [PR #103](https://github.com/Lucenx9/signaltty/pull/103) against
+main. Requested delivery is complete; merge was not requested for this feature.
+CI checks are reported on the PR independently of the clean local full gate.
+Desktop screen-reader/OSK/IME, folder chooser, desktop notification clicks and
+paid provider sessions are not run.
