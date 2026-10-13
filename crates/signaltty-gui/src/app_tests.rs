@@ -2936,8 +2936,21 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
         .is_some_and(|focus| focus == new_tab.clone().upcast::<gtk4::Widget>()));
     assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
-    assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
-        .is_some_and(|focus| focus == board.clone().upcast::<gtk4::Widget>()));
+    let focus = gtk4::prelude::GtkWindowExt::focus(&app.window);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|focus| focus == board.upcast_ref::<gtk4::Widget>()),
+        "expected Board after New Tab, got {:?}; font {:?}; window {}px; board classes {:?}",
+        focus.map(|widget| (
+            widget.type_().name(),
+            widget.tooltip_text(),
+            widget.css_classes()
+        )),
+        settings.gtk_font_name(),
+        app.window.width(),
+        board.css_classes(),
+    );
     assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
     assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
         .is_some_and(|focus| focus == changes.clone().upcast::<gtk4::Widget>()));
