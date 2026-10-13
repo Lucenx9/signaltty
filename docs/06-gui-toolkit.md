@@ -115,7 +115,8 @@ Board and Changes use flat icon buttons with named tooltips. Below 520sp, they
 move into labeled controls in the pinned sidebar footer; secondary context and
 the decorative title mark hide. The footer also remains available whenever the
 workspace sidebar is collapsed, including before hidden content is reallocated.
-Activating a footer tool dismisses the sidebar overlay. Window breakpoints still
+Activating a footer tool dismisses the sidebar only in collapsed overlay mode;
+a docked workspace sidebar stays visible. Window breakpoints still
 own panel docking (1100sp for Changes, 760sp for the workspace sidebar).
 Menus, palette and shortcuts retain the same actions. Terminal content and
 workspace context continue to own the canvas.

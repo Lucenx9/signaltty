@@ -528,12 +528,18 @@ impl App {
             .bidirectional()
             .sync_create()
             .build();
-        let compact_sidebar = split_view.clone();
-        compact_new_tab.connect_clicked(move |_| compact_sidebar.set_show_sidebar(false));
-        let compact_sidebar = split_view.clone();
-        compact_board.connect_clicked(move |_| compact_sidebar.set_show_sidebar(false));
-        let compact_sidebar = split_view.clone();
-        compact_changes.connect_clicked(move |_| compact_sidebar.set_show_sidebar(false));
+        for tool in [
+            &compact_new_tab,
+            &compact_board,
+            compact_changes.upcast_ref(),
+        ] {
+            let compact_sidebar = split_view.clone();
+            tool.connect_clicked(move |_| {
+                if compact_sidebar.is_collapsed() {
+                    compact_sidebar.set_show_sidebar(false);
+                }
+            });
+        }
 
         // Window breakpoints own panel docking; content breakpoints own tools.
         let medium = adw::Breakpoint::new(

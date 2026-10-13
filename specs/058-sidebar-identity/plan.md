@@ -1,6 +1,6 @@
 # Implementation plan: Sidebar app identity
 
-Branch gui/sidebar-identity-polish | Base f8c3f18, parent PR #106 | Date 2026-10-14 | [Spec](spec.md)
+Branch gui/sidebar-identity-polish | Base 29e9aa6, parent PR #106 | Date 2026-10-14 | [Spec](spec.md)
 
 ## Summary
 A native horizontal brand lockup pairs a 20px symbolic mark with a 600-weight system-font wordmark. Keep existing header height and New Workspace action. Replace the original app artwork with a simple prompt plus two parallel rails, using the same geometry in the launcher tile and small symbolic mark. Mark follows text colors in the UI; the launcher alone carries a restrained cool brand hue.
@@ -16,3 +16,5 @@ App header in crates/signaltty-gui/src/app.rs; scoped branding CSS in data/style
 
 ## Strategy
 Capture parent shell scenes and old native icon artwork. Add a focused GTK identity test with geometry/focus/resource provenance assertions and capture hooks, run red. Implement only branding and two owned app assets. Inspect actual light/dark/200px/enlarged/native-HC/RTL renders and small-size icons, adjust weight/geometry if needed. Retain all terminal widgets and existing actions. Pin source for independent review and a clean full gate; publish the stacked PR and link immediately.
+
+Parent PR #106 advanced to 29e9aa6 during the first gate. Integrated its compact-tool dismissal fix, preserving the docked sidebar. Documentation conflict retained both the updated toolbar map and new branding map. Source baseline captures remain f8c3f18; the final full gate follows this integration.
