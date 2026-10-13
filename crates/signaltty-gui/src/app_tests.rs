@@ -5682,6 +5682,20 @@ fn project_scope_filters_without_rebuilding_workspaces() {
             .snapshots
             .insert(id.into(), snapshot);
     }
+    for (id, pane, parent) in [
+        ("api-task", "pane_api", "pane_other"),
+        ("worker-task", "pane_worker", "pane_api"),
+    ] {
+        let mut task = chip_scene_task(id);
+        task["id"] = json!(id);
+        task["pane_id"] = json!(pane);
+        task["parent_pane_id"] = json!(parent);
+        assert!(app
+            .model
+            .borrow_mut()
+            .tasks
+            .apply_event(signaltty_proto::event::TASK_CREATED, &json!({"task":task})));
+    }
     app.model.borrow_mut().cache.catalog_authority =
         signaltty_core::project::CatalogAuthority::Complete;
     app.refresh_sidebar();
@@ -5719,6 +5733,10 @@ fn project_scope_filters_without_rebuilding_workspaces() {
     assert_eq!(app.active_ws_id().as_deref(), Some("api"));
     assert!(api_row.is_visible());
     assert!(row("worker").is_visible());
+    assert!(
+        row("worker").has_css_class("workspace-child"),
+        "nested lineage remains grouped when its external ancestor is excluded"
+    );
     assert!(row("nested").is_visible());
     assert!(!other_row.is_visible());
     assert!(

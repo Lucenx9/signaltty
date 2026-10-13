@@ -1160,19 +1160,37 @@ impl Sidebar {
 
     pub fn reveal_workspace(&self, ws_id: &str) {
         self.project.reveal_workspace(ws_id);
+        self.expand_parent(ws_id);
+    }
+
+    fn expand_parent(&self, ws_id: &str) {
+        if !self
+            .project
+            .catalog
+            .borrow()
+            .includes_workspace(&self.project.scope(), ws_id)
+        {
+            return;
+        }
         let parent = self
-            .items
+            .rows
             .borrow()
             .iter()
-            .find(|item| item.id == ws_id)
-            .and_then(|item| item.parent.clone());
-        if let Some(parent) = parent {
-            self.collapsed_roots.borrow_mut().remove(&parent);
+            .find(|row| row.id == ws_id)
+            .and_then(|row| row.parent.clone());
+        let expanded =
+            parent.is_some_and(|parent| self.collapsed_roots.borrow_mut().remove(&parent));
+        if expanded {
+            self.render();
         }
-        self.render();
     }
 
     pub fn select(&self, ws_id: &str) {
+        self.expand_parent(ws_id);
+        self.restore_selection(ws_id);
+    }
+
+    pub fn restore_selection(&self, ws_id: &str) {
         self.selected_id.replace(Some(ws_id.to_owned()));
         self.reconciling.set(true);
         let rows = self.rows.borrow();

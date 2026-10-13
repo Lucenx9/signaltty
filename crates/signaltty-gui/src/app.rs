@@ -1332,8 +1332,7 @@ impl App {
             )
         };
         self.sidebar.project.set_catalog(catalog.0, catalog.1);
-        let (mut items, needing) = self.build_sidebar_items();
-        sidebar::sort_summaries(&mut items);
+        let (items, needing) = self.build_sidebar_items();
         self.sidebar.update(items);
         self.update_attention_button(&needing);
     }
@@ -1516,7 +1515,11 @@ impl App {
         self.render_tabs();
         self.content
             .set_visible_child_name(if has_tabs { "tabs" } else { "no-tabs" });
-        self.sidebar.select(ws_id);
+        if user_navigation {
+            self.sidebar.select(ws_id);
+        } else {
+            self.sidebar.restore_selection(ws_id);
+        }
     }
 
     // ---- layout rendering ----
