@@ -2805,6 +2805,39 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     app.changes_split.set_show_sidebar(false);
     wait_ui(|| board.has_css_class("header-tool-button"));
 
+    // Both docked panels can leave a compact content header in a wide window.
+    app.set_sidebar_width(560);
+    app.split_view.set_show_sidebar(true);
+    app.changes_split.set_show_sidebar(true);
+    wait_ui(|| !board.is_visible());
+    assert!(!app.split_view.is_collapsed());
+    assert!(!app.changes_split.is_collapsed());
+    for tooltip in [
+        "New Tab (Ctrl+Shift+T)",
+        "Task Board (Ctrl+Shift+B)",
+        "Changes (Ctrl+Shift+D)",
+    ] {
+        let tool = button_with_tooltip(app.sidebar_overlay.upcast_ref(), tooltip).unwrap();
+        wait_ui(|| tool.is_mapped());
+        tool.emit_clicked();
+        assert!(
+            app.split_view.shows_sidebar(),
+            "{tooltip} must preserve the docked workspace sidebar"
+        );
+        let dialog = app.board_dialog.borrow().as_ref().map(|b| b.dialog.clone());
+        if let Some(dialog) = dialog {
+            dialog.close();
+        }
+        wait_ui(|| app.board_dialog.borrow().is_none());
+        let form = app.new_ws_dialog.borrow().as_ref().cloned();
+        if let Some(form) = form {
+            form.dialog.close();
+            wait_ui(|| app.new_ws_dialog.borrow().is_none());
+        }
+    }
+    app.changes_split.set_show_sidebar(false);
+    app.set_sidebar_width(300);
+
     app.split_view.set_show_sidebar(false);
     app.window.set_default_size(360, 600);
     wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
@@ -2841,6 +2874,15 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     capture_workflow(&app.window, "compact-tools-large-high-contrast");
     settings.set_gtk_font_name(old_font.as_deref());
     app.window.remove_css_class("high-contrast");
+    let compact_new_tab =
+        button_with_tooltip(app.sidebar_overlay.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
+    compact_new_tab.emit_clicked();
+    assert!(!app.split_view.shows_sidebar());
+    let form = app.new_ws_dialog.borrow().as_ref().unwrap().clone();
+    form.dialog.close();
+    wait_ui(|| app.new_ws_dialog.borrow().is_none());
+    app.split_view.set_show_sidebar(true);
+
     let compact_board = button_with_tooltip(
         app.sidebar_overlay.upcast_ref(),
         "Task Board (Ctrl+Shift+B)",
