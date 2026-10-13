@@ -1,0 +1,13 @@
+thread 'app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions' (3577516) panicked at crates/signaltty-gui/src/app_tests.rs:2122:5:
+assertion `left == right` failed
+  left: "feature/header · /tmp/signaltty <literal>&"
+ right: "feature/header"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 156 filtered out; finished in 0.43s
+
+error: test failed, to rerun pass `-p signaltty-gui --bin signaltty-gui`

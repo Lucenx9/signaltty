@@ -2,7 +2,7 @@
 
 **Feature Branch**: `gui/compact-workspace-hierarchy`
 **Created**: 2026-10-13
-**Status**: Ready for planning
+**Status**: Implemented and verified
 **Input**: Improve sidebar density and header hierarchy toward T3 Code quality; use the requested design skills and deliver a PR.
 
 ## User Scenarios & Testing

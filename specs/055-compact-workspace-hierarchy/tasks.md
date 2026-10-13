@@ -21,7 +21,7 @@ Independent test: branch/agent/directory contexts and full literal names/paths u
 
 ## Phase 5: Delivery
 - [x] T010 Update presentation contract in docs/06-gui-toolkit.md and feature verification map in .agents/skills/verify-signaltty/features/.
-- [ ] T011 Complete full gate and two-axis independent review; record outcomes in specs/055-compact-workspace-hierarchy/verification.md.
+- [x] T011 Complete full gate and two-axis independent review; record outcomes in specs/055-compact-workspace-hierarchy/verification.md.
 - [ ] T012 Commit selected proof under docs/qa/compact-workspace-hierarchy-2026-10-13/, push and open/link PR; update specs/055-compact-workspace-hierarchy/handoff.md.
 
 ## Dependencies and parallel opportunities
