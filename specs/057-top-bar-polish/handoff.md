@@ -1,0 +1,2 @@
+# Handoff
+Assigned checkout gui-secondary-window-polish; branch gui/top-bar-polish. Original baseline9d1913a includes merged #104; final basef3f42f2 includes #105. Scope: researched native top-bar hierarchy, allocation and grouping, then new PR. Source implemented and initial native scenarios reviewed; integrated main before the final full gate. Feature renumbered057 to avoid main's056-pr-readiness. Root checkout and other tasks untouched.

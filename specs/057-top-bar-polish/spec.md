@@ -43,4 +43,4 @@ Empty application title, very long generated workspace/branch names, full paths 
 - **SC-004**: The desktop fixture retains a blank drag region of at least 24px and a compact fixture of at least 12px.
 
 ## Assumptions
-The active task continues the previously authorized PR workflow. #104 is merged; new base is `9d1913a`. Scope is top-bar presentation and native adaptive layout, not new timeline/inbox/navigation features. Actual desktop dragging, screen-reader speech, OSK and IME are explicitly reported if not exercised; native geometry alone does not certify compositor behavior.
+The active task continues the previously authorized PR workflow. #104 is merged; baseline is `9d1913a`. Final integration base is `f3f42f2`, including #105. Scope is top-bar presentation and native adaptive layout, not new timeline/inbox/navigation features. Actual desktop dragging, screen-reader speech, OSK and IME are explicitly reported if not exercised; native geometry alone does not certify compositor behavior.

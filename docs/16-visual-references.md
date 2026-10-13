@@ -107,7 +107,7 @@ and checkout actions remain local. Native captures and explicit proof limits are
 recorded in [spec053 verification](../specs/053-icon-hierarchy-polish/verification.md).
 
 
-## Top bar refinement, spec056
+## Top bar refinement, spec057
 
 [GNOME header bars](https://developer.gnome.org/hig/patterns/containers/header-bars.html)
 recommend start/title/end grouping, few contextual controls, spacing between
@@ -120,4 +120,4 @@ follows allocated content width rather than total window width, protecting the
 title when Changes is docked. New Tab, Board and Changes stay labeled in the
 compact sidebar. Native measurement, light/dark/RTL/enlarged-text/high-contrast
 proof and compositor limits are recorded in
-[spec056 verification](../specs/056-top-bar-polish/verification.md).
+[spec057 verification](../specs/057-top-bar-polish/verification.md).

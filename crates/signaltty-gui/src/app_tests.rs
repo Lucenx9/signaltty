@@ -2402,6 +2402,20 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
         } else {
             assert!(!new_tab.is_mapped());
         }
+        if width != 360 && direction == gtk4::TextDirection::Ltr {
+            new_tab.grab_focus();
+            assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
+            let focus = gtk4::prelude::GtkWindowExt::focus(&app.window).unwrap();
+            assert!(
+                focus == app.crumb_button.clone().upcast::<gtk4::Widget>()
+                    || focus.is_ancestor(&app.crumb_button),
+                "active Details follows creation in keyboard order"
+            );
+            assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
+            assert!(gtk4::prelude::GtkWindowExt::focus(&app.window).is_some_and(
+                |focus| focus == app.attention.button.clone().upcast::<gtk4::Widget>()
+            ));
+        }
         for widget in [
             app.crumb_button.upcast_ref(),
             app.attention.button.upcast_ref(),

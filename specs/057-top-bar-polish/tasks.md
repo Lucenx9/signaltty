@@ -1,8 +1,8 @@
 # Tasks: Top bar polish
 
 ## Setup
-- [x] T001 Research primary toolbar guidance and record design decisions in specs/056-top-bar-polish/research.md.
-- [x] T002 Complete spec/plan/contract/checklist in specs/056-top-bar-polish/.
+- [x] T001 Research primary toolbar guidance and record design decisions in specs/057-top-bar-polish/research.md.
+- [x] T002 Complete spec/plan/contract/checklist in specs/057-top-bar-polish/.
 - [x] T003 Capture current native baseline using crates/signaltty-gui/src/app_tests.rs.
 
 ## US1: Identity and groups
@@ -18,8 +18,8 @@ Independent test: attention, keyboard, RTL, breakpoint restoration and retained 
 
 ## Delivery
 - [x] T009 Update docs/06-gui-toolkit.md, docs/16-visual-references.md and .agents/skills/verify-signaltty/features/structure.md.
-- [ ] T010 Run full gate and independent two-axis review; record in specs/056-top-bar-polish/verification.md.
-- [ ] T011 Commit selected proof under docs/qa/top-bar-polish-2026-10-14/, publish/link PR and update specs/056-top-bar-polish/handoff.md.
+- [ ] T010 Run full gate and independent two-axis review; record in specs/057-top-bar-polish/verification.md.
+- [ ] T011 Commit selected proof under docs/qa/top-bar-polish-2026-10-14/, publish/link PR and update specs/057-top-bar-polish/handoff.md.
 
 ## Dependencies and strategy
 T001-T004 precede implementation. US1 and US2 share App/CSS ownership and run sequentially; independent review axes run in parallel. Use existing native test seams and capture helpers. Changes remain a single frontend concern; full verification and inspected screenshots are the delivery gate.

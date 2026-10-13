@@ -1,6 +1,6 @@
 # Implementation Plan: Top bar polish
 
-Branch gui/top-bar-polish | Base 9d1913a | Date 2026-10-13 | [Spec](spec.md)
+Branch gui/top-bar-polish | Base f3f42f2 | Date 2026-10-13 | [Spec](spec.md)
 
 ## Summary
 Use native HeaderBar regions to separate leading navigation/create, an expanding title lane and trailing attention/views/menu. Put the existing Details button in the title lane alongside a non-interactive 24px drag space (12px compact). Hide the decorative workspace mark at the narrow content breakpoint; retain full identity through its accessible control. Refine group spacing only within the owned content header.
@@ -24,3 +24,5 @@ Capture the current header fixture before changing expected geometry. Extend exi
 
 ## Final adaptive design
 Window breakpoints retain panel docking at 1100sp/760sp. A native content BreakpointBin uses 860sp for icon labels and 520sp for compact relocation, so an open Changes panel cannot squeeze labeled actions into the title. New Tab joins the labeled compact sidebar tools. One weak-reference callback shows that footer when the sidebar is collapsed or the header creation control is hidden; breakpoint setters do not compete over footer visibility. The attention button hides directly, eliminating the concealed Revealer's measured 35px footprint.
+
+Main advanced with #105 during verification. Integrated f3f42f2 before final gate; renumbered this feature to057 because main now contains056-pr-readiness. Baseline captures retain their original9d1913a provenance.
