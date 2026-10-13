@@ -1471,15 +1471,19 @@ impl App {
         let snapshot = self.model.borrow().cache.snapshots.get(ws_id).cloned();
         let Some(snapshot) = snapshot else { return };
         let ws = snapshot.workspace;
-        if user_navigation {
+        let scope_changed = if user_navigation {
+            let before = self.sidebar.project.scope();
             self.sidebar.reveal_workspace(ws_id);
-        }
+            self.sidebar.project.scope() != before
+        } else {
+            false
+        };
         if self.active_ws_id().as_deref() != Some(ws_id) {
             self.zoom.borrow_mut().take();
             // The card describes one workspace; a switch closes it.
             self.details.popover.popdown();
         }
-        if user_navigation && self.active_ws_id().as_deref() != Some(ws_id) {
+        if user_navigation && (scope_changed || self.active_ws_id().as_deref() != Some(ws_id)) {
             self.navigate();
         }
         self.title.set_text(&self.display_title(&ws));

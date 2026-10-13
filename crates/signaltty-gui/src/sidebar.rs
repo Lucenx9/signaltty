@@ -999,7 +999,7 @@ impl Sidebar {
     /// place. Moves remove + re-insert rows, which drops GTK's selection
     /// on the moved row — so snapshot the selected workspace and restore
     /// it after: the highlight tracks the workspace, not the row index.
-    /// The echo is harmless (`on_select` skips the already-active one).
+    /// Reconcile suppresses selection callbacks while restoring the active row.
     pub fn update(&self, items: Vec<WsSummary>) {
         self.items.replace(items);
         self.render();
@@ -1129,7 +1129,7 @@ impl Sidebar {
                 .rows
                 .borrow()
                 .iter()
-                .find(|r| r.id == id && r.row.is_visible())
+                .find(|r| r.id == id && r.row.get_visible())
             {
                 self.list.select_row(Some(&row.row));
             }
@@ -1178,7 +1178,7 @@ impl Sidebar {
         let rows = self.rows.borrow();
         if let Some(row) = rows
             .iter()
-            .find(|row| row.id == ws_id && row.row.is_visible())
+            .find(|row| row.id == ws_id && row.row.get_visible())
         {
             self.list.select_row(Some(&row.row));
         } else {

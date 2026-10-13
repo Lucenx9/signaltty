@@ -333,14 +333,24 @@ impl ProjectPicker {
         let query = self.search.text().to_lowercase();
         let mut matches = 0;
         for (scope, row, _) in self.choices.borrow().iter() {
-            let visible = match scope {
-                ProjectScope::All => query.is_empty(),
-                ProjectScope::Project(id) => id.directory().to_lowercase().contains(&query),
-            };
+            let visible = matches_query(scope, &query);
             row.set_visible(visible);
             matches += usize::from(visible);
         }
         self.empty.set_visible(matches == 0);
+    }
+}
+
+fn matches_query(scope: &ProjectScope, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    match scope {
+        ProjectScope::All => "all projects".contains(&query),
+        ProjectScope::Project(id) => {
+            id.directory().to_lowercase().contains(&query)
+                || crate::util::tilde(id.directory())
+                    .to_lowercase()
+                    .contains(&query)
+        }
     }
 }
 
@@ -381,6 +391,23 @@ pub fn save(path: &Path, scope: &ProjectScope) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_projects_can_be_found_by_its_displayed_label() {
+        assert!(matches_query(&ProjectScope::All, "all"));
+        assert!(matches_query(&ProjectScope::All, "ALL PROJECTS"));
+        assert!(!matches_query(&ProjectScope::All, "unmatched"));
+    }
+
+    #[test]
+    fn project_search_matches_absolute_and_displayed_home_paths() {
+        let directory = format!("{}/project-picker-search", std::env::var("HOME").unwrap());
+        let scope = ProjectScope::Project(ProjectId::new(&directory));
+        assert!(matches_query(&scope, &directory));
+        assert!(matches_query(&scope, "~/project-picker-search"));
+        assert!(matches_query(&scope, "PROJECT-PICKER-SEARCH"));
+        assert!(!matches_query(&scope, "unmatched"));
+    }
 
     #[test]
     fn scope_storage_roundtrips_and_recovers_missing_corrupt_or_empty_files() {

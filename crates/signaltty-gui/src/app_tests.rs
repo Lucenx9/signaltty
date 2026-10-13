@@ -5764,7 +5764,12 @@ fn project_scope_filters_without_rebuilding_workspaces() {
     app.configure_project_scope(config.clone());
     assert_eq!(app.sidebar.project.scope().directory(), Some("/two/api"));
     // Explicit global navigation reveals the target; passive repaint above did not.
+    let navigation = app.navigation.get();
     app.show_workspace("api");
+    assert!(
+        app.navigation.get() > navigation,
+        "revealing the already-active workspace supersedes pending creation focus"
+    );
     assert_eq!(app.sidebar.project.scope().directory(), Some("/one/api"));
     assert!(api_row.is_visible());
     for (scheme, name) in [
@@ -5822,8 +5827,8 @@ fn project_scope_filters_without_rebuilding_workspaces() {
             || focus.is_ancestor(&selector)));
     selector.popup();
     wait_ui(|| picker.is_mapped());
-    let all = list.row_at_index(0).unwrap();
-    list.emit_by_name::<()>("row-activated", &[&all]);
+    search.set_text("all");
+    search.emit_by_name::<()>("activate", &[]);
     assert_eq!(
         app.sidebar.project.scope(),
         signaltty_core::project::ProjectScope::All
