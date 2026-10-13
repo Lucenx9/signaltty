@@ -1,0 +1,41 @@
+
+running 1 test
+test app::tests::sidebar_brand_is_static_and_keeps_creation_reachable_at_minimum_width ... dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.0' (uid=1000 pid=4180068 comm="/home/simone/.t3/worktrees/signaltty/gui-secondary")
+dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.1' (uid=1000 pid=4180085 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.1' (uid=1000 pid=4180085 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.396: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.1' (uid=1000 pid=4180085 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.4' (uid=1000 pid=4180108 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[4180117]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=4180108 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[4180117]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.511: Choosing gtk.portal for org.freedesktop.impl.portal.Settings as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.512: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.513: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.514: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.514: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.515: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.516: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.522: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.523: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:4180085): xdg-desktop-portal-WARNING **: 00:58:50.523: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback
+dbus-daemon[4180067]: [session uid=1000 pid=4180067 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 159 filtered out; finished in 2.22s
+

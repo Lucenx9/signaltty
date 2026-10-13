@@ -1,6 +1,6 @@
 # Feature specification: Sidebar app identity
 
-Branch `gui/sidebar-identity-polish` | Created 2026-10-14 | Status Ready for planning
+Branch `gui/sidebar-identity-polish` | Created 2026-10-14 | Status Implemented and verified
 
 Input: Improve the left area labeled signaltty, including the app icon if useful; research web best practices, use Emil/Apple/frontend-design skills and deliver a PR.
 
