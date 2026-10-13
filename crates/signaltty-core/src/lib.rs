@@ -9,6 +9,7 @@ pub mod paths;
 pub mod project;
 pub mod state;
 pub mod theme;
+pub mod workflow;
 
 pub use error::CoreError;
 pub use ids::{
@@ -17,9 +18,11 @@ pub use ids::{
 pub use model::{
     compose_worker_prompt, parse_review_decision, rollup_status_checks, AgentInfo, AgentKind,
     Artifact, Contract, Decision, DecisionOption, Disposition, DispositionOutcome, GitInfo, Layout,
-    LiveState, Notification, NotificationSeverity, Pane, PrChecks, PrReview, PrState, PtySize,
-    Relationship, RestoreState, SplitDir, Tab, Task, TaskPr, TaskResult, TaskResultStatus,
-    Workspace,
+    LiveState, Notification, NotificationSeverity, Pane, PrChecks, PrMergeState, PrMergeability,
+    PrReview, PrState, PtySize, Relationship, RestoreState, SplitDir, Tab, Task, TaskPr,
+    TaskResult, TaskResultStatus, Workspace,
 };
 pub use state::{Attention, Lifecycle, TaskState};
 pub use theme::{clamp_sidebar_width, Appearance, GuiPreference, Theme};
+
+pub use workflow::{task_stage, TaskStage};

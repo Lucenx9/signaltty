@@ -4091,13 +4091,13 @@ fn task_board_shows_columns_and_navigates_to_pane() {
     app.window.visible_dialog().unwrap().close();
     wait_ui(|| app.window.visible_dialog().is_none());
 
-    // 2. Populate 4 tasks in the model
+    // 2. Populate lifecycle and PR observations in the model
     let now = chrono::Utc::now();
     let now_str = now.to_rfc3339();
     let older_str = (now - chrono::Duration::minutes(5)).to_rfc3339();
     {
         let mut model = app.model.borrow_mut();
-        let tasks = vec![
+        let mut tasks = vec![
             json!({
                 "id": "task_working_1",
                 "context_id": "ctx1",
@@ -4168,6 +4168,31 @@ fn task_board_shows_columns_and_navigates_to_pane() {
             }),
         ];
 
+        for (id, label, draft, error, number) in [
+            ("task_ready_pr", "Ready pull request", false, None, 201),
+            ("task_draft_pr", "Draft pull request", true, None, 202),
+            (
+                "task_failed_refresh",
+                "Refresh failed pull request",
+                false,
+                Some("offline"),
+                203,
+            ),
+        ] {
+            let mut task = tasks[2].clone();
+            task["id"] = json!(id);
+            task["pane_id"] = json!(format!("pane_pr_{number}"));
+            task["label"] = json!(label);
+            task["branch"] = json!("orch/pr-observation");
+            task["pr"] = json!({
+                "number":number, "url":format!("https://github.com/o/r/pull/{number}"),
+                "state":"open", "checks":"passing", "review":"approved",
+                "head_sha":"abcdef", "draft":draft, "mergeability":"mergeable",
+                "merge_state":"clean", "checked_at":now_str, "refresh_error":error
+            });
+            tasks.push(task);
+        }
+
         for t in &tasks {
             assert!(model
                 .tasks
@@ -4224,7 +4249,7 @@ fn task_board_shows_columns_and_navigates_to_pane() {
         assert!(has_board_column_count(
             &dialog.child().unwrap(),
             "In review",
-            "1"
+            "3"
         ));
         assert!(has_board_column_count(
             &dialog.child().unwrap(),
@@ -4245,6 +4270,54 @@ fn task_board_shows_columns_and_navigates_to_pane() {
             "Initial multiplexer core"
         ));
 
+        assert!(has_board_column_count(
+            &dialog.child().unwrap(),
+            "Ready to merge",
+            "1"
+        ));
+        for label in ["Draft pull request", "Refresh failed pull request"] {
+            let task = app
+                .model
+                .borrow()
+                .tasks
+                .iter()
+                .find(|task| task.label == label)
+                .unwrap()
+                .clone();
+            let subtitle = board::task_to_card(&task, chrono::Utc::now()).subtitle();
+            assert!(has_label(&dialog.child().unwrap(), &subtitle), "{subtitle}");
+        }
+        if theme == "dark" {
+            let ready = app
+                .model
+                .borrow()
+                .tasks
+                .iter()
+                .find(|task| task.id == "task_ready_pr")
+                .unwrap()
+                .clone();
+            let mut expired = ready.clone();
+            expired.pr.as_mut().unwrap().checked_at =
+                Some(chrono::Utc::now() - chrono::Duration::minutes(5));
+            app.model.borrow_mut().tasks.apply_event(
+                signaltty_proto::event::TASK_UPDATED,
+                &json!({"task":expired}),
+            );
+            app.refresh_open_board();
+            wait_ui(|| has_board_column_count(&dialog.child().unwrap(), "Ready to merge", "0"));
+            assert!(has_board_column_count(
+                &dialog.child().unwrap(),
+                "In review",
+                "4"
+            ));
+            capture_workflow(&app.window, "board-pr-expired");
+            app.model
+                .borrow_mut()
+                .tasks
+                .apply_event(signaltty_proto::event::TASK_UPDATED, &json!({"task":ready}));
+            app.refresh_open_board();
+            wait_ui(|| has_board_column_count(&dialog.child().unwrap(), "Ready to merge", "1"));
+        }
         capture_workflow(&app.window, &format!("board-{theme}"));
         let dialog = app.window.visible_dialog().unwrap();
         if theme == "dark" {

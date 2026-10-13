@@ -2196,6 +2196,7 @@ mod tests {
             checks: signaltty_core::model::PrChecks::Pending,
             review: signaltty_core::model::PrReview::ReviewRequired,
             checked_at: None,
+            ..TaskPr::default()
         };
 
         // Non-existent task

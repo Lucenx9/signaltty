@@ -69,3 +69,19 @@ EPERM before/after a host-owned bridge starts a worker, error guidance is usable
 and native Codex accepts the registration. It performs no authenticated model
 turn and does not prove every provider's runtime MCP child boundary. See the
 support/proof matrix in docs/07-agents.md.
+
+## Verified PR readiness
+
+`cargo test -p signaltty-core workflow` verifies complete merge evidence, draft and
+unknown facts, exact five-minute expiry, future timestamps, and legacy snapshots.
+`cargo test -p signaltty-server --test orchestrator_pr` uses fake gh and real IPC
+to verify head changes, draft/conflict states, malformed observations, failed
+refresh invalidation, batch error reporting, and shared task get/list stages.
+`cargo test -p signaltty-server --lib pr_refresh_orders_attempts` verifies response
+ordering and preservation of the latest successful facts after a failed attempt.
+The CLI `cli_task_orchestration` test checks stage in JSON and normal task output.
+
+The ignored GTK test `task_board_shows_columns_and_navigates_to_pane` renders
+ready, draft, and failed-refresh PR cards in light and dark. It verifies expired
+readiness moves columns when the board reevaluates without a server event.
+These fixtures do not certify live GitHub branch rules or perform a remote merge.

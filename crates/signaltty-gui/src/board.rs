@@ -13,74 +13,11 @@ use std::rc::Rc;
 use chrono::{DateTime, Utc};
 use gtk4::prelude::*;
 use libadwaita::prelude::*;
-use signaltty_core::{DispositionOutcome, PrChecks, PrReview, PrState, Task, TaskState};
+use signaltty_core::{PrChecks, PrMergeState, PrMergeability, PrState, Task};
 
 use crate::task_chip::{state_class, state_word};
 
-/// The five kanban columns representing a task's lifecycle stage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BoardColumn {
-    Working,
-    NeedsYou,
-    InReview,
-    ReadyToMerge,
-    Done,
-}
-
-impl BoardColumn {
-    pub fn title(self) -> &'static str {
-        match self {
-            BoardColumn::Working => "Working",
-            BoardColumn::NeedsYou => "Needs you",
-            BoardColumn::InReview => "In review",
-            BoardColumn::ReadyToMerge => "Ready to merge",
-            BoardColumn::Done => "Done",
-        }
-    }
-}
-
-/// Pure derivation of a task's board column according to orchestrator lifecycle rules:
-/// - Working: TaskState::Pending | TaskState::Working
-/// - NeedsYou: InputRequired | Failed | Rejected (with outcome == None)
-/// - InReview: Completed (with outcome == None)
-/// - Done: disposition outcome Merged or Discarded, plus Canceled
-pub fn board_column(task: &Task) -> BoardColumn {
-    if matches!(
-        task.disposition.outcome,
-        DispositionOutcome::Merged | DispositionOutcome::Discarded
-    ) || task.state == TaskState::Canceled
-    {
-        BoardColumn::Done
-    } else if let Some(ref pr) = task.pr {
-        match pr.state {
-            PrState::Merged | PrState::Closed => BoardColumn::Done,
-            PrState::Open => {
-                if pr.checks == PrChecks::Failing || pr.review == PrReview::ChangesRequested {
-                    BoardColumn::NeedsYou
-                } else if pr.checked_at.is_some()
-                    && matches!(pr.checks, PrChecks::Passing | PrChecks::None)
-                    && matches!(pr.review, PrReview::Approved | PrReview::None)
-                {
-                    BoardColumn::ReadyToMerge
-                } else {
-                    BoardColumn::InReview
-                }
-            }
-        }
-    } else if task.state == TaskState::Completed
-        && task.disposition.outcome == DispositionOutcome::None
-    {
-        BoardColumn::InReview
-    } else if matches!(
-        task.state,
-        TaskState::InputRequired | TaskState::Failed | TaskState::Rejected
-    ) && task.disposition.outcome == DispositionOutcome::None
-    {
-        BoardColumn::NeedsYou
-    } else {
-        BoardColumn::Working
-    }
-}
+pub use signaltty_core::TaskStage as BoardColumn;
 
 /// "now", "3m", "2h", "1d" relative age format from `updated_at` against `now`.
 pub fn relative_age(updated_at: DateTime<Utc>, now: DateTime<Utc>) -> String {
@@ -129,6 +66,7 @@ pub struct TaskCardView {
     pub updated_at: DateTime<Utc>,
     pub pr_number: Option<u64>,
     pub pr_checks: Option<PrChecks>,
+    pub pr_note: Option<&'static str>,
 }
 
 impl TaskCardView {
@@ -158,6 +96,10 @@ impl TaskCardView {
             parts.push(checks);
         }
 
+        if let Some(note) = self.pr_note {
+            parts.insert(0, note);
+        }
+
         parts.join(" · ")
     }
 }
@@ -168,6 +110,29 @@ pub fn task_to_card(task: &Task, now: DateTime<Utc>) -> TaskCardView {
         Some(ref pr) => (Some(pr.number), Some(pr.checks)),
         None => (None, None),
     };
+    let pr_note = task
+        .pr
+        .as_ref()
+        .filter(|pr| pr.state == PrState::Open)
+        .and_then(|pr| {
+            if pr.refresh_error.is_some() {
+                Some("refresh failed")
+            } else if !pr.observation_fresh(now) || pr.head_sha.is_none() || pr.draft.is_none() {
+                Some("refresh needed")
+            } else if pr.draft == Some(true) {
+                Some("draft")
+            } else if pr.mergeability == PrMergeability::Conflicting {
+                Some("merge conflict")
+            } else if pr.mergeability == PrMergeability::Unknown
+                || pr.merge_state == PrMergeState::Unknown
+            {
+                Some("mergeability unknown")
+            } else if pr.merge_state != PrMergeState::Clean {
+                Some("merge blocked")
+            } else {
+                None
+            }
+        });
     TaskCardView {
         id: task.id.clone(),
         pane_id: task.pane_id.clone(),
@@ -180,6 +145,7 @@ pub fn task_to_card(task: &Task, now: DateTime<Utc>) -> TaskCardView {
         updated_at: task.updated_at,
         pr_number,
         pr_checks,
+        pr_note,
     }
 }
 
@@ -201,7 +167,7 @@ pub fn build_board(tasks: &[Task], now: DateTime<Utc>) -> Vec<BoardColumnView> {
     let mut done = Vec::new();
 
     for task in tasks {
-        let col = board_column(task);
+        let col = signaltty_core::task_stage(task, now);
         let card = task_to_card(task, now);
         match col {
             BoardColumn::Working => working.push(card),
@@ -952,7 +918,9 @@ pub fn present(
 mod tests {
     use super::*;
     use chrono::{Duration, TimeZone};
-    use signaltty_core::{Contract, Disposition, Relationship, TaskPr};
+    use signaltty_core::{
+        Contract, Disposition, DispositionOutcome, PrReview, Relationship, TaskPr, TaskState,
+    };
     use std::path::PathBuf;
 
     fn make_task(
@@ -1017,7 +985,10 @@ mod tests {
             DispositionOutcome::None,
             base_time,
         );
-        assert_eq!(board_column(&task_pending), BoardColumn::Working);
+        assert_eq!(
+            signaltty_core::task_stage(&task_pending, Utc::now()),
+            BoardColumn::Working
+        );
 
         let task_working = make_task(
             "t2",
@@ -1026,7 +997,10 @@ mod tests {
             DispositionOutcome::None,
             base_time,
         );
-        assert_eq!(board_column(&task_working), BoardColumn::Working);
+        assert_eq!(
+            signaltty_core::task_stage(&task_working, Utc::now()),
+            BoardColumn::Working
+        );
 
         // 2. NeedsYou: InputRequired | Failed | Rejected when outcome == None
         let task_input = make_task(
@@ -1036,7 +1010,10 @@ mod tests {
             DispositionOutcome::None,
             base_time,
         );
-        assert_eq!(board_column(&task_input), BoardColumn::NeedsYou);
+        assert_eq!(
+            signaltty_core::task_stage(&task_input, Utc::now()),
+            BoardColumn::NeedsYou
+        );
 
         let task_failed = make_task(
             "t4",
@@ -1045,7 +1022,10 @@ mod tests {
             DispositionOutcome::None,
             base_time,
         );
-        assert_eq!(board_column(&task_failed), BoardColumn::NeedsYou);
+        assert_eq!(
+            signaltty_core::task_stage(&task_failed, Utc::now()),
+            BoardColumn::NeedsYou
+        );
 
         let task_rejected = make_task(
             "t5",
@@ -1054,7 +1034,10 @@ mod tests {
             DispositionOutcome::None,
             base_time,
         );
-        assert_eq!(board_column(&task_rejected), BoardColumn::NeedsYou);
+        assert_eq!(
+            signaltty_core::task_stage(&task_rejected, Utc::now()),
+            BoardColumn::NeedsYou
+        );
 
         // 3. InReview: Completed when outcome == None
         let task_completed = make_task(
@@ -1064,7 +1047,10 @@ mod tests {
             DispositionOutcome::None,
             base_time,
         );
-        assert_eq!(board_column(&task_completed), BoardColumn::InReview);
+        assert_eq!(
+            signaltty_core::task_stage(&task_completed, Utc::now()),
+            BoardColumn::InReview
+        );
 
         // 4. Done: Canceled regardless of outcome
         let task_canceled = make_task(
@@ -1074,7 +1060,10 @@ mod tests {
             DispositionOutcome::None,
             base_time,
         );
-        assert_eq!(board_column(&task_canceled), BoardColumn::Done);
+        assert_eq!(
+            signaltty_core::task_stage(&task_canceled, Utc::now()),
+            BoardColumn::Done
+        );
 
         // 5. Done: Any state when outcome is Merged or Discarded
         let task_merged_completed = make_task(
@@ -1084,7 +1073,10 @@ mod tests {
             DispositionOutcome::Merged,
             base_time,
         );
-        assert_eq!(board_column(&task_merged_completed), BoardColumn::Done);
+        assert_eq!(
+            signaltty_core::task_stage(&task_merged_completed, Utc::now()),
+            BoardColumn::Done
+        );
 
         let task_discarded_failed = make_task(
             "t9",
@@ -1093,7 +1085,10 @@ mod tests {
             DispositionOutcome::Discarded,
             base_time,
         );
-        assert_eq!(board_column(&task_discarded_failed), BoardColumn::Done);
+        assert_eq!(
+            signaltty_core::task_stage(&task_discarded_failed, Utc::now()),
+            BoardColumn::Done
+        );
 
         let task_merged_working = make_task(
             "t10",
@@ -1102,7 +1097,10 @@ mod tests {
             DispositionOutcome::Merged,
             base_time,
         );
-        assert_eq!(board_column(&task_merged_working), BoardColumn::Done);
+        assert_eq!(
+            signaltty_core::task_stage(&task_merged_working, Utc::now()),
+            BoardColumn::Done
+        );
 
         let task_discarded_input = make_task(
             "t11",
@@ -1111,7 +1109,10 @@ mod tests {
             DispositionOutcome::Discarded,
             base_time,
         );
-        assert_eq!(board_column(&task_discarded_input), BoardColumn::Done);
+        assert_eq!(
+            signaltty_core::task_stage(&task_discarded_input, Utc::now()),
+            BoardColumn::Done
+        );
     }
 
     #[test]
@@ -1231,8 +1232,62 @@ mod tests {
     }
 
     #[test]
+    fn legacy_pr_observation_does_not_establish_readiness() {
+        let now = Utc::now();
+        let mut task = make_task(
+            "legacy",
+            "Legacy PR",
+            TaskState::Completed,
+            DispositionOutcome::None,
+            now,
+        );
+        task.pr = Some(
+            serde_json::from_value(serde_json::json!({
+                "number": 7, "url": "https://github.com/o/r/pull/7",
+                "state": "open", "checks": "passing", "review": "approved",
+                "checked_at": now
+            }))
+            .unwrap(),
+        );
+        assert_eq!(
+            signaltty_core::task_stage(&task, Utc::now()),
+            BoardColumn::InReview
+        );
+    }
+
+    #[test]
+    fn board_withdraws_expired_readiness_and_explains_it() {
+        let now = Utc::now();
+        let mut task = make_task(
+            "expiry",
+            "Expiring PR",
+            TaskState::Completed,
+            DispositionOutcome::None,
+            now,
+        );
+        task.pr = Some(TaskPr {
+            number: 7,
+            url: "https://github.com/o/r/pull/7".into(),
+            checked_at: Some(now),
+            head_sha: Some("abcdef".into()),
+            draft: Some(false),
+            mergeability: PrMergeability::Mergeable,
+            merge_state: PrMergeState::Clean,
+            checks: PrChecks::Passing,
+            review: PrReview::Approved,
+            ..TaskPr::default()
+        });
+        let initial = build_board(std::slice::from_ref(&task), now);
+        assert_eq!(initial[3].total_count, 1);
+        let expired = build_board(std::slice::from_ref(&task), now + Duration::minutes(5));
+        assert_eq!(expired[3].total_count, 0);
+        assert_eq!(expired[2].total_count, 1);
+        assert!(expired[2].cards[0].subtitle().starts_with("refresh needed"));
+    }
+
+    #[test]
     fn test_board_column_with_pr() {
-        let base_time = Utc.with_ymd_and_hms(2026, 10, 4, 12, 0, 0).unwrap();
+        let base_time = Utc::now();
 
         let make_pr_task =
             |state: TaskState, pr_state: PrState, checks: PrChecks, review: PrReview| {
@@ -1244,6 +1299,11 @@ mod tests {
                     checks,
                     review,
                     checked_at: None,
+                    head_sha: Some("abcdef".into()),
+                    draft: Some(false),
+                    mergeability: PrMergeability::Mergeable,
+                    merge_state: PrMergeState::Clean,
+                    ..TaskPr::default()
                 });
                 t
             };
@@ -1255,14 +1315,20 @@ mod tests {
             PrChecks::Passing,
             PrReview::Approved,
         );
-        assert_eq!(board_column(&t_merged), BoardColumn::Done);
+        assert_eq!(
+            signaltty_core::task_stage(&t_merged, Utc::now()),
+            BoardColumn::Done
+        );
         let t_closed = make_pr_task(
             TaskState::Completed,
             PrState::Closed,
             PrChecks::None,
             PrReview::None,
         );
-        assert_eq!(board_column(&t_closed), BoardColumn::Done);
+        assert_eq!(
+            signaltty_core::task_stage(&t_closed, Utc::now()),
+            BoardColumn::Done
+        );
 
         // 2. Open with failing checks or changes requested -> NeedsYou
         let t_failing = make_pr_task(
@@ -1271,14 +1337,20 @@ mod tests {
             PrChecks::Failing,
             PrReview::Approved,
         );
-        assert_eq!(board_column(&t_failing), BoardColumn::NeedsYou);
+        assert_eq!(
+            signaltty_core::task_stage(&t_failing, Utc::now()),
+            BoardColumn::NeedsYou
+        );
         let t_changes = make_pr_task(
             TaskState::Completed,
             PrState::Open,
             PrChecks::Passing,
             PrReview::ChangesRequested,
         );
-        assert_eq!(board_column(&t_changes), BoardColumn::NeedsYou);
+        assert_eq!(
+            signaltty_core::task_stage(&t_changes, Utc::now()),
+            BoardColumn::NeedsYou
+        );
 
         // 3. Open with checks passing/none and review approved/none -> ReadyToMerge (once refreshed)
         let mut t_ready1 = make_pr_task(
@@ -1288,7 +1360,10 @@ mod tests {
             PrReview::Approved,
         );
         t_ready1.pr.as_mut().unwrap().checked_at = Some(base_time);
-        assert_eq!(board_column(&t_ready1), BoardColumn::ReadyToMerge);
+        assert_eq!(
+            signaltty_core::task_stage(&t_ready1, Utc::now()),
+            BoardColumn::ReadyToMerge
+        );
 
         let mut t_ready2 = make_pr_task(
             TaskState::Completed,
@@ -1297,7 +1372,10 @@ mod tests {
             PrReview::None,
         );
         t_ready2.pr.as_mut().unwrap().checked_at = Some(base_time);
-        assert_eq!(board_column(&t_ready2), BoardColumn::ReadyToMerge);
+        assert_eq!(
+            signaltty_core::task_stage(&t_ready2, Utc::now()),
+            BoardColumn::ReadyToMerge
+        );
 
         let mut t_ready3 = make_pr_task(
             TaskState::Completed,
@@ -1306,7 +1384,10 @@ mod tests {
             PrReview::None,
         );
         t_ready3.pr.as_mut().unwrap().checked_at = Some(base_time);
-        assert_eq!(board_column(&t_ready3), BoardColumn::ReadyToMerge);
+        assert_eq!(
+            signaltty_core::task_stage(&t_ready3, Utc::now()),
+            BoardColumn::ReadyToMerge
+        );
 
         let mut t_ready4 = make_pr_task(
             TaskState::Completed,
@@ -1315,7 +1396,10 @@ mod tests {
             PrReview::Approved,
         );
         t_ready4.pr.as_mut().unwrap().checked_at = Some(base_time);
-        assert_eq!(board_column(&t_ready4), BoardColumn::ReadyToMerge);
+        assert_eq!(
+            signaltty_core::task_stage(&t_ready4, Utc::now()),
+            BoardColumn::ReadyToMerge
+        );
 
         // 4. Open with pending checks or review required -> InReview
         let t_pending = make_pr_task(
@@ -1324,14 +1408,20 @@ mod tests {
             PrChecks::Pending,
             PrReview::None,
         );
-        assert_eq!(board_column(&t_pending), BoardColumn::InReview);
+        assert_eq!(
+            signaltty_core::task_stage(&t_pending, Utc::now()),
+            BoardColumn::InReview
+        );
         let t_rev_req = make_pr_task(
             TaskState::Completed,
             PrState::Open,
             PrChecks::Passing,
             PrReview::ReviewRequired,
         );
-        assert_eq!(board_column(&t_rev_req), BoardColumn::InReview);
+        assert_eq!(
+            signaltty_core::task_stage(&t_rev_req, Utc::now()),
+            BoardColumn::InReview
+        );
 
         // 5. Open PR never refreshed (checked_at == None) -> InReview
         let t_unrefreshed = make_pr_task(
@@ -1340,7 +1430,10 @@ mod tests {
             PrChecks::None,
             PrReview::None,
         );
-        assert_eq!(board_column(&t_unrefreshed), BoardColumn::InReview);
+        assert_eq!(
+            signaltty_core::task_stage(&t_unrefreshed, Utc::now()),
+            BoardColumn::InReview
+        );
 
         // 6. Terminal disposition Discarded wins over open PR -> Done
         let mut t_discarded_pr = make_pr_task(
@@ -1350,7 +1443,10 @@ mod tests {
             PrReview::Approved,
         );
         t_discarded_pr.disposition.outcome = DispositionOutcome::Discarded;
-        assert_eq!(board_column(&t_discarded_pr), BoardColumn::Done);
+        assert_eq!(
+            signaltty_core::task_stage(&t_discarded_pr, Utc::now()),
+            BoardColumn::Done
+        );
 
         // 7. Canceled state wins over open PR -> Done
         let t_canceled_pr = make_pr_task(
@@ -1359,7 +1455,10 @@ mod tests {
             PrChecks::Passing,
             PrReview::Approved,
         );
-        assert_eq!(board_column(&t_canceled_pr), BoardColumn::Done);
+        assert_eq!(
+            signaltty_core::task_stage(&t_canceled_pr, Utc::now()),
+            BoardColumn::Done
+        );
     }
 
     #[test]
@@ -1386,7 +1485,12 @@ mod tests {
             state: PrState::Open,
             checks: PrChecks::Failing,
             review: PrReview::None,
-            checked_at: None,
+            checked_at: Some(now),
+            head_sha: Some("abcdef".into()),
+            draft: Some(false),
+            mergeability: PrMergeability::Mergeable,
+            merge_state: PrMergeState::Clean,
+            ..TaskPr::default()
         });
         let card = task_to_card(&task, now);
         assert_eq!(
