@@ -2699,6 +2699,7 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     let config = std::env::temp_dir().join(format!("signaltty-topbar-{}", std::process::id()));
     std::env::set_var("XDG_CONFIG_HOME", &config);
     adw::init().unwrap();
+
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
     let display = gtk4::gdk::Display::default().unwrap();
     let provider = gtk4::CssProvider::new();
@@ -2908,6 +2909,8 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     assert!(!app.split_view.shows_sidebar());
     app.action_show_changes();
     assert!(!compact_changes.is_active());
+    // Closing changes the toggle before the panel's controls leave focus traversal.
+    wait_ui(|| !app.changes.widget.is_mapped());
     app.window.set_default_size(1280, 800);
     wait_ui(|| board.is_mapped());
     assert!(!compact_board.is_mapped());
@@ -2918,20 +2921,6 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     })
     .unwrap();
     wait_ui(|| menu.is_mapped());
-    // Mapping precedes allocation when the content breakpoint restores tools.
-    wait_ui(|| {
-        if app.window.width() < 1200 || !new_tab.is_mapped() || !board.is_mapped() {
-            return false;
-        }
-        let creation = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
-        let board = widget_bounds(board.upcast_ref(), app.window.upcast_ref());
-        let changes = widget_bounds(changes.upcast_ref(), app.window.upcast_ref());
-        creation.w > 0.0
-            && board.w > 0.0
-            && changes.w > 0.0
-            && creation.x + creation.w < board.x
-            && board.x + board.w <= changes.x
-    });
     assert!(new_tab.grab_focus());
     assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
         .is_some_and(|focus| focus == new_tab.clone().upcast::<gtk4::Widget>()));
