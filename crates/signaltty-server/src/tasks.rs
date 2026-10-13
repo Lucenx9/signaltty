@@ -1070,8 +1070,10 @@ pub fn h_task_report(ctx: &Ctx, req: &Request, params: &Value) -> (Response, Con
 
     let mut s = ctx.store.write().unwrap();
     match s.task_report(&target_task_id, result) {
-        Ok(_) => {
-            ctx.mark_persist();
+        Ok(events) => {
+            if events.is_some() {
+                ctx.mark_persist();
+            }
             let task = s.tasks.get(&target_task_id).unwrap();
             (
                 Response::ok(&req.id, json!({ "task": task })),

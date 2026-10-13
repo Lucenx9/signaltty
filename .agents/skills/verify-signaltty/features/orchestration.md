@@ -85,3 +85,13 @@ The ignored GTK test `task_board_shows_columns_and_navigates_to_pane` renders
 ready, draft, and failed-refresh PR cards in light and dark. It verifies expired
 readiness moves columns when the board reevaluates without a server event.
 These fixtures do not certify live GitHub branch rules or perform a remote merge.
+
+## Accepted task report retries
+
+`cargo test -p signaltty-core task_report` verifies identical content preserves
+the accepted result and task metadata, while changed content and unreported
+terminal tasks remain refused. `cargo test -p signaltty-server --test
+orchestrator_tasks task_report` verifies reconnects, both selectors, optional-field
+defaults, concurrent reports, snapshot-restored retries, and one paired result/update
+notification. Only identical `task.report` content has this retry guarantee. The
+fixtures do not prove synchronous snapshot flushing or coordinator delivery.

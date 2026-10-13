@@ -171,7 +171,7 @@ tasks). IDs are opaque `task_…` / `tctx_…` strings.
 | `preexisting_branch` | true when the branch already existed (never auto-deleted) |
 | `base_ref`, `base_sha` | requested ref + resolved full SHA at start |
 | `state` | lifecycle below |
-| `result?` | structured handoff, set once by report (`status` completed\|failed\|rejected, `summary` 1 … 8 KiB, `artifacts` ≤ 32 `{name, path, version?}`, `evidence?`, `reported_at`) |
+| `result?` | structured handoff, set once by report (`status` completed\|failed\|rejected, `summary` 1 … 8 KiB, `artifacts` ≤ 32 `{name, path, version?}`, `evidence?`, `reported_at`); identical retries preserve the original result and timestamps |
 | `disposition` | `{outcome: none\|merged\|discarded, target_ref?, merged_sha?, branch_deleted?, at?}` — review outcome, not lifecycle |
 | `pr?` | `{number, url, state: open\|merged\|closed, checks: none\|pending\|passing\|failing, review: none\|review_required\|approved\|changes_requested, checked_at?, head_sha?, draft?, mergeability: unknown\|mergeable\|conflicting, merge_state: unknown\|clean\|blocked\|behind\|dirty\|draft\|has_hooks\|unstable, refresh_attempted_at?, refresh_error?}` — GitHub pull request associated with the task |
 | `status_reason?` | A2A-style evidence: `{stage, …}` for background/startup failures, `{reason: turn_ended_without_report, last_message?}`, `{reason: worker_silent, timeout_s}`, `{reason: decision_required, decision_id}` |
@@ -207,7 +207,7 @@ See [ADR-0034](adr/0034-verified-pr-readiness.md).
 | `* → canceled` (non-terminal) | `task.cancel`, or `finish --discard` from a non-terminal state |
 | `working → input_required` | worker turn ended with no report (`turn_ended_without_report` + `last_message?`); silent-worker watchdog (`worker_silent` + `timeout_s`, default 600 s, `0` disables); pending decision on the worker pane (`decision_required` + `decision_id`) |
 | `input_required → working` | accepted follow-up `pane.submit` on the worker pane when no decision remains pending (also clears `status_reason`); answering the pending decision |
-| `working/input_required/pending → completed/failed/rejected` | `task.report` status (report on a terminal task is refused) |
+| `working/input_required/pending → completed/failed/rejected` | First accepted `task.report`; an identical terminal retry is a no-op, other terminal reports are refused |
 | `working/input_required/pending → failed` | worker pane death or restart recovery, with evidence, exactly once |
 
 `task.start` takes an optional `client_request_id`: a retry with the same key
