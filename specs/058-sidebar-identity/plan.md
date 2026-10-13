@@ -1,6 +1,6 @@
 # Implementation plan: Sidebar app identity
 
-Branch gui/sidebar-identity-polish | Base 29e9aa6, parent PR #106 | Date 2026-10-14 | [Spec](spec.md)
+Branch gui/sidebar-identity-polish | Base f7de184, parent PR #106 | Date 2026-10-14 | [Spec](spec.md)
 
 ## Summary
 A native horizontal brand lockup pairs a 20px symbolic mark with a 600-weight system-font wordmark. Keep existing header height and New Workspace action. Replace the original app artwork with a simple prompt plus two parallel rails, using the same geometry in the launcher tile and small symbolic mark. Mark follows text colors in the UI; the launcher alone carries a restrained cool brand hue.

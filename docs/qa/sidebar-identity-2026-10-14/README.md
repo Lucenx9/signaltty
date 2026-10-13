@@ -17,3 +17,7 @@ The first integrated gate failed the pre-existing server backpressure test's exp
 ## Completed release gate
 
 `RUST_TEST_THREADS=1 scripts/verify.sh full --output /tmp/sidebar-identity-full-retry-20261014` passed all 55 steps, including all 43 isolated GTK tests and refresh benchmark, on the clean integrated source above. `verification.json` retains every command, outcome, duration, versions and source identity. Final standard screenshots and `native-identity.log` come from that run; native high-contrast captures precede integration, whose branding code and assets are identical. Selected complete logs are retained here; other successful runner logs remain in the local evidence directory.
+
+## Final test-only parent update
+
+After the full gate, parent PR #106 advanced to f7de184 with a test-only allocation guard in visible_workspace_tools. Integrated as 720b321. Production code, SVG assets and install helper are identical to gated source ec3b4d7; only app_tests.rs changed. The exact updated native test, cargo fmt and GUI all-target Clippy passed. `parent-focus-test-recheck.log` and `final-gui-clippy.log` retain those checks. The full report honestly remains tied to ec3b4d7.
