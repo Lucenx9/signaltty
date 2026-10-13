@@ -400,6 +400,10 @@ async fn bind_workspace(
                 .into_owned()
         })
     });
+    let primary_root = git(&cwd, &["worktree", "list", "--porcelain", "-z"])
+        .await
+        .ok()
+        .and_then(|bytes| crate::git::primary_root_from_porcelain(&bytes));
     let mut store = ctx.store.write().unwrap();
     if !store.workspaces.contains_key(source_id) {
         return Err((
@@ -420,6 +424,7 @@ async fn bind_workspace(
         handle: unique_handle(&store, &signaltty_core::model::slugify(&name)),
         name,
         git: GitInfo {
+            primary_root,
             root: Some(cwd.clone()),
             name: path.file_name().map(|n| n.to_string_lossy().into_owned()),
             branch: tree.branch.clone(),

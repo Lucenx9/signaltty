@@ -6,6 +6,7 @@ pub mod error;
 pub mod ids;
 pub mod model;
 pub mod paths;
+pub mod project;
 pub mod state;
 pub mod theme;
 

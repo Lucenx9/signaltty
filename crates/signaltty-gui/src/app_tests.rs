@@ -5580,3 +5580,332 @@ fn owned_icon_roles_resolve_and_render_without_external_themes() {
     style.set_color_scheme(original);
     window.destroy();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn project_scope_filters_without_rebuilding_workspaces() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
+    let (actor, mut requests) = IpcHandle::test_channel();
+    let worker = std::thread::spawn(move || {
+        while let Some(request) = requests.blocking_recv() {
+            if let ActorRequest::Call {
+                method,
+                params,
+                reply,
+                ..
+            } = request
+            {
+                let value = if method == "pane.get" {
+                    let id = params["pane_id"]
+                        .as_str()
+                        .unwrap()
+                        .strip_prefix("pane_")
+                        .unwrap();
+                    json!({"pane": fixture(id)["panes"][0]})
+                } else if method == "focus.next_unread" {
+                    json!({"pane_id":"pane_other"})
+                } else {
+                    Value::Null
+                };
+                let _ = reply.send(Ok(value));
+                if method == "test.stop" {
+                    break;
+                }
+            }
+        }
+    });
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor.clone(), ui);
+    let config = std::env::temp_dir().join(format!(
+        "signaltty-project-scope-{}.json",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&config);
+    app.configure_project_scope(config.clone());
+    let style = adw::StyleManager::default();
+    let old_scheme = style.color_scheme();
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let old_motion = settings.is_gtk_enable_animations();
+    settings.set_gtk_enable_animations(false);
+    app.apply_preference(signaltty_core::theme::GuiPreference::default());
+    for (id, cwd, checkout, primary) in [
+        ("api", "/one/api", "/one/api", "/one/api"),
+        (
+            "worker",
+            "/worktrees/review",
+            "/worktrees/review",
+            "/one/api",
+        ),
+        ("nested", "/one/api/src", "/one/api", "/one/api"),
+        ("other", "/two/api", "/two/api", "/two/api"),
+        (
+            "long",
+            "/projects/a-very-long-project-name-with-unbroken-characters-for-the-project-picker",
+            "",
+            "",
+        ),
+    ] {
+        let mut value = fixture(id);
+        value["workspace"]["cwd"] = json!(cwd);
+        value["workspace"]["git"] = if checkout.is_empty() {
+            json!({})
+        } else {
+            json!({"root":checkout,"primary_root":primary,"branch":"feature/project-sidebar"})
+        };
+        value["panes"][0]["lifecycle"] = json!("working");
+        if id == "other" {
+            value["panes"][0]["attention"] = json!("permission_required");
+        }
+        let snapshot: Snapshot = serde_json::from_value(value).unwrap();
+        app.model
+            .borrow_mut()
+            .cache
+            .workspaces
+            .push(snapshot.workspace.clone());
+        app.model
+            .borrow_mut()
+            .cache
+            .snapshots
+            .insert(id.into(), snapshot);
+    }
+    app.model.borrow_mut().cache.catalog_authority =
+        signaltty_core::project::CatalogAuthority::Complete;
+    app.refresh_sidebar();
+    app.show_workspace("api");
+    app.present();
+    wait_ui(|| app.window.is_mapped());
+    let selector = find_matching_widget::<gtk4::MenuButton>(app.window.upcast_ref(), &|button| {
+        button.tooltip_text().as_deref() == Some("Choose Project")
+    })
+    .expect("project scope must have a visible native selector");
+    assert!(has_label(selector.upcast_ref(), "All projects"));
+    let row = |id: &str| {
+        find_matching_widget::<gtk4::ListBoxRow>(app.sidebar.widget.upcast_ref(), &|row| {
+            row.widget_name() == id
+        })
+        .unwrap()
+    };
+    let api_row = row("api");
+    let other_row = row("other");
+    let terminal = app.widgets.borrow().get("pane_api").unwrap().clone();
+    let picker = selector.popover().unwrap();
+    let search = find_widget::<gtk4::SearchEntry>(picker.upcast_ref()).unwrap();
+    let list = find_widget::<gtk4::ListBox>(picker.upcast_ref()).unwrap();
+    let choose = |path: &str| {
+        selector.popup();
+        wait_ui(|| picker.is_mapped());
+        let target = find_matching_widget::<gtk4::ListBoxRow>(picker.upcast_ref(), &|row| {
+            row.tooltip_text().as_deref() == Some(path)
+        })
+        .unwrap();
+        list.emit_by_name::<()>("row-activated", &[&target]);
+        wait_ui(|| !picker.is_visible());
+    };
+    choose("/one/api");
+    assert_eq!(app.active_ws_id().as_deref(), Some("api"));
+    assert!(api_row.is_visible());
+    assert!(row("worker").is_visible());
+    assert!(row("nested").is_visible());
+    assert!(!other_row.is_visible());
+    assert!(
+        has_label(app.attention.button.upcast_ref(), "1"),
+        "global attention remains visible"
+    );
+    assert_eq!(
+        crate::project_scope::load(&config).directory(),
+        Some("/one/api")
+    );
+    choose("/two/api");
+    assert!(!api_row.is_visible());
+    assert!(other_row.is_visible());
+    assert_eq!(app.active_ws_id().as_deref(), Some("api"));
+    app.refresh_sidebar();
+    app.show_workspace_internal("api", false);
+    assert_eq!(app.sidebar.project.scope().directory(), Some("/two/api"));
+    assert_eq!(row("api"), api_row);
+    assert!(Rc::ptr_eq(
+        app.widgets.borrow().get("pane_api").unwrap(),
+        &terminal
+    ));
+    app.action_new_workspace();
+    let form = app.new_ws_dialog.borrow().as_ref().unwrap().clone();
+    let body = form.dialog.child().unwrap();
+    assert!(
+        has_label(&body, "/two/api"),
+        "new workspace uses scope rather than the active terminal"
+    );
+    button_with_label(&body, "Cancel").unwrap().emit_clicked();
+    wait_ui(|| app.new_ws_dialog.borrow().is_none());
+    // Restore through the production storage boundary, before any authoritative list.
+    app.sidebar.project.set_scope(
+        signaltty_core::project::ProjectScope::All,
+        crate::project_scope::ScopeChange::Reconcile,
+    );
+    crate::project_scope::save(
+        &config,
+        &signaltty_core::project::ProjectScope::Project(signaltty_core::project::ProjectId::new(
+            "/two/api",
+        )),
+    );
+    app.configure_project_scope(config.clone());
+    assert_eq!(app.sidebar.project.scope().directory(), Some("/two/api"));
+    // Explicit global navigation reveals the target; passive repaint above did not.
+    app.show_workspace("api");
+    assert_eq!(app.sidebar.project.scope().directory(), Some("/one/api"));
+    assert!(api_row.is_visible());
+    for (scheme, name) in [
+        (adw::ColorScheme::ForceLight, "light"),
+        (adw::ColorScheme::ForceDark, "dark"),
+    ] {
+        style.set_color_scheme(scheme);
+        capture_workflow(&app.window, &format!("project-sidebar-{name}"));
+        selector.popup();
+        wait_ui(|| picker.is_mapped());
+        assert!(has_label(picker.upcast_ref(), "/one/api"));
+        assert!(has_label(picker.upcast_ref(), "/two/api"));
+        capture_workflow(&picker, &format!("project-picker-{name}"));
+        search.set_text("/two/");
+        wait_ui(|| !list.row_at_index(0).unwrap().is_visible());
+        search.emit_by_name::<()>("activate", &[]);
+        wait_ui(|| !picker.is_visible());
+        assert_eq!(app.sidebar.project.scope().directory(), Some("/two/api"));
+        app.show_workspace("api");
+    }
+    selector.popup();
+    wait_ui(|| picker.is_mapped());
+    search.set_text("unmatched-repository");
+    let no_match = find_matching_widget::<gtk4::Label>(picker.upcast_ref(), &|label| {
+        label.text() == "No matching projects"
+    })
+    .unwrap();
+    wait_ui(|| no_match.is_visible());
+    search.emit_by_name::<()>("activate", &[]);
+    assert!(picker.is_visible());
+    capture_workflow(&picker, "project-picker-no-match");
+    let controllers = picker.observe_controllers();
+    let dismiss = (0..controllers.n_items())
+        .filter_map(|i| {
+            controllers
+                .item(i)
+                .unwrap()
+                .downcast::<gtk4::EventControllerKey>()
+                .ok()
+        })
+        .find(|controller| controller.name().as_deref() == Some("project-dismiss"))
+        .unwrap();
+    assert!(dismiss.emit_by_name::<bool>(
+        "key-pressed",
+        &[
+            &gtk4::gdk::Key::Escape,
+            &0u32,
+            &gtk4::gdk::ModifierType::empty()
+        ]
+    ));
+    wait_ui(|| !picker.is_visible());
+    assert_eq!(app.sidebar.project.scope().directory(), Some("/one/api"));
+    assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
+        .is_some_and(|focus| focus == selector.clone().upcast::<gtk4::Widget>()
+            || focus.is_ancestor(&selector)));
+    selector.popup();
+    wait_ui(|| picker.is_mapped());
+    let all = list.row_at_index(0).unwrap();
+    list.emit_by_name::<()>("row-activated", &[&all]);
+    assert_eq!(
+        app.sidebar.project.scope(),
+        signaltty_core::project::ProjectScope::All
+    );
+    assert!(other_row.is_visible());
+    capture_workflow(&app.window, "project-sidebar-all-dark");
+    choose("/one/api");
+    gtk4::prelude::WidgetExt::activate_action(&app.window, "win.next-attention", None).unwrap();
+    drain_refresh(&app);
+    assert_eq!(app.active_ws_id().as_deref(), Some("other"));
+    assert_eq!(app.sidebar.project.scope().directory(), Some("/two/api"));
+    assert!(other_row.is_visible());
+    choose("/one/api");
+    app.action_palette();
+    let palette = app.palette_dialog.borrow().as_ref().unwrap().clone();
+    let palette_body = palette.child().unwrap();
+    let target =
+        find_matching_widget::<adw::ActionRow>(&palette_body, &|row| row.title() == "other")
+            .unwrap();
+    let choices = find_widget::<gtk4::ListBox>(&palette_body).unwrap();
+    choices.emit_by_name::<()>(
+        "row-activated",
+        &[&target.clone().upcast::<gtk4::ListBoxRow>()],
+    );
+    wait_ui(|| app.palette_dialog.borrow().is_none());
+    assert_eq!(app.active_ws_id().as_deref(), Some("other"));
+    assert_eq!(app.sidebar.project.scope().directory(), Some("/two/api"));
+    let catalog = app.sidebar.project.catalog.borrow().clone();
+    app.sidebar.project.set_catalog(
+        Default::default(),
+        signaltty_core::project::CatalogAuthority::Retained,
+    );
+    assert_eq!(app.sidebar.project.scope().directory(), Some("/two/api"));
+    app.sidebar.project.set_catalog(
+        catalog.clone(),
+        signaltty_core::project::CatalogAuthority::Retained,
+    );
+    assert!(other_row.is_visible());
+    app.sidebar.project.set_catalog(
+        Default::default(),
+        signaltty_core::project::CatalogAuthority::Complete,
+    );
+    assert_eq!(
+        app.sidebar.project.scope(),
+        signaltty_core::project::ProjectScope::All
+    );
+    app.sidebar
+        .project
+        .set_catalog(catalog, signaltty_core::project::CatalogAuthority::Complete);
+    app.window.set_default_size(360, 800);
+    app.split_view.set_collapsed(true);
+    app.split_view.set_show_sidebar(true);
+    wait_ui(|| app.window.width() <= 362);
+    selector.popup();
+    wait_ui(|| picker.is_mapped());
+    assert!(
+        picker.width() <= app.window.width(),
+        "native popup fits narrow window"
+    );
+    capture_workflow(&picker, "project-picker-narrow-dark");
+    picker.popdown();
+    settings.set_gtk_font_name(Some("Sans 18"));
+    app.window.add_css_class("high-contrast");
+    selector.popup();
+    wait_ui(|| picker.is_mapped());
+    capture_workflow(&picker, "project-picker-narrow-large-high-contrast");
+    picker.popdown();
+    let old_direction = gtk4::Widget::default_direction();
+    gtk4::Widget::set_default_direction(gtk4::TextDirection::Rtl);
+    selector.popup();
+    wait_ui(|| picker.is_mapped());
+    capture_workflow(&picker, "project-picker-narrow-rtl");
+    picker.popdown();
+    gtk4::Widget::set_default_direction(old_direction);
+    app.window.remove_css_class("high-contrast");
+    settings.set_gtk_font_name(old_font.as_deref());
+    settings.set_gtk_enable_animations(old_motion);
+    style.set_color_scheme(old_scheme);
+    app.window.destroy();
+    glib::MainContext::default()
+        .block_on(actor.call("test.stop", json!({})))
+        .unwrap();
+    worker.join().unwrap();
+    let _ = std::fs::remove_file(config);
+}

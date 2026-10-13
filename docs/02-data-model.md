@@ -36,6 +36,14 @@ Git context is a lightweight cached enrichment, refreshed on
 `pane.cwd` change, explicit `refresh`, and cheap filesystem events —
 never a Git client, never aggressive polling.
 
+`git.root` identifies the current checkout; optional `git.primary_root` identifies
+the main registered checkout shared by linked worktrees. The server reads literal
+NUL-delimited Git worktree records. Legacy snapshots default this field to absent
+and receive a bounded background enrichment after startup. Non-Git workspaces use
+their folder as project identity. The toolkit-free `project` module derives a
+catalog from workspaces; projects do not own sessions or require a separate store.
+See [ADR-0033](adr/0033-project-scope-metadata.md).
+
 Git worktree registrations are queried from Git rather than copied into the
 snapshot. A workspace's canonical `cwd` associates it with a checkout;
 `worktree.list` reports the open workspace IDs for each registered checkout.

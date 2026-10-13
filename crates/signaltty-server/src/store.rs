@@ -92,6 +92,24 @@ pub(crate) fn is_reviewed_terminal(pane: &Pane) -> bool {
 }
 
 impl Store {
+    pub fn set_workspace_primary_root_if_missing(
+        &mut self,
+        id: &str,
+        expected_cwd: &str,
+        root: String,
+    ) -> bool {
+        let Some(ws) = self.workspaces.get_mut(id) else {
+            return false;
+        };
+        if ws.cwd != expected_cwd || ws.git.primary_root.is_some() || ws.git.root.is_none() {
+            return false;
+        }
+        ws.git.primary_root = Some(root);
+        let workspace = ws.clone();
+        self.emit(event::WORKSPACE_UPDATED, json!({"workspace":workspace}));
+        true
+    }
+
     pub fn begin_workspace_title(&mut self, pane_id: &str) -> Option<String> {
         use signaltty_core::model::WorkspaceNaming;
         let id = self.panes.get(pane_id)?.workspace_id.clone();
@@ -2223,5 +2241,42 @@ mod tests {
         assert_eq!(ev.name, "task.updated");
         assert_eq!(ev.payload["task"]["pr"]["number"], 123);
         assert_eq!(store.tasks[&task_id].pr, Some(pr));
+    }
+}
+
+#[cfg(test)]
+mod project_metadata_tests {
+    use super::*;
+    #[test]
+    fn backfill_pairs_one_event_and_refuses_stale_or_complete_metadata() {
+        let mut store = Store::new();
+        let workspace: Workspace = serde_json::from_value(json!({"id":"ws_legacy","name":"worker","cwd":"/linked",
+            "git":{"root":"/linked"},"tabs":[],"created_at":"2026-10-13T12:00:00Z","updated_at":"2026-10-13T12:00:00Z"})).unwrap();
+        assert!(workspace.git.primary_root.is_none());
+        store.workspaces.insert(workspace.id.clone(), workspace);
+        assert!(!store.set_workspace_primary_root_if_missing(
+            "ws_legacy",
+            "/changed",
+            "/repo".into()
+        ));
+        assert!(store.events.is_empty());
+        assert!(store.set_workspace_primary_root_if_missing(
+            "ws_legacy",
+            "/linked",
+            "/repo".into()
+        ));
+        assert_eq!(store.events.len(), 1);
+        assert_eq!(store.events[0].name, event::WORKSPACE_UPDATED);
+        assert_eq!(
+            store.events[0].payload["workspace"]["git"]["primary_root"],
+            "/repo"
+        );
+        assert!(!store.set_workspace_primary_root_if_missing(
+            "ws_legacy",
+            "/linked",
+            "/other".into()
+        ));
+        assert!(!store.set_workspace_primary_root_if_missing("missing", "/linked", "/repo".into()));
+        assert_eq!(store.events.len(), 1);
     }
 }

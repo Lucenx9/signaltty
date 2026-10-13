@@ -632,6 +632,9 @@ pub struct Tab {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GitInfo {
+    /// Primary registered checkout, shared by linked worktrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

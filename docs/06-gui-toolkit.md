@@ -81,6 +81,16 @@ palette (`Ctrl+Shift+P`). The launcher uses bundled symbolic artwork and
 semantic Adwaita surfaces across light, dark, custom themes and high contrast.
 New Workspace remains in the sidebar header.
 
+A native project selector sits below Search and above the scrolling workspace list.
+Its popover searches project names and full paths, displays paths to distinguish
+duplicate names, and offers All projects. Selecting a project filters existing
+rows without changing the active terminal. Included task children with an excluded
+parent appear as roots; group collapse survives scope changes. Global attention and
+the command palette keep their full workspace catalog and reveal an excluded target
+on explicit navigation. New Workspace proposes the selected project's folder while
+retaining the editable creation form. Background refresh never overrides a valid
+scope. This follows the T3 Code project-scope interaction using native GTK controls.
+
 Only the **Workspaces** list scrolls (Adwaita `.caption-heading` title,
 live total). Worktrees and Preferences are pinned in the sidebar footer, so
 a long list never buries them; they activate the existing `win.*` handlers,

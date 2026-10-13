@@ -81,6 +81,10 @@ async fn worktree_checkout_isolated_reused_and_removed_without_branch_deletion()
         .await
         .unwrap();
     assert_eq!(created["workspace"]["id"], opened["workspace"]["id"]);
+    assert_eq!(
+        created["workspace"]["git"]["primary_root"],
+        json!(repo.main())
+    );
     assert_eq!(opened["reused"], true);
     let listed = c
         .call("worktree.list", json!({"workspace_id":source}))
@@ -497,5 +501,89 @@ async fn cli_worktree_commands_deliver_the_json_api_contract() {
     .await;
     assert_eq!(removed["removed"], true);
     assert!(!Path::new(path).exists());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn project_root_is_shared_by_main_subdirectory_and_linked_checkouts() {
+    let repo = Repository::new();
+    let nested = repo.main().join("src");
+    std::fs::create_dir(&nested).unwrap();
+    let linked = repo.0.join("linked checkout\né");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-qb",
+        "project-fixture",
+        linked.to_str().unwrap(),
+    ]);
+    let server = TestServer::start().await;
+    let mut client = server.client().await;
+    for cwd in [repo.main(), nested, linked.clone()] {
+        let response = client
+            .call("workspace.create", json!({"cwd": cwd}))
+            .await
+            .unwrap();
+        assert_eq!(
+            response["workspace"]["git"]["primary_root"],
+            json!(repo.main()),
+            "linked checkouts must retain their common project identity"
+        );
+        let checkout = if cwd == linked { &linked } else { &repo.main() };
+        assert_eq!(response["workspace"]["git"]["root"], json!(checkout));
+    }
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn legacy_linked_checkout_metadata_is_backfilled_after_restart() {
+    let repo = Repository::new();
+    let linked = repo.0.join("legacy checkout");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-qb",
+        "legacy-fixture",
+        linked.to_str().unwrap(),
+    ]);
+    let mut server = TestServer::start().await;
+    let mut client = server.client().await;
+    let workspace = client
+        .call("workspace.create", json!({"cwd":linked}))
+        .await
+        .unwrap()["workspace"]["id"]
+        .clone();
+    client
+        .call("server.shutdown", json!({"force":true}))
+        .await
+        .unwrap();
+    assert!(
+        server
+            .wait_for_exit(std::time::Duration::from_secs(3))
+            .await
+    );
+    let file = server.state_dir.join("snapshot.json");
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    for ws in saved["workspaces"].as_array_mut().unwrap() {
+        ws["git"].as_object_mut().unwrap().remove("primary_root");
+    }
+    std::fs::write(&file, serde_json::to_vec(&saved).unwrap()).unwrap();
+    server.restart().await;
+    let mut client = server.client().await;
+    tokio::time::timeout(std::time::Duration::from_secs(4), async {
+        loop {
+            let ws = client
+                .call("workspace.get", json!({"workspace_id":workspace}))
+                .await
+                .unwrap();
+            if ws["workspace"]["git"]["primary_root"] == json!(repo.main()) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("legacy project identity must upgrade without blocking the listener");
     server.shutdown().await;
 }
