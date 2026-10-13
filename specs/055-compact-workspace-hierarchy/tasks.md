@@ -22,7 +22,7 @@ Independent test: branch/agent/directory contexts and full literal names/paths u
 ## Phase 5: Delivery
 - [x] T010 Update presentation contract in docs/06-gui-toolkit.md and feature verification map in .agents/skills/verify-signaltty/features/.
 - [x] T011 Complete full gate and two-axis independent review; record outcomes in specs/055-compact-workspace-hierarchy/verification.md.
-- [ ] T012 Commit selected proof under docs/qa/compact-workspace-hierarchy-2026-10-13/, push and open/link PR; update specs/055-compact-workspace-hierarchy/handoff.md.
+- [x] T012 Commit selected proof under docs/qa/compact-workspace-hierarchy-2026-10-13/, push and open/link PR; update specs/055-compact-workspace-hierarchy/handoff.md.
 
 ## Dependencies and parallel opportunities
 T001-T003 precede implementation. US1 and US2 have independent tests but shared CSS and capture ownership; implement sequentially. Native display tests run in separate processes. Review axes run in parallel after final source commit.
