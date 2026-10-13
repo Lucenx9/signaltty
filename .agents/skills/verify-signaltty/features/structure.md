@@ -53,3 +53,5 @@ the resulting two panes through real IPC. This path runs in desktop mode, not fu
 
 `terminal::tests::keyboard_focus_renders_an_inactive_panes_controls` also asserts
 a logical visual gap between the paired splits and Close, preserving 28px targets.
+
+Compact workspace hierarchy: `sidebar::tests::workspace_previews_follow_selection_without_hiding_attention_or_tasks` checks direct/programmatic selection, refresh identity, unread/attention/blocked previews and retained task chips. `app::tests::shell_empty_states_explain_actions_and_fit_large_text` captures a ten-workspace fixture, RTL sidebar and 200px enlarged-text rail with protected title/status allocations. `app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions` checks branch/agent/basename/Detached HEAD, full tooltip identity and narrow context hiding. `SIGNALTTY_UI_EVIDENCE` saves actual native light/dark/stress scenes.

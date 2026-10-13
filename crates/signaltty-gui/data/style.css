@@ -347,7 +347,7 @@ toolbarview > .top-bar headerbar button.header-tool-button:focus-visible {
  * secondary text, the place is quieter. Colour is spent only on the
  * status slot. */
 .workspace-row {
-  padding: 8px;
+  padding: 6px 8px;
 }
 
 /* Search, workspace rows and footer share one geometry. Selection is a
@@ -360,7 +360,7 @@ toolbarview > .top-bar headerbar button.header-tool-button:focus-visible {
   background-color: alpha(currentColor, 0.04);
 }
 
-/* Child task workspace: indented ~20px, compact 2-line layout */
+/* Child task workspace: indented, with details when selected or urgent. */
 .navigation-sidebar > row.workspace-child {
   margin-left: 28px;
 }
@@ -425,6 +425,7 @@ toolbarview > .top-bar headerbar button.header-tool-button:focus-visible {
 }
 .crumb-context {
   color: alpha(currentColor, 0.5);
+  font-size: 0.88em;
 }
 
 /* The breadcrumb is a button that opens the details card: it keeps its

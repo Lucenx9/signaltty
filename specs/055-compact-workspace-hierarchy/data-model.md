@@ -1,0 +1,2 @@
+# Presentation data
+Existing WsSummary owns name, place, agents, lifecycle, attention, message and naming state. Existing Row owns task chips, child counts and keyed GTK widgets. Native row selection determines preview visibility; no duplicate persisted selection model is added. Full information remains in the row accessible label and tooltip. Header derives short context from existing workspace GitInfo, cwd and agents; no model changes.

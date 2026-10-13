@@ -1674,6 +1674,12 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
     let (ui, _) = tokio::sync::mpsc::unbounded_channel();
     let app = App::new(&application, actor.clone(), ui);
     let old_scheme = adw::StyleManager::default().color_scheme();
+    if std::env::var("ADW_DEBUG_HIGH_CONTRAST").as_deref() == Ok("1") {
+        assert!(
+            adw::StyleManager::default().is_high_contrast(),
+            "native high contrast must be active for this capture run"
+        );
+    }
     let settings = gtk4::Settings::default().unwrap();
     let old_font = settings.gtk_font_name();
     let old_motion = settings.is_gtk_enable_animations();
@@ -1705,6 +1711,55 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
             "done",
             "unread",
             "All 42 integration tests passed",
+        ),
+        (
+            "docs",
+            "documentation",
+            "idle",
+            "none",
+            "Updated the API guide",
+        ),
+        (
+            "auth",
+            "authentication",
+            "working",
+            "none",
+            "Checking session expiry",
+        ),
+        (
+            "cli",
+            "command-line",
+            "idle",
+            "none",
+            "Ready for the next task",
+        ),
+        (
+            "build",
+            "build-pipeline",
+            "working",
+            "none",
+            "Compiling release targets",
+        ),
+        (
+            "storage",
+            "storage",
+            "idle",
+            "none",
+            "Reviewed schema changes",
+        ),
+        (
+            "sync",
+            "workspace-sync",
+            "working",
+            "none",
+            "Testing reconnect behavior",
+        ),
+        (
+            "perf",
+            "performance",
+            "idle",
+            "none",
+            "Measured refresh latency",
         ),
     ] {
         let mut value = fixture(id);
@@ -1740,8 +1795,25 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
         });
         capture_workflow(&app.window, &format!("shell-{}", appearance.id()));
     }
+    let mut quiet_height = 0;
+    walk_widgets(app.sidebar.widget.upcast_ref(), &mut |widget| {
+        if let Some(row) = widget.downcast_ref::<gtk4::ListBoxRow>() {
+            if ["docs", "auth", "cli", "build", "storage", "sync", "perf"]
+                .contains(&row.widget_name().as_str())
+            {
+                quiet_height += row.height();
+            }
+        }
+        false
+    });
+    eprintln!("compact hierarchy: seven quiet rows occupy {quiet_height}px");
+    let original_direction = gtk4::Widget::default_direction();
+    gtk4::Widget::set_default_direction(gtk4::TextDirection::Rtl);
+    capture_workflow(&app.window, "shell-sidebar-rtl-dark");
+    assert_eq!(app.sidebar.widget.direction(), gtk4::TextDirection::Rtl);
+    gtk4::Widget::set_default_direction(original_direction);
 
-    // AI titles need their own line, rather than competing with urgency pills.
+    // Compact rows retain distinct name and textual-state allocations.
     let mut value = fixture("ui");
     value["workspace"]["name"] = json!("Refine workspace keyboard navigation");
     value["workspace"]["naming"] = json!("generated");
@@ -1775,8 +1847,9 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
     let status = status.unwrap();
     let status_bounds = status.compute_bounds(&app.window).unwrap();
     assert!(
-        status_bounds.y() >= name_bounds.y() + name_bounds.height(),
-        "status must leave room for the title"
+        status_bounds.y() >= name_bounds.y() + name_bounds.height()
+            || name_bounds.x() + name_bounds.width() <= status_bounds.x(),
+        "state wraps below the name when the primary line cannot fit both"
     );
 
     let mut attention = crate::sidebar::summarize(&snapshot.workspace, &snapshot.panes);
@@ -1845,6 +1918,11 @@ fn shell_empty_states_explain_actions_and_fit_large_text() {
             let bounds = place.compute_bounds(&app.window).unwrap();
             let status_bounds = status.compute_bounds(&app.window).unwrap();
             let rail = app.sidebar.widget.compute_bounds(&app.window).unwrap();
+            let name_bounds = name.compute_bounds(&app.window).unwrap();
+            assert!(
+                name_bounds.width() >= 80.0,
+                "urgency must leave a readable title allocation at minimum rail width"
+            );
             assert!(
                 bounds.width() > 0.0
                     && bounds.x() + bounds.width() <= rail.x() + rail.width() + 1.0
@@ -2040,7 +2118,7 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
     let original_scheme = style.color_scheme();
     let app = App::new(&application, actor.clone(), ui);
     app.apply_preference(signaltty_core::theme::GuiPreference::default());
-    app.window.set_default_size(720, 600);
+    app.window.set_default_size(900, 600);
     app.window.present();
     let separator = try_descendant(app.window.upcast_ref(), "crumb-sep").unwrap();
     assert!(!separator.is_visible(), "startup has no context separator");
@@ -2058,10 +2136,7 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
     capture_workflow(&app.window, "header-shell-light");
     style.set_color_scheme(adw::ColorScheme::ForceDark);
     capture_workflow(&app.window, "header-shell-dark");
-    assert_eq!(
-        app.title_context.text(),
-        "feature/header · /tmp/signaltty <literal>&"
-    );
+    assert_eq!(app.title_context.text(), "feature/header");
     assert!(app.title_context.is_visible() && separator.is_visible());
     assert_eq!(
         app.title_context.tooltip_text().as_deref(),
@@ -2073,14 +2148,14 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
         serde_json::from_value(shell.clone()).unwrap(),
     );
     app.show_workspace("shell");
-    assert_eq!(app.title_context.text(), "/tmp/signaltty <literal>&");
+    assert_eq!(app.title_context.text(), "signaltty <literal>&");
     shell["workspace"]["git"]["branch"] = Value::Null;
     app.model.borrow_mut().cache.snapshots.insert(
         "shell".into(),
         serde_json::from_value(shell.clone()).unwrap(),
     );
     app.show_workspace("shell");
-    assert_eq!(app.title_context.text(), "/tmp/signaltty <literal>&");
+    assert_eq!(app.title_context.text(), "signaltty <literal>&");
     shell["panes"][0]["agent"] = json!({"kind": "claude"});
     app.model.borrow_mut().cache.snapshots.insert(
         "shell".into(),
@@ -2100,15 +2175,40 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
         serde_json::from_value(shell.clone()).unwrap(),
     );
     app.show_workspace("shell");
-    assert_eq!(app.title_context.text(), "Claude");
+    assert_eq!(app.title_context.text(), "feature/header");
     assert_eq!(
         app.title_context.tooltip_text().as_deref(),
         Some("feature/header · ~/signaltty")
     );
     capture_workflow(&app.window, "header-agent-dark");
+    assert!(app
+        .crumb_button
+        .tooltip_text()
+        .unwrap()
+        .contains("Signaltty"));
+    assert!(app
+        .crumb_button
+        .tooltip_text()
+        .unwrap()
+        .contains("~/signaltty"));
     shell["panes"][0]["agent"] = json!({"kind": "none"});
+    for (cwd, detached, expected) in [
+        ("/", false, "/"),
+        ("/tmp/folder///", false, "folder"),
+        ("/tmp/folder", true, "Detached HEAD"),
+    ] {
+        shell["workspace"]["cwd"] = json!(cwd);
+        shell["workspace"]["git"] = json!({"detached": detached});
+        app.model.borrow_mut().cache.snapshots.insert(
+            "shell".into(),
+            serde_json::from_value(shell.clone()).unwrap(),
+        );
+        app.show_workspace("shell");
+        assert_eq!(app.title_context.text(), expected);
+        assert!(app.crumb_button.tooltip_text().unwrap().contains(cwd));
+    }
     shell["workspace"]["cwd"] = json!("");
-    shell["workspace"]["git"]["branch"] = Value::Null;
+    shell["workspace"]["git"] = json!({});
     app.model.borrow_mut().cache.snapshots.insert(
         "shell".into(),
         serde_json::from_value(shell.clone()).unwrap(),
@@ -2150,11 +2250,9 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
         capture_workflow(&app.window, name);
         for widget in [
             app.title.clone().upcast::<gtk4::Widget>(),
-            app.title_context.clone().upcast(),
             button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)")
                 .unwrap()
                 .upcast(),
-            try_descendant(app.window.upcast_ref(), "crumb-sep").unwrap(),
         ] {
             let bounds = widget_bounds(&widget, app.window.upcast_ref());
             assert!(
@@ -2162,13 +2260,17 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
                 "header child outside narrow window"
             );
         }
-        let context = widget_bounds(app.title_context.upcast_ref(), app.window.upcast_ref());
+        assert!(
+            !app.title_context.is_mapped(),
+            "narrow headers reserve space for workspace identity"
+        );
+        let title_bounds = widget_bounds(app.title.upcast_ref(), app.window.upcast_ref());
         let new_tab =
             button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
         let new_tab_bounds = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
         assert!(
-            context.x + context.w <= new_tab_bounds.x,
-            "context overlaps New Tab"
+            title_bounds.x + title_bounds.w <= new_tab_bounds.x,
+            "workspace name overlaps New Tab"
         );
         assert!(app.title.layout().is_ellipsized() || app.title_context.layout().is_ellipsized());
         assert_eq!(app.title_context.tooltip_text().as_deref(), Some("feature/a-very-long-branch-name · /tmp/an/extremely/long/path/that/must/ellipsize/inside/the/header"));

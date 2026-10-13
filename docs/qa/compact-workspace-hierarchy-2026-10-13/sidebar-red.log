@@ -1,0 +1,11 @@
+thread 'sidebar::tests::workspace_previews_follow_selection_without_hiding_attention_or_tasks' (3574213) panicked at crates/signaltty-gui/src/sidebar.rs:1649:9:
+unselected ordinary workspaces stay compact
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    sidebar::tests::workspace_previews_follow_selection_without_hiding_attention_or_tasks
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 156 filtered out; finished in 0.13s
+
+error: test failed, to rerun pass `-p signaltty-gui --bin signaltty-gui`

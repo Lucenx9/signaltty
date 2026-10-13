@@ -1,0 +1,18 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling signaltty-core v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-core)
+   Compiling signaltty-proto v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-proto)
+   Compiling signaltty-agent v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-agent)
+   Compiling signaltty-term v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-term)
+   Compiling signaltty-plugin v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-plugin)
+   Compiling signaltty-testkit v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-testkit)
+   Compiling signaltty-server v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 34.20s
+     Running tests/screen_detection.rs (target/debug/deps/screen_detection-dc0ae6fdeae8f19a)
+
+running 1 test
+test semantic_hooks_override_grok_progress_and_screen_evidence ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 3.63s
+
