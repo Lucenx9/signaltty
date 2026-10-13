@@ -25,4 +25,4 @@ Capture the current header fixture before changing expected geometry. Extend exi
 ## Final adaptive design
 Window breakpoints retain panel docking at 1100sp/760sp. A native content BreakpointBin uses 860sp for icon labels and 520sp for compact relocation, so an open Changes panel cannot squeeze labeled actions into the title. New Tab joins the labeled compact sidebar tools. One weak-reference callback shows that footer when the sidebar is collapsed or the header creation control is hidden; breakpoint setters do not compete over footer visibility. The attention button hides directly, eliminating the concealed Revealer's measured 35px footprint.
 
-Main advanced with #105 during verification. Integrated f3f42f2 before final gate; renumbered this feature to057 because main now contains056-pr-readiness. Baseline captures retain their original9d1913a provenance.
+Main advanced with #105 during verification. Integrated f3f42f2 before final gate; renumbered this feature to 057 because main now contains 056-pr-readiness. Baseline captures retain their original 9d1913a provenance.

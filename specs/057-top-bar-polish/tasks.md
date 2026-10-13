@@ -18,7 +18,7 @@ Independent test: attention, keyboard, RTL, breakpoint restoration and retained 
 
 ## Delivery
 - [x] T009 Update docs/06-gui-toolkit.md, docs/16-visual-references.md and .agents/skills/verify-signaltty/features/structure.md.
-- [ ] T010 Run full gate and independent two-axis review; record in specs/057-top-bar-polish/verification.md.
+- [x] T010 Run full gate and independent two-axis review; record in specs/057-top-bar-polish/verification.md.
 - [ ] T011 Commit selected proof under docs/qa/top-bar-polish-2026-10-14/, publish/link PR and update specs/057-top-bar-polish/handoff.md.
 
 ## Dependencies and strategy
