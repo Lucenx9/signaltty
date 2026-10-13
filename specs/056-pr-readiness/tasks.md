@@ -24,7 +24,7 @@
 
 - [x] T009 Record ADR-0034 in docs/adr/0034-verified-pr-readiness.md and update docs/02-data-model.md, docs/08-ipc.md, and relevant verification guidance.
 - [x] T010 Run scripts/verify.sh full, inspect native board renders, and record results in specs/056-pr-readiness/verification.md.
-- [ ] T011 Review the diff, commit the concern, push orch/pr-readiness, create and link the PR.
+- [x] T011 Review the diff, commit the concern, push orch/pr-readiness, create and link the PR.
 
 ## Dependencies and execution
 
