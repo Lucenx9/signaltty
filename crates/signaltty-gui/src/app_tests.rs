@@ -2918,7 +2918,23 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     })
     .unwrap();
     wait_ui(|| menu.is_mapped());
-    new_tab.grab_focus();
+    // Mapping precedes allocation when the content breakpoint restores tools.
+    wait_ui(|| {
+        if app.window.width() < 1200 || !new_tab.is_mapped() || !board.is_mapped() {
+            return false;
+        }
+        let creation = widget_bounds(new_tab.upcast_ref(), app.window.upcast_ref());
+        let board = widget_bounds(board.upcast_ref(), app.window.upcast_ref());
+        let changes = widget_bounds(changes.upcast_ref(), app.window.upcast_ref());
+        creation.w > 0.0
+            && board.w > 0.0
+            && changes.w > 0.0
+            && creation.x + creation.w < board.x
+            && board.x + board.w <= changes.x
+    });
+    assert!(new_tab.grab_focus());
+    assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
+        .is_some_and(|focus| focus == new_tab.clone().upcast::<gtk4::Widget>()));
     assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
     assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
         .is_some_and(|focus| focus == board.clone().upcast::<gtk4::Widget>()));
