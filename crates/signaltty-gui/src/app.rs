@@ -80,7 +80,6 @@ type PanedWidgets = HashMap<(String, Vec<bool>), glib::WeakRef<gtk4::Paned>>;
 
 /// Header button: how many panes need you; click jumps to the next.
 struct AttentionButton {
-    revealer: gtk4::Revealer,
     button: gtk4::Button,
     dot: gtk4::Box,
     count: gtk4::Label,
@@ -263,6 +262,12 @@ impl App {
         sidebar_footer.add_css_class("sidebar-footer");
         let compact_tools = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
         compact_tools.set_visible(false);
+        let compact_new_tab = crate::sidebar::nav_button(
+            "signaltty-tab-new-symbolic",
+            "New Tab",
+            "New Tab (Ctrl+Shift+T)",
+            "win.new-tab",
+        );
         let compact_board = crate::sidebar::nav_button(
             "signaltty-board-symbolic",
             "Task Board",
@@ -277,6 +282,7 @@ impl App {
             "signaltty-changes-symbolic",
             "Changes",
         )));
+        compact_tools.append(&compact_new_tab);
         compact_tools.append(&compact_board);
         compact_tools.append(&compact_changes);
         sidebar_footer.append(&compact_tools);
@@ -302,6 +308,7 @@ impl App {
         let title = gtk4::Label::new(Some("signaltty"));
         title.add_css_class("crumb-title");
         title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        title.set_hexpand(true);
         title.set_max_width_chars(32);
         let title_context = gtk4::Label::new(None);
         title_context.add_css_class("crumb-context");
@@ -310,9 +317,13 @@ impl App {
         title_context.set_visible(false);
         let title_mark = sidebar::mark();
         title_mark.set_visible(false);
+        let mark_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        mark_box.set_valign(gtk4::Align::Center);
+        mark_box.append(&title_mark);
         let title_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        title_box.set_hexpand(true);
         title_box.add_css_class("crumb");
-        title_box.append(&title_mark);
+        title_box.append(&mark_box);
         title_box.append(&title);
         let crumb_sep = gtk4::Label::new(Some("/"));
         crumb_sep.add_css_class("crumb-sep");
@@ -326,13 +337,15 @@ impl App {
         title_box.append(&context_box);
         let header = adw::HeaderBar::new();
         header.add_css_class("workspace-header");
-        header.set_title_widget(Some(&gtk4::Box::new(gtk4::Orientation::Horizontal, 0)));
+        header.set_centering_policy(adw::CenteringPolicy::Loose);
         let btn_sidebar = gtk4::ToggleButton::new();
         btn_sidebar.set_icon_name("sidebar-show-symbolic");
         btn_sidebar.set_tooltip_text(Some("Toggle Sidebar (F9)"));
         btn_sidebar.update_property(&[gtk4::accessible::Property::Label("Toggle Sidebar")]);
         btn_sidebar.set_action_name(Some("win.toggle-sidebar"));
-        header.pack_start(&btn_sidebar);
+        let navigation_tools = gtk4::Box::new(gtk4::Orientation::Horizontal, 2);
+        navigation_tools.append(&btn_sidebar);
+        header.pack_start(&navigation_tools);
         // The breadcrumb opens the workspace details card.
         let details = crate::details::DetailsCard::new();
         let crumb_button = gtk4::MenuButton::new();
@@ -344,7 +357,16 @@ impl App {
         crumb_button
             .update_property(&[gtk4::accessible::Property::Description("Workspace Details")]);
         crumb_button.set_sensitive(false);
-        header.pack_start(&crumb_button);
+        crumb_button.set_hexpand(true);
+        let title_lane = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        title_lane.add_css_class("workspace-title-lane");
+        title_lane.set_hexpand(true);
+        title_lane.append(&crumb_button);
+        let drag_space = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        drag_space.add_css_class("workspace-drag-space");
+        drag_space.set_width_request(24);
+        title_lane.append(&drag_space);
+        header.set_title_widget(Some(&title_lane));
         let btn_menu = gtk4::MenuButton::new();
         btn_menu.set_icon_name("open-menu-symbolic");
         btn_menu.set_tooltip_text(Some("Main Menu"));
@@ -365,7 +387,7 @@ impl App {
             .label("New Tab")
             .build();
         btn_new_tab.set_child(Some(&new_tab_content));
-        header.pack_start(&btn_new_tab);
+        navigation_tools.append(&btn_new_tab);
         let btn_changes = gtk4::ToggleButton::new();
         btn_changes.add_css_class("header-tool-button");
         btn_changes.set_tooltip_text(Some("Changes (Ctrl+Shift+D)"));
@@ -389,12 +411,13 @@ impl App {
 
         let views = gtk4::Box::new(gtk4::Orientation::Horizontal, 2);
         views.add_css_class("workspace-view-tools");
+        views.set_margin_start(8);
         views.set_margin_end(8);
         views.append(&btn_board);
         views.append(&btn_changes);
         header.pack_end(&views);
         let attention = Self::attention_button();
-        header.pack_end(&attention.revealer);
+        header.pack_end(&attention.button);
 
         let banner = adw::Banner::new("Lost connection to the session server — retrying…");
 
@@ -460,6 +483,10 @@ impl App {
         content_page.add_top_bar(&banner);
         content_page.add_top_bar(&tab_bar);
         content_page.set_content(Some(&content));
+        let content_breakpoints = adw::BreakpointBin::new();
+        content_breakpoints.add_css_class("workspace-content-breakpoints");
+        content_breakpoints.set_size_request(200, 200);
+        content_breakpoints.set_child(Some(&content_page));
 
         let changes = crate::changes::ChangesPanel::new(actor.clone());
         let changes_split = adw::OverlaySplitView::new();
@@ -470,7 +497,7 @@ impl App {
         changes_split.set_sidebar_width_fraction(0.36);
         changes_split.set_show_sidebar(false);
         changes_split.set_sidebar(Some(&changes.widget));
-        changes_split.set_content(Some(&content_page));
+        changes_split.set_content(Some(&content_breakpoints));
         changes_split
             .bind_property("show-sidebar", &btn_changes, "active")
             .bidirectional()
@@ -491,60 +518,83 @@ impl App {
             .sync_create()
             .build();
         let compact_sidebar = split_view.clone();
+        compact_new_tab.connect_clicked(move |_| compact_sidebar.set_show_sidebar(false));
+        let compact_sidebar = split_view.clone();
         compact_board.connect_clicked(move |_| compact_sidebar.set_show_sidebar(false));
         let compact_sidebar = split_view.clone();
         compact_changes.connect_clicked(move |_| compact_sidebar.set_show_sidebar(false));
 
-        // Only the last matching breakpoint applies, so the wider one
-        // goes first and the narrow one repeats its setters.
-        // Below 1100sp the docked panel would squeeze the terminals: it
-        // overlays them instead.
+        // Window breakpoints own panel docking; content breakpoints own tools.
         let medium = adw::Breakpoint::new(
             adw::BreakpointCondition::parse("max-width: 1100sp").expect("breakpoint"),
         );
         medium.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
-        // Icon-only at this width: AdwButtonContent hides an empty label,
-        // and the buttons drop the labeled pill for the same flat
-        // `.image-button` look as New Tab and the main menu.
-        medium.add_setter(&changes_content, "label", Some(&"".to_value()));
-        medium.add_setter(&board_content, "label", Some(&"".to_value()));
-        medium.add_setter(&new_tab_content, "label", Some(&"".to_value()));
-        medium.add_setter(
-            &btn_new_tab,
-            "css-classes",
-            Some(&["image-button"].to_value()),
-        );
-        medium.add_setter(
-            &btn_changes,
-            "css-classes",
-            Some(&["toggle", "image-button"].to_value()),
-        );
-        medium.add_setter(
-            &btn_board,
-            "css-classes",
-            Some(&["image-button"].to_value()),
-        );
         window.add_breakpoint(medium);
-        // Narrow windows: the sidebar overlays instead of squeezing panes.
         let narrow = adw::Breakpoint::new(
             adw::BreakpointCondition::parse("max-width: 760sp").expect("breakpoint"),
         );
         narrow.add_setter(&split_view, "collapsed", Some(&true.to_value()));
         narrow.add_setter(&changes_split, "collapsed", Some(&true.to_value()));
-        // At 360px labeled tools move to the overlay sidebar. Their
-        // original header controls return at wider widths.
-        narrow.add_setter(&btn_changes, "visible", Some(&false.to_value()));
-        narrow.add_setter(&btn_board, "visible", Some(&false.to_value()));
-        narrow.add_setter(&views, "visible", Some(&false.to_value()));
-        narrow.add_setter(&context_box, "visible", Some(&false.to_value()));
-        narrow.add_setter(&new_tab_content, "label", Some(&"".to_value()));
-        narrow.add_setter(
-            &btn_new_tab,
-            "css-classes",
-            Some(&["image-button"].to_value()),
-        );
-        narrow.add_setter(&compact_tools, "visible", Some(&true.to_value()));
         window.add_breakpoint(narrow);
+
+        let compact_labels = adw::Breakpoint::new(
+            adw::BreakpointCondition::parse("max-width: 860sp").expect("breakpoint"),
+        );
+        let compact_header = adw::Breakpoint::new(
+            adw::BreakpointCondition::parse("max-width: 520sp").expect("breakpoint"),
+        );
+        // Only the last matching breakpoint applies, so both declare icon mode.
+        for breakpoint in [&compact_labels, &compact_header] {
+            for (content, button, classes) in [
+                (
+                    &new_tab_content,
+                    btn_new_tab.upcast_ref::<gtk4::Widget>(),
+                    vec!["image-button"],
+                ),
+                (
+                    &board_content,
+                    btn_board.upcast_ref::<gtk4::Widget>(),
+                    vec!["image-button"],
+                ),
+                (
+                    &changes_content,
+                    btn_changes.upcast_ref::<gtk4::Widget>(),
+                    vec!["toggle", "image-button"],
+                ),
+            ] {
+                breakpoint.add_setter(content, "label", Some(&"".to_value()));
+                breakpoint.add_setter(button, "css-classes", Some(&classes.to_value()));
+            }
+        }
+        content_breakpoints.add_breakpoint(compact_labels);
+        compact_header.add_setter(&btn_changes, "visible", Some(&false.to_value()));
+        compact_header.add_setter(&btn_board, "visible", Some(&false.to_value()));
+        compact_header.add_setter(&views, "visible", Some(&false.to_value()));
+        compact_header.add_setter(&btn_new_tab, "visible", Some(&false.to_value()));
+        compact_header.add_setter(&context_box, "visible", Some(&false.to_value()));
+        compact_header.add_setter(&mark_box, "visible", Some(&false.to_value()));
+        compact_header.add_setter(&drag_space, "width-request", Some(&12.to_value()));
+        content_breakpoints.add_breakpoint(compact_header);
+
+        // Collapsed content can be unmapped before its bin gets a new width.
+        // One writer joins window mode and contextual toolbar visibility.
+        let sidebar_mode = split_view.downgrade();
+        let creation = btn_new_tab.downgrade();
+        let footer_tools = compact_tools.downgrade();
+        let sync_compact_tools = Rc::new(move || {
+            if let (Some(sidebar), Some(creation), Some(tools)) = (
+                sidebar_mode.upgrade(),
+                creation.upgrade(),
+                footer_tools.upgrade(),
+            ) {
+                tools.set_visible(sidebar.is_collapsed() || !creation.get_visible());
+            }
+        });
+        let sync = Rc::clone(&sync_compact_tools);
+        split_view.connect_collapsed_notify(move |_| sync());
+        let sync = Rc::clone(&sync_compact_tools);
+        btn_new_tab.connect_visible_notify(move |_| sync());
+        sync_compact_tools();
 
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&split_view));
@@ -658,16 +708,8 @@ impl App {
         button.add_css_class("attention-button");
         button.set_valign(gtk4::Align::Center);
         button.set_action_name(Some("win.next-attention"));
-        let revealer = gtk4::Revealer::new();
-        revealer.set_transition_type(gtk4::RevealerTransitionType::Crossfade);
-        revealer.set_transition_duration(150);
-        revealer.set_child(Some(&button));
-        AttentionButton {
-            revealer,
-            button,
-            dot,
-            count,
-        }
+        button.set_visible(false);
+        AttentionButton { button, dot, count }
     }
 
     fn install_actions(&self, application: &adw::Application) {
@@ -1448,7 +1490,7 @@ impl App {
             1 => "1 pane needs attention — jump to it (Ctrl+Shift+J)".to_string(),
             n => format!("{n} panes need attention — jump to the next (Ctrl+Shift+J)"),
         }));
-        b.revealer.set_reveal_child(!needing.is_empty());
+        b.button.set_visible(!needing.is_empty());
     }
 
     /// The header title, disambiguated like the sidebar row when sibling

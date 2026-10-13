@@ -97,18 +97,22 @@ a long list never buries them; they activate the existing `win.*` handlers,
 with no second navigation state or fake dashboard behind them. The footer
 deliberately does not display an invented "connected" state or agent count.
 
-Task Board (`Ctrl+Shift+B`) and Changes (`Ctrl+Shift+D`) have exactly one
-visible entry point: a trailing view group in the content header, beside the attention
-indicator and separated from the menu by spacing. Changes keeps its toggle state. Both are
-`AdwButtonContent` buttons labeled at spacious desktop widths; below 1100sp
-the label is cleared and they take the same flat `.image-button` style as
-the other header buttons, keeping their accessible names. New Tab sits after the
-workspace breadcrumb in the leading group, with a desktop label that also clears
-below 1100sp. Below 760sp they
-move into labeled controls in the pinned overlay-sidebar footer. Changes
-keeps the same toggle state, and activating either tool dismisses the left
-overlay. The main menu, command palette and shortcuts remain available. No new IPC, fake panes or full-width second toolbar: terminal
-content and workspace context continue to own the canvas.
+The content header groups Sidebar and New Tab at the leading edge, workspace
+Details in the native expanding title lane, and attention, Board/Changes and
+Main Menu at the trailing edge. Blank non-interactive title space reserves 24px
+for native dragging, or 12px in compact mode. A hidden attention button occupies
+no width. Changes retains its native synchronized toggle state.
+
+Toolbar presentation follows the actual content width through an
+`AdwBreakpointBin`, including when Changes is docked. Below 860sp, New Tab,
+Board and Changes use flat icon buttons with named tooltips. Below 520sp, they
+move into labeled controls in the pinned sidebar footer; secondary context and
+the decorative title mark hide. The footer also remains available whenever the
+workspace sidebar is collapsed, including before hidden content is reallocated.
+Activating a footer tool dismisses the sidebar overlay. Window breakpoints still
+own panel docking (1100sp for Changes, 760sp for the workspace sidebar).
+Menus, palette and shortcuts retain the same actions. Terminal content and
+workspace context continue to own the canvas.
 
 One status vocabulary, shared by every surface
 (`crates/signaltty-gui/src/status.rs`, colours in `data/style.css`):
@@ -125,7 +129,7 @@ One status vocabulary, shared by every surface
 A sidebar row is three quiet lines, modelled on t3code's thread rows:
 the workspace mark (monogram on a stable per-workspace tint, kept off
 the accent and status hues; the content header repeats it in a
-left-aligned `mark name / context` breadcrumb) and name with the
+native title-lane `mark name / context` breadcrumb) and name with the
 status slot on the right — "Working 3m", the age dropped under a
 minute — the latest message (or the
 verb-tense run state), then branch or folder with the agents on the
