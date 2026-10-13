@@ -46,6 +46,10 @@ class DesktopInstallTests(unittest.TestCase):
                          [line for line in source if not line.startswith("Exec=")])
         self.assertEqual(entry.stat().st_mode & 0o777, 0o644)
         self.assertTrue(self.marker.exists())
+        for name in ["dev.signaltty.gui.svg", "dev.signaltty.gui-symbolic.svg"]:
+            installed = prefix / "share/icons/hicolor/scalable/apps" / name
+            artwork = self.repo / "crates/signaltty-gui/data/icons/scalable/apps" / name
+            self.assertEqual(installed.read_bytes(), artwork.read_bytes())
         if shutil.which("desktop-file-validate"):
             subprocess.run(["desktop-file-validate", str(entry)], check=True)
         # Run the quoted executable with no installation bin directory on PATH.

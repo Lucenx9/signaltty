@@ -481,9 +481,8 @@ button.details-row {
 .details-pr-status.pr-merged { color: var(--purple-3); }
 
 .wordmark {
-  margin-left: 6px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 /* Lower, flatter bars: icon buttons carry no slab until hovered. */

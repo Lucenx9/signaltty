@@ -1,0 +1,2 @@
+# Handoff
+Branch gui/sidebar-identity-polish on assigned gui-secondary-window-polish checkout. Parent f8c3f18, open PR #106. Source is a static native sidebar brand plus two original app SVG assets; existing IDs, actions, install paths and terminal widgets remain. Focused red/green capture and installation tests recorded under /tmp/sidebar-identity-*. Native populated and high-contrast checks precede clean source full gate and two-axis review. Publish a stacked PR against gui/top-bar-polish unless parent merges. Other checkouts untouched.

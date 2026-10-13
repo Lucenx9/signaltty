@@ -6309,3 +6309,188 @@ fn project_scope_filters_without_rebuilding_workspaces() {
     worker.join().unwrap();
     let _ = std::fs::remove_file(config);
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn sidebar_brand_is_static_and_keeps_creation_reachable_at_minimum_width() {
+    let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+    let config = std::env::temp_dir().join(format!("signaltty-brand-{}", std::process::id()));
+    std::env::set_var("XDG_CONFIG_HOME", &config);
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
+    let style = adw::StyleManager::default();
+    let original_scheme = style.color_scheme();
+    if std::env::var("ADW_DEBUG_HIGH_CONTRAST").as_deref() == Ok("1") {
+        assert!(style.is_high_contrast());
+    }
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let theme = gtk4::IconTheme::new();
+    theme.set_search_path(&[]);
+    theme.add_resource_path("/dev/signaltty/gui/icons");
+    let icon_window = adw::ApplicationWindow::new(&application);
+    let samples = gtk4::Box::new(gtk4::Orientation::Vertical, 24);
+    for (name, flags, sizes) in [
+        (
+            "dev.signaltty.gui",
+            gtk4::IconLookupFlags::FORCE_REGULAR,
+            vec![16, 32, 64, 128],
+        ),
+        (
+            "dev.signaltty.gui-symbolic",
+            gtk4::IconLookupFlags::FORCE_SYMBOLIC,
+            vec![16, 24, 32],
+        ),
+    ] {
+        assert!(theme.has_icon(name));
+        let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 24);
+        row.set_valign(gtk4::Align::Center);
+        for size in sizes {
+            let icon = theme.lookup_icon(name, &[], size, 1, gtk4::TextDirection::Ltr, flags);
+            assert_eq!(icon.is_symbolic(), name.ends_with("-symbolic"));
+            assert!(icon.file().unwrap().uri().starts_with("resource://"));
+            let image = gtk4::Image::from_paintable(Some(&icon));
+            image.set_pixel_size(size);
+            image.set_accessible_role(gtk4::AccessibleRole::Presentation);
+            let sample = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+            sample.set_valign(gtk4::Align::Center);
+            sample.append(&image);
+            sample.append(&gtk4::Label::new(Some(&format!("{size}px"))));
+            row.append(&sample);
+        }
+        samples.append(&row);
+    }
+    samples.set_margin_top(24);
+    samples.set_margin_bottom(24);
+    samples.set_margin_start(24);
+    samples.set_margin_end(24);
+    icon_window.set_content(Some(&samples));
+    icon_window.set_default_size(440, 280);
+    icon_window.present();
+    for (scheme, name) in [
+        (adw::ColorScheme::ForceLight, "app-icons-light"),
+        (adw::ColorScheme::ForceDark, "app-icons-dark"),
+    ] {
+        style.set_color_scheme(scheme);
+        capture_workflow(&icon_window, name);
+    }
+    icon_window.destroy();
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.present();
+    wait_ui(|| app.window.is_mapped());
+    let brand = try_descendant(app.window.upcast_ref(), "sidebar-brand")
+        .expect("sidebar identity needs a distinct static mark and wordmark");
+    assert!(!brand.is_focusable());
+    let mark = find_widget::<gtk4::Image>(&brand).unwrap();
+    assert_eq!(
+        mark.icon_name().as_deref(),
+        Some("dev.signaltty.gui-symbolic")
+    );
+    assert_eq!(mark.accessible_role(), gtk4::AccessibleRole::Presentation);
+    assert!(!mark.is_focusable());
+    let wordmark = label_with_class(&brand, "wordmark");
+    assert_eq!(wordmark.text(), "signaltty");
+    assert_eq!(wordmark.tooltip_text().as_deref(), Some("signaltty"));
+    let creation =
+        button_with_tooltip(app.window.upcast_ref(), "New Workspace (Ctrl+Shift+N)").unwrap();
+    assert_eq!(creation.action_name().as_deref(), Some("win.new-workspace"));
+    let settings = gtk4::Settings::default().unwrap();
+    let original_font = settings.gtk_font_name();
+    let original_direction = gtk4::Widget::default_direction();
+    for (width, font, direction, appearance, name) in [
+        (
+            280,
+            "Sans 11",
+            gtk4::TextDirection::Ltr,
+            signaltty_core::theme::Appearance::Light,
+            "brand-desktop-light",
+        ),
+        (
+            280,
+            "Sans 11",
+            gtk4::TextDirection::Ltr,
+            signaltty_core::theme::Appearance::Dark,
+            "brand-desktop-dark",
+        ),
+        (
+            200,
+            "Sans 18",
+            gtk4::TextDirection::Ltr,
+            signaltty_core::theme::Appearance::Light,
+            "brand-minimum-large-light",
+        ),
+        (
+            200,
+            "Sans 18",
+            gtk4::TextDirection::Rtl,
+            signaltty_core::theme::Appearance::Dark,
+            "brand-minimum-large-rtl-dark",
+        ),
+    ] {
+        app.set_sidebar_width(width);
+        settings.set_gtk_font_name(Some(font));
+        gtk4::Widget::set_default_direction(direction);
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..Default::default()
+        });
+        capture_workflow(&app.window, name);
+        let brand_bounds = widget_bounds(&brand, app.sidebar_overlay.upcast_ref());
+        let create_bounds = widget_bounds(creation.upcast_ref(), app.sidebar_overlay.upcast_ref());
+        assert!(brand_bounds.w > 0.0 && wordmark.width() > 0);
+        assert!(mark.is_mapped() && creation.is_mapped() && creation.is_sensitive());
+        assert!(create_bounds.w >= 28.0 && creation.height() >= 28);
+        assert!(
+            if direction == gtk4::TextDirection::Ltr {
+                brand_bounds.x + brand_bounds.w <= create_bounds.x
+            } else {
+                create_bounds.x + create_bounds.w <= brand_bounds.x
+            },
+            "brand and creation groups overlap"
+        );
+        for bounds in [brand_bounds, create_bounds] {
+            assert!(
+                bounds.x >= 0.0 && bounds.x + bounds.w <= f64::from(app.sidebar_overlay.width())
+            );
+        }
+        creation.grab_focus();
+        assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
+            .is_some_and(|focus| focus == creation.clone().upcast::<gtk4::Widget>()));
+        assert!(app.window.child_focus(gtk4::DirectionType::TabForward));
+        assert!(gtk4::prelude::GtkWindowExt::focus(&app.window)
+            .is_some_and(|focus| !focus.is_ancestor(&brand)));
+    }
+    for keyboard in [true, false] {
+        creation.grab_focus();
+        if keyboard {
+            assert!(creation.activate());
+        } else {
+            creation.emit_clicked();
+        }
+        wait_ui(|| app.window.visible_dialog().is_some());
+        let dialog = app.window.visible_dialog().unwrap();
+        assert!(has_label(&dialog.child().unwrap(), "New Workspace"));
+        dialog.close();
+        wait_ui(|| app.window.visible_dialog().is_none());
+    }
+    app.window.destroy();
+    settings.set_gtk_font_name(original_font.as_deref());
+    gtk4::Widget::set_default_direction(original_direction);
+    style.set_color_scheme(original_scheme);
+    match previous_config {
+        Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+        None => std::env::remove_var("XDG_CONFIG_HOME"),
+    }
+    let _ = std::fs::remove_dir_all(config);
+}

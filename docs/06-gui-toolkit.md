@@ -79,7 +79,13 @@ button bound to `win.command-palette`, not an editable search entry: clicking
 or pressing Enter opens the existing keyboard-first Commands and Workspaces
 palette (`Ctrl+Shift+P`). The launcher uses bundled symbolic artwork and
 semantic Adwaita surfaces across light, dark, custom themes and high contrast.
-New Workspace remains in the sidebar header.
+The sidebar header pairs the original application symbolic mark with a semibold
+system-font wordmark. The mark is decorative and non-interactive; the app-name
+label keeps its full tooltip when ellipsized. Logical spacing mirrors in RTL.
+New Workspace remains a separate trailing named action. The same prompt and
+parallel-line metaphor appears in the regular 128px desktop app icon and the
+small filled symbolic icon, bundled and installed under the existing application
+ID. Native text colors style the header mark; brand hue stays in launcher artwork.
 
 A native project selector sits below Search and above the scrolling workspace list.
 Its popover searches project names and full paths, displays paths to distinguish
