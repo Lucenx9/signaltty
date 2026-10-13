@@ -3271,6 +3271,7 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
     narrow.close();
     wait_ui(|| app.window.visible_dialog().is_none());
     app.window.set_default_size(360, 680);
+    wait_ui(|| app.window.width() > 0 && app.window.width() <= 360);
     gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-changes", None).unwrap();
     // Narrow windows overlay the panel rather than squeezing panes.
     wait_ui(|| app.changes_split.is_collapsed());
