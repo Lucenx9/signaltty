@@ -8,4 +8,5 @@ Accepted scope: verified PR readiness, fresh/current observations, immediate err
 Completed: every task in [tasks.md](tasks.md). [Verification](verification.md) records the successful full gate, targeted final UI checks, independent reviews, and inspected native renders.
 Merge preview: `git merge-tree --write-tree HEAD origin/main` succeeded against upstream `9d1913a` without modifying the checkout.
 Uncommitted changes: none after this handoff commit. No remaining local failure or implementation task. GitHub CI is tracked on the PR.
-Next step: human PR review. Automatic CI/review feedback delivery, coordinator inbox, and detached PTY continuity remain separately scoped follow-ups.
+Bot review follow-up: fix per-PR attempt/completion timestamps and the documented PR object shape. The seven IPC regressions pass. [Verification](verification.md) records the findings and proof.
+Next step: after final GitHub checks pass, merge PR #105 as requested. Automatic CI/review feedback delivery, coordinator inbox, and detached PTY continuity remain separately scoped follow-ups.

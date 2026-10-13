@@ -897,6 +897,14 @@ async fn test_task_pr_refresh_all_skips_failing_pr() {
 
     let ready = c.call("task.pr_refresh", json!({})).await.unwrap();
     assert_eq!(ready["tasks"].as_array().unwrap().len(), 2);
+    let timestamp = |value: &serde_json::Value| {
+        chrono::DateTime::parse_from_rfc3339(value.as_str().unwrap()).unwrap()
+    };
+    assert!(
+        timestamp(&ready["tasks"][1]["pr"]["refresh_attempted_at"])
+            > timestamp(&ready["tasks"][0]["pr"]["checked_at"]),
+        "each PR observation must start its own freshness clock"
+    );
 
     fs::write(&env.gh_fail_next, "fail once").unwrap();
     fs::write(&env.gh_pause, "hold the remaining observation").unwrap();
@@ -909,6 +917,7 @@ async fn test_task_pr_refresh_all_skips_failing_pr() {
     })
     .await;
     let during = c.call("task.list", json!({})).await.unwrap();
+    let released_at = chrono::Utc::now();
     fs::remove_file(&env.gh_pause).unwrap();
     let completed = batch.await.unwrap().unwrap();
     assert!(
@@ -916,6 +925,10 @@ async fn test_task_pr_refresh_all_skips_failing_pr() {
         "the second observation never reached the pause"
     );
     assert_eq!(completed["errors"].as_array().unwrap().len(), 1);
+    assert!(
+        timestamp(&completed["tasks"][0]["pr"]["checked_at"]) > released_at,
+        "a successful observation must be dated after the command completes"
+    );
     let failed_during = during["tasks"]
         .as_array()
         .unwrap()

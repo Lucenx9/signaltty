@@ -33,3 +33,11 @@ Standards and Spec reviews ran separately. Four concrete findings were reproduce
 `RUST_TEST_THREADS=1 scripts/verify.sh full` passed. Its unique local evidence directory is `target/verification/full-4goonb32`; the [committed result summary](evidence/verification.json) records the actual base revision, dirty state, tool versions, and step outcomes. All 41 ignored GTK tests and the refresh benchmark passed. The final metadata-ordering change also passed the ten headless board tests, an isolated native scene with inspected light/dark captures, `cargo fmt --check`, and `cargo clippy -p signaltty-gui --all-targets --locked`.
 
 Live GitHub branch-policy coverage, compositor accessibility, IME, and paid provider sessions are not certified by these fixtures. Readiness remains an advisory cached observation with a five-minute lifetime.
+
+## Bot review follow-up
+
+Codex found that a long batch reused its start time for later PR observations. The IPC regression failed before the fix because the second PR's attempt time equaled the first observation time. Each PR now records its own attempt time, and `checked_at` records successful completion. A paused-command regression verifies that completion time follows release of the command. All seven `orchestrator_pr` tests pass, including concurrent refresh ordering and preservation of newer failures.
+
+CodeRabbit found a misplaced brace in the Task field table. The documented observation fields now belong to `pr`, matching `TaskPr` serialization. Its generic docstring-coverage warning is not a repository requirement. Local Clippy passes. Copilot did not review because its quota was exhausted.
+
+The first follow-up full run (`target/verification/full-w71tr0_v`) passed workspace tests and server QA, then stopped at the existing native-dialog test's narrow-breakpoint assertion. The same test passed in isolation with the runner's X11, Cairo, and screenshot settings, without a code change. GitHub CI reruns full verification on the follow-up commit before merge.

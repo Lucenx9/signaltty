@@ -34,7 +34,7 @@ Spec and clarification review precede this plan. Domain logic remains toolkit-fr
 
 A positive observation is fresh for 300 seconds, excluding the exact expiry boundary and future timestamps. Readiness additionally requires a nonempty head, draft=false, mergeability=mergeable, merge_state=clean, checks=passing|none, review=approved|none, and no refresh error. Github's CLEAN merge state accounts for repository restrictions that a reviewDecision aggregate alone cannot establish.
 
-Refresh requests take an attempt timestamp before I/O. Writeback matches the current PR URL and refuses an older attempt. A single failure persists invalidation before returning the original error. A batch returns successful task views and an additive errors array. Missing or mistyped required gh fields fail decoding. Unknown merge enum values map to unknown and do not establish readiness.
+Each PR refresh takes an attempt timestamp before its command starts and a successful observation timestamp after it completes. Writeback matches the current PR URL and refuses an older attempt. A single failure persists invalidation before returning the original error. A batch returns successful task views and an additive errors array. Missing or mistyped required gh fields fail decoding. Unknown merge enum values map to unknown and do not establish readiness.
 
 Task read views add a computed `stage` field to the returned task JSON. Snapshots, events, and persisted Task do not store the projection. GUI computes the same stage locally so time expiry needs no server event.
 

@@ -2297,7 +2297,6 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
         Err((ref c, ref m)) => return (Response::err(&req.id, c, m), ConnEffect::default()),
     };
 
-    let attempted_at = Utc::now();
     // 1. Gather target tasks: (task_id, source_repo, existing_pr)
     let targets = {
         let s = ctx.store.read().unwrap();
@@ -2348,7 +2347,7 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
     let mut successful = Vec::new();
     let mut errors = Vec::new();
     for (tid, src_repo, mut pr) in targets {
-        pr.refresh_attempted_at = Some(attempted_at);
+        pr.refresh_attempted_at = Some(Utc::now());
         let observation = run_cli(
             "gh", &src_repo,
             &["pr", "view", &pr.url, "--json",
@@ -2359,7 +2358,7 @@ pub async fn h_task_pr_refresh(ctx: &Ctx, req: &Request, params: &Value) -> (Res
         });
         match &observation {
             Ok(()) => {
-                pr.checked_at = Some(attempted_at);
+                pr.checked_at = Some(Utc::now());
                 pr.refresh_error = None;
             }
             Err((_, message, _)) => pr.refresh_error = Some(message.clone()),
