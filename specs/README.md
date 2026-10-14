@@ -10,6 +10,7 @@ Use `status --feature <slug> --evidence <run>` to inspect current proof.
 | Feature | Phase checks | Artifacts | Successor |
 |---|---|---|---|
 | [062-ci-pr-workflow](062-ci-pr-workflow/spec.md) | enrolled | [spec.md](062-ci-pr-workflow/spec.md), [plan.md](062-ci-pr-workflow/plan.md), [tasks.md](062-ci-pr-workflow/tasks.md) |  |
+| [062-cli-output-gaps](062-cli-output-gaps/spec.md) | enrolled | [spec.md](062-cli-output-gaps/spec.md), [plan.md](062-cli-output-gaps/plan.md), [tasks.md](062-cli-output-gaps/tasks.md) |  |
 
 ## Completed
 

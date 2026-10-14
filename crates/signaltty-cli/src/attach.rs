@@ -106,7 +106,7 @@ async fn attach_loop(
                         if let Some(b64) = payload.get("data_b64").and_then(|v| v.as_str()) {
                             if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
                                 let end = payload["output_offset"].as_u64();
-                                let bytes = unseen_output(&mut seen, end, &bytes);
+                                let bytes = unseen_output(&mut seen, end, &bytes)?;
                                 out.write_all(bytes).await.map_err(|e| CliError::Io(e.to_string()))?;
                                 out.flush().await.map_err(|e| CliError::Io(e.to_string()))?;
                             }
@@ -128,14 +128,23 @@ async fn attach_loop(
 
 /// The attach snapshot already covers output up to `seen`; a chunk
 /// streamed while it was taken may overlap it.
-fn unseen_output<'a>(seen: &mut u64, end: Option<u64>, data: &'a [u8]) -> &'a [u8] {
+fn unseen_output<'a>(
+    seen: &mut u64,
+    end: Option<u64>,
+    data: &'a [u8],
+) -> Result<&'a [u8], CliError> {
     let Some(end) = end else {
-        return data;
+        return Ok(data);
     };
     let start = end.saturating_sub(data.len() as u64);
+    if start > *seen {
+        return Err(CliError::Io(
+            "terminal output gap detected; attach again to restore the current screen".into(),
+        ));
+    }
     let covered = seen.saturating_sub(start).min(data.len() as u64) as usize;
     *seen = (*seen).max(end);
-    &data[covered..]
+    Ok(&data[covered..])
 }
 
 async fn send_input(client: &mut Client, pane_id: &str, data: &[u8]) -> Result<(), CliError> {
@@ -158,11 +167,11 @@ mod tests {
     #[test]
     fn output_covered_by_the_snapshot_is_not_written_twice() {
         let mut seen = 8;
-        assert_eq!(unseen_output(&mut seen, Some(8), b"abcd"), b"");
-        assert_eq!(unseen_output(&mut seen, Some(10), b"efgh"), b"gh");
-        assert_eq!(unseen_output(&mut seen, Some(12), b"ij"), b"ij");
+        assert_eq!(unseen_output(&mut seen, Some(8), b"abcd").unwrap(), b"");
+        assert_eq!(unseen_output(&mut seen, Some(10), b"efgh").unwrap(), b"gh");
+        assert_eq!(unseen_output(&mut seen, Some(12), b"ij").unwrap(), b"ij");
         assert_eq!(seen, 12);
-        assert_eq!(unseen_output(&mut seen, None, b"kl"), b"kl");
+        assert_eq!(unseen_output(&mut seen, None, b"kl").unwrap(), b"kl");
     }
 
     #[test]

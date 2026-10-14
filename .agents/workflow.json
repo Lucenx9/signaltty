@@ -544,6 +544,10 @@
     "062-ci-pr-workflow": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "062-cli-output-gaps": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }
