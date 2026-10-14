@@ -20,6 +20,8 @@ same `pwd` fixture without changing the server.
    and `pane split`. Apply it only to explicit cwd.
 3. Add real CLI regressions in `crates/signaltty-cli/tests/cli.rs`. A Python
    standard-library PTY helper supplies the attach's controlling terminal.
+   Startup readiness has a ten-second setup budget; input and termination
+   assertions retain their three-second behavior budget.
 4. Document the caller-relative cwd semantics in `docs/08-ipc.md`.
 
 ## Constitution check

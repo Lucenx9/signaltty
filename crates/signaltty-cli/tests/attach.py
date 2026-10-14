@@ -40,8 +40,8 @@ def read_output():
             pass
 
 
-def wait_for(predicate, message):
-    deadline = time.monotonic() + 3
+def wait_for(predicate, message, timeout=3):
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         read_output()
         if predicate():
@@ -53,6 +53,7 @@ try:
     wait_for(
         lambda: not termios.tcgetattr(terminal)[3] & termios.ICANON,
         "attach did not enter raw mode",
+        timeout=10,
     )
     if action == "close":
         call("pane.close", {"pane_id": pane_id})
