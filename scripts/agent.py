@@ -333,6 +333,11 @@ def next_action(feature, evidence):
             return {'phase': 'implement', 'kind': 'agent_command', 'command': ['speckit-implement'],
                     'task_ids': [t['id'] for t in feature['tasks'] if not t['checked']],
                     'reason': 'Implement and verify the remaining tasks.'}
+        if evidence['status'] in {'running', 'failed', 'unavailable'}:
+            return {'phase': 'verify' if evidence['status'] == 'running' else 'diagnose',
+                    'kind': 'manual', 'command': [],
+                    'reason': evidence.get('recovery') or evidence['reason'],
+                    'evidence': evidence.get('summary'), 'log': evidence.get('log')}
         if evidence['status'] != 'fresh':
             return {'phase': 'verify', 'kind': 'shell', 'command': ['scripts/verify.sh', 'full'],
                     'reason': evidence['reason']}
@@ -460,7 +465,8 @@ def main():
             if args.phase != 'repository' and args.scope == 'feature':
                 errors += phase_findings(feature, args.phase)
             if args.phase == 'delivery' and evidence['status'] != 'fresh':
-                errors.append(finding('UNVERIFIED_DELIVERY', evidence['reason'], 'Run scripts/verify.sh full and pass its evidence directory.'))
+                errors.append(finding('UNVERIFIED_DELIVERY', evidence['reason'], evidence.get('recovery') or
+                                      'Run scripts/verify.sh full and pass its evidence directory.'))
             data = {'phase': args.phase, 'scope': args.scope, 'feature': feature,
                     'evidence': evidence, 'exemption': args.scope if args.scope != 'feature' else None}
         result = {'schema_version': 1, 'command': args.command, 'ok': not errors,

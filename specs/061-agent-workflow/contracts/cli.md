@@ -15,7 +15,9 @@ metadata or filesystem input returns INVALID_INPUT. Exit codes are 0 success,
 status exposes checkout, Git facts, feature metadata/artifacts/task observations,
 evidence status and next action. context exposes canonical source roles and
 chosen routes. next actions distinguish shell argv, agent command names and manual
-artifact correction. No command automatically executes an LLM skill or test run.
+artifact correction. Running or failed verification returns manual inspection
+or diagnosis guidance, not another test command. No command automatically
+executes an LLM skill or test run.
 
 check phases: repository, planning, implementation, delivery. Repository checks
 are independent of selected feature and historical phase readiness. Feature

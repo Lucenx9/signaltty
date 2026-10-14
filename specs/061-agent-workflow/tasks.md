@@ -35,5 +35,12 @@ The initial full run at 3ece6e9 passed with 45 isolated GTK tests and refresh
 benchmark in target/verification/full-5zz9zs9s. Review findings were fixed
 test-first in 84ded98; the 22 focused CLI/evidence cases passed. Standards and
 Spec re-reviews closed all findings. The source recorded here is submitted to
-`verify.sh full --output target/verification/agent-workflow-final-20261014`
+`verify.sh full --output target/verification/agent-workflow-reviewed-20261014`
 before publication; delivery checks assess that report, not these checkboxes.
+
+The first final gate stopped at the unchanged server test
+`explain_reports_the_bundled_rule_that_matches` with a five-second working-state
+timeout. The exact test passed alone in 2.23 seconds; a targeted module rerun
+is retained in target/workflow-screen-recheck.log. No server source was changed.
+A separate next-action regression was fixed test-first so running/failed reports
+request inspection/diagnosis instead of immediately recommending another full run.

@@ -126,7 +126,9 @@ For setup failure, correct the reported prerequisite and run doctor. For a comma
 failure, read that step's log and form a diagnosis before a bounded rerun. If the
 failure repeats, collect new evidence and revise the hypothesis. For stale proof,
 finish source writes and rerun full. For interruption, confirm owned processes
-stopped before restarting. The workflow does not retry commands automatically.
+stopped before restarting. `next` directs inspection of a running report and diagnosis of a failed or
+unavailable report before another run. The workflow does not retry commands
+automatically.
 
 ## JSON and evaluation
 

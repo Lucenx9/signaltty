@@ -188,6 +188,20 @@ class AgentWorkflowCLI(unittest.TestCase):
                               '--feature', '001-current', expected=1)
         self.assertEqual([f['code'] for f in result['findings']], ['MISSING_CHECKLIST'])
 
+    def test_next_inspects_running_or_failed_verification_before_another_run(self):
+        feature = self.root / 'specs/001-current'
+        (feature / 'plan.md').write_text('# Plan\n')
+        (feature / 'tasks.md').write_text('- [x] T001 [FR-001] implement\n')
+        report = self.root / 'target/evidence/summary.json'
+        report.parent.mkdir(parents=True)
+        for state in ['running', 'failed']:
+            with self.subTest(state=state):
+                report.write_text(json.dumps({'status': state, 'steps': []}))
+                result = self.run_cli('next', '--feature', '001-current', '--evidence', str(report))
+                self.assertEqual(result['data']['next']['kind'], 'manual')
+                self.assertEqual(result['data']['next']['command'], [])
+                self.assertIn('Inspect' if state == 'running' else 'Read', result['data']['next']['reason'])
+
 
 if __name__ == '__main__':
     unittest.main()
