@@ -21,7 +21,7 @@
 
 - [x] T009 Document decision and proof limits in docs/adr/0036-automatic-agent-permissions.md, docs/06-gui-toolkit.md, docs/07-agents.md and docs/08-ipc.md.
 - [x] T010 Run scripts/verify.sh full and inspect generated light/dark native renders; record evidence in specs/059-automatic-agent-permissions/handoff.md.
-- [ ] T011 Run independent Standards/Spec and final Gemini 3.8 Flash High Antigravity reviews, then create/link a PR.
+- [x] T011 Run independent Standards/Spec and final Gemini 3.8 Flash High Antigravity reviews, then create/link a PR.
 
 ## Dependencies and implementation strategy
 

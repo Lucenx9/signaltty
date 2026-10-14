@@ -15,4 +15,4 @@ Independent Standards review: 0 findings. Spec review: 1 documentation precision
 
 Not certified: paid provider turns, live user account trust/authentication, another PC's installed build, native compositor accessibility/IME/folder chooser/notification clicks. No pending request is auto-answered and no live session policy is changed.
 
-Remaining: publish and link the PR, record its URL. No code failures or unresolved reviewer findings.
+Published and linked: https://github.com/Lucenx9/signaltty/pull/111 against main. All tasks complete. No code failures or unresolved reviewer findings. Hosted CI is a separate check on the published head; no merge was requested for this PR.
