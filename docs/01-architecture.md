@@ -59,6 +59,10 @@
 
 ## Client/server rules
 
+Startup refuses occupied socket paths that are files, directories, or symbolic
+links. An existing socket is removed only after a refused connection; a live
+listener or another connection error is reported without replacing the path.
+
 1. All durable or process-owning state lives in the server.
 2. Clients hold no authoritative state; on connect they fetch a
    snapshot then subscribe to events.
