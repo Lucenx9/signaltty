@@ -2177,6 +2177,7 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
         app.window.set_default_size(width, 600);
         wait_ui(|| app.window.width() >= width - 40);
         app.changes_split.set_show_sidebar(false);
+        wait_ui(|| app.changes_split.content().unwrap().width() == app.changes_split.width());
         capture_workflow(&app.window, name);
         let ink_width = app.title.layout().pixel_extents().0.width();
         eprintln!(
@@ -2201,18 +2202,14 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
             (0.0..=16.0).contains(&mark_gap) && (0.0..=16.0).contains(&context_gap),
             "identity components must form a compact group"
         );
-        let creation =
-            button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
-        let creation = widget_bounds(creation.upcast_ref(), app.window.upcast_ref());
+        let header = try_descendant(app.window.upcast_ref(), "workspace-header").unwrap();
+        let header = widget_bounds(&header, app.window.upcast_ref());
         let identity = widget_bounds(app.crumb_button.upcast_ref(), app.window.upcast_ref());
-        let navigation_gap = if direction == gtk4::TextDirection::Ltr {
-            identity.x - creation.x - creation.w
-        } else {
-            creation.x - identity.x - identity.w
-        };
+        let center_offset = (identity.x + identity.w / 2.0 - header.x - header.w / 2.0).abs();
+        eprintln!("{name}: identity center offset {center_offset}px");
         assert!(
-            (0.0..=24.0).contains(&navigation_gap),
-            "identity stays adjacent to leading navigation"
+            center_offset <= 24.0,
+            "compact workspace identity stays centered in its content header"
         );
     }
     gtk4::Widget::set_default_direction(gtk4::TextDirection::Ltr);

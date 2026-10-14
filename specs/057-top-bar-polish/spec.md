@@ -47,3 +47,7 @@ The active task continues the previously authorized PR workflow. #104 is merged;
 
 ## Full-width grouping correction, 2026-10-14
 User screenshot shows the workspace mark, centered name and far-edge branch dispersed across a fullscreen header. Extend FR-001/SC-002: at wide allocations, mark/name/context remain one compact reading group. A short title's allocated width stays within 16px of its ink width, and adjacent identity gaps stay at most 16px, mirrored in RTL. Free width belongs to the non-interactive drag region. Existing narrow title allocation, Details metadata, focus order and terminal identity remain acceptance requirements. Base 0a2cddd includes merged PR #106/#108; correction branch gui/full-width-title-group.
+
+## Centered identity clarification, 2026-10-14
+
+User clarified that centered placement was correct; only internal mark/name/branch spacing needed correction. This supersedes the earlier leading-placement requirement. Preserve the compact identity gaps and short-label natural allocation from PR109, but return the identity to HeaderBar's native center title widget. At wide widths, the identity group's midpoint stays within 24px of the content header midpoint; do not measure against the whole window including the workspace sidebar. Retain narrow title minima, attention, native drag region, keyboard order, metadata and terminal identity. Base bc39d5b includes merged PR109; branch gui/centered-workspace-identity. No unclarified requirement remains.

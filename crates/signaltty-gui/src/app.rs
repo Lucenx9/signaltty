@@ -315,7 +315,7 @@ impl App {
         sidebar_overlay.add_overlay(&sidebar_handle);
 
         // ---- content header ----
-        // Left-aligned breadcrumb (Linear-style): mark · name · context.
+        // Compact centered workspace identity: mark · name · context.
         let title = gtk4::Label::new(Some("signaltty"));
         title.add_css_class("crumb-title");
         title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
@@ -346,7 +346,7 @@ impl App {
         title_box.append(&context_box);
         let header = adw::HeaderBar::new();
         header.add_css_class("workspace-header");
-        header.set_centering_policy(adw::CenteringPolicy::Loose);
+        header.set_centering_policy(adw::CenteringPolicy::Strict);
         let btn_sidebar = gtk4::ToggleButton::new();
         btn_sidebar.set_icon_name("sidebar-show-symbolic");
         btn_sidebar.set_tooltip_text(Some("Toggle Sidebar (F9)"));
@@ -368,15 +368,12 @@ impl App {
         crumb_button.set_sensitive(false);
         let title_lane = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         title_lane.add_css_class("workspace-title-lane");
-        title_lane.set_hexpand(true);
         title_lane.append(&crumb_button);
         let drag_space = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         drag_space.add_css_class("workspace-drag-space");
         drag_space.set_width_request(24);
-        drag_space.set_hexpand(true);
-        title_lane.append(&drag_space);
-        header.set_title_widget(Some(&gtk4::Box::new(gtk4::Orientation::Horizontal, 0)));
-        header.pack_start(&title_lane);
+        header.pack_start(&drag_space);
+        header.set_title_widget(Some(&title_lane));
         let btn_menu = gtk4::MenuButton::new();
         btn_menu.set_icon_name("open-menu-symbolic");
         btn_menu.set_tooltip_text(Some("Main Menu"));
@@ -561,6 +558,11 @@ impl App {
         );
         // Only the last matching breakpoint applies, so both declare icon mode.
         for breakpoint in [&compact_labels, &compact_header] {
+            breakpoint.add_setter(
+                &header,
+                "centering-policy",
+                Some(&adw::CenteringPolicy::Loose.to_value()),
+            );
             for (content, button, classes) in [
                 (
                     &new_tab_content,
