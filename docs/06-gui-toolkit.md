@@ -387,6 +387,7 @@ when opened, when the active workspace changes while it is open, and on explicit
 Refresh; a closed panel does no reads. The Working tree summary says "Changes against HEAD"
 with aggregate file/line counts. The native header keeps the Changes title;
 a separate native selector exposes Working tree and Latest turn without hover.
+Its native labels wrap with enlarged or wider fonts rather than truncating the comparison names.
 Refresh acts on the selected comparison. Files sort by path under a directory label per
 group; each row shows the file name (full path in the tooltip) and `+N −N` in the
 diff colours, or "Untracked"/"Binary". Working tree compares against HEAD;

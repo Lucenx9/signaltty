@@ -200,6 +200,11 @@ impl ChangesPanel {
             let toggle = adw::Toggle::new();
             toggle.set_name(Some(name));
             toggle.set_label(Some(label));
+            let text = gtk4::Label::new(Some(label));
+            text.set_wrap(true);
+            text.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+            text.set_justify(gtk4::Justification::Center);
+            toggle.set_child(Some(&text));
             toggle.set_tooltip(tooltip);
             scopes.add(toggle);
         }

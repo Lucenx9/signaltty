@@ -44,3 +44,17 @@ Repeat with `app::tests::changes_panel_scopes_to_the_latest_turn` and with `ADW_
 These native artifacts are committed before final full verification. Final full result/content-index provenance lives in `/tmp/changes-reading-full-20261014/summary.json` and the PR's verification artifact when CI runs. The PR description records the actual verified revision and outcome. Validate against current content with `scripts/agent.sh check --phase delivery --feature 064-changes-reading-polish --evidence /tmp/changes-reading-full-20261014`. No source/unchecked nonignored handoff is written after final success.
 
 [Independent reviews](reviews.md) found no actionable findings. Native logs include portal fallback warnings; they do not certify an actual desktop. Compositor behavior, screen-reader speech/order, OSK, IME, folder choosers and paid-provider sessions were not run.
+
+## PR 119 CI correction
+
+The initial GitHub full run failed the narrow scope assertion: the runner's
+Sans 18 font truncated Working tree. The original local pass did not cover
+that font's metrics. Native toggle children now use centered wrapping labels;
+the toggle labels, accessible comparison names and request values remain.
+A DejaVu Sans 22 case reproduced the same failed assertion locally before the
+fix and passes after it, alongside the existing light/dark/RTL matrix and
+separate native high-contrast run.
+
+![Wrapping scope labels with a wider font](scope-wide-font-fixed.png)
+
+The current PR checks and verification artifact supersede the initial CI result.

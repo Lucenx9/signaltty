@@ -3666,6 +3666,12 @@ fn changes_panel_scopes_to_the_latest_turn() {
             adw::ColorScheme::ForceDark,
             "changes-scope-narrow-large-rtl",
         ),
+        (
+            "DejaVu Sans 22",
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceLight,
+            "changes-scope-narrow-wide-font",
+        ),
     ] {
         settings.set_gtk_font_name(Some(font));
         gtk4::Widget::set_default_direction(direction);
