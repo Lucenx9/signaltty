@@ -28,6 +28,91 @@ fn cli_json(socket: &std::path::Path, args: &[&str]) -> Value {
 }
 
 #[tokio::test]
+async fn cli_attach_keeps_the_named_pane_identity() {
+    let srv = TestServer::start().await;
+    for (action, by_name) in [
+        ("close", false),
+        ("close", true),
+        ("exit", true),
+        ("rename", true),
+    ] {
+        let new = cli_json(&srv.socket, &["new", "--cwd", "/tmp", "--", "cat"]);
+        let pane = new["pane_id"].as_str().unwrap();
+        let name = format!("attach-{action}");
+        cli_json(&srv.socket, &["pane", "rename", pane, &name]);
+        let output = Command::new("python3")
+            .args(["-c", include_str!("attach.py")])
+            .arg(bin_path("signaltty"))
+            .arg(&srv.socket)
+            .args([if by_name { name.as_str() } else { pane }, pane, action])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{action}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_relative_cwd_uses_the_callers_directory() {
+    let repo = signaltty_testkit::TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let run = |args: &[&str]| {
+        let output = Command::new(bin_path("signaltty"))
+            .arg("--socket")
+            .arg(&srv.socket)
+            .arg("--json")
+            .args(args)
+            .current_dir(repo.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let new = run(&["new", "--cwd", ".", "--", "pwd"]);
+    let workspace = new["workspace_id"].as_str().unwrap();
+    let first = new["pane_id"].as_str().unwrap();
+    let tab = run(&["tab", "create", "--workspace", workspace]);
+    let spawned = run(&[
+        "pane",
+        "spawn",
+        "--workspace",
+        workspace,
+        "--tab",
+        tab["tab"]["id"].as_str().unwrap(),
+        "--cwd",
+        ".",
+        "--",
+        "pwd",
+    ]);
+    let split = run(&["pane", "split", first, "--cwd", ".", "--", "pwd"]);
+    for pane in [
+        first,
+        spawned["pane"]["id"].as_str().unwrap(),
+        split["pane"]["id"].as_str().unwrap(),
+    ] {
+        run(&[
+            "wait",
+            "--pane",
+            pane,
+            "--until",
+            "exited",
+            "--timeout",
+            "5",
+        ]);
+        let read = run(&["pane", "read", pane]);
+        assert_eq!(
+            read["text"].as_str().unwrap().trim(),
+            repo.path().to_str().unwrap()
+        );
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn cli_status_and_new_json() {
     let srv = TestServer::start().await;
     let st = cli_json(&srv.socket, &["status"]);
