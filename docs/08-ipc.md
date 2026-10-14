@@ -468,6 +468,10 @@ passthrough of `result`. Examples: `signaltty new` → `workspace.create`
 `$SIGNALTTY_PANE` context for `notify`/`hook-event` when run inside a
 pane (env set by the server at spawn).
 
+Explicit `--cwd` on `new`, `pane spawn`, and `pane split` resolves against
+the CLI's working directory before IPC. Omitting it retains the server's
+workspace default or the target pane's directory for a split.
+
 Task orchestration CLI: `signaltty task start --repo … --objective …
 … -- <argv…>` → `task.start` (the worker command is trailing args, not a
 flag; returns `{task, pane}` at `pending`); `signaltty task get/list/wait

@@ -21,6 +21,10 @@ fn ends_attach(name: &str, payload: &Value, pane_id: &str) -> bool {
 pub async fn run(socket: &std::path::Path, pane_id: &str) -> Result<(), CliError> {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut client = Client::connect(socket).await?;
+    let pane = client.call("pane.get", json!({"pane_id": pane_id})).await?;
+    let pane_id = pane["pane"]["id"]
+        .as_str()
+        .ok_or_else(|| CliError::Io("pane.get returned no pane ID".into()))?;
     // Attach streams only `pty.data`; subscribe first so an exit (or
     // close) racing the attach still arrives.
     client
