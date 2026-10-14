@@ -589,6 +589,11 @@ fn socket_path(args: &Args) -> PathBuf {
         .unwrap_or_else(signaltty_core::paths::socket_path)
 }
 
+fn absolute_path(path: &str) -> Result<PathBuf, CliError> {
+    std::path::absolute(path)
+        .map_err(|e| CliError::Usage(format!("cannot resolve path '{path}': {e}")))
+}
+
 fn emit(json_mode: bool, result: &Value, human: String) {
     if json_mode {
         println!("{}", serde_json::to_string(result).unwrap());
@@ -683,7 +688,7 @@ async fn run(args: Args) -> Result<(), CliError> {
             let mut c = Client::connect(&socket).await?;
             let mut wparams = json!({});
             if let Some(cwd) = cwd {
-                wparams["cwd"] = json!(cwd);
+                wparams["cwd"] = json!(absolute_path(&cwd)?);
             }
             if let Some(name) = name {
                 wparams["name"] = json!(name);
@@ -1424,7 +1429,7 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                         p["tab_id"] = json!(t);
                     }
                     if let Some(cwd) = cwd {
-                        p["cwd"] = json!(cwd);
+                        p["cwd"] = json!(absolute_path(&cwd)?);
                     }
                     if let Some(a) = agent {
                         p["agent_hint"] = json!(a);
@@ -1493,7 +1498,7 @@ async fn pane_cmd(socket: PathBuf, json: bool, op: PaneOp) -> Result<(), CliErro
                 } => {
                     let mut p = json!({"pane_id": id, "direction": direction});
                     if let Some(cwd) = cwd {
-                        p["cwd"] = json!(cwd);
+                        p["cwd"] = json!(absolute_path(&cwd)?);
                     }
                     if !cmd.is_empty() {
                         p["argv"] = json!(cmd);
@@ -1738,13 +1743,8 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
                 contract["acceptance_criteria"] = json!(crit);
             }
 
-            // The server resolves paths against its own cwd, not ours.
-            let abs = |path: &str| {
-                std::path::absolute(path)
-                    .map_err(|e| CliError::Usage(format!("cannot resolve path '{path}': {e}")))
-            };
             let mut p = json!({
-                "repo": abs(&repo)?,
+                "repo": absolute_path(&repo)?,
                 "contract": contract,
             });
             if let Some(a) = agent {
@@ -1772,7 +1772,7 @@ async fn task_cmd(socket: PathBuf, json: bool, op: TaskOp) -> Result<(), CliErro
                 p["branch"] = json!(b);
             }
             if let Some(pa) = path {
-                p["path"] = json!(abs(&pa)?);
+                p["path"] = json!(absolute_path(&pa)?);
             }
             if let Some(rt) = ready_timeout_s {
                 p["ready_timeout_s"] = json!(rt);
