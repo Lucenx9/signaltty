@@ -10,6 +10,14 @@ async fn automatic_naming_is_opt_in_and_manual_rename_disables_it() {
         .await
         .unwrap();
     assert_eq!(manual["workspace"]["naming"], "manual");
+    let null_default = client
+        .call(
+            "workspace.create",
+            json!({"name":"manual with null", "auto_name":null}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(null_default["workspace"]["naming"], "manual");
     let automatic = client
         .call(
             "workspace.create",

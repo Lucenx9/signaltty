@@ -65,6 +65,45 @@ async fn read(client: &mut TestClient, workspace: &Value, path: &str) -> Value {
 }
 
 #[tokio::test]
+async fn null_diff_scope_uses_head_and_mistyped_scopes_are_rejected() {
+    let repo = Repository::new();
+    repo.write("tracked.txt", "old\n");
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-qm", "base"]);
+    repo.write("tracked.txt", "new\n");
+    let server = TestServer::start().await;
+    let mut client = server.client().await;
+    let workspace = repo.workspace(&mut client).await;
+
+    for method in ["workspace.diff", "workspace.file_diff"] {
+        let mut params = json!({"workspace_id":workspace["id"], "path":"tracked.txt"});
+        let default = client.call(method, params.clone()).await.unwrap();
+        if method == "workspace.diff" {
+            assert_eq!(default["scope"], "head");
+            assert_eq!(default["added"], 1);
+            assert_eq!(default["removed"], 1);
+        } else {
+            assert_eq!(default["content"]["kind"], "text");
+            assert_eq!(default["content"]["hunks"][0]["lines"][0]["text"], "old");
+            assert_eq!(default["content"]["hunks"][0]["lines"][1]["text"], "new");
+        }
+        params["scope"] = Value::Null;
+        assert_eq!(client.call(method, params.clone()).await.unwrap(), default);
+        params["scope"] = json!("head");
+        assert_eq!(client.call(method, params.clone()).await.unwrap(), default);
+        for invalid in [json!(false), json!(42), json!("unknown")] {
+            params["scope"] = invalid;
+            let error = client.call(method, params.clone()).await.unwrap_err();
+            assert!(
+                error.starts_with(signaltty_proto::code::BAD_PARAMS),
+                "{error}"
+            );
+        }
+    }
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn tracked_diff_combines_staged_and_unstaged_and_reads_deletion() {
     let repo = Repository::new();
     repo.write(

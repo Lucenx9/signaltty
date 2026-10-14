@@ -60,7 +60,7 @@ pub enum DiffScope {
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceDiff {
     pub workspace_id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_null_default")]
     pub scope: DiffScope,
 }
 
@@ -68,7 +68,7 @@ pub struct WorkspaceDiff {
 pub struct WorkspaceFileDiff {
     pub workspace_id: String,
     pub path: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_null_default")]
     pub scope: DiffScope,
 }
 
@@ -113,7 +113,7 @@ pub struct ServerShutdown {
 
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceCreate {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_null_default")]
     pub auto_name: bool,
     pub name: Option<String>,
     pub cwd: Option<String>,
