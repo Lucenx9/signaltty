@@ -1,7 +1,7 @@
 {
   "mode": "full",
   "status": "passed",
-  "revision": "4a69bea05c48e2a925c6ceb32ad32f88e80e46e8",
+  "revision": "cee0e5812c2afd64f8e4f5f9f7efaef319bb4f62",
   "dirty": false,
   "display_tests": 45,
   "versions": {
@@ -17,7 +17,7 @@
     "Native accessibility QA runs only in desktop mode; Xvfb does not certify a compositor."
   ],
   "command": "scripts/verify.sh full",
-  "evidence_directory": "target/verification/full-butqqo_d",
+  "evidence_directory": "target/verification/full-lbqv9yj1",
   "passed_steps": 57,
   "errors": [],
   "code_unchanged_after_verified_revision": true,
