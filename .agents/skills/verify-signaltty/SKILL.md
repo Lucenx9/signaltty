@@ -5,6 +5,9 @@ description: Verify signaltty's native GTK workspace, real PTYs and IPC reliabil
 
 ## Launch
 
+Inspect task-specific references with `scripts/agent.sh context --task verify --json`.
+The workflow and source-ownership contract is in [docs/18](../../../docs/18-agent-workflow.md).
+
 Use `scripts/verify.sh doctor` for prerequisites, `scripts/verify.sh fast` during
 development, and `scripts/verify.sh full` before submitting a PR. Full includes
 every ignored GTK test in a separate Xvfb/D-Bus process, server QA and the refresh
@@ -49,6 +52,12 @@ signaltty-gui <filter> -- --ignored --test-threads=1`.
 ## Evidence
 
 The runner saves logs under `target/verification/`; CI uploads its evidence artifact.
+Stage final source before running full. Versioned provenance covers working and
+staged content before/after the commands. Changed inputs prevent passing proof.
+Use `scripts/agent.sh check --phase delivery --feature <full-slug> --evidence <run>`
+to assess a chosen report against current inputs. Doctor/fast and legacy reports
+do not establish delivery proof. Committing identical staged content preserves
+proof; subsequent source, index or nonignored handoff writes require a new run.
 For durable release evidence, save selected helper stdout JSONL under `docs/qa/`
 with the verification date and commit.
 Proof includes the action and actual resulting state: decisions remain answerable,

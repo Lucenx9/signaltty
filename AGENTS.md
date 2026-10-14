@@ -22,7 +22,11 @@ scripts/setup-agent.sh all       # pinned skills + spec-kit commands + git hooks
 scripts/verify.sh doctor         # Rust, native libraries and display-test tools
 ```
 
-Load skills for the current task using `docs/15-agent-skills.md`.
+At session start, run `scripts/agent.sh status --json` and
+`scripts/agent.sh context --task <key> --json`. Pass `--feature <full-slug>`
+when work was selected explicitly. These commands never persist selection.
+Use `docs/18-agent-workflow.md` for catalog enrollment, phase checks, handoffs
+and failure recovery; `docs/15-agent-skills.md` routes the applicable skills.
 Before completing a change, read `.agents/skills/verify-signaltty/SKILL.md`.
 Environment setup, worktree isolation, handoffs and proof limits are in
 `docs/17-agent-development.md`. CI runs the same full verification command.
@@ -51,4 +55,4 @@ Server integration tests live in `crates/signaltty-server/tests/` and use `signa
 - Core (`signaltty-core`) holds pure logic with unit tests in-module; no PTY, async, or OS calls there.
 - GUI reconcile is structural: ratio-only layout changes move widgets in place, never rebuild terminals.
 - Commits read `area: what` (`gui: …`, `layouts: …`); one concern per commit.
-- Fix the one pre-existing clippy warning only if you touch that line; otherwise leave it.
+- Clippy warnings must match the reviewed `scripts/clippy-baseline.json`; never regenerate the baseline to silence a warning.

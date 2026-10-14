@@ -11,6 +11,8 @@ import sys
 import tempfile
 import time
 
+from verification_evidence import capture_checkout
+
 ROOT = Path(__file__).resolve().parents[1]
 LIMITS = [
     'Screenshots require visual review; automated success is not visual approval.',
@@ -71,19 +73,50 @@ def doctor(mode):
 
 
 class Verification:
-    def __init__(self, mode, output):
+    def __init__(self, mode, output, before, provenance_error):
         self.output = output
         self.env = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / 'target'),
                         SIGNALTTY_QA_LOG_DIR=str(output / 'qa-logs'))
         # Existing native helpers resolve binaries under the checkout's target/debug.
         # A separate checkout therefore owns its binaries and app sessions.
-        self.report = dict(mode=mode, status='running', steps=[], errors=[], limits=LIMITS)
-        if shutil.which('git'):
+        self.report = dict(schema_version=1, mode=mode, status='running', steps=[], errors=[], limits=LIMITS,
+                           revision=before['revision'] if before else None,
+                           provenance=dict(schema_version=1, before=before, after=None, unchanged=False))
+        if provenance_error:
+            self.report['provenance']['error'] = provenance_error
+        if before:
             try:
-                self.report['revision'] = probe(['git', 'rev-parse', 'HEAD'])
                 self.report['dirty'] = bool(probe(['git', 'status', '--porcelain']))
             except subprocess.SubprocessError:
-                self.report['revision'] = None
+                self.report['dirty'] = None
+
+    def fail(self, category, error):
+        failed = next((step for step in reversed(self.report['steps']) if step['status'] == 'failed'), {})
+        log = str(self.output / failed['log']) if failed else str(self.output / 'summary.json')
+        recovery = {
+            'environment': 'Read the environment errors; run scripts/setup-dev.sh --system and scripts/verify.sh doctor before rerunning.',
+            'provenance': 'Inspect Git availability and checkout root; restore source provenance before rerunning scripts/verify.sh full.',
+            'stale': 'Finish source writes or use an isolated checkout, then run scripts/verify.sh full again.',
+            'interruption': f'Read {log}; confirm the owned verification processes stopped, then rerun when the interruption is resolved.',
+            'command': f'Read {log} and qa-logs; diagnose the failing command before one bounded rerun. If it fails again, gather new evidence and revise the hypothesis.',
+        }[category]
+        self.report.update(status='failed', failure=dict(category=category, failed_step=failed.get('name'),
+                                                        log=log, recovery=recovery))
+        self.report['errors'].append(str(error) or 'interrupted')
+
+    def finish_provenance(self):
+        provenance = self.report['provenance']
+        try:
+            after = capture_checkout(ROOT, self.output)
+            before = provenance['before']
+            provenance.update(after=after, unchanged=before is not None and all(
+                before[key] == after[key] for key in ('root', 'content_digest', 'index_digest', 'files')))
+            if before is not None and not provenance['unchanged'] and self.report['status'] == 'passed':
+                self.fail('stale', 'checkout inputs changed during verification; successful commands do not prove the current source')
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            provenance['error'] = str(error)
+            if self.report['mode'] != 'doctor' and self.report['status'] != 'failed':
+                self.fail('provenance', f'cannot capture final source provenance: {error}')
 
     def save(self):
         (self.output / 'summary.json').write_text(json.dumps(self.report, indent=2) + '\n')
@@ -127,9 +160,11 @@ class Verification:
         return log
 
     def checks(self, mode):
-        self.run('tooling-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-v'])
-        self.run('fmt', ['cargo', 'fmt', '--check'])
+        # Resolve locked dependencies before offline packaging checks on fresh runners.
         metadata = self.run('metadata', ['cargo', 'metadata', '--locked', '--format-version', '1'])
+        self.run('tooling-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-v'])
+        self.run('repository', [str(ROOT / 'scripts/agent.sh'), 'check', '--phase', 'repository'])
+        self.run('fmt', ['cargo', 'fmt', '--check'])
         metadata_json = self.output / 'metadata.json'
         metadata_json.write_text('\n'.join(line for line in metadata.read_text().splitlines()
                                            if line.startswith('{')))
@@ -185,6 +220,20 @@ def main():
     args = parser.parse_args()
     if args.output:
         output = args.output.resolve()
+        if output.exists():
+            parser.error(f'evidence directory already exists: {output}')
+    else:
+        output = ROOT / 'target' / 'verification'
+    before, provenance_error = None, None
+    try:
+        before = capture_checkout(ROOT, output)
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        if isinstance(error, ValueError) and 'evidence output must be ignored' in str(error):
+            parser.error(str(error))
+        provenance_error = str(error)
+        if args.output and ROOT in output.parents:
+            parser.error(f'cannot establish that evidence output is ignored: {error}')
+    if args.output:
         try:
             output.mkdir(parents=True, exist_ok=False)
         except FileExistsError:
@@ -194,20 +243,27 @@ def main():
         base.mkdir(parents=True, exist_ok=True)
         output = Path(tempfile.mkdtemp(prefix=f'{args.mode}-', dir=base))
     print(f'Evidence: {output}', flush=True)
-    run = Verification(args.mode, output)
+    run = Verification(args.mode, output, before, provenance_error)
+    category = 'environment'
     try:
         errors, versions = doctor(args.mode)
         run.report.update(errors=errors, versions=versions)
         if errors:
             raise RuntimeError('environment diagnosis failed: ' + '; '.join(errors))
         if args.mode != 'doctor':
+            category = 'provenance'
+            if before is None:
+                raise RuntimeError(f'source provenance unavailable: {provenance_error}')
+            category = 'command'
             run.checks(args.mode)
         run.report['status'] = 'passed'
     except (Exception, KeyboardInterrupt) as error:
-        run.report['status'] = 'failed'
-        run.report['errors'].append(str(error) or 'interrupted')
+        if isinstance(error, (KeyboardInterrupt, subprocess.TimeoutExpired)):
+            category = 'interruption'
+        run.fail(category, error)
         print(f'FAIL: {error}', file=sys.stderr)
     finally:
+        run.finish_provenance()
         run.save()
     return run.report['status'] != 'passed'
 

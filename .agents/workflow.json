@@ -1,0 +1,543 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "constraints": ".specify/memory/constitution.md",
+    "catalog_and_routing": ".agents/workflow.json",
+    "feature_selection": ".specify/feature.json",
+    "command_sources": ".specify/commands",
+    "pinned_skill_sources": "scripts/setup-agent.sh",
+    "verification": ".agents/skills/verify-signaltty/SKILL.md",
+    "development": "docs/17-agent-development.md"
+  },
+  "routes": {
+    "research": {
+      "label": "Investigate a question",
+      "first": [
+        "research",
+        "how"
+      ],
+      "conditional": [
+        "why for architectural rationale"
+      ],
+      "documents": [
+        "docs/README.md"
+      ],
+      "commands": []
+    },
+    "specify": {
+      "label": "Specify a feature",
+      "first": [
+        "speckit-specify",
+        "speckit-clarify"
+      ],
+      "conditional": [
+        "domain-modeling for new concepts"
+      ],
+      "documents": [
+        ".specify/memory/constitution.md",
+        "specs/README.md"
+      ],
+      "commands": []
+    },
+    "design": {
+      "label": "Design a substantial change",
+      "first": [
+        "speckit-plan",
+        "architect"
+      ],
+      "conditional": [
+        "codebase-design for module boundaries"
+      ],
+      "documents": [
+        "docs/11-crates.md"
+      ],
+      "commands": []
+    },
+    "tasks": {
+      "label": "Break down work",
+      "first": [
+        "speckit-tasks"
+      ],
+      "conditional": [
+        "to-issues only when publishing issues is requested"
+      ],
+      "documents": [
+        ".specify/memory/constitution.md"
+      ],
+      "commands": []
+    },
+    "implement": {
+      "label": "Implement",
+      "first": [
+        "implement",
+        "tdd",
+        "karpathy-guidelines"
+      ],
+      "conditional": [
+        "principle-* for a concrete design or failure"
+      ],
+      "documents": [
+        "docs/17-agent-development.md"
+      ],
+      "commands": [
+        [
+          "scripts/verify.sh",
+          "fast"
+        ]
+      ]
+    },
+    "review": {
+      "label": "Review a diff",
+      "first": [
+        "code-review"
+      ],
+      "conditional": [
+        "interrogate for adversarial review",
+        "blast-radius for cross-module risk"
+      ],
+      "documents": [
+        ".specify/memory/constitution.md"
+      ],
+      "commands": []
+    },
+    "verify": {
+      "label": "Verify a change",
+      "first": [
+        "verify-signaltty",
+        "principle-prove-it-works"
+      ],
+      "conditional": [
+        "maintain-verification-skill when coverage changes"
+      ],
+      "documents": [
+        ".agents/skills/verify-signaltty/SKILL.md",
+        "docs/17-agent-development.md"
+      ],
+      "commands": [
+        [
+          "scripts/verify.sh",
+          "full"
+        ]
+      ]
+    },
+    "gui": {
+      "label": "Change GTK visuals",
+      "first": [
+        "frontend-design",
+        "emil-design-eng"
+      ],
+      "conditional": [
+        "motion/prototype skills for those changes"
+      ],
+      "documents": [
+        "docs/06-gui-toolkit.md",
+        "docs/14-product-direction.md",
+        "docs/16-visual-references.md",
+        "docs/17-agent-development.md"
+      ],
+      "commands": [
+        [
+          "scripts/verify.sh",
+          "full"
+        ]
+      ]
+    },
+    "diagnose": {
+      "label": "Diagnose a failure",
+      "first": [
+        "diagnosing-bugs"
+      ],
+      "conditional": [
+        "figure-it-out when no narrower workflow fits"
+      ],
+      "documents": [
+        "docs/17-agent-development.md"
+      ],
+      "commands": [
+        [
+          "scripts/verify.sh",
+          "doctor"
+        ]
+      ]
+    },
+    "docs": {
+      "label": "Write documentation",
+      "first": [
+        "technical-writing"
+      ],
+      "conditional": [
+        "writing-for-agents for instructions or skills"
+      ],
+      "documents": [
+        "docs/README.md",
+        "docs/18-agent-workflow.md"
+      ],
+      "commands": [
+        [
+          "scripts/agent.sh",
+          "check",
+          "--phase",
+          "repository"
+        ]
+      ]
+    },
+    "core": {
+      "label": "Change pure domain logic",
+      "first": [
+        "implement",
+        "tdd",
+        "karpathy-guidelines"
+      ],
+      "conditional": [],
+      "documents": [
+        "docs/02-data-model.md",
+        "docs/03-lifecycle-attention.md",
+        "docs/11-crates.md"
+      ],
+      "commands": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "signaltty-core"
+        ]
+      ]
+    },
+    "ipc": {
+      "label": "Change IPC contracts",
+      "first": [
+        "implement",
+        "tdd",
+        "karpathy-guidelines"
+      ],
+      "conditional": [],
+      "documents": [
+        "docs/08-ipc.md",
+        "docs/02-data-model.md"
+      ],
+      "commands": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "signaltty-server"
+        ]
+      ]
+    },
+    "workflow": {
+      "label": "Change agent tooling",
+      "first": [
+        "implement",
+        "tdd",
+        "writing-for-agents"
+      ],
+      "conditional": [],
+      "documents": [
+        "docs/15-agent-skills.md",
+        "docs/17-agent-development.md",
+        "docs/18-agent-workflow.md"
+      ],
+      "commands": [
+        [
+          "python3",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "scripts/tests",
+          "-v"
+        ]
+      ]
+    }
+  },
+  "features": {
+    "001-priority-sorted-sidebar": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "002-self-printing-schema": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "003-inline-approvals": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "004-close-workspace-gui": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "005-agent-manifests-proc": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "006-agent-skill-handles-audit": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "007-notif-actions-diff": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "008-qa-reliability": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "009-ui-refinement": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "010-automatic-agent-hooks": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "011-codex-pane-runtime": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "012-workspace-visual-hierarchy": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "013-local-agent-workflows": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "014-file-diff-review": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "015-agent-ready-repository": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "016-agent-event-recovery": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "017-themes": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "018-orchestrator": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "019-task-board": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "020-pr-cycle": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "021-board-quality": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "022-approval-reconcile": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "023-harness-event-normalization": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "023-palette-usability": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "023-submit-permission-race": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "024-header-wayfinding": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "024-pty-input-isolation": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "024-reviewed-terminal-attention": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "025-board-history-subset": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "025-pty-writer-queue": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "025-resume-selected-executable": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "026-board-live-refresh": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "026-bounded-pty-input": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "027-screen-detection-rules": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "028-bundled-screen-rules": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "029-pane-explain": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "030-claude-screen-rules": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "031-codex-screen-rules": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "032-logind-shutdown": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "033-binary-scoped-screen-rules": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "034-reload-agent-manifests": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "035-muse-antigravity-rules": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "036-pane-wait-for-output-clear": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "037-pane-swap-move": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "038-pane-names": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "039-t3code-polish": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "040-changes-panel": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "041-layout-export-apply": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "041-turn-diff": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "042-preferences-previews": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "043-workspace-details": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "044-craft-pass": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "045-osc-progress-grok": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "045-shell-polish": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "046-workspace-titles": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "047-harness-socket-access": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "048-workspace-refinement": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "049-secondary-window-polish": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "050-restrained-native-surfaces": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "051-restrained-workspace-shell": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "052-reliable-workspace-interactions": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "053-icon-hierarchy-polish": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "054-project-workspace-sidebar": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "055-compact-workspace-hierarchy": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "056-pr-readiness": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "057-idempotent-task-reports": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "057-top-bar-polish": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "058-sidebar-identity": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "059-automatic-agent-permissions": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "060-cli-address-resolution": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "060-socket-startup": {
+      "lifecycle": "unreviewed",
+      "enrolled": false
+    },
+    "061-agent-workflow": {
+      "lifecycle": "completed",
+      "enrolled": true
+    }
+  }
+}

@@ -1,17 +1,8 @@
-# signaltty — Architecture Deliverable (Phase 0)
+# signaltty documentation
 
-First deliverable for the native Linux multi-agent workspace.
-Covers: architecture diagram, process/server model, data model,
-lifecycle/attention models, PTY lifecycle, terminal-backend research,
-GTK vs Qt, agent integration, IPC schema, persistence, security,
-crate layout, roadmap, risks.
+The server owns sessions and processes. GTK and CLI are clients. Start with the current architecture or the development workflow for your task. Research and verification reports retain their original dates and describe the checkout they examined.
 
-Design rule: **the server owns the processes, the terminal backend
-renders terminal state, agent adapters provide semantic agent state,
-notifications describe human attention, and the UI helps the user
-find the work that needs them.**
-
-Docs index:
+## Current architecture and product direction
 
 - [01 — Architecture & process model](01-architecture.md)
 - [02 — Data model (server/workspace/tab/pane)](02-data-model.md)
@@ -27,13 +18,29 @@ Docs index:
 - [12 — MVP roadmap & risks](12-roadmap-risks.md)
 - [13 — Plugins & workflows](13-plugins.md)
 - [14 — Product direction (cmux + herdr, t3code visual bar)](14-product-direction.md)
-- [License provenance and remaining distribution checks, 2026-10-11](research/2026-10-11-license-provenance.md)
-- [15 — Agent skills (install + phase routing)](15-agent-skills.md)
 - [16 — Visual references (Geist, Linear, Vercel)](16-visual-references.md)
+
+## Development workflow
+
+- [15 — Agent skills (install + phase routing)](15-agent-skills.md)
 - [17 — Agent development and verification](17-agent-development.md)
+- [18 — Agent workflow commands and source ownership](18-agent-workflow.md)
+- [Feature catalog and recorded lifecycle](../specs/README.md)
+
+## Architecture decisions
+
+- [ADRs](adr/)
+
+## Research
+
+- [License provenance and remaining distribution checks, 2026-10-11](research/2026-10-11-license-provenance.md)
 - [Agent Orchestrator review, 2026-10-12](research/2026-10-12-agent-orchestrator.md)
 - [Agent-ready repository research, 2026-10-03](research/2026-10-03-agent-ready-repository.md)
+- [Agent workflow automation research, 2026-10-14](research/2026-10-14-agent-workflow-automation.md)
 - [cmux and Herdr source review, 2026-10-03](research/2026-10-03-cmux-herdr-code.md)
+
+## Historical verification evidence
+
 - [App verification, 2026-09-29](qa/2026-09-29.md)
 - [Native UI refinement verification, 2026-09-29–30](qa/ui-2026-09-29.md)
 - [Workspace visual hierarchy verification, 2026-09-30](qa/visual-hierarchy-2026-09-30.md)
@@ -41,4 +48,3 @@ Docs index:
 - [Codex pane runtime verification, 2026-09-30](qa/codex-pane-runtime-2026-09-30.md)
 - [Local agent workflow verification, 2026-09-30](qa/local-workflows-2026-09-30.md)
 - [Per-file diff review verification, 2026-10-03](qa/file-diff-review-2026-10-03.md)
-- [ADRs](adr/)
