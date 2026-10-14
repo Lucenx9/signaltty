@@ -7,4 +7,4 @@
 - [x] T005 Resolve explicit cwd in `crates/signaltty-cli/src/main.rs`.
 - [x] T006 Verify real CLI regressions in `crates/signaltty-cli/tests/cli.rs`.
 - [x] T007 Document cwd semantics in `docs/08-ipc.md`.
-- [ ] T008 Run `scripts/verify.sh full` and review the diff before publishing.
+- [x] T008 Run `scripts/verify.sh full` and review the diff before publishing.
