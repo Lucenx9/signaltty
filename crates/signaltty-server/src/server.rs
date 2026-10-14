@@ -1,7 +1,7 @@
 //! Unix-socket listener, connection handling, event fan-out.
 
 use std::collections::HashSet;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -44,16 +44,30 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&runtime_dir)?;
         std::fs::set_permissions(&runtime_dir, std::fs::Permissions::from_mode(0o700))?;
     }
-    // Remove a stale socket left by a crashed server.
-    if config.socket_path.exists() {
-        if UnixStream::connect(&config.socket_path).await.is_ok() {
+    // Only a refused connection to a socket establishes that it is stale.
+    match std::fs::symlink_metadata(&config.socket_path) {
+        Ok(metadata) if !metadata.file_type().is_socket() => {
             return Err(format!(
-                "a server is already listening on {}",
+                "socket path is not a socket: {}",
                 config.socket_path.display()
             )
             .into());
         }
-        std::fs::remove_file(&config.socket_path)?;
+        Ok(_) => match UnixStream::connect(&config.socket_path).await {
+            Ok(_) => {
+                return Err(format!(
+                    "a server is already listening on {}",
+                    config.socket_path.display()
+                )
+                .into());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                std::fs::remove_file(&config.socket_path)?;
+            }
+            Err(error) => return Err(error.into()),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
 
     let store: SharedStore = Arc::new(std::sync::RwLock::new(Store::new()));
@@ -591,6 +605,152 @@ mod tests {
         assert!(!flush_pending_snapshot(&ctx, &pending));
         assert!(!snapshot.exists());
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn startup_preserves_a_regular_file_at_the_socket_path() {
+        let (ctx, base, _) = test_context();
+        let socket = ctx.config.socket_path.clone();
+        std::fs::write(&socket, b"user content\n").unwrap();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            serve(ctx.config.clone()),
+        )
+        .await;
+        let content = std::fs::read(&socket);
+        std::fs::remove_dir_all(base).unwrap();
+
+        assert_eq!(content.unwrap(), b"user content\n");
+        assert!(result
+            .unwrap()
+            .unwrap_err()
+            .to_string()
+            .contains("not a socket"));
+    }
+
+    #[tokio::test]
+    async fn startup_preserves_a_directory_at_the_socket_path() {
+        let (ctx, base, _) = test_context();
+        std::fs::create_dir(&ctx.config.socket_path).unwrap();
+        let contents = ctx.config.socket_path.join("user-file");
+        std::fs::write(&contents, b"user content\n").unwrap();
+        let error = serve(ctx.config.clone()).await.unwrap_err();
+        let content = std::fs::read(contents);
+        std::fs::remove_dir_all(base).unwrap();
+
+        assert_eq!(content.unwrap(), b"user content\n");
+        assert!(error.to_string().contains("not a socket"));
+    }
+
+    #[tokio::test]
+    async fn startup_preserves_an_inaccessible_live_socket() {
+        use std::os::unix::fs::MetadataExt;
+
+        let (ctx, base, _) = test_context();
+        let socket = ctx.config.socket_path.clone();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let original_inode = std::fs::symlink_metadata(&socket).unwrap().ino();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            serve(ctx.config.clone()),
+        )
+        .await;
+        let current_inode = std::fs::symlink_metadata(&socket).unwrap().ino();
+        drop(listener);
+        std::fs::remove_dir_all(base).unwrap();
+
+        assert_eq!(current_inode, original_inode);
+        let error = result.unwrap().unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_preserves_symbolic_links_at_the_socket_path() {
+        for dangling in [false, true] {
+            let (ctx, base, _) = test_context();
+            let target = base.join("user-file");
+            if !dangling {
+                std::fs::write(&target, b"user content\n").unwrap();
+            }
+            std::os::unix::fs::symlink(&target, &ctx.config.socket_path).unwrap();
+
+            let result = tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                serve(ctx.config.clone()),
+            )
+            .await;
+            let link = std::fs::read_link(&ctx.config.socket_path);
+            let content = (!dangling).then(|| std::fs::read(&target).unwrap());
+            std::fs::remove_dir_all(base).unwrap();
+
+            assert_eq!(link.unwrap(), target);
+            if let Some(content) = content {
+                assert_eq!(content, b"user content\n");
+            }
+            assert!(result
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("not a socket"));
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_preserves_an_accessible_live_socket() {
+        use std::os::unix::fs::MetadataExt;
+
+        let (ctx, base, _) = test_context();
+        let socket = ctx.config.socket_path.clone();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let original_inode = std::fs::symlink_metadata(&socket).unwrap().ino();
+        let error = serve(ctx.config.clone()).await.unwrap_err();
+        assert!(error.to_string().contains("already listening"));
+        assert_eq!(
+            std::fs::symlink_metadata(&socket).unwrap().ino(),
+            original_inode
+        );
+        drop(listener);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn startup_serves_ipc_on_absent_and_stale_socket_paths() {
+        for stale in [false, true] {
+            let (ctx, base, _) = test_context();
+            let socket = ctx.config.socket_path.clone();
+            if stale {
+                drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+            }
+            let interaction = async {
+                let mut client = loop {
+                    if let Ok(client) = signaltty_testkit::TestClient::connect(&socket).await {
+                        break client;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                };
+                let status = client
+                    .call("server.status", serde_json::json!({}))
+                    .await
+                    .unwrap();
+                assert_eq!(status["protocol"], signaltty_proto::PROTOCOL);
+                client
+                    .call("server.shutdown", serde_json::json!({"force":true}))
+                    .await
+                    .unwrap();
+            };
+            let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                tokio::join!(serve(ctx.config.clone()), interaction)
+            })
+            .await;
+            std::fs::remove_dir_all(base).unwrap();
+            result.unwrap().0.unwrap();
+        }
     }
 
     #[test]
