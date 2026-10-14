@@ -44,3 +44,6 @@ Empty application title, very long generated workspace/branch names, full paths 
 
 ## Assumptions
 The active task continues the previously authorized PR workflow. #104 is merged; baseline is `9d1913a`. Final integration base is `f3f42f2`, including #105. Scope is top-bar presentation and native adaptive layout, not new timeline/inbox/navigation features. Actual desktop dragging, screen-reader speech, OSK and IME are explicitly reported if not exercised; native geometry alone does not certify compositor behavior.
+
+## Full-width grouping correction, 2026-10-14
+User screenshot shows the workspace mark, centered name and far-edge branch dispersed across a fullscreen header. Extend FR-001/SC-002: at wide allocations, mark/name/context remain one compact reading group. A short title's allocated width stays within 16px of its ink width, and adjacent identity gaps stay at most 16px, mirrored in RTL. Free width belongs to the non-interactive drag region. Existing narrow title allocation, Details metadata, focus order and terminal identity remain acceptance requirements. Base 0a2cddd includes merged PR #106/#108; correction branch gui/full-width-title-group.

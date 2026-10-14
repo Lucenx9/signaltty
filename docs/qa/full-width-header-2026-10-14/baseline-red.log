@@ -1,0 +1,58 @@
+   Compiling signaltty-core v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-core)
+   Compiling signaltty-agent v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-agent)
+   Compiling signaltty-proto v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-proto)
+   Compiling signaltty-gui v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-gui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.62s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-033da366973ed1d2)
+
+running 1 test
+test app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions ... dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.0' (uid=1000 pid=146505 comm="/home/simone/.t3/worktrees/signaltty/gui-secondary")
+dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.1' (uid=1000 pid=146522 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.1' (uid=1000 pid=146522 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.220: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.1' (uid=1000 pid=146522 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.4' (uid=1000 pid=146545 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[146554]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=146545 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[146554]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.442: Choosing gtk.portal for org.freedesktop.impl.portal.Settings as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.444: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.446: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.447: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.449: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.451: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.452: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.469: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.474: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:146522): xdg-desktop-portal-WARNING **: 02:06:43.475: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback
+dbus-daemon[145463]: [session uid=1000 pid=145463 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+header-wide-short-light: window 1270, title 197, ink 58
+
+thread 'app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions' (146506) panicked at crates/signaltty-gui/src/app_tests.rs:2180:9:
+wide identity must not stretch the label across blank space
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    app::tests::workspace_header_context_survives_shell_agent_and_empty_transitions
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 159 filtered out; finished in 1.19s
+
+error: test failed, to rerun pass `-p signaltty-gui --bin signaltty-gui`

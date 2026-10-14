@@ -14,3 +14,7 @@ Current canvas/surface/border/text/accent roles and system font remain. Primary 
 
 ## Native allocation findings
 The baseline long-name title measured 31px at Sans11 and 25px at Sans18 in the narrow fixture. Concealing the attention Revealer still reserved 35px; direct button visibility removes that footprint. The final no-attention title measures 126px in both font fixtures, and 73px with active attention and enlarged text. Actual content-width breakpoints keep icons compact when a wide window has a docked Changes panel; global window width cannot express that constraint. The hidden content bin can retain old allocations, so compact footer visibility joins sidebar collapse and header creation visibility with one writer.
+
+## Full-width correction, 2026-10-14
+
+Rechecked [GNOME header-bar guidance](https://developer.gnome.org/hig/patterns/containers/header-bars.html) on 2026-10-14: preserve blank drag space and communicate relationships through spacing. Apple toolbar page still requires JavaScript; no new claim is based on its unreadable body. The earlier native title-widget preference did not meet the user's wide-window requirement: an expanding title label split the identity, and native center allocation added a leading gap. Final placement uses native pack_start after navigation, with an empty center title widget. Only the drag spacer expands. No custom chrome is introduced.

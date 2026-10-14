@@ -319,7 +319,6 @@ impl App {
         let title = gtk4::Label::new(Some("signaltty"));
         title.add_css_class("crumb-title");
         title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        title.set_hexpand(true);
         title.set_max_width_chars(32);
         let title_context = gtk4::Label::new(None);
         title_context.add_css_class("crumb-context");
@@ -332,7 +331,6 @@ impl App {
         mark_box.set_valign(gtk4::Align::Center);
         mark_box.append(&title_mark);
         let title_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-        title_box.set_hexpand(true);
         title_box.add_css_class("crumb");
         title_box.append(&mark_box);
         title_box.append(&title);
@@ -368,7 +366,6 @@ impl App {
         crumb_button
             .update_property(&[gtk4::accessible::Property::Description("Workspace Details")]);
         crumb_button.set_sensitive(false);
-        crumb_button.set_hexpand(true);
         let title_lane = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         title_lane.add_css_class("workspace-title-lane");
         title_lane.set_hexpand(true);
@@ -376,8 +373,10 @@ impl App {
         let drag_space = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         drag_space.add_css_class("workspace-drag-space");
         drag_space.set_width_request(24);
+        drag_space.set_hexpand(true);
         title_lane.append(&drag_space);
-        header.set_title_widget(Some(&title_lane));
+        header.set_title_widget(Some(&gtk4::Box::new(gtk4::Orientation::Horizontal, 0)));
+        header.pack_start(&title_lane);
         let btn_menu = gtk4::MenuButton::new();
         btn_menu.set_icon_name("open-menu-symbolic");
         btn_menu.set_tooltip_text(Some("Main Menu"));
