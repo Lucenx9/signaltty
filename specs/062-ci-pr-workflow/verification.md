@@ -13,6 +13,8 @@ Observed focused checks:
   initially prevented the image's guest user from reading it; only the ignored
   validation fixture's permissions were adjusted.
 - Repository and implementation phase checks: pass; generated index is current.
+- Independent Standards/Spec reviews: no remaining findings. The Spec review
+  corrected capture of reviewed_head to precede all comment/check assessment.
 - Independent read-only grounding: confirms event/group semantics and caveats.
 
 Concurrency examples from the chosen GitHub expression:

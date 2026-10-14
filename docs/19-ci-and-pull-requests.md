@@ -56,18 +56,20 @@ settings; these files define the checks and do not configure merge enforcement.
 
 ## Review, recover and merge
 
-1. Inspect conversation comments, review submissions and inline threads, including
-   replies and resolved state. Use `gh-address-comments` when available. Evaluate
-   each finding against source and project requirements; fix valid defects and
-   record the reason for rejecting a suggestion. A bot's generic threshold does
-   not become a project requirement. A reviewer out of quota has not approved.
-2. Capture the latest PR head, then inspect its check runs and workflow run
-   identity. Keep this value through check and comment assessment:
+1. Capture the current head before assessing comments or checks. Keep this value
+   throughout the review and merge:
 
    ```sh
    reviewed_head=$(gh pr view NUMBER --json headRefOid --jq .headRefOid)
    ```
 
+   Inspect conversation comments, review submissions and inline threads, including
+   replies and resolved state. Use `gh-address-comments` when available. Evaluate
+   each finding against source and project requirements; fix valid defects and
+   record the reason for rejecting a suggestion. A bot's generic threshold does
+   not become a project requirement. A reviewer out of quota has not approved.
+2. Inspect the PR's check runs and workflow run identity. Confirm the head still
+   equals `reviewed_head`; a change requires restarting the assessment.
    Use `gh pr view NUMBER --json headRefOid,statusCheckRollup,reviews`
    and `gh run view RUN_ID --json event,headSha,status,conclusion,jobs`.
    Require the latest PR run's three jobs to pass for the reviewed head. An old

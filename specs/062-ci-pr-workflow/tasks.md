@@ -13,7 +13,7 @@
 
 - [x] T004 [FR-007] [FR-008] Add .github/pull_request_template.md, docs/19-ci-and-pull-requests.md and ADR-0038; connect docs17/18/index and workflow context.
 - [x] T005 [FR-008] Enroll feature062 in .agents/workflow.json, regenerate specs/README.md and run repository/phase checks.
-- [ ] T006 [FR-004] [FR-006] [FR-008] Obtain independent Standards/Spec reviews and record the final verification procedure in specs/062-ci-pr-workflow/verification.md.
+- [x] T006 [FR-004] [FR-006] [FR-008] Obtain independent Standards/Spec reviews and record the final verification procedure in specs/062-ci-pr-workflow/verification.md.
 
 T001 precedes source writes. T002/T003 precede T004's final guidance. T005 precedes
 T006. Root owns all source writes; reviewers are read-only. A verified task list
