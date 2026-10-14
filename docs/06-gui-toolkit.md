@@ -104,10 +104,12 @@ with no second navigation state or fake dashboard behind them. The footer
 deliberately does not display an invented "connected" state or agent count.
 
 The content header groups Sidebar and New Tab at the leading edge, workspace
-Details in a compact leading identity group, and attention, Board/Changes and
-Main Menu at the trailing edge. Mark, name and context share bounded spacing
-next to navigation; only the blank non-interactive space expands. It reserves 24px
-for native dragging, or 12px in compact mode. A hidden attention button occupies
+Details in a compact centered identity group, and attention, Board/Changes and
+Main Menu at the trailing edge. Mark, name and context share bounded spacing;
+identity widgets use their natural width. The native title widget uses strict
+centering at spacious widths and loose centering below 860sp to preserve useful
+title width with compact tools or docked Changes. A separate non-interactive
+leading space reserves 24px for native dragging, or 12px in compact mode. A hidden attention button occupies
 no width. Changes retains its native synchronized toggle state.
 
 Toolbar presentation follows the actual content width through an

@@ -28,3 +28,8 @@ T001-T004 precede implementation. US1 and US2 share App/CSS ownership and run se
 - [x] T012 Reproduce and capture wide short-title dispersion, add red ink-width/group-gap checks in app_tests.rs.
 - [x] T013 Move flexible width to drag space in app.rs, inspect wide/narrow/RTL renders and run native regression tests.
 - [x] T014 Update current GUI/map guidance, complete full gate and independent review, retain source/evidence, publish/link correction PR.
+
+## Centered identity clarification
+- [x] T015 Replace leading proximity acceptance with a native center-position assertion and reproduce red on merged PR109.
+- [x] T016 Restore centered native placement with compact identity, inspect wide/narrow/RTL renders and test all existing behavior.
+- [ ] T017 Complete full verification/reviews, retain correction proof and publish/link a new PR against main.

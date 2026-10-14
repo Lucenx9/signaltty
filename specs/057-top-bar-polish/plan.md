@@ -33,3 +33,9 @@ Add native 1280/2400px short-title LTR/RTL capture and ink/allocation/group-gap 
 Final native placement packs the title lane after navigation in HeaderBar's leading region, with an empty center widget. The labels, identity box and Details button use natural width; only the trailing blank box expands. This also removes native center alignment's excess gap before the mark. Native gaps from creation to Details stay at most 24px. Narrow long-title allocation remains 120px, versus the old 25px baseline; active attention leaves 67px and required controls remain available.
 
 The shared runner uses a 1600px monitor, which clamps requested 2400px windows. The wide test uses up to 2400px bounded by monitor width minus 80px, while the dedicated 2560px display captures actual 2390px windows. Assertions remain the same in both runs; no native case is skipped and no deadline is relaxed.
+
+## Centered identity correction plan
+
+Use the existing native HeaderBar title-widget with a naturally sized compact title lane. Keep mark/title/context widgets non-expanding; retain the blank 24px/12px native drag reservation and existing breakpoints. Replace the navigation-adjacency test with center-position acceptance at wide widths, keeping ink/gap assertions. Run red on merged PR109 before implementation, then focused display tests and actual native captures, full gate and independent two-axis review. Same feature, no new dependencies or custom layout abstraction.
+
+Native measurements refined the placement: a drag reservation inside the title lane offsets the actual identity center and consumes its width. Pack the existing blank drag widget at the leading edge, independently of the centered title. Native strict centering gives 0px center offset at 1270px and 2390px; both compact breakpoints restore loose centering to preserve narrow title/attention allocation. Closing Changes is awaited until content takes the full split width before wide captures.
