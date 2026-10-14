@@ -119,6 +119,37 @@ pub async fn snapshot(cwd: &str) -> Result<Snapshot, ParamError> {
         Err(e) => return Err((code::IO_ERROR.into(), e.to_string())),
     }
     git(&root, &["add", "--all"], Some(&temp.index)).await?;
+    let entries = git_raw(&root, &["ls-files", "--stage", "-z"], Some(&temp.index)).await?;
+    let mut gitlinks = Vec::new();
+    for entry in entries.split(|b| *b == 0) {
+        if entry.starts_with(b"160000 ") {
+            if let Some(tab) = entry.iter().position(|b| *b == b'\t') {
+                gitlinks.extend_from_slice(&entry[tab + 1..]);
+                gitlinks.push(0);
+            }
+        }
+    }
+    if !gitlinks.is_empty() {
+        // Git 2.55 skips ignore=all submodules even during add --all. Force
+        // only tracked gitlinks in the private index, never ignored files.
+        let paths = temp.dir.join("gitlinks");
+        std::fs::write(&paths, gitlinks).map_err(|e| (code::IO_ERROR.into(), e.to_string()))?;
+        git(
+            &root,
+            &[
+                "--literal-pathspecs",
+                "add",
+                "--force",
+                "--pathspec-from-file",
+                paths
+                    .to_str()
+                    .ok_or_else(|| bad_params("Invalid temporary path"))?,
+                "--pathspec-file-nul",
+            ],
+            Some(&temp.index),
+        )
+        .await?;
+    }
     let tree = git(&root, &["write-tree"], Some(&temp.index)).await?;
     Ok(Snapshot { root, tree })
 }
@@ -152,6 +183,7 @@ pub async fn changed_files(
             "-z",
             "--no-renames",
             "--no-relative",
+            "--ignore-submodules=untracked",
             base,
             current,
         ],

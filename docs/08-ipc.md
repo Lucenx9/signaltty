@@ -373,6 +373,14 @@ Known tracked files, deletions and unignored untracked files are supported.
 The comparison includes staged and unstaged edits against HEAD, or an empty
 tree before the first commit. It uses three context lines, no rename detection,
 and no external diff or textconv. It emits no event and issues no Git mutation command.
+Explicit workspace and task summaries and patches include changed submodule commit
+pointers even when Git's diff or per-submodule ignore settings hide them. Submodule
+patches use Git's short `Subproject commit` representation; turn comparisons use
+the commit pointers recorded in their trees. Untracked-only content inside a
+submodule remains ignored, as in Git's ordinary default. Turn snapshots capture
+tracked submodule commit pointers in their private index even when Git's
+`add --all` skips links configured with `ignore=all`; ignored ordinary files
+remain excluded.
 The application issues no edit/stage operation. As with the existing summary,
 tracked reads retain canonical clean/process conversions from trusted local Git
 configuration; those helpers can have their own effects. The Git process-group

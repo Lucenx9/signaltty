@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use serde_json::{json, Value};
-use signaltty_testkit::{TestClient, TestServer};
+use signaltty_testkit::{FakeAgentPane, TestClient, TestServer};
 
 struct Repository(PathBuf);
 
@@ -173,6 +173,206 @@ async fn tracked_diff_combines_staged_and_unstaged_and_reads_deletion() {
             .await
             .unwrap()["seq"],
         sequence
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn selected_submodule_diff_is_not_hidden_by_git_ignore_settings() {
+    let repo = Repository::new();
+    let module = Repository::new();
+    let revision = |repo: &Repository| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repo.0)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    module.write("file.txt", "base\n");
+    module.git(&["add", "."]);
+    module.git(&["commit", "-qm", "base"]);
+    let old_commit = revision(&module);
+    repo.git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        module.0.to_str().unwrap(),
+        "module[1]",
+    ]);
+    repo.write(".gitignore", "ignored.txt\n");
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-qm", "base"]);
+    let base = revision(&repo);
+    let server = TestServer::start().await;
+    let mut client = server.client().await;
+    let workspace = repo.workspace(&mut client).await;
+    assert_eq!(
+        read(&mut client, &workspace, "module[1]").await["content"]["kind"],
+        "unchanged"
+    );
+    let pane = client
+        .call(
+            "pane.spawn",
+            json!({"workspace_id":workspace["id"],"argv":["sleep","30"]}),
+        )
+        .await
+        .unwrap()["pane"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut watcher = server.client().await;
+    watcher
+        .call("subscribe", json!({"events":["workspace.turn_started"]}))
+        .await
+        .unwrap();
+    FakeAgentPane::new(pane, "codex")
+        .prompt_submit(&mut client)
+        .await
+        .unwrap();
+    watcher
+        .read_events(1, std::time::Duration::from_secs(10))
+        .await;
+
+    module.write("file.txt", "changed\n");
+    module.git(&["add", "."]);
+    module.git(&["commit", "-qm", "changed"]);
+    let new_commit = revision(&module);
+    repo.git(&["-C", "module[1]", "fetch", "-q"]);
+    repo.git(&["-C", "module[1]", "checkout", "-q", "origin/HEAD"]);
+    repo.write("module[1]/untracked.txt", "untracked submodule content\n");
+    repo.write("ignored.txt", "ignored repository content\n");
+    for setting in ["diff", "local", "gitmodules"] {
+        repo.git(&[
+            "config",
+            "diff.ignoreSubmodules",
+            if setting == "diff" { "all" } else { "none" },
+        ]);
+        repo.git(&[
+            "config",
+            "submodule.module[1].ignore",
+            if setting == "local" { "all" } else { "none" },
+        ]);
+        repo.git(&[
+            "config",
+            "--file",
+            ".gitmodules",
+            "submodule.module[1].ignore",
+            if setting == "gitmodules" {
+                "all"
+            } else {
+                "none"
+            },
+        ]);
+        if setting != "local" {
+            repo.git(&["config", "--unset", "submodule.module[1].ignore"]);
+        }
+        let index = std::fs::read(repo.0.join(".git/index")).unwrap();
+        let config = std::fs::read(repo.0.join(".git/config")).unwrap();
+        let gitmodules = std::fs::read(repo.0.join(".gitmodules")).unwrap();
+        for scope in ["head", "turn"] {
+            let diff = client
+                .call(
+                    "workspace.file_diff",
+                    json!({"workspace_id":workspace["id"],"path":"module[1]","scope":scope}),
+                )
+                .await
+                .unwrap();
+            assert_eq!(diff["content"]["kind"], "text", "{setting}/{scope}: {diff}");
+            assert_eq!(
+                diff["content"]["hunks"][0]["lines"],
+                json!([
+                    {"kind":"removed","text":format!("Subproject commit {old_commit}"),"old_line":1,"new_line":null},
+                    {"kind":"added","text":format!("Subproject commit {new_commit}"),"old_line":null,"new_line":1}
+                ])
+            );
+            let summary = client
+                .call(
+                    "workspace.diff",
+                    json!({"workspace_id":workspace["id"],"scope":scope}),
+                )
+                .await
+                .unwrap();
+            assert!(
+                summary["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|f| f["path"] == "module[1]" && f["added"] == 1 && f["removed"] == 1),
+                "{setting}/{scope}: {summary}"
+            );
+            assert!(summary["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["path"] != "ignored.txt"));
+        }
+        let task = signaltty_server::git::task_git_diff(repo.0.to_str().unwrap(), &base).unwrap();
+        assert!(
+            task.files
+                .iter()
+                .any(|f| f.path == "module[1]" && f.added == 1 && f.removed == 1),
+            "{setting}: {task:?}"
+        );
+        let task_patch = signaltty_server::file_diff::read_with_base(
+            repo.0.to_str().unwrap(),
+            "module[1]",
+            Some(&base),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(task_patch.content).unwrap(),
+            read(&mut client, &workspace, "module[1]").await["content"]
+        );
+        assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+        assert_eq!(std::fs::read(repo.0.join(".git/config")).unwrap(), config);
+        assert_eq!(
+            std::fs::read(repo.0.join(".gitmodules")).unwrap(),
+            gitmodules
+        );
+    }
+    repo.git(&["add", "--force", "module[1]"]);
+    let staged_turn = client
+        .call(
+            "workspace.file_diff",
+            json!({"workspace_id":workspace["id"],"path":"module[1]","scope":"turn"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        staged_turn["content"],
+        read(&mut client, &workspace, "module[1]").await["content"]
+    );
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-qm", "record submodule change"]);
+    assert_eq!(
+        read(&mut client, &workspace, "module[1]").await["content"]["kind"],
+        "unchanged"
+    );
+    let task = signaltty_server::git::task_git_diff(repo.0.to_str().unwrap(), &base).unwrap();
+    assert!(task
+        .files
+        .iter()
+        .any(|f| f.path == "module[1]" && f.added == 1 && f.removed == 1));
+    let task_patch = signaltty_server::file_diff::read_with_base(
+        repo.0.to_str().unwrap(),
+        "module[1]",
+        Some(&base),
+    )
+    .await
+    .unwrap();
+    let content = serde_json::to_value(task_patch.content).unwrap();
+    assert_eq!(
+        content["hunks"][0]["lines"][0]["text"],
+        format!("Subproject commit {old_commit}")
+    );
+    assert_eq!(
+        content["hunks"][0]["lines"][1]["text"],
+        format!("Subproject commit {new_commit}")
     );
     server.shutdown().await;
 }

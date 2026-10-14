@@ -73,6 +73,7 @@ pub fn git_diff(cwd: &str) -> Option<WorktreeDiff> {
             "-z",
             "--no-renames",
             "--no-relative",
+            "--ignore-submodules=untracked",
             &base,
         ],
     )?;
@@ -176,6 +177,7 @@ pub fn task_git_diff(
             "-z",
             "--no-renames",
             "--no-relative",
+            "--ignore-submodules=untracked",
             base,
         ],
     )
