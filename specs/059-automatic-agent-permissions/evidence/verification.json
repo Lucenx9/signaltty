@@ -1,0 +1,34 @@
+{
+  "mode": "full",
+  "status": "passed",
+  "revision": "4a69bea05c48e2a925c6ceb32ad32f88e80e46e8",
+  "dirty": false,
+  "display_tests": 45,
+  "versions": {
+    "gtk4": "4.18.6",
+    "libadwaita-1": "1.7.6",
+    "vte-2.91-gtk4": "0.80.1",
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "clippy": "clippy 0.1.94 (4a4ef493e3 2026-03-02)"
+  },
+  "limits": [
+    "Screenshots require visual review; automated success is not visual approval.",
+    "IME, folder chooser, notification clicks and paid provider sessions require manual checks.",
+    "Native accessibility QA runs only in desktop mode; Xvfb does not certify a compositor."
+  ],
+  "command": "scripts/verify.sh full",
+  "evidence_directory": "target/verification/full-butqqo_d",
+  "passed_steps": 57,
+  "errors": [],
+  "code_unchanged_after_verified_revision": true,
+  "screenshots": {
+    "automatic-permissions-light.png": {
+      "sha256": "242550e0da000c8531299ab108b550f6ed423542998b3314ac2580f33ee4c0e2",
+      "visual_review": "inspected, native title/description/switch readable with production CSS"
+    },
+    "automatic-permissions-dark.png": {
+      "sha256": "4af503de5c0bf78c09a74efd6b5cc0b9bcf0f6d51f80408a5a404fb1604f40a0",
+      "visual_review": "inspected, native title/description/switch readable with production CSS"
+    }
+  }
+}

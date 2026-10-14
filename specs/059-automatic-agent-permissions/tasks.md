@@ -14,13 +14,13 @@
 ## User story 2: Preserve orchestration choice
 
 - [x] T006 [US2] Add failing resume regression then preserve generated automatic prefix and executable precedence in crates/signaltty-agent/src/resume.rs.
-- [x] T007 [US2] Verify actual resumed process arguments through crates/signaltty-server/tests/integration.rs.
+- [x] T007 [US2] Verify actual resumed process arguments through crates/signaltty-server/tests/automatic_execution.rs.
 - [x] T008 [US2] Add failing default-worker tests then inherit same-provider prefix in crates/signaltty-server/src/tasks.rs; preserve explicit argv.
 
 ## Delivery
 
 - [x] T009 Document decision and proof limits in docs/adr/0036-automatic-agent-permissions.md, docs/06-gui-toolkit.md, docs/07-agents.md and docs/08-ipc.md.
-- [ ] T010 Run scripts/verify.sh full and inspect generated light/dark native renders; record evidence in specs/059-automatic-agent-permissions/handoff.md.
+- [x] T010 Run scripts/verify.sh full and inspect generated light/dark native renders; record evidence in specs/059-automatic-agent-permissions/handoff.md.
 - [ ] T011 Run independent Standards/Spec and final Gemini 3.8 Flash High Antigravity reviews, then create/link a PR.
 
 ## Dependencies and implementation strategy
