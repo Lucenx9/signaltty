@@ -14,3 +14,9 @@
 ## Delivery
 
 - [x] T006 [US1] [FR-001] [FR-002] [FR-003] [FR-004] Complete independent Standards/Spec reviews and prepare final source for shared full verification.
+
+## Hosted CI recovery
+
+- [x] T007 [US1] [FR-003] [FR-004] Reproduce Git 2.55 snapshot omissions and capture tracked gitlinks despite ignore=all using only the private index in turns.rs.
+- [x] T008 [US1] [FR-003] [FR-004] Strengthen file_diff.rs regression for literal gitlink paths, ignored content and explicitly staged/unstaged pointers on Git 2.47 and 2.55.
+- [x] T009 [US1] [FR-003] [FR-004] Review the CI correction independently and stage final source for fresh shared full verification.

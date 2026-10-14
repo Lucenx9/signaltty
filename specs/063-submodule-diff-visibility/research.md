@@ -24,3 +24,26 @@ Final targeted regression passes in 0.68 seconds after compilation. Committing
 the pointer makes HEAD unchanged while the recorded task base still shows old/new
 commits. Independent Standards review found no violations. Spec review's one
 scope finding was fixed and its final round found no unresolved findings.
+
+## Hosted Git 2.55 failure and correction
+
+PR run 38588522653 used Git 2.55.0 and failed the gitmodules/turn assertion.
+A locally built upstream v2.55.0 reproduces that exact failure in 0.36 seconds;
+system Git 2.47.3 passes. A minimal independent Git snapshot probe confirms
+that `git add --all` and plain explicit add skip .gitmodules ignore=all gitlinks
+on 2.55, retaining the old OID. Tree-to-tree diff still displays distinct OIDs,
+so diff suppression and baseline replacement were ruled out.
+
+Git's force option works only with explicit submodule paths for this case.
+Snapshot capture now enumerates tracked gitlinks from its private index and
+force-adds just those literal NUL-delimited paths before writing its tree.
+No configuration or user index changes. Untracked ignored repository files
+remain excluded. A deinitialized submodule retains its recorded pointer.
+
+The strengthened IPC regression includes module[1] as a literal path, unstaged
+and explicitly force-staged gitlinks, and ignored repository content. It passes
+on both Git 2.55.0 and 2.47.3 in under one second after compilation.
+
+Both independent review axes found no unresolved findings in the CI recovery
+patch. The capture remains in turns.rs and uses the existing private index,
+without a Git-version branch or new architecture decision.

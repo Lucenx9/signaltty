@@ -201,15 +201,17 @@ async fn selected_submodule_diff_is_not_hidden_by_git_ignore_settings() {
         "submodule",
         "add",
         module.0.to_str().unwrap(),
-        "module",
+        "module[1]",
     ]);
+    repo.write(".gitignore", "ignored.txt\n");
+    repo.git(&["add", ".gitignore"]);
     repo.git(&["commit", "-qm", "base"]);
     let base = revision(&repo);
     let server = TestServer::start().await;
     let mut client = server.client().await;
     let workspace = repo.workspace(&mut client).await;
     assert_eq!(
-        read(&mut client, &workspace, "module").await["content"]["kind"],
+        read(&mut client, &workspace, "module[1]").await["content"]["kind"],
         "unchanged"
     );
     let pane = client
@@ -239,9 +241,10 @@ async fn selected_submodule_diff_is_not_hidden_by_git_ignore_settings() {
     module.git(&["add", "."]);
     module.git(&["commit", "-qm", "changed"]);
     let new_commit = revision(&module);
-    repo.git(&["-C", "module", "fetch", "-q"]);
-    repo.git(&["-C", "module", "checkout", "-q", "origin/HEAD"]);
-    repo.write("module/untracked.txt", "untracked submodule content\n");
+    repo.git(&["-C", "module[1]", "fetch", "-q"]);
+    repo.git(&["-C", "module[1]", "checkout", "-q", "origin/HEAD"]);
+    repo.write("module[1]/untracked.txt", "untracked submodule content\n");
+    repo.write("ignored.txt", "ignored repository content\n");
     for setting in ["diff", "local", "gitmodules"] {
         repo.git(&[
             "config",
@@ -250,14 +253,14 @@ async fn selected_submodule_diff_is_not_hidden_by_git_ignore_settings() {
         ]);
         repo.git(&[
             "config",
-            "submodule.module.ignore",
+            "submodule.module[1].ignore",
             if setting == "local" { "all" } else { "none" },
         ]);
         repo.git(&[
             "config",
             "--file",
             ".gitmodules",
-            "submodule.module.ignore",
+            "submodule.module[1].ignore",
             if setting == "gitmodules" {
                 "all"
             } else {
@@ -265,10 +268,7 @@ async fn selected_submodule_diff_is_not_hidden_by_git_ignore_settings() {
             },
         ]);
         if setting != "local" {
-            repo.git(&["config", "--unset", "submodule.module.ignore"]);
-        }
-        if setting == "gitmodules" {
-            repo.git(&["add", "module"]);
+            repo.git(&["config", "--unset", "submodule.module[1].ignore"]);
         }
         let index = std::fs::read(repo.0.join(".git/index")).unwrap();
         let config = std::fs::read(repo.0.join(".git/config")).unwrap();
@@ -277,7 +277,7 @@ async fn selected_submodule_diff_is_not_hidden_by_git_ignore_settings() {
             let diff = client
                 .call(
                     "workspace.file_diff",
-                    json!({"workspace_id":workspace["id"],"path":"module","scope":scope}),
+                    json!({"workspace_id":workspace["id"],"path":"module[1]","scope":scope}),
                 )
                 .await
                 .unwrap();
@@ -301,27 +301,32 @@ async fn selected_submodule_diff_is_not_hidden_by_git_ignore_settings() {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|f| f["path"] == "module" && f["added"] == 1 && f["removed"] == 1),
+                    .any(|f| f["path"] == "module[1]" && f["added"] == 1 && f["removed"] == 1),
                 "{setting}/{scope}: {summary}"
             );
+            assert!(summary["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["path"] != "ignored.txt"));
         }
         let task = signaltty_server::git::task_git_diff(repo.0.to_str().unwrap(), &base).unwrap();
         assert!(
             task.files
                 .iter()
-                .any(|f| f.path == "module" && f.added == 1 && f.removed == 1),
+                .any(|f| f.path == "module[1]" && f.added == 1 && f.removed == 1),
             "{setting}: {task:?}"
         );
         let task_patch = signaltty_server::file_diff::read_with_base(
             repo.0.to_str().unwrap(),
-            "module",
+            "module[1]",
             Some(&base),
         )
         .await
         .unwrap();
         assert_eq!(
             serde_json::to_value(task_patch.content).unwrap(),
-            read(&mut client, &workspace, "module").await["content"]
+            read(&mut client, &workspace, "module[1]").await["content"]
         );
         assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
         assert_eq!(std::fs::read(repo.0.join(".git/config")).unwrap(), config);
@@ -330,20 +335,32 @@ async fn selected_submodule_diff_is_not_hidden_by_git_ignore_settings() {
             gitmodules
         );
     }
+    repo.git(&["add", "--force", "module[1]"]);
+    let staged_turn = client
+        .call(
+            "workspace.file_diff",
+            json!({"workspace_id":workspace["id"],"path":"module[1]","scope":"turn"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        staged_turn["content"],
+        read(&mut client, &workspace, "module[1]").await["content"]
+    );
     repo.git(&["add", "."]);
     repo.git(&["commit", "-qm", "record submodule change"]);
     assert_eq!(
-        read(&mut client, &workspace, "module").await["content"]["kind"],
+        read(&mut client, &workspace, "module[1]").await["content"]["kind"],
         "unchanged"
     );
     let task = signaltty_server::git::task_git_diff(repo.0.to_str().unwrap(), &base).unwrap();
     assert!(task
         .files
         .iter()
-        .any(|f| f.path == "module" && f.added == 1 && f.removed == 1));
+        .any(|f| f.path == "module[1]" && f.added == 1 && f.removed == 1));
     let task_patch = signaltty_server::file_diff::read_with_base(
         repo.0.to_str().unwrap(),
-        "module",
+        "module[1]",
         Some(&base),
     )
     .await

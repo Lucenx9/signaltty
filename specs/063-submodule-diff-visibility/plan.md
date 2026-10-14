@@ -20,7 +20,11 @@ independent Standards/Spec reviews precede publishing. No exception needed.
 ## Design and ownership
 
 - git.rs owns HEAD workspace and task numstat calls.
-- turns.rs owns tree-to-tree numstat comparisons.
+- turns.rs owns tree-to-tree numstat comparisons and private snapshot capture.
+  After ordinary add, enumerate stage records with mode 160000 and force-add only
+  those literal NUL-delimited paths in the private index. This compensates for
+  Git 2.55 skipping ignore=all links even during add --all; ignored ordinary
+  files remain excluded. Existing TempIndex cleanup also removes the path file.
 - file_diff.rs owns HEAD/base and tree-to-tree patches.
 - tests/file_diff.rs exercises existing IPC and Git boundaries with local submodules.
 - docs/08-ipc.md clarifies that Git ignore settings cannot hide gitlink changes.
