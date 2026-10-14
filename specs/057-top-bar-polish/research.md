@@ -18,3 +18,7 @@ The baseline long-name title measured 31px at Sans11 and 25px at Sans18 in the n
 ## Full-width correction, 2026-10-14
 
 Rechecked [GNOME header-bar guidance](https://developer.gnome.org/hig/patterns/containers/header-bars.html) on 2026-10-14: preserve blank drag space and communicate relationships through spacing. Apple toolbar page still requires JavaScript; no new claim is based on its unreadable body. The earlier native title-widget preference did not meet the user's wide-window requirement: an expanding title label split the identity, and native center allocation added a leading gap. Final placement uses native pack_start after navigation, with an empty center title widget. Only the drag spacer expands. No custom chrome is introduced.
+
+## User clarification supersedes leading placement
+
+The user accepted the original centered position and rejected only the large internal spacing. Keep the spacing fix while restoring the native center title-widget. Separate the drag reservation from the identity to prevent a center offset or avoidable context truncation. Strict centering serves spacious content; native Loose policy below 860sp preserves narrow and docked-panel title width. Existing tokens, icons, typography and actions remain.
