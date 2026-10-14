@@ -27,4 +27,4 @@ T001-T004 precede implementation. US1 and US2 share App/CSS ownership and run se
 ## Full-width correction
 - [x] T012 Reproduce and capture wide short-title dispersion, add red ink-width/group-gap checks in app_tests.rs.
 - [x] T013 Move flexible width to drag space in app.rs, inspect wide/narrow/RTL renders and run native regression tests.
-- [ ] T014 Update current GUI/map guidance, complete full gate and independent review, retain source/evidence, publish/link correction PR.
+- [x] T014 Update current GUI/map guidance, complete full gate and independent review, retain source/evidence, publish/link correction PR.
