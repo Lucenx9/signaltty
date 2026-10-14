@@ -104,8 +104,9 @@ with no second navigation state or fake dashboard behind them. The footer
 deliberately does not display an invented "connected" state or agent count.
 
 The content header groups Sidebar and New Tab at the leading edge, workspace
-Details in the native expanding title lane, and attention, Board/Changes and
-Main Menu at the trailing edge. Blank non-interactive title space reserves 24px
+Details in a compact leading identity group, and attention, Board/Changes and
+Main Menu at the trailing edge. Mark, name and context share bounded spacing
+next to navigation; only the blank non-interactive space expands. It reserves 24px
 for native dragging, or 12px in compact mode. A hidden attention button occupies
 no width. Changes retains its native synchronized toggle state.
 

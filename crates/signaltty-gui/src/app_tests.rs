@@ -2145,6 +2145,71 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
     capture_workflow(&app.window, "header-shell-dark");
     assert_eq!(app.title_context.text(), "feature/header");
     assert!(app.title_context.is_visible() && separator.is_visible());
+    for (width, direction, scheme, name) in [
+        (
+            1280,
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceLight,
+            "header-wide-short-light",
+        ),
+        (
+            2400,
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceDark,
+            "header-full-width-short-dark",
+        ),
+        (
+            2400,
+            gtk4::TextDirection::Rtl,
+            adw::ColorScheme::ForceDark,
+            "header-full-width-short-rtl-dark",
+        ),
+    ] {
+        gtk4::Widget::set_default_direction(direction);
+        style.set_color_scheme(scheme);
+        app.window.set_default_size(width, 600);
+        wait_ui(|| app.window.width() >= width - 40);
+        app.changes_split.set_show_sidebar(false);
+        capture_workflow(&app.window, name);
+        let ink_width = app.title.layout().pixel_extents().0.width();
+        eprintln!(
+            "{name}: window {}, title {}, ink {}",
+            app.window.width(),
+            app.title.width(),
+            ink_width
+        );
+        assert!(
+            app.title.width() <= ink_width + 16,
+            "wide identity must not stretch the label across blank space"
+        );
+        let title = widget_bounds(app.title.upcast_ref(), app.window.upcast_ref());
+        let mark = widget_bounds(app.title_mark.upcast_ref(), app.window.upcast_ref());
+        let context = widget_bounds(separator.upcast_ref(), app.window.upcast_ref());
+        let (mark_gap, context_gap) = if direction == gtk4::TextDirection::Ltr {
+            (title.x - mark.x - mark.w, context.x - title.x - title.w)
+        } else {
+            (mark.x - title.x - title.w, title.x - context.x - context.w)
+        };
+        assert!(
+            (0.0..=16.0).contains(&mark_gap) && (0.0..=16.0).contains(&context_gap),
+            "identity components must form a compact group"
+        );
+        let creation =
+            button_with_tooltip(app.window.upcast_ref(), "New Tab (Ctrl+Shift+T)").unwrap();
+        let creation = widget_bounds(creation.upcast_ref(), app.window.upcast_ref());
+        let identity = widget_bounds(app.crumb_button.upcast_ref(), app.window.upcast_ref());
+        let navigation_gap = if direction == gtk4::TextDirection::Ltr {
+            identity.x - creation.x - creation.w
+        } else {
+            creation.x - identity.x - identity.w
+        };
+        assert!(
+            (0.0..=24.0).contains(&navigation_gap),
+            "identity stays adjacent to leading navigation"
+        );
+    }
+    gtk4::Widget::set_default_direction(gtk4::TextDirection::Ltr);
+    app.window.set_default_size(900, 600);
     assert_eq!(
         app.title_context.tooltip_text().as_deref(),
         Some("feature/header · /tmp/signaltty <literal>&")
