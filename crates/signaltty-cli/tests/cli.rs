@@ -28,6 +28,35 @@ fn cli_json(socket: &std::path::Path, args: &[&str]) -> Value {
 }
 
 #[tokio::test]
+async fn cli_attach_keeps_the_named_pane_identity() {
+    let srv = TestServer::start().await;
+    for (action, by_name) in [
+        ("close", false),
+        ("close", true),
+        ("exit", true),
+        ("rename", true),
+    ] {
+        let new = cli_json(&srv.socket, &["new", "--cwd", "/tmp", "--", "cat"]);
+        let pane = new["pane_id"].as_str().unwrap();
+        let name = format!("attach-{action}");
+        cli_json(&srv.socket, &["pane", "rename", pane, &name]);
+        let output = Command::new("python3")
+            .args(["-c", include_str!("attach.py")])
+            .arg(bin_path("signaltty"))
+            .arg(&srv.socket)
+            .args([if by_name { name.as_str() } else { pane }, pane, action])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{action}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn cli_status_and_new_json() {
     let srv = TestServer::start().await;
     let st = cli_json(&srv.socket, &["status"]);
