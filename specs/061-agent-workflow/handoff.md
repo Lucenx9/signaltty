@@ -16,8 +16,8 @@ final source. Final gate command is recorded below; inspect its actual result.
 Next concrete step before publication:
 
 ```sh
-scripts/verify.sh full --output target/verification/agent-workflow-main-20261014
-scripts/agent.sh check --phase delivery --feature 061-agent-workflow --evidence target/verification/agent-workflow-main-20261014
+scripts/verify.sh full --output target/verification/agent-workflow-ci-ready-20261014
+scripts/agent.sh check --phase delivery --feature 061-agent-workflow --evidence target/verification/agent-workflow-ci-ready-20261014
 ```
 
 Paid agent productivity trials and real-desktop manual accessibility were not run;

@@ -35,7 +35,7 @@ The initial full run at 3ece6e9 passed with 45 isolated GTK tests and refresh
 benchmark in target/verification/full-5zz9zs9s. Review findings were fixed
 test-first in 84ded98; the 22 focused CLI/evidence cases passed. Standards and
 Spec re-reviews closed all findings. The source recorded here is submitted to
-`verify.sh full --output target/verification/agent-workflow-main-20261014`
+`verify.sh full --output target/verification/agent-workflow-ci-ready-20261014`
 before publication; delivery checks assess that report, not these checkboxes.
 
 The first final gate stopped at the unchanged server test
@@ -50,3 +50,11 @@ target/verification/agent-workflow-reviewed-20261014. Main then advanced through
 PRs #113 and #114. They were merged without conflicts; the new full slug
 060-cli-address-resolution was cataloged without colliding with 060-socket-startup.
 The combined source requires the separate main verification report above.
+
+The combined source passed full verification and delivery in
+target/verification/agent-workflow-main-20261014. The first GitHub push exposed a
+fresh-cache failure in existing offline Cargo packaging tests (run 38567064484).
+An empty CARGO_HOME reproduced missing serde; locked metadata preparation made
+both real packaging tests pass. The shared runner now prepares metadata before
+offline tooling tests. A regression failed before the reorder and passed after it.
+The CI-ready source uses the final report named above.

@@ -84,7 +84,26 @@ class VerificationCLI(unittest.TestCase):
         self.assertEqual(report['status'], 'passed')
         self.assertEqual(report['provenance']['before']['root'], str(checkout))
         self.assertEqual(report['provenance']['unchanged'], True)
-        self.assertEqual([step['name'] for step in report['steps'][:3]], ['tooling-tests', 'repository', 'fmt'])
+        self.assertTrue({'tooling-tests', 'repository', 'fmt', 'metadata'} <=
+                        {step['name'] for step in report['steps']})
+
+    def test_cold_cache_is_ready_before_offline_tooling_checks(self):
+        checkout, env = self.fixture(fmt='exit 0')
+        cache = checkout.parent / 'cargo-cache-ready'
+        env['SIGNALTTY_TEST_CACHE'] = str(cache)
+        cargo = Path(env['PATH']) / 'cargo'
+        cargo.write_text(cargo.read_text().replace('metadata)',
+                         'metadata) : > "$SIGNALTTY_TEST_CACHE";'))
+        (checkout / 'scripts/tests/test_fixture.py').write_text(
+            'import os\nfrom pathlib import Path\nimport unittest\n'
+            'class OfflinePackaging(unittest.TestCase):\n'
+            '    def test_dependencies_are_available(self):\n'
+            '        self.assertTrue(Path(os.environ["SIGNALTTY_TEST_CACHE"]).exists())\n')
+        output = checkout / 'target/evidence'
+        result = subprocess.run([sys.executable, str(checkout / 'scripts/verify.py'),
+                                 'fast', '--output', str(output)], env=env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_source_mutation_during_successful_checks_fails_proof(self):
         checkout, env = self.fixture(fmt='echo mutation >> source.txt; exit 0')

@@ -160,10 +160,11 @@ class Verification:
         return log
 
     def checks(self, mode):
+        # Resolve locked dependencies before offline packaging checks on fresh runners.
+        metadata = self.run('metadata', ['cargo', 'metadata', '--locked', '--format-version', '1'])
         self.run('tooling-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-v'])
         self.run('repository', [str(ROOT / 'scripts/agent.sh'), 'check', '--phase', 'repository'])
         self.run('fmt', ['cargo', 'fmt', '--check'])
-        metadata = self.run('metadata', ['cargo', 'metadata', '--locked', '--format-version', '1'])
         metadata_json = self.output / 'metadata.json'
         metadata_json.write_text('\n'.join(line for line in metadata.read_text().splitlines()
                                            if line.startswith('{')))
