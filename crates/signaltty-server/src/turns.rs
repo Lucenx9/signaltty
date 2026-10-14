@@ -152,6 +152,7 @@ pub async fn changed_files(
             "-z",
             "--no-renames",
             "--no-relative",
+            "--ignore-submodules=untracked",
             base,
             current,
         ],
