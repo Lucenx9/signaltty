@@ -363,11 +363,12 @@ commands_install() { # --agent --dry-run
   done < <(resolve_agents "$agent")
 }
 
-commands_check() { # --agent
-  local agent="auto"
+commands_check() { # --agent --installed-only
+  local agent="auto" installed_only=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --agent) agent="$2"; shift 2 ;;
+      --installed-only) installed_only=1; shift ;;
       *) die "unknown flag: $1" ;;
     esac
   done
@@ -376,6 +377,18 @@ commands_check() { # --agent
     [ -n "$a" ] || continue
     local spec layout reldir
     spec="$(agent_dest "$a")"; layout="${spec%%|*}"; reldir="${spec##*|}"
+    if [ "$installed_only" -eq 1 ]; then
+      local installed=0 src base
+      for src in "$ROOT/.specify/commands"/*.md; do
+        base="$(basename "$src" .md)"
+        if [ "$layout" = "skills" ]; then
+          [ ! -f "$ROOT/$reldir/speckit-$base/SKILL.md" ] || installed=1
+        else
+          [ ! -f "$ROOT/$reldir/$base.md" ] || installed=1
+        fi
+      done
+      [ "$installed" -eq 1 ] || continue
+    fi
     for src in "$ROOT/.specify/commands"/*.md; do
       local base name to
       base="$(basename "$src" .md)"; name="speckit-$base"

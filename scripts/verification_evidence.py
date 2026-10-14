@@ -153,6 +153,11 @@ def assess_evidence(root, summary_path):
                 not isinstance(step.get('name'), str) for step in steps)):
         return finish('unverified', 'verification steps are missing, incomplete or unsuccessful')
     names = {step['name'] for step in steps}
+    count = report.get('display_tests')
+    if (len(names) != len(steps) or type(count) is not int or count < 1 or count > len(steps) or
+            {name for name in names if name.startswith('gtk-')} !=
+            {f'gtk-{index:02d}' for index in range(1, count + 1)}):
+        return finish('unverified', 'discovered GTK test count or unique completed steps do not match')
     required = FULL_STEPS | ({'native-accessibility'} if report['mode'] == 'desktop' else set())
     if (not required <= names or not any(name.startswith('gui-list-') for name in names) or
             not any(name.startswith('gtk-') for name in names)):

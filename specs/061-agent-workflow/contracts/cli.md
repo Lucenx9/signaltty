@@ -19,7 +19,8 @@ artifact correction. No command automatically executes an LLM skill or test run.
 
 check phases: repository, planning, implementation, delivery. Repository checks
 are independent of selected feature and historical phase readiness. Feature
-phase gates require explicit enrollment. --scope docs-only/one-line declares a
+phase gates require explicit enrollment and implementation requires the
+recorded requirements review checklist. --scope docs-only/one-line declares a
 spec-flow exemption but does not waive repository integrity or full delivery proof.
 
 index without --write validates the generated specs index and routing block;
@@ -29,7 +30,7 @@ ownership. It reports evidence again after writing. It does not update task or
 lifecycle metadata.
 
 Evidence states: fresh, stale, unverified, failed, running, unavailable. Fresh
-requires a versioned successful full/desktop report with all completed gates,
+requires a versioned successful full/desktop report with all completed gates and the complete unique sequence matching display_tests,
 valid matching before/after provenance and matching current root/content/index.
 Revision is descriptive; identical staged/working content after a commit remains
 applicable. Doctor and fast never establish delivery proof.

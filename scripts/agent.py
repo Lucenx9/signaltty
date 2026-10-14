@@ -74,8 +74,8 @@ def git(*args):
 
 
 def selected_feature(explicit, config):
-    selection = explicit or os.environ.get('SPECIFY_FEATURE_DIRECTORY')
-    if not selection:
+    selection = explicit if explicit is not None else os.environ.get('SPECIFY_FEATURE_DIRECTORY')
+    if selection is None:
         pointer = ROOT / '.specify/feature.json'
         if not pointer.exists():
             return None
@@ -88,7 +88,7 @@ def selected_feature(explicit, config):
     if '/' not in selection and not Path(selection).is_absolute():
         selection = 'specs/' + selection
     path = repo_path(selection)
-    if path.resolve().parent != (ROOT / 'specs').resolve() or not path.is_dir():
+    if path.is_symlink() or path.resolve().parent != (ROOT / 'specs').resolve() or not path.is_dir():
         raise ValueError(f'feature must be an existing direct specs child: {selection}')
     slug = path.name
     if slug not in config['features']:
@@ -110,6 +110,11 @@ def feature_observation(feature):
     if feature is None:
         return None
     path = Path(feature['directory'])
+    for name in ['spec.md', 'plan.md', 'tasks.md']:
+        if (path / name).resolve().parent != path.resolve():
+            raise ValueError(f'{name} must belong to the selected feature directory')
+    if (path / 'checklists').is_symlink():
+        raise ValueError('checklists must belong to the selected feature directory')
     artifacts = {name: (path / name).is_file() for name in ['spec.md', 'plan.md', 'tasks.md']}
     tasks = []
     if artifacts['tasks.md']:
@@ -204,7 +209,7 @@ def repository_findings(config):
                                           'Repair the local link in the authoritative document.', relative))
     for slug in sorted(directories & catalog):
         path = ROOT / 'specs' / slug
-        if path.resolve().parent != (ROOT / 'specs').resolve() or not (path / 'spec.md').is_file():
+        if path.is_symlink() or path.resolve().parent != (ROOT / 'specs').resolve() or not (path / 'spec.md').is_file():
             errors.append(finding('INVALID_SPEC', f'{slug} has no spec or escapes specs/.',
                                   'Restore its spec at the stable catalog path.', str(path)))
     canonical = ROOT / '.agents/skills/verify-signaltty/SKILL.md'
@@ -215,20 +220,14 @@ def repository_findings(config):
                 errors.append(finding('SKILL_SOURCE_DRIFT', str(link.relative_to(ROOT)),
                                       'Restore the relative symlink to .agents/skills/verify-signaltty.'))
     command_sources = ROOT / '.specify/commands'
-    layouts = [('codex', '.agents/skills', True), ('claude', '.claude/skills', True),
-               ('cursor', '.cursor/skills', True), ('copilot', '.github/skills', True),
-               ('opencode', '.opencode/commands', False), ('gemini', '.gemini/commands', False)]
     sources = sorted(command_sources.glob('*.md'))
-    for harness, folder, skills in layouts:
-        copies = [(source, ROOT / folder / (f'speckit-{source.stem}/SKILL.md' if skills else source.name))
-                  for source in sources]
-        if not any(target.exists() for _, target in copies):
-            continue
-        result = subprocess.run(['bash', str(ROOT / 'scripts/setup-agent.sh'), 'commands', 'check', '--agent', harness],
+    if sources:
+        result = subprocess.run(['bash', str(ROOT / 'scripts/setup-agent.sh'), 'commands', 'check',
+                                 '--agent', 'all', '--installed-only'],
                                 capture_output=True, text=True, timeout=30)
         if result.returncode:
             errors.append(finding('COMMAND_SOURCE_DRIFT', result.stdout.strip() + '\n' + result.stderr.strip(),
-                                  f'Run scripts/setup-agent.sh commands install --agent {harness}.'))
+                                  'Run scripts/setup-agent.sh commands install --agent all.'))
     errors += generated_findings(config)
     return errors
 
@@ -287,7 +286,13 @@ def phase_findings(feature, phase):
         if references - requirements:
             errors.append(finding('UNKNOWN_REQUIREMENTS', ', '.join(sorted(references - requirements)),
                                   'Correct task references to the current spec requirements.', str(path / 'tasks.md')))
+        if not (path / 'checklists/requirements.md').is_file():
+            errors.append(finding('MISSING_CHECKLIST', 'The requirements review checklist is missing.',
+                                  'Record the requirements review with speckit-specify/clarify.',
+                                  str(path / 'checklists/requirements.md')))
         for checklist in sorted((path / 'checklists').glob('*.md')):
+            if checklist.resolve().parent != (path / 'checklists').resolve():
+                raise ValueError('checklist must belong to the selected feature')
             if re.search(r'^\s*-\s+\[ \]', checklist.read_text(), re.MULTILINE):
                 errors.append(finding('OPEN_CHECKLIST', f'{checklist.name} has unresolved review items.',
                                       'Resolve and record the requirements review.', str(checklist)))

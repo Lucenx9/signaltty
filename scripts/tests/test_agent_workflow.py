@@ -31,6 +31,9 @@ class AgentWorkflowCLI(unittest.TestCase):
             feature = self.root / 'specs' / slug
             feature.mkdir(parents=True)
             (feature / 'spec.md').write_text('# Spec\n- FR-001: preserve work.\n')
+            if slug == '001-current':
+                (feature / 'checklists').mkdir()
+                (feature / 'checklists/requirements.md').write_text('- [x] Requirements reviewed.\n')
         (self.root / '.specify/feature.json').write_text(
             '{"feature_directory":"specs/001-original"}\n')
         self.config = {
@@ -155,15 +158,35 @@ class AgentWorkflowCLI(unittest.TestCase):
         command = ['bash', str(self.root / 'scripts/setup-agent.sh'), 'commands']
         subprocess.run(command + ['install', '--agent', 'codex'], check=True,
                        capture_output=True, text=True)
-        self.assertEqual(subprocess.run(command + ['check', '--agent', 'codex'],
+        self.assertEqual(subprocess.run(command + ['check', '--agent', 'all', '--installed-only'],
                                        capture_output=True).returncode, 0)
         generated = self.root / '.agents/skills/speckit-specify/SKILL.md'
         generated.write_text(generated.read_text().replace('Original', 'Changed'))
-        result = subprocess.run(command + ['check', '--agent', 'codex'], capture_output=True, text=True)
+        result = subprocess.run(command + ['check', '--agent', 'all', '--installed-only'], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('changed', result.stdout + result.stderr)
         result = self.run_cli('check', '--phase', 'repository', expected=1)
         self.assertIn('COMMAND_SOURCE_DRIFT', [f['code'] for f in result['findings']])
+
+    def test_explicit_empty_selection_never_falls_back_to_previous_work(self):
+        result = self.run_cli('status', '--feature', '', expected=2)
+        self.assertEqual(result['findings'][0]['code'], 'INVALID_INPUT')
+
+    def test_feature_alias_cannot_mix_metadata_and_artifacts(self):
+        shutil.rmtree(self.root / 'specs/001-current')
+        (self.root / 'specs/001-current').symlink_to('001-original', target_is_directory=True)
+        result = self.run_cli('status', '--feature', '001-current', expected=2)
+        self.assertEqual(result['findings'][0]['code'], 'INVALID_INPUT')
+
+    def test_implementation_requires_the_recorded_requirements_review(self):
+        feature = self.root / 'specs/001-current'
+        (feature / 'plan.md').write_text('# Plan\n')
+        (feature / 'tasks.md').write_text('- [x] T001 [FR-001] implement\n')
+        (feature / 'checklists/requirements.md').unlink()
+        self.run_cli('index', '--write')
+        result = self.run_cli('check', '--phase', 'implementation',
+                              '--feature', '001-current', expected=1)
+        self.assertEqual([f['code'] for f in result['findings']], ['MISSING_CHECKLIST'])
 
 
 if __name__ == '__main__':

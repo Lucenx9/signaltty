@@ -67,7 +67,7 @@ scripts/agent.sh check --phase implementation --feature 061-agent-workflow
 not infer lifecycle, modify tasks or persist feature selection. `check` inspects
 prerequisites and proof; it never starts a test run. Planning requires a clarified
 spec. Implementation additionally requires plan, numbered tasks, requirement
-coverage and resolved review checklists. Delivery also requires checked tasks and
+coverage and the checked `checklists/requirements.md` and any additional review checklists. Delivery also requires checked tasks and
 applicable successful full or desktop evidence. These checks establish structural
 readiness; review and behavior tests establish whether the intent is satisfied.
 
@@ -87,7 +87,8 @@ scripts/agent.sh check --phase delivery --feature 061-agent-workflow --evidence 
 
 The runner invokes the same repository check in local runs and CI. It checks
 catalog coverage, source links, generated indexes, verification symlinks and
-installed command copies. Setup's command check compares contents with sources;
+installed command copies. Setup's `commands check --agent all --installed-only` owns harness discovery
+and compares installed contents with sources;
 missing or edited generated files require reinstallation for that harness.
 A harness with no generated commands is not presumed installed.
 

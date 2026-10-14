@@ -30,7 +30,7 @@ class CheckoutEvidence(unittest.TestCase):
         names = ['tooling-tests', 'repository', 'fmt', 'metadata', 'architecture', 'clippy',
                  'warning-policy', 'build', 'workspace-tests', 'server-qa', 'gui-build',
                  'gui-list-0', 'gtk-01', 'refresh-benchmark']
-        report = dict(schema_version=1, mode='full', status='passed', errors=[],
+        report = dict(schema_version=1, mode='full', status='passed', errors=[], display_tests=1,
                       provenance=dict(before=snapshot, after=snapshot, unchanged=True),
                       steps=[dict(name=name, status='passed', exit_code=0) for name in names])
         report.update(updates)
@@ -144,6 +144,17 @@ class CheckoutEvidence(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, 'checkout'):
                 capture_checkout(Path(directory))
+
+    def test_incomplete_or_duplicate_gtk_steps_cannot_establish_delivery_proof(self):
+        path = self.summary(display_tests=2)
+        self.assertEqual(assess_evidence(self.root, path)['status'], 'unverified')
+        path = self.summary(display_tests=0)
+        self.assertEqual(assess_evidence(self.root, path)['status'], 'unverified')
+        path = self.summary()
+        report = json.loads(path.read_text())
+        report['steps'].append(dict(name='gtk-01', status='passed', exit_code=0))
+        path.write_text(json.dumps(report))
+        self.assertEqual(assess_evidence(self.root, path)['status'], 'unverified')
 
 
 if __name__ == '__main__':
