@@ -5,6 +5,7 @@
 
 pub mod adapters;
 pub mod bundled;
+pub mod execution;
 pub mod manifest;
 pub mod permission;
 pub mod process;

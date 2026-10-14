@@ -182,7 +182,7 @@ fn theme_preview(theme: Theme, variant: &str) -> gtk4::Box {
     preview
 }
 
-/// Build the Preferences dialog with Appearance and Theme controls.
+/// Build the Preferences dialog with appearance and agent launch controls.
 pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
     let dialog = adw::PreferencesDialog::new();
     dialog.add_css_class("signaltty-dialog");
@@ -306,6 +306,20 @@ pub fn build_dialog(app: &crate::app::App) -> adw::PreferencesDialog {
 
     page.add(&appearance_group);
     page.add(&theme_group);
+    let agents = adw::PreferencesGroup::builder().title("Agents").build();
+    let automatic = adw::SwitchRow::builder()
+        .title("Run agents without confirmations")
+        .subtitle("New Codex, Claude and Antigravity workspaces can run commands and edit files without asking. Codex runs without a sandbox.")
+        .active(current_pref.automatic_agent_permissions)
+        .build();
+    let weak = app.weak();
+    automatic.connect_active_notify(move |row| {
+        if let Some(app) = weak.upgrade() {
+            app.set_automatic_agent_permissions(row.is_active());
+        }
+    });
+    agents.add(&automatic);
+    page.add(&agents);
     dialog.add(&page);
 
     dialog
@@ -392,6 +406,7 @@ mod tests {
             appearance: Appearance::Dark,
             theme: Theme::Grove,
             sidebar_width: Some(380),
+            ..Default::default()
         };
         save_preference_to(&file, &pref);
         let loaded = load_preference_from(&file);

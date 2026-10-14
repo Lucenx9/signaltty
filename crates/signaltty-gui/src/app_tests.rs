@@ -6,6 +6,72 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[test]
+#[ignore = "requires a GTK display; run with dbus-run-session"]
+fn automatic_agent_permissions_are_persistent_native_controls() {
+    adw::init().unwrap();
+    gio::resources_register_include!("signaltty-gui.gresource").unwrap();
+    let display = gtk4::gdk::Display::default().unwrap();
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_resource("/dev/signaltty/gui/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    gtk4::IconTheme::for_display(&display).add_resource_path("/dev/signaltty/gui/icons");
+    let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+    let dir = std::env::temp_dir().join(signaltty_core::ids::new_pane_id());
+    std::env::set_var("XDG_CONFIG_HOME", &dir);
+    let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let (actor, _requests) = IpcHandle::test_channel();
+    let (ui, _) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(&application, actor, ui);
+    app.window.present();
+    let dialog = crate::preferences::build_dialog(&app);
+    dialog.present(Some(&app.window));
+    let mut row = None;
+    walk_widgets(dialog.upcast_ref(), &mut |widget| {
+        if let Some(switch) = widget.downcast_ref::<adw::SwitchRow>() {
+            if switch.title() == "Run agents without confirmations" {
+                row = Some(switch.clone());
+                return true;
+            }
+        }
+        false
+    });
+    let row = row.expect("automatic execution is a native switch in Preferences");
+    assert!(!row.is_active());
+    row.set_active(true);
+    assert!(app.preference().automatic_agent_permissions);
+    assert!(crate::preferences::load_preference().automatic_agent_permissions);
+    for appearance in [
+        signaltty_core::theme::Appearance::Light,
+        signaltty_core::theme::Appearance::Dark,
+    ] {
+        app.apply_preference(signaltty_core::theme::GuiPreference {
+            appearance,
+            ..app.preference()
+        });
+        capture_workflow(
+            &app.window,
+            &format!("automatic-permissions-{}", appearance.id()),
+        );
+        assert!(row.is_mapped() && row.is_sensitive());
+    }
+    row.set_active(false);
+    assert!(!crate::preferences::load_preference().automatic_agent_permissions);
+    dialog.close();
+    app.window.destroy();
+    let _ = std::fs::remove_dir_all(dir);
+    if let Some(path) = previous_config {
+        std::env::set_var("XDG_CONFIG_HOME", path);
+    } else {
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+}
+
+#[test]
 fn sidebar_pointer_tracks_the_trailing_edge_in_both_directions() {
     use gtk4::TextDirection::{Ltr, Rtl};
     // The six-pixel handle occupies opposite edges of the same allocation.

@@ -371,10 +371,16 @@ impl NewWorkspaceDialog {
 pub fn show_dialog(
     parent: &adw::ApplicationWindow,
     active_ws_cwd: Option<&str>,
+    automatic_agent_permissions: bool,
     on_create: impl Fn(NewWorkspaceRequest, Rc<NewWorkspaceDialog>) + 'static,
     on_close: impl Fn() + 'static,
 ) -> Rc<NewWorkspaceDialog> {
-    let commands = available_commands();
+    let mut commands = available_commands();
+    if automatic_agent_permissions {
+        for command in &mut commands {
+            command.argv = signaltty_agent::execution::automatic_launch_argv(&command.argv);
+        }
+    }
     let default_index = default_command_index(&commands);
     let cwd = default_cwd(active_ws_cwd);
     let dialog = adw::Dialog::builder()
@@ -757,6 +763,98 @@ mod tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn automatic_workspace_launches_preserve_custom_commands() {
+        use std::os::unix::fs::PermissionsExt;
+
+        adw::init().unwrap();
+        let directory = std::env::temp_dir().join(signaltty_core::ids::new_pane_id());
+        std::fs::create_dir_all(&directory).unwrap();
+        for program in ["codex", "claude", "agy"] {
+            let file = directory.join(program);
+            std::fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let original_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", &directory);
+        let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+        application.register(None::<&gio::Cancellable>).unwrap();
+        let window = adw::ApplicationWindow::new(&application);
+        window.present();
+        for automatic in [false, true] {
+            let form = show_dialog(&window, directory.to_str(), automatic, |_, _| {}, || {});
+            for (program, expected) in [
+                (
+                    "codex",
+                    vec!["codex", "--dangerously-bypass-approvals-and-sandbox"],
+                ),
+                ("claude", vec!["claude", "--dangerously-skip-permissions"]),
+                (
+                    "agy",
+                    vec![
+                        "agy",
+                        "--dangerously-skip-permissions",
+                        "--mode",
+                        "accept-edits",
+                    ],
+                ),
+            ] {
+                let index = form
+                    .commands
+                    .iter()
+                    .position(|command| command.argv[0] == program)
+                    .unwrap();
+                form.combo.set_selected(index as u32);
+                let request = form.request().unwrap();
+                let expected = if automatic { expected } else { vec![program] };
+                assert_eq!(request.argv, expected);
+                form.finish(Err(CreationError {
+                    message: "retry fixture".into(),
+                    workspace_id: None,
+                }));
+            }
+            form.combo.set_selected(form.commands.len() as u32);
+            form.custom_row.set_text("codex --sandbox read-only");
+            assert_eq!(
+                form.request().unwrap().argv,
+                vec!["codex", "--sandbox", "read-only"]
+            );
+            form.finish(Ok(()));
+        }
+        std::fs::remove_file(directory.join("agy")).unwrap();
+        for alias in ["antigravity", "antigravity-cli"] {
+            let file = directory.join(alias);
+            std::fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let form = show_dialog(&window, directory.to_str(), true, |_, _| {}, || {});
+            let index = form
+                .commands
+                .iter()
+                .position(|command| command.argv[0] == alias)
+                .unwrap();
+            form.combo.set_selected(index as u32);
+            assert_eq!(
+                form.request().unwrap().argv,
+                vec![
+                    alias,
+                    "--dangerously-skip-permissions",
+                    "--mode",
+                    "accept-edits"
+                ]
+            );
+            form.finish(Ok(()));
+            std::fs::remove_file(file).unwrap();
+        }
+        window.destroy();
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
     fn dialog_validation_explains_invalid_folder() {
         adw::init().unwrap();
         let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
@@ -766,6 +864,7 @@ mod tests {
         let dialog = show_dialog(
             &window,
             Some("/signaltty-missing-project-folder"),
+            false,
             |_, _| panic!("invalid form submitted"),
             || {},
         );
@@ -822,6 +921,7 @@ mod tests {
         let dialog = show_dialog(
             &window,
             Some(&dir_s),
+            false,
             move |req, _form| {
                 submitted.set(submitted.get() + 1);
                 *got2.borrow_mut() = Some((req.name, req.cwd, req.argv, req.auto_name));

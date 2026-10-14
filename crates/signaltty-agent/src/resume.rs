@@ -7,7 +7,8 @@
 ///
 /// Explicit adapter paths take precedence. Only matching bare commands are
 /// replaced; legacy relative launch paths have no reliable directory anchor.
-/// Launch options and the adapter's resume arguments stay separate.
+/// Only Signaltty's explicit automatic launch prefix survives standard resume;
+/// other launch options and the adapter's resume arguments stay separate.
 pub fn resolve_resume_argv(original_argv: &[String], resume_argv: &[String]) -> Vec<String> {
     let mut resolved = resume_argv.to_vec();
     if let (Some(selected), Some(program)) = (original_argv.first(), resolved.first_mut()) {
@@ -19,7 +20,7 @@ pub fn resolve_resume_argv(original_argv: &[String], resume_argv: &[String]) -> 
             *program = selected.clone();
         }
     }
-    resolved
+    crate::execution::inherit_automatic_permissions(original_argv, &resolved)
 }
 
 /// Validate a resume argv an agent reported about itself (`report-session`).
@@ -55,6 +56,22 @@ mod tests {
 
     fn to_vec(args: &[&str]) -> Vec<String> {
         args.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn automatic_permissions_survive_standard_resume() {
+        assert_eq!(
+            resolve_resume_argv(
+                &to_vec(&["/opt/codex", "--dangerously-bypass-approvals-and-sandbox"]),
+                &to_vec(&["codex", "resume", "session"])
+            ),
+            to_vec(&[
+                "/opt/codex",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "resume",
+                "session"
+            ])
+        );
     }
 
     #[test]
