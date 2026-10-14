@@ -40,7 +40,7 @@ before publication; delivery checks assess that report, not these checkboxes.
 
 The first final gate stopped at the unchanged server test
 `explain_reports_the_bundled_rule_that_matches` with a five-second working-state
-timeout. The exact test passed alone in 2.23 seconds; a targeted module rerun
-is retained in target/workflow-screen-recheck.log. No server source was changed.
-A separate next-action regression was fixed test-first so running/failed reports
-request inspection/diagnosis instead of immediately recommending another full run.
+timeout. The exact test passed alone in 2.23 seconds; all 24 tests in the targeted
+module passed, retained in target/workflow-screen-recheck.log. No server source
+was changed. Separate next-action regressions were fixed test-first so unavailable,
+running and failed reports request inspection/diagnosis before another full run.

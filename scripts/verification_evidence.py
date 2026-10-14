@@ -123,6 +123,7 @@ def assess_evidence(root, summary_path):
     try:
         report = json.loads(path.read_text())
     except OSError as error:
+        result['recovery'] = 'Inspect the selected evidence path and its readability; correct it or select an existing report before rerunning verification.'
         return finish('unavailable', f'cannot read evidence: {error}')
     except (ValueError, UnicodeError) as error:
         return finish('unverified', f'malformed evidence: {error}')
@@ -175,6 +176,7 @@ def assess_evidence(root, summary_path):
     try:
         current = capture_checkout(root)
     except (ValueError, OSError, subprocess.SubprocessError) as error:
+        result['recovery'] = 'Inspect Git availability and checkout input errors; restore provenance before rerunning verification.'
         return finish('unavailable', f'cannot capture current checkout: {error}')
     if _identity(current) != _identity(after):
         return finish('stale', 'checkout inputs changed after verification')
