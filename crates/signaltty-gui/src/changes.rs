@@ -38,10 +38,9 @@ enum Scope {
 }
 
 impl Scope {
-    /// Short labels fit the 320px panel; tooltips carry the full name.
     const TOGGLES: [(&'static str, &'static str, &'static str); 2] = [
-        ("head", "All", "All changes against HEAD"),
-        ("turn", "Turn", "Changes in the latest agent turn"),
+        ("head", "Working tree", "All changes against HEAD"),
+        ("turn", "Latest turn", "Changes in the latest agent turn"),
     ];
 
     fn as_str(self) -> &'static str {
@@ -155,7 +154,7 @@ fn label() -> gtk4::Label {
 
 fn refresh_button(header: &adw::HeaderBar) -> gtk4::Button {
     let button = gtk4::Button::from_icon_name("view-refresh-symbolic");
-    button.set_tooltip_text(Some("Refresh working tree changes"));
+    button.set_tooltip_text(Some("Refresh changes"));
     button.update_property(&[gtk4::accessible::Property::Label("Refresh")]);
     header.pack_end(&button);
     button
@@ -201,6 +200,11 @@ impl ChangesPanel {
             let toggle = adw::Toggle::new();
             toggle.set_name(Some(name));
             toggle.set_label(Some(label));
+            let text = gtk4::Label::new(Some(label));
+            text.set_wrap(true);
+            text.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+            text.set_justify(gtk4::Justification::Center);
+            toggle.set_child(Some(&text));
             toggle.set_tooltip(tooltip);
             scopes.add(toggle);
         }
@@ -208,8 +212,10 @@ impl ChangesPanel {
         scopes
             .upcast_ref::<gtk4::Widget>()
             .update_property(&[gtk4::accessible::Property::Label("Compare against")]);
-        list_header.set_title_widget(Some(&scopes));
         list_body.append(&list_header);
+        scopes.set_margin_start(12);
+        scopes.set_margin_end(12);
+        list_body.append(&scopes);
         let summary = label();
         summary.add_css_class("changes-summary");
         list_body.append(&summary);
@@ -249,7 +255,7 @@ impl ChangesPanel {
         list_body.append(&list_scroll);
         let list_page = adw::NavigationPage::new(&list_body, "Changes");
         navigation.add(&list_page);
-        let reader_body = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+        let reader_body = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
         let reader_header = adw::HeaderBar::new();
         reader_header.add_css_class("workspace-header");
         reader_header.set_show_back_button(false);
@@ -261,6 +267,7 @@ impl ChangesPanel {
         reader_body.append(&reader_header);
         let path = label();
         path.add_css_class("heading");
+        path.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
         reader_body.append(&path);
         let reader_scope = label();
         reader_scope.set_text(Scope::Head.reader());
@@ -279,6 +286,7 @@ impl ChangesPanel {
         let reader = gtk4::TextView::new();
         reader.set_editable(false);
         reader.set_monospace(true);
+        reader.set_direction(gtk4::TextDirection::Ltr);
         reader.set_wrap_mode(gtk4::WrapMode::None);
         reader.set_left_margin(16);
         reader.set_right_margin(16);
@@ -292,7 +300,15 @@ impl ChangesPanel {
         let buffer = reader.buffer();
         buffer.create_tag(Some("added"), &[]);
         buffer.create_tag(Some("removed"), &[]);
-        buffer.create_tag(Some("heading"), &[("weight", &700i32)]);
+        buffer.create_tag(
+            Some("heading"),
+            &[
+                ("weight", &600i32),
+                ("pixels-above-lines", &8i32),
+                ("pixels-below-lines", &6i32),
+            ],
+        );
+        buffer.create_tag(Some("line-numbers"), &[]);
         let reader_scroll = gtk4::ScrolledWindow::new();
         reader_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
         reader_scroll.set_vexpand(true);
@@ -539,6 +555,22 @@ impl Changes {
                         tag.set_paragraph_background_rgba(Some(&bg));
                     }
                 }
+                let foreground = this.reader.color();
+                let mut numbers = foreground;
+                if !adw::StyleManager::default().is_high_contrast() {
+                    numbers.set_alpha(0.65);
+                }
+                let table = this.reader.buffer().tag_table();
+                table
+                    .lookup("line-numbers")
+                    .unwrap()
+                    .set_foreground_rgba(Some(&numbers));
+                let mut heading_background = foreground;
+                heading_background.set_alpha(0.05);
+                table
+                    .lookup("heading")
+                    .unwrap()
+                    .set_paragraph_background_rgba(Some(&heading_background));
             }
         });
     }
@@ -763,10 +795,21 @@ impl Changes {
                             DiffLineKind::Removed => ('−', Some("removed")),
                             DiffLineKind::NoNewline => ('\\', None),
                         };
-                        let text = format!("{old:>width$}  {new:>width$}  {sign} {}\n", line.text);
+                        let prefix = format!("{old:>width$}  {new:>width$}  ");
+                        let text = format!("{sign} {}\n", line.text);
                         if let Some(tag) = tag {
+                            buffer.insert_with_tags_by_name(
+                                &mut buffer.end_iter(),
+                                &prefix,
+                                &[tag, "line-numbers"],
+                            );
                             buffer.insert_with_tags_by_name(&mut buffer.end_iter(), &text, &[tag]);
                         } else {
+                            buffer.insert_with_tags_by_name(
+                                &mut buffer.end_iter(),
+                                &prefix,
+                                &["line-numbers"],
+                            );
                             buffer.insert(&mut buffer.end_iter(), &text);
                         }
                     }

@@ -1,0 +1,54 @@
+   Compiling signaltty-gui v0.1.0 (/home/simone/.t3/worktrees/signaltty/gui-secondary-window-polish/crates/signaltty-gui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.78s
+     Running unittests src/main.rs (target/debug/deps/signaltty_gui-033da366973ed1d2)
+
+running 1 test
+test app::tests::file_diff_reader_uses_native_numbered_selectable_controls ... dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.0' (uid=1000 pid=2000805 comm="/home/simone/.t3/worktrees/signaltty/gui-secondary")
+dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.1' (uid=1000 pid=2000822 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.1' (uid=1000 pid=2000822 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.810: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.1' (uid=1000 pid=2000822 comm="/usr/libexec/xdg-desktop-portal")
+dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.4' (uid=1000 pid=2000846 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[2000855]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=2000846 comm="/usr/libexec/xdg-desktop-portal-gtk")
+dbus-daemon[2000855]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.963: Choosing gtk.portal for org.freedesktop.impl.portal.Settings as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.964: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.965: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.967: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.968: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.969: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.970: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.982: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.983: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2000822): xdg-desktop-portal-WARNING **: 19:43:49.984: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback
+dbus-daemon[1999300]: [session uid=1000 pid=1999300 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+
+thread 'app::tests::file_diff_reader_uses_native_numbered_selectable_controls' (2000806) panicked at crates/signaltty-gui/src/app_tests.rs:3855:5:
+hunk heading must have visible separation from code
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    app::tests::file_diff_reader_uses_native_numbered_selectable_controls
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 161 filtered out; finished in 0.90s
+
+error: test failed, to rerun pass `-p signaltty-gui --bin signaltty-gui`

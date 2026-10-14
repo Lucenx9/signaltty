@@ -384,10 +384,15 @@ the window's right edge, beside the terminals, in an end-side
 `AdwOverlaySplitView`. Below 1100sp it overlays the content; below 760sp the
 header toggle hides so the header fits 360px. The panel reads `workspace.diff`
 when opened, when the active workspace changes while it is open, and on explicit
-Refresh; a closed panel does no reads. Its summary says "Changes against HEAD"
-with aggregate file/line counts. Files sort by path under a directory label per
+Refresh; a closed panel does no reads. The Working tree summary says "Changes against HEAD"
+with aggregate file/line counts. The native header keeps the Changes title;
+a separate native selector exposes Working tree and Latest turn without hover.
+Its native labels wrap with enlarged or wider fonts rather than truncating the comparison names.
+Refresh acts on the selected comparison. Files sort by path under a directory label per
 group; each row shows the file name (full path in the tooltip) and `+N −N` in the
-diff colours, or "Untracked"/"Binary". It does not imply a per-turn diff.
+diff colours, or "Untracked"/"Binary". Working tree compares against HEAD;
+Latest turn compares against the recorded agent-turn baseline and explains when
+no turn has been recorded.
 Workspace names, paths and file names render literally, including `<`, `>` and `&`.
 
 Clicking the header breadcrumb opens the workspace details card
@@ -400,7 +405,11 @@ apply are hidden; the breadcrumb is inactive without a workspace.
 Activating a file pushes a reader inside the same panel, using
 `workspace.file_diff`. Back returns to the preserved file list and row focus.
 The selectable, noneditable monospace view shows hunk headings, old/new line
-numbers, context, and explicit added/removed signs. Semantic text colors support
+numbers, context, and explicit added/removed signs. Number prefixes keep the same
+monospace metrics with a secondary foreground, restored to full text contrast in
+high-contrast mode. Native paragraph bands and spacing separate hunk headings.
+The reader stays LTR inside RTL panels; long literal paths wrap at character
+boundaries instead of forcing the panel wider. Semantic text colors support
 light and dark themes; long code lines scroll within the reader. New text files
 show additions. Binary, unchanged, unavailable and incomplete previews have
 explicit notices. Refresh invalidates the old patch and reads the current
