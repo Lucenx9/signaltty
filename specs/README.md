@@ -84,4 +84,5 @@ Use `status --feature <slug> --evidence <run>` to inspect current proof.
 | [057-top-bar-polish](057-top-bar-polish/spec.md) | historical | [spec.md](057-top-bar-polish/spec.md), [plan.md](057-top-bar-polish/plan.md), [tasks.md](057-top-bar-polish/tasks.md) |  |
 | [058-sidebar-identity](058-sidebar-identity/spec.md) | historical | [spec.md](058-sidebar-identity/spec.md), [plan.md](058-sidebar-identity/plan.md), [tasks.md](058-sidebar-identity/tasks.md) |  |
 | [059-automatic-agent-permissions](059-automatic-agent-permissions/spec.md) | historical | [spec.md](059-automatic-agent-permissions/spec.md), [plan.md](059-automatic-agent-permissions/plan.md), [tasks.md](059-automatic-agent-permissions/tasks.md) |  |
+| [060-cli-address-resolution](060-cli-address-resolution/spec.md) | historical | [spec.md](060-cli-address-resolution/spec.md), [plan.md](060-cli-address-resolution/plan.md), [tasks.md](060-cli-address-resolution/tasks.md) |  |
 | [060-socket-startup](060-socket-startup/spec.md) | historical | [spec.md](060-socket-startup/spec.md), [plan.md](060-socket-startup/plan.md), [tasks.md](060-socket-startup/tasks.md) |  |
