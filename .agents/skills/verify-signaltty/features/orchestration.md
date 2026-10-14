@@ -95,3 +95,24 @@ orchestrator_tasks task_report` verifies reconnects, both selectors, optional-fi
 defaults, concurrent reports, snapshot-restored retries, and one paired result/update
 notification. Only identical `task.report` content has this retry guarantee. The
 fixtures do not prove synchronous snapshot flushing or coordinator delivery.
+
+## Automatic agent execution
+
+Enable Run agents without confirmations once in Preferences to select native
+automatic execution for new installed-command Codex/Claude/Antigravity
+workspaces. Codex runs without its native sandbox. Custom commands retain their
+arguments. Existing sessions keep their recorded launch mode.
+
+`cargo test -p signaltty-server --test automatic_execution` verifies actual
+Codex resume arguments after snapshot restoration, default same-provider native
+worker inheritance, explicit worker argv and cross-provider precedence. Pure
+argument tests in signaltty-agent cover all three native prefixes and standard
+resume shapes; Antigravity workers still require explicit argv.
+
+The isolated ignored GTK tests
+`app::tests::automatic_agent_permissions_are_persistent_native_controls` and
+`new_workspace::tests::automatic_workspace_launches_preserve_custom_commands`
+exercise preference save/load, native light/dark controls and actual form
+submission arguments. Full verification runs both; the first emits
+`automatic-permissions-light.png` and `automatic-permissions-dark.png`. These
+fixtures do not authenticate providers or certify paid turns or remote installations.

@@ -419,8 +419,8 @@ Antigravity workspaces. Shells, other agents and Custom commands keep their argv
 Standard `codex resume ID`, `claude --resume ID` and self-reported
 `agy --conversation ID` commands retain this generated prefix exactly once.
 Explicit resume options win. A `task.start` using `agent` without `argv`
-inherits the prefix from its recorded `parent_pane_id` only for the same native
-provider. Explicit worker argv and different providers are unchanged. Arbitrary
+inherits the prefix from its recorded `parent_pane_id` only for the same supported
+native provider, Codex or Claude. Antigravity workers still require explicit argv. Explicit worker argv and different providers are unchanged. Arbitrary
 initial provider flags and runtime permission changes inside a TUI are not inferred.
 
 The setting affects new launches. Unchecking it leaves an existing session's

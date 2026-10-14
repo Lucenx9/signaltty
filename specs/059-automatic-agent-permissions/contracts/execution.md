@@ -6,4 +6,4 @@ Native prefixes: Codex `--dangerously-bypass-approvals-and-sandbox`; Claude `--d
 
 The standard resume shapes are `codex resume ID`, `claude --resume ID`, `agy --conversation ID`. Matching executable basenames are required, including explicit matching paths. Only those minimal shapes inherit; any explicit resume options win. The generated prefix is inserted after the executable and retained exactly once.
 
-`task.start` with agent and no argv inherits that same provider prefix only when parent_pane_id identifies its automatic native parent. Explicit argv is never modified. Unknown/missing parents and different providers retain current default launch behavior. No new params or error codes.
+`task.start` with agent and no argv inherits the Codex/Claude native provider prefix only when parent_pane_id identifies its automatic native parent. Explicit argv is never modified. Unknown/missing parents and different providers retain current default launch behavior. No new params or error codes.

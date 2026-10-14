@@ -25,11 +25,11 @@ A user enables Run agents without confirmations in Preferences. New workspaces s
 A resumed automatic session and its same-provider worker should not revert to repeatedly asking for permissions.
 
 **Why this priority**: Restart and delegation must not silently undo the selected mode.
-**Independent Test**: Report a native session, resume it and start a worker through the existing interfaces; inspect the resulting process arguments.
+**Independent Test**: Report a native session, resume it and start a supported native worker through the existing interfaces; inspect the resulting process arguments.
 
 **Acceptance Scenarios**:
 1. **Given** an automatic direct launch, **When** recording and running the provider's standard resume command, **Then** the selected executable and automatic mode survive.
-2. **Given** an automatic parent, **When** starting a same-provider task by agent name without an explicit command, **Then** the worker inherits automatic mode.
+2. **Given** an automatic parent, **When** starting a supported Codex/Claude same-provider task by agent name without an explicit command, **Then** the worker inherits automatic mode.
 3. **Given** an automatic parent, **When** starting a different provider or supplying explicit worker arguments, **Then** no mode is inferred or appended.
 4. **Given** an explicitly configured resume command, **When** resuming, **Then** its options retain precedence.
 
@@ -47,7 +47,7 @@ A resumed automatic session and its same-provider worker should not revert to re
 - **FR-001**: Offer one persisted, default-off automatic execution preference with text explaining that supported agents may run commands and edit files without asking.
 - **FR-002**: Apply it only to supported installed-command GUI launches, preserving custom commands and unsupported programs.
 - **FR-003**: Native provider automatic flags must be retained in recorded standard resume commands, without duplication or overriding explicit resume options.
-- **FR-004**: Default same-provider task workers inherit the parent's recorded automatic launch mode; explicit commands and different providers remain unchanged.
+- **FR-004**: Default Codex/Claude same-provider task workers inherit the parent's recorded automatic launch mode; explicit commands and different providers remain unchanged.
 - **FR-005**: The preference must read old, missing or mistyped values as disabled, preserve other GUI settings and survive save/load.
 - **FR-006**: Reuse native provider execution controls. Do not alter provider-wide configuration, trust, authentication, hook answers or live process modes.
 - **FR-007**: Verification must cover persisted choice, launched/resumed worker arguments and native accessible light/dark controls.
@@ -71,7 +71,7 @@ A resumed automatic session and its same-provider worker should not revert to re
 
 - The user authorizes implementing and publishing a repository fix, not changing configuration on this PC or accessing the other PC.
 - Native CLI permissions flags are verified against installed help. Paid provider sessions are outside automated verification.
-- Inheritance is limited to Signaltty's generated automatic launch prefix. Arbitrary provider options, permission changes made inside a TUI and wrapper commands are outside this change.
+- Inheritance is limited to Signaltty's generated automatic launch prefix. Arbitrary provider options, permission changes made inside a TUI and wrapper commands are outside this change. Antigravity has no native default task adapter; its workers continue to require explicit commands.
 - This is an opt-in product control. The user's current authorization does not change permission defaults for other users.
 
 ## Clarifications
