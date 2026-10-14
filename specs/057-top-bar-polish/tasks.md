@@ -32,4 +32,4 @@ T001-T004 precede implementation. US1 and US2 share App/CSS ownership and run se
 ## Centered identity clarification
 - [x] T015 Replace leading proximity acceptance with a native center-position assertion and reproduce red on merged PR109.
 - [x] T016 Restore centered native placement with compact identity, inspect wide/narrow/RTL renders and test all existing behavior.
-- [ ] T017 Complete full verification/reviews, retain correction proof and publish/link a new PR against main.
+- [x] T017 Complete full verification/reviews, retain correction proof and publish/link a new PR against main.
