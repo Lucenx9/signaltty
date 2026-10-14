@@ -5,6 +5,12 @@ Use the complete slug: numeric prefixes are historical and may repeat.
 Lifecycle is recorded intent; checked tasks and verified behavior are separate facts.
 Use `status --feature <slug> --evidence <run>` to inspect current proof.
 
+## Active
+
+| Feature | Phase checks | Artifacts | Successor |
+|---|---|---|---|
+| [062-ci-pr-workflow](062-ci-pr-workflow/spec.md) | enrolled | [spec.md](062-ci-pr-workflow/spec.md), [plan.md](062-ci-pr-workflow/plan.md), [tasks.md](062-ci-pr-workflow/tasks.md) |  |
+
 ## Completed
 
 | Feature | Phase checks | Artifacts | Successor |
