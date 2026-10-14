@@ -26,3 +26,6 @@
 ## Dependencies and implementation strategy
 
 T001 → T002 → T003 → T004 → T005. T003 → T006 → T007 → T008. T009 follows implementation, T010 and T011 follow all tests. Sequential changes reuse existing seams. Standards and Spec reviews can run independently. No parallel file writers.
+
+- [x] T012 Fix bot-reported Antigravity aliases and add pure/native form regressions in crates/signaltty-agent/src/execution.rs and crates/signaltty-gui/src/new_workspace.rs.
+- [ ] T013 Repeat full verification and final Gemini review on the corrected source before merging PR #111.

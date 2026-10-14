@@ -820,6 +820,30 @@ mod tests {
             );
             form.finish(Ok(()));
         }
+        std::fs::remove_file(directory.join("agy")).unwrap();
+        for alias in ["antigravity", "antigravity-cli"] {
+            let file = directory.join(alias);
+            std::fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let form = show_dialog(&window, directory.to_str(), true, |_, _| {}, || {});
+            let index = form
+                .commands
+                .iter()
+                .position(|command| command.argv[0] == alias)
+                .unwrap();
+            form.combo.set_selected(index as u32);
+            assert_eq!(
+                form.request().unwrap().argv,
+                vec![
+                    alias,
+                    "--dangerously-skip-permissions",
+                    "--mode",
+                    "accept-edits"
+                ]
+            );
+            form.finish(Ok(()));
+            std::fs::remove_file(file).unwrap();
+        }
         window.destroy();
         if let Some(path) = original_path {
             std::env::set_var("PATH", path);

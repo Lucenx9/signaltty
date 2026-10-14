@@ -20,7 +20,9 @@ fn automatic_flags(program: &str) -> &'static [&'static str] {
     match program {
         "codex" => &["--dangerously-bypass-approvals-and-sandbox"],
         "claude" => &["--dangerously-skip-permissions"],
-        "agy" => &["--dangerously-skip-permissions", "--mode", "accept-edits"],
+        "agy" | "antigravity" | "antigravity-cli" => {
+            &["--dangerously-skip-permissions", "--mode", "accept-edits"]
+        }
         _ => &[],
     }
 }
@@ -33,7 +35,9 @@ pub fn inherit_automatic_permissions(source: &[String], target: &[String]) -> Ve
     let standard_resume = target.len() == 3
         && matches!(
             (name, target[1].as_str()),
-            ("codex", "resume") | ("claude", "--resume") | ("agy", "--conversation")
+            ("codex", "resume")
+                | ("claude", "--resume")
+                | ("agy" | "antigravity" | "antigravity-cli", "--conversation")
         )
         && !target[2].is_empty()
         && !target[2].starts_with('-');
@@ -56,6 +60,26 @@ mod tests {
 
     fn argv(args: &[&str]) -> Vec<String> {
         args.iter().map(|s| (*s).into()).collect()
+    }
+
+    #[test]
+    fn antigravity_aliases_keep_automatic_launch_and_resume_permissions() {
+        for program in ["agy", "antigravity", "antigravity-cli"] {
+            let expected = argv(&[
+                program,
+                "--dangerously-skip-permissions",
+                "--mode",
+                "accept-edits",
+            ]);
+            assert_eq!(automatic_launch_argv(&argv(&[program])), expected);
+            let resume = argv(&[program, "--conversation", "session"]);
+            let mut expected_resume = expected.clone();
+            expected_resume.extend(["--conversation".into(), "session".into()]);
+            assert_eq!(
+                inherit_automatic_permissions(&expected, &resume),
+                expected_resume
+            );
+        }
     }
 
     #[test]

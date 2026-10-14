@@ -9,3 +9,5 @@ Installed CLI help, 2026-10-14: `codex --help` supports `--dangerously-bypass-ap
 Decision: use a provider-specific automatic argument prefix generated for bare launch commands. Inherit only that prefix into same-provider bare default worker commands and minimal standard resume commands. Explicit argv remains authoritative. This avoids interpreting option-looking prompt text or provider-specific arbitrary argument grammars. Source and target must refer to the same native program.
 
 Decision: store the launch preference in existing `gui.json`; store session choice in existing Pane.argv. No new IPC field or snapshot schema is needed. Tasks use the existing explicit parent_pane_id reference. Cross-provider workers require explicit argv to choose their mode.
+
+PR bot review found the bundled Antigravity launcher also exposes `antigravity` and `antigravity-cli`. The native automatic flags and matching self-reported resume shapes now cover all three declared executable names. Pure regression fails before the correction; the actual GTK form fixture exercises installations with only either alternate name on PATH.
