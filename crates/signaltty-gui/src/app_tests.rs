@@ -2145,6 +2145,13 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
     capture_workflow(&app.window, "header-shell-dark");
     assert_eq!(app.title_context.text(), "feature/header");
     assert!(app.title_context.is_visible() && separator.is_visible());
+    let wide_width = (gtk4::prelude::WidgetExt::display(&app.window)
+        .monitor_at_surface(&app.window.surface().unwrap())
+        .unwrap()
+        .geometry()
+        .width()
+        - 80)
+        .min(2400);
     for (width, direction, scheme, name) in [
         (
             1280,
@@ -2153,13 +2160,13 @@ fn workspace_header_context_survives_shell_agent_and_empty_transitions() {
             "header-wide-short-light",
         ),
         (
-            2400,
+            wide_width,
             gtk4::TextDirection::Ltr,
             adw::ColorScheme::ForceDark,
             "header-full-width-short-dark",
         ),
         (
-            2400,
+            wide_width,
             gtk4::TextDirection::Rtl,
             adw::ColorScheme::ForceDark,
             "header-full-width-short-rtl-dark",
