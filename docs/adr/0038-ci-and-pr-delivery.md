@@ -18,7 +18,9 @@ Allow only the known reference runner label missing from its built-in list.
 Use read-only repository permissions and omit persisted checkout credentials.
 
 Use one PR template and a delivery guide for actual evidence, comment triage,
-latest-revision check assessment and authorized merging against the reviewed head.
+latest-revision check assessment and authorized merging against the reviewed head
+after rechecking the reviewed base. The CLI's atomic guard covers the head only;
+server-enforced base freshness requires branch protection or a merge queue.
 Reviewer warnings require project-specific judgment. Existing authorization is
 reused; no automatic merge or additional approval service is introduced.
 

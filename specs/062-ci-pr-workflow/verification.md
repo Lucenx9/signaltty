@@ -15,6 +15,12 @@ Observed focused checks:
 - Repository and implementation phase checks: pass; generated index is current.
 - Independent Standards/Spec reviews: no remaining findings. The Spec review
   corrected capture of reviewed_head to precede all comment/check assessment.
+- GitHub Codex review identified base drift before merging. The guide now captures
+  head/base together, rechecks both immediately before merge and records the limit
+  of the CLI's head-only atomic guard.
+- The actual guide shell blocks pass bash syntax validation; isolated gh fixtures
+  allow an unchanged pair and refuse changed head, changed base and query failure.
+  Independent Standards/Spec delta reviews closed the base-drift finding.
 - Independent read-only grounding: confirms event/group semantics and caveats.
 
 Concurrency examples from the chosen GitHub expression:
@@ -34,8 +40,8 @@ paid-provider tests or real-desktop accessibility acceptance were run.
 Final source gate:
 
 ```sh
-scripts/verify.sh full --output target/verification/ci-pr-workflow-20261014
-scripts/agent.sh check --phase delivery --feature 062-ci-pr-workflow --evidence target/verification/ci-pr-workflow-20261014
+scripts/verify.sh full --output target/verification/ci-pr-review-fix-20261014
+scripts/agent.sh check --phase delivery --feature 062-ci-pr-workflow --evidence target/verification/ci-pr-review-fix-20261014
 ```
 
 Read the actual versioned summary and delivery result for completion. The PR body

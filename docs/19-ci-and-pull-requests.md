@@ -56,11 +56,12 @@ settings; these files define the checks and do not configure merge enforcement.
 
 ## Review, recover and merge
 
-1. Capture the current head before assessing comments or checks. Keep this value
-   throughout the review and merge:
+1. Capture the current head and base before assessing comments or checks. Keep
+   both values throughout the review and merge:
 
    ```sh
-   reviewed_head=$(gh pr view NUMBER --json headRefOid --jq .headRefOid)
+   reviewed_refs=$(gh pr view NUMBER --json headRefOid,baseRefOid --jq '[.headRefOid, .baseRefOid] | join(" ")') || exit 1
+   read -r reviewed_head reviewed_base <<< "$reviewed_refs"
    ```
 
    Inspect conversation comments, review submissions and inline threads, including
@@ -68,14 +69,15 @@ settings; these files define the checks and do not configure merge enforcement.
    each finding against source and project requirements; fix valid defects and
    record the reason for rejecting a suggestion. A bot's generic threshold does
    not become a project requirement. A reviewer out of quota has not approved.
-2. Inspect the PR's check runs and workflow run identity. Confirm the head still
-   equals `reviewed_head`; a change requires restarting the assessment.
-   Use `gh pr view NUMBER --json headRefOid,statusCheckRollup,reviews`
+2. Inspect the PR's check runs and workflow run identity. Confirm the head and base
+   still equal `reviewed_head` and `reviewed_base`; a change requires restarting
+   the assessment. Use `gh pr view NUMBER --json headRefOid,baseRefOid,statusCheckRollup,reviews`
    and `gh run view RUN_ID --json event,headSha,status,conclusion,jobs`.
    Require the latest PR run's three jobs to pass for the reviewed head. An old
    cancelled push run alongside a passing replacement is not an outstanding
    defect. A cancelled latest run, pending/failed check or unavailable log is not
-   passing proof. If main advances, update and verify the proposed merge again.
+   passing proof. Confirm the checked merge used `reviewed_base`; if main advances,
+   update and verify the proposed merge again.
 3. For failed GitHub Actions checks, use `gh-fix-ci` when available. Read the log,
    reproduce the failure, form a diagnosis and make a bounded correction. Rerun
    only after examining the cause; repeated failure needs new evidence. Use
@@ -86,14 +88,23 @@ settings; these files define the checks and do not configure merge enforcement.
    Finish pending reviews before claiming they are clear. Prefer orchestrator
    PR watching to a polling loop while waiting.
 5. Merge only when authorized by the user/task and all latest checks and review
-   decisions are settled. Preserve the reviewed revision in the merge request:
+   decisions are settled. Recheck both revisions immediately before merging and
+   preserve the reviewed head in the merge request:
 
    ```sh
+   current_refs=$(gh pr view NUMBER --json headRefOid,baseRefOid --jq '[.headRefOid, .baseRefOid] | join(" ")') || exit 1
+   if [ "$current_refs" != "$reviewed_refs" ]; then
+     echo 'PR head or base changed; review and verify again.' >&2
+     exit 1
+   fi
    gh pr merge NUMBER --squash --match-head-commit "$reviewed_head"
    ```
 
-   Capture `reviewed_head` before assessing checks and comments, not after them.
-   A changed head requires reassessment. Do not bypass checks with admin flags.
+   Capture both revisions before assessing checks and comments, not after them.
+   `--match-head-commit` atomically guards only the head. The base recheck detects
+   changes observed before the merge request; it cannot prevent a concurrent base
+   update after that check. Strict up-to-date branch protection or a merge queue
+   is needed for server-enforced base freshness. Do not bypass checks with admin flags.
    Existing merge authorization persists; ask only if it was never provided.
 6. Confirm merged state and merge commit. Stop orchestrator watching when handing
    work back. Start follow-up changes from updated main in a separate branch.
