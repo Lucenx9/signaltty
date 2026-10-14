@@ -5,7 +5,7 @@ Use the complete slug: numeric prefixes are historical and may repeat.
 Lifecycle is recorded intent; checked tasks and verified behavior are separate facts.
 Use `status --feature <slug> --evidence <run>` to inspect current proof.
 
-## Active
+## Completed
 
 | Feature | Phase checks | Artifacts | Successor |
 |---|---|---|---|

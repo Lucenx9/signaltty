@@ -532,7 +532,7 @@
       "enrolled": false
     },
     "061-agent-workflow": {
-      "lifecycle": "active",
+      "lifecycle": "completed",
       "enrolled": true
     }
   }
