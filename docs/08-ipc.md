@@ -442,7 +442,9 @@ byte offset of this output chunk. The attach reply carries the offset covered
 by its snapshot, acquired atomically with terminal state. Streaming registration
 precedes the final snapshot, and its response precedes subsequent stream events.
 Clients discard or trim output already covered by that snapshot. A forward byte
-gap requires reattach/reconnect before feeding more bytes. Offsets are
+gap requires reattach/reconnect before feeding more bytes. CLI attach ends with
+an explicit error on a forward gap; attach again to restore the current screen.
+The pane keeps running. Offsets are
 per-pane for the lifetime of the server and are not persisted. Repeated attach
 on one connection registers one viewer; detach removes it and preserves the
 process. Viewer registration survives a child exit and `pane.resume`, so

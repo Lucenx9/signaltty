@@ -545,6 +545,10 @@
       "lifecycle": "active",
       "enrolled": true
     },
+    "062-cli-output-gaps": {
+      "lifecycle": "active",
+      "enrolled": true
+    },
     "063-submodule-diff-visibility": {
       "lifecycle": "active",
       "enrolled": true
