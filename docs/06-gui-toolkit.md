@@ -384,12 +384,14 @@ the window's right edge, beside the terminals, in an end-side
 `AdwOverlaySplitView`. Below 1100sp it overlays the content; below 760sp the
 header toggle hides so the header fits 360px. The panel reads `workspace.diff`
 when opened, when the active workspace changes while it is open, and on explicit
-Refresh; a closed panel does no reads. Its summary says "Changes against HEAD"
+Refresh; a closed panel does no reads. The Working tree summary says "Changes against HEAD"
 with aggregate file/line counts. The native header keeps the Changes title;
 a separate native selector exposes Working tree and Latest turn without hover.
 Refresh acts on the selected comparison. Files sort by path under a directory label per
 group; each row shows the file name (full path in the tooltip) and `+N −N` in the
-diff colours, or "Untracked"/"Binary". It does not imply a per-turn diff.
+diff colours, or "Untracked"/"Binary". Working tree compares against HEAD;
+Latest turn compares against the recorded agent-turn baseline and explains when
+no turn has been recorded.
 Workspace names, paths and file names render literally, including `<`, `>` and `&`.
 
 Clicking the header breadcrumb opens the workspace details card
