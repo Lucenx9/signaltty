@@ -137,6 +137,8 @@ pub struct GuiPreference {
     pub theme: Theme,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidebar_width: Option<u32>,
+    #[serde(default)]
+    pub automatic_agent_permissions: bool,
 }
 
 impl GuiPreference {
@@ -165,6 +167,10 @@ impl GuiPreference {
             appearance,
             theme,
             sidebar_width,
+            automatic_agent_permissions: obj
+                .get("automatic_agent_permissions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         }
     }
 
@@ -289,6 +295,30 @@ mod tests {
     }
 
     #[test]
+    fn gui_preference_remembers_automatic_agent_permissions() {
+        let enabled =
+            GuiPreference::parse(r#"{"automatic_agent_permissions":true,"theme":"ocean"}"#);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&enabled.to_json()).unwrap()
+                ["automatic_agent_permissions"],
+            true
+        );
+        assert_eq!(enabled.theme, Theme::Ocean);
+        assert_eq!(GuiPreference::parse(&enabled.to_json()), enabled);
+        for input in [
+            "{}",
+            r#"{"automatic_agent_permissions":"true"}"#,
+            r#"{"automatic_agent_permissions":null}"#,
+        ] {
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&GuiPreference::parse(input).to_json())
+                    .unwrap()["automatic_agent_permissions"],
+                false
+            );
+        }
+    }
+
+    #[test]
     fn gui_preference_roundtrip() {
         let pref_without_width = GuiPreference {
             appearance: Appearance::Dark,
@@ -304,6 +334,7 @@ mod tests {
             appearance: Appearance::Light,
             theme: Theme::Iris,
             sidebar_width: Some(340),
+            ..Default::default()
         };
         let json = pref_with_width.to_json();
         let parsed = GuiPreference::parse(&json);

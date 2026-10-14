@@ -118,6 +118,11 @@ through the ordinary Store transition. No additional project IPC method is neede
 `attention_cleared`; a nonempty array matches any alternative in caller order.
 Without `after`, an already matching current state succeeds immediately.
 
+When `task.start` supplies `agent` without `argv`, a same-provider worker
+inherits the native automatic execution prefix recorded in `parent_pane_id`'s
+launch command. Explicit worker argv, unknown parents and other providers remain
+unchanged. See [automatic execution](07-agents.md#automatic-execution).
+
 `task.start` requires `agent` or `argv` (else `BAD_PARAMS`) and runs cap →
 base → worktree → spawn synchronously: over-cap starts are refused with
 `RATE_LIMITED` before creating anything. Validation and base/worktree failures
@@ -488,7 +493,9 @@ dispatches on); a sync test proves every listed method dispatches.
 `pane.resume` retains a directly selected path-qualified executable when its
 basename matches the adapter's bare resume command, including older snapshots.
 Explicit manifest resume paths and the retained configuration environment remain
-authoritative. Launch options are not copied into resume arguments.
+authoritative. Launch options are not copied into resume arguments, except
+Signaltty's native automatic execution prefix for a minimal standard provider
+resume command. Explicit resume options win and repeated resolution adds no duplicates.
 
 Relative executable paths supplied to `pane.spawn` or `pane.split` are anchored
 to their launch directory before spawning and stored as absolute paths. Later

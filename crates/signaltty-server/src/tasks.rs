@@ -595,6 +595,19 @@ fn resolve_agent_and_argv(
                 ));
             }
             let argv = vec![adapter.metadata().binaries[0].to_string()];
+            let argv = {
+                let store = ctx.store.read().unwrap();
+                p.parent_pane_id
+                    .as_ref()
+                    .and_then(|id| store.panes.get(id))
+                    .map(|parent| {
+                        signaltty_agent::execution::inherit_automatic_permissions(
+                            &parent.argv,
+                            &argv,
+                        )
+                    })
+                    .unwrap_or(argv)
+            };
             Ok((argv, kind, Some(agent_name.to_string())))
         }
         (Some(agent_name), Some(argv)) => {

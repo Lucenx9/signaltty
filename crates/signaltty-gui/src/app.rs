@@ -1166,6 +1166,12 @@ impl App {
         }
     }
 
+    pub(crate) fn set_automatic_agent_permissions(&self, automatic: bool) {
+        let mut pref = self.preference.borrow_mut();
+        pref.automatic_agent_permissions = automatic;
+        crate::preferences::save_preference(&pref);
+    }
+
     pub(crate) fn set_sidebar_width(&self, width: u32) {
         let w = signaltty_core::clamp_sidebar_width(f64::from(width));
         self.split_view.set_min_sidebar_width(f64::from(w));
@@ -2502,6 +2508,7 @@ impl App {
         let form = crate::new_workspace::show_dialog(
             &self.window,
             active_cwd.as_deref(),
+            self.preference().automatic_agent_permissions,
             move |req, form| {
                 if let Some(a) = w.upgrade() {
                     let deletable = a.window.is_deletable();

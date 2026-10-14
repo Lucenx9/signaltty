@@ -465,6 +465,17 @@ with a provisional folder name until their first prompt. Disabling it reveals th
 native editable name row; unsupported/custom commands use manual names. The hint
 and tooltip explain first-message generation and use of the agent account.
 
+Preferences includes the native **Run agents without confirmations** switch.
+It saves immediately in `gui.json` and defaults off. Its description explains
+command/file execution and Codex's unsandboxed mode. Enabled, it selects native
+automatic mode for new installed-command Codex, Claude and Antigravity workspaces;
+Custom commands, shells and other providers remain unchanged. The selected command
+preview includes its actual arguments. Running sessions retain their launch choice.
+The isolated display tests `automatic_agent_permissions_are_persistent_native_controls`
+and `automatic_workspace_launches_preserve_custom_commands` cover the switch's
+save/load behavior, light/dark renders, supported launch arguments and custom
+command precedence. See [automatic execution](07-agents.md#automatic-execution).
+
 Workspace task chips occupy a separate optional line below headline/status, so
 large-text worker labels do not compete with attention pills.
 

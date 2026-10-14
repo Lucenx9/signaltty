@@ -383,7 +383,8 @@ When an agent was launched directly through a path-qualified executable,
 matching bare resume commands retain that selected path. Explicit manifest
 resume paths remain authoritative; promoted shell panes keep the adapter
 command. Resume arguments come from the adapter rather than the initial launch
-options. Existing bare snapshot commands are repaired when resumed.
+options, except the explicitly selected native automatic execution prefix on
+standard resume commands. Existing bare snapshot commands are repaired when resumed.
 
 Relative executable paths supplied to `pane.spawn` or `pane.split` are anchored
 to their launch directory before spawning and stored as absolute paths. Later
@@ -401,7 +402,33 @@ bridge with the same automatic setup as hooks for Codex, Claude, Cursor and
 OpenCode. Restart an existing harness after `signaltty integration install
 <agent>` and approve the tools in its own settings. `signaltty integration
 status --json` reports registration, not effective trust or tool availability.
-No network, filesystem sandbox or approval policy is relaxed.
+The MCP bridge does not relax network, filesystem sandbox or approval policy.
+
+## Automatic execution
+
+Preferences offers **Run agents without confirmations**, saved as
+`automatic_agent_permissions` in `$XDG_CONFIG_HOME/signaltty/gui.json`.
+It defaults off, including for older or invalid settings. Enable it once to
+apply native automatic execution to new installed-command Codex, Claude and
+Antigravity workspaces. Shells, other agents and Custom commands keep their argv.
+
+- Codex: `--dangerously-bypass-approvals-and-sandbox`, no confirmations or native sandbox.
+- Claude: `--dangerously-skip-permissions`.
+- Antigravity (`agy`): `--dangerously-skip-permissions --mode accept-edits`, so a planning default does not prevent execution.
+
+Standard `codex resume ID`, `claude --resume ID` and self-reported
+`agy --conversation ID` commands retain this generated prefix exactly once.
+Explicit resume options win. A `task.start` using `agent` without `argv`
+inherits the prefix from its recorded `parent_pane_id` only for the same native
+provider. Explicit worker argv and different providers are unchanged. Arbitrary
+initial provider flags and runtime permission changes inside a TUI are not inferred.
+
+The setting affects new launches. Unchecking it leaves an existing session's
+recorded mode intact for resume. Running processes and pending decisions are
+unchanged; Once/Deny still serves sessions using provider-managed approvals.
+Authentication, hook trust and managed provider restrictions remain native.
+No provider configuration or live permission request is rewritten.
+See [ADR-0036](adr/0036-automatic-agent-permissions.md).
 
 Use `signaltty_context` to find the hosting pane and `signaltty_call` for the
 [existing workspace/PTY API](08-ipc.md). A `pane.split` call can launch an agy
