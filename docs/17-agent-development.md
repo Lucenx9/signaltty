@@ -33,6 +33,14 @@ disposable checkout or a named workspace volume when host user IDs differ.
 The Ubuntu tag and apt
 packages receive updates; this setup is repeatable, not bit-for-bit reproducible.
 
+## Inspect the agent workflow
+
+Use `scripts/agent.sh status --json` to inspect selected work and
+`context --task <key> --json` to load the applicable references. Full slugs
+identify features; [the catalog](../specs/README.md) keeps lifecycle separate
+from task checkboxes. [Workflow commands and ownership](18-agent-workflow.md)
+describes enrollment, generated indexes, phase gates and failure recovery.
+
 ## Choose the verification scope
 
 | Command | Proof |
@@ -50,6 +58,12 @@ Each run prints a new evidence directory under `target/verification/`. Use
 `--output /absolute/new-directory` for a chosen location; existing directories are
 rejected to prevent stale results from being mistaken for new proof. `summary.json`
 records revision, dirty state, tool versions, commands, durations and outcomes.
+Versioned content/index provenance identifies the actual tracked and nonignored
+new inputs before and after execution. Different input snapshots before/after the run prevent a
+passing result. Stage final source first; committing identical content preserves
+proof, while later content or index changes require a new run. Check a chosen run
+with `scripts/agent.sh check --phase delivery --feature <full-slug> --evidence <run>`.
+Custom evidence output must be ignored or outside the checkout.
 Logs are saved before running the next step. On failure, read the failed step log
 and `qa-logs/`. CI uploads the evidence even when verification fails.
 
@@ -106,7 +120,11 @@ Use helper-owned temporary sockets, state and plugin directories. GUI automation
 also needs an isolated D-Bus session because the production application ID is
 shared. Never stop processes by name or clean another task's directories.
 
-Keep the following handoff in the feature directory for interrupted or multi-session work:
+Create a new handoff with `scripts/agent.sh handoff --feature <full-slug>`.
+It gathers facts under ignored `target/handoffs/` and accepts `--notes` for
+decisions/ownership. Use `--output` for a durable new path; an existing file is
+never overwritten. Saving nonignored source after verification makes proof stale.
+The decisions section should cover the following for multi-session work:
 
 ```text
 Branch/worktree and base/current commit:
@@ -132,6 +150,10 @@ Copy `result-template.json` per trial. Record the actual final commit and eviden
 success criteria, human interventions, regressions, setup/runtime, token/cost data
 when available, and environment failures separately. `null` means not measured.
 Compare completion and defects first; faster output with broken behavior is not a win.
+Include workflow discovery, an interrupted handoff and recognition of stale evidence.
+Compare one routing/instruction change at a time and retain traces to diagnose
+wrong results or evaluator mistakes. The workflow commands make no measured
+claim about agent productivity.
 Have a reviewer verify outcomes independently of the implementing agent's summary.
 This PR supplies the protocol and fixtures, not measured claims about agent quality.
 

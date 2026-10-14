@@ -319,6 +319,14 @@ resolve_agents() { # $1=auto|all|name -> names, deduped by dest dir
   done
 }
 
+render_command() { # layout name source
+  if [ "$1" = "skills" ]; then
+    awk -v n="$2" 'NR==1 && $0=="---" {print; print "name: " n; next} {print}' "$3"
+  else
+    cat "$3"
+  fi
+}
+
 commands_install() { # --agent --dry-run
   local agent="auto" dry_run=0
   while [ $# -gt 0 ]; do
@@ -343,12 +351,12 @@ commands_install() { # --agent --dry-run
         if [ "$dry_run" -eq 1 ]; then echo "would install $a: $to"; continue; fi
         mkdir -p "$dest_dir/$name"
         # Ensure `name:` frontmatter for the skills layout; keep body verbatim.
-        awk -v n="$name" 'NR==1 && $0=="---" {print; print "name: " n; next} {print}' "$src" >"$to"
+        render_command "$layout" "$name" "$src" >"$to"
       else
         local to="$dest_dir/$base.md"
         if [ "$dry_run" -eq 1 ]; then echo "would install $a: $to"; continue; fi
         mkdir -p "$dest_dir"
-        cp -p "$src" "$to"
+        render_command "$layout" "$name" "$src" >"$to"
       fi
     done
     echo "commands: installed for $a ($reldir)"
@@ -373,14 +381,18 @@ commands_check() { # --agent
       base="$(basename "$src" .md)"; name="speckit-$base"
       if [ "$layout" = "skills" ]; then to="$ROOT/$reldir/$name/SKILL.md"; else to="$ROOT/$reldir/$base.md"; fi
       total=$((total + 1))
-      if [ ! -f "$to" ]; then echo "missing: $to"; missing=$((missing + 1)); fi
+      if [ ! -f "$to" ]; then
+        echo "missing: $to"; missing=$((missing + 1))
+      elif ! cmp -s "$to" <(render_command "$layout" "$name" "$src"); then
+        echo "changed: $to"; missing=$((missing + 1))
+      fi
     done
   done < <(resolve_agents "$agent")
   if [ "$missing" -gt 0 ]; then
-    echo "commands check: $missing/$total missing" >&2
+    echo "commands check: $missing/$total missing or changed" >&2
     return 1
   fi
-  echo "commands check: $total present"
+  echo "commands check: $total match source"
 }
 
 hooks_install() {
