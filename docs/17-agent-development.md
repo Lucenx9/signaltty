@@ -43,6 +43,9 @@ describes enrollment, generated indexes, phase gates and failure recovery.
 
 ## Choose the verification scope
 
+For GitHub CI events, PR descriptions, review comments and merging, use the
+[CI and PR procedure](19-ci-and-pull-requests.md).
+
 | Command | Proof |
 |---|---|
 | `scripts/verify.sh doctor` | Rust/components, compiler, native package versions, Xvfb and D-Bus prerequisites |

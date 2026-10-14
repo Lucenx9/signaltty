@@ -170,7 +170,8 @@
       ],
       "documents": [
         "docs/README.md",
-        "docs/18-agent-workflow.md"
+        "docs/18-agent-workflow.md",
+        "docs/19-ci-and-pull-requests.md"
       ],
       "commands": [
         [
@@ -235,7 +236,8 @@
       "documents": [
         "docs/15-agent-skills.md",
         "docs/17-agent-development.md",
-        "docs/18-agent-workflow.md"
+        "docs/18-agent-workflow.md",
+        "docs/19-ci-and-pull-requests.md"
       ],
       "commands": [
         [
@@ -537,6 +539,10 @@
     },
     "061-agent-workflow": {
       "lifecycle": "completed",
+      "enrolled": true
+    },
+    "062-ci-pr-workflow": {
+      "lifecycle": "active",
       "enrolled": true
     }
   }

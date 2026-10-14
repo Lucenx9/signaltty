@@ -78,6 +78,9 @@ of the diff. Repository integrity and the full delivery gate still apply.
 
 ## Verify and deliver
 
+Publishing, GitHub checks, review comments and authorized merging follow the
+[CI and PR procedure](19-ci-and-pull-requests.md).
+
 ```sh
 scripts/agent.sh check --phase repository
 scripts/verify.sh fast

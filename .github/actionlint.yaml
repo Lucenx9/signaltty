@@ -1,0 +1,4 @@
+# actionlint 1.7.12's built-in label list predates our hosted reference runner.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

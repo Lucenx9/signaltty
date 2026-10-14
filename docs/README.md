@@ -25,6 +25,7 @@ The server owns sessions and processes. GTK and CLI are clients. Start with the 
 - [15 — Agent skills (install + phase routing)](15-agent-skills.md)
 - [17 — Agent development and verification](17-agent-development.md)
 - [18 — Agent workflow commands and source ownership](18-agent-workflow.md)
+- [19 — CI and pull request delivery](19-ci-and-pull-requests.md)
 - [Feature catalog and recorded lifecycle](../specs/README.md)
 
 ## Architecture decisions
