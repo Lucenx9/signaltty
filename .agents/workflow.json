@@ -552,6 +552,10 @@
     "063-submodule-diff-visibility": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "064-changes-reading-polish": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }

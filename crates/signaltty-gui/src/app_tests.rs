@@ -3574,11 +3574,17 @@ fn numbered_diff_fixture(path: &str) -> Value {
 #[ignore = "requires a GTK display; run with dbus-run-session"]
 fn changes_panel_scopes_to_the_latest_turn() {
     adw::init().unwrap();
+    let style = adw::StyleManager::default();
+    style.set_color_scheme(adw::ColorScheme::ForceDark);
+    if std::env::var("ADW_DEBUG_HIGH_CONTRAST").as_deref() == Ok("1") {
+        assert!(style.is_high_contrast());
+    }
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
     let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
     application.set_resource_base_path(Some("/dev/signaltty/gui"));
     application.register(None::<&gio::Cancellable>).unwrap();
     let window = adw::ApplicationWindow::new(&application);
+    window.add_css_class("dark");
     window.set_default_size(920, 680);
     let terminal = gtk4::Label::new(Some("Workspace terminals stay mounted"));
     terminal.set_hexpand(true);
@@ -3633,6 +3639,63 @@ fn changes_panel_scopes_to_the_latest_turn() {
         .unwrap();
     wait_ui(|| has_label(&root, "Latest turn · 2 files · +3 −1"));
     capture_workflow(&window, "changes-turn");
+    let panel_title =
+        find_matching_widget::<gtk4::Label>(&root, &|label| label.text() == "Changes")
+            .expect("review panel needs a visible title");
+    assert!(panel_title.is_mapped());
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let old_direction = gtk4::Widget::default_direction();
+    terminal.set_visible(false);
+    for (font, direction, scheme, name) in [
+        (
+            "Sans 11",
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceLight,
+            "changes-scope-narrow-light",
+        ),
+        (
+            "Sans 18",
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceDark,
+            "changes-scope-narrow-large-dark",
+        ),
+        (
+            "Sans 18",
+            gtk4::TextDirection::Rtl,
+            adw::ColorScheme::ForceDark,
+            "changes-scope-narrow-large-rtl",
+        ),
+    ] {
+        settings.set_gtk_font_name(Some(font));
+        gtk4::Widget::set_default_direction(direction);
+        style.set_color_scheme(scheme);
+        if style.is_dark() {
+            window.add_css_class("dark");
+        } else {
+            window.remove_css_class("dark");
+        }
+        if style.is_high_contrast() {
+            window.add_css_class("high-contrast");
+        }
+        window.set_default_size(360, 680);
+        wait_ui(|| window.width() <= 360);
+        capture_workflow(&window, name);
+        for text in ["Working tree", "Latest turn"] {
+            let label = find_matching_widget::<gtk4::Label>(scopes.upcast_ref(), &|label| {
+                label.text() == text
+            })
+            .expect("comparison scope must be understandable without hover");
+            assert!(label.is_mapped() && !label.layout().is_ellipsized());
+            let bounds = widget_bounds(label.upcast_ref(), window.upcast_ref());
+            assert!(bounds.x >= 0.0 && bounds.x + bounds.w <= f64::from(window.width()));
+            assert!(label.layout().pixel_extents().0.width() <= label.width() + 1);
+        }
+        assert_eq!(scopes.active_name().as_deref(), Some("turn"));
+        assert!(requests.is_empty(), "resizing must not reread changes");
+    }
+    settings.set_gtk_font_name(old_font.as_deref());
+    gtk4::Widget::set_default_direction(old_direction);
 
     let row = action_row_with_title(&root, "new.rs").unwrap();
     adw::prelude::ActionRowExt::activate(&row);
@@ -3652,6 +3715,9 @@ fn changes_panel_scopes_to_the_latest_turn() {
 #[ignore = "requires a GTK display; run with dbus-run-session"]
 fn file_diff_reader_uses_native_numbered_selectable_controls() {
     adw::init().unwrap();
+    if std::env::var("ADW_DEBUG_HIGH_CONTRAST").as_deref() == Ok("1") {
+        assert!(adw::StyleManager::default().is_high_contrast());
+    }
     gio::resources_register_include!("signaltty-gui.gresource").unwrap();
     let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
     application.set_resource_base_path(Some("/dev/signaltty/gui"));
@@ -3744,6 +3810,14 @@ fn file_diff_reader_uses_native_numbered_selectable_controls() {
         ("dark", adw::ColorScheme::ForceDark),
     ] {
         style.set_color_scheme(scheme);
+        if style.is_dark() {
+            window.add_css_class("dark");
+        } else {
+            window.remove_css_class("dark");
+        }
+        if style.is_high_contrast() {
+            window.add_css_class("high-contrast");
+        }
         if let Some(previous) = palettes.last() {
             wait_ui(|| {
                 buffer
@@ -3779,6 +3853,23 @@ fn file_diff_reader_uses_native_numbered_selectable_controls() {
         );
         palettes.push(added);
     }
+    if style.is_high_contrast() {
+        assert_eq!(
+            buffer
+                .tag_table()
+                .lookup("line-numbers")
+                .unwrap()
+                .foreground_rgba(),
+            Some(reader.color()),
+            "high-contrast numbers use the full text foreground"
+        );
+    }
+    let heading = reader.iter_location(&buffer.start_iter());
+    let code = reader.iter_location(&buffer.iter_at_line(1).unwrap());
+    assert!(
+        code.y() - heading.y() - heading.height() >= 4,
+        "hunk heading must have visible separation from code"
+    );
     assert_ne!(
         palettes[0], palettes[1],
         "semantic diff colors must adapt to light and dark themes"
@@ -3809,7 +3900,7 @@ fn file_diff_reader_uses_native_numbered_selectable_controls() {
     // The list and actual row survive refresh; only explicit activation reads.
     let list_refresh = button_with_tooltip(
         &navigation.visible_page().unwrap().child().unwrap(),
-        "Refresh working tree changes",
+        "Refresh changes",
     )
     .unwrap();
     list_refresh.emit_clicked();
@@ -3854,7 +3945,7 @@ fn file_diff_reader_uses_native_numbered_selectable_controls() {
     let (_, stale_refresh) = next_diff_call(&mut requests, "workspace.file_diff");
     let refresh = button_with_tooltip(
         &navigation.visible_page().unwrap().child().unwrap(),
-        "Refresh working tree changes",
+        "Refresh changes",
     )
     .unwrap();
     refresh.emit_clicked();
@@ -3934,6 +4025,53 @@ fn file_diff_reader_uses_native_numbered_selectable_controls() {
     wait_ui(|| reader_scroll.width() <= 360);
     assert!(back.width() > 0 && back.width() < 100);
     capture_workflow(&window, "file-diff-narrow");
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let old_direction = gtk4::Widget::default_direction();
+    settings.set_gtk_font_name(Some("Sans 18"));
+    gtk4::Widget::set_default_direction(gtk4::TextDirection::Rtl);
+    let long_path =
+        "src/a-very-long-directory/component-with-a-long-literal-<name>&-and-unbroken-segment.rs";
+    let long_summary = json!({"added":1,"removed":0,"files":[
+        {"path":long_path,"added":1,"removed":0,"binary":false,"untracked":false}
+    ]});
+    panel.show("long");
+    let (_, reply) = next_diff_call(&mut requests, "workspace.diff");
+    reply.send(Ok(long_summary)).unwrap();
+    wait_ui(|| action_row_with_title(&root, long_path.rsplit('/').next().unwrap()).is_some());
+    let long_row = action_row_with_title(&root, long_path.rsplit('/').next().unwrap()).unwrap();
+    adw::prelude::ActionRowExt::activate(&long_row);
+    let (_, reply) = next_diff_call(&mut requests, "workspace.file_diff");
+    let mut long_diff = numbered_diff_fixture(long_path);
+    long_diff["content"]["hunks"][0]["lines"][0]["text"] =
+        json!("literal long code <>& ".repeat(25));
+    reply.send(Ok(long_diff)).unwrap();
+    wait_ui(|| reader_text().contains("after"));
+    capture_workflow(&window, "file-diff-narrow-large-rtl");
+    assert!(
+        window.width() <= 360,
+        "long paths cannot force the narrow panel wider"
+    );
+    assert_eq!(
+        reader.direction(),
+        gtk4::TextDirection::Ltr,
+        "code order remains LTR in an RTL panel"
+    );
+    let path_label =
+        find_matching_widget::<gtk4::Label>(&root, &|label| label.text() == long_path).unwrap();
+    let path_bounds = widget_bounds(path_label.upcast_ref(), window.upcast_ref());
+    assert!(path_bounds.x >= 0.0 && path_bounds.x + path_bounds.w <= f64::from(window.width()));
+    assert!(
+        reader_scroll.hadjustment().upper() > reader_scroll.hadjustment().page_size(),
+        "long code scrolls inside the reader"
+    );
+    gtk4::Widget::set_default_direction(old_direction);
+    settings.set_gtk_font_name(old_font.as_deref());
+    panel.show("a");
+    let (_, reply) = next_diff_call(&mut requests, "workspace.diff");
+    reply.send(Ok(summary.clone())).unwrap();
+    wait_ui(|| action_row_with_title(&root, "<changed>&.rs").is_some());
+    let row = action_row_with_title(&root, "<changed>&.rs").unwrap();
     assert_eq!(
         terminal.parent().unwrap(),
         host.clone().upcast::<gtk4::Widget>()
@@ -3958,7 +4096,7 @@ fn file_diff_reader_uses_native_numbered_selectable_controls() {
         "Changes",
         "a new workspace starts at its file list"
     );
-    button_with_tooltip(&root, "Refresh working tree changes")
+    button_with_tooltip(&root, "Refresh changes")
         .unwrap()
         .emit_clicked();
     let (params, reply) = next_diff_call(&mut requests, "workspace.diff");
