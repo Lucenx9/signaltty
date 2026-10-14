@@ -28,6 +28,20 @@ fn cli_json(socket: &std::path::Path, args: &[&str]) -> Value {
 }
 
 #[tokio::test]
+async fn cli_attach_rejects_output_gaps() {
+    let output = Command::new("python3")
+        .args(["-c", include_str!("attach_stream.py")])
+        .arg(bin_path("signaltty"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
 async fn cli_attach_keeps_the_named_pane_identity() {
     let srv = TestServer::start().await;
     for (action, by_name) in [
