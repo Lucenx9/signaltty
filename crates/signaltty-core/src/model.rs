@@ -1040,7 +1040,7 @@ pub fn parse_review_decision(s: &str) -> PrReview {
 
 /// Roll up GitHub `statusCheckRollup` items into a single `PrChecks` status.
 ///
-/// Priority 1: Failing (any failure, error, cancelled, timed_out, action_required, startup_failure)
+/// Priority 1: Failing (failure, error, cancelled, timed_out, action_required, startup_failure, stale)
 /// Priority 2: Pending (any status != COMPLETED or state in PENDING, EXPECTED)
 /// Priority 3: Passing (non-empty items and none of the above)
 /// Priority 4: None (empty items)
@@ -1056,6 +1056,7 @@ pub fn rollup_status_checks(checks: &[serde_json::Value]) -> PrChecks {
         "TIMED_OUT",
         "ACTION_REQUIRED",
         "STARTUP_FAILURE",
+        "STALE",
     ];
     const FAILING_STATES: &[&str] = &["FAILURE", "ERROR"];
     const PENDING_STATES: &[&str] = &["PENDING", "EXPECTED"];
@@ -1921,6 +1922,26 @@ mod tests {
         assert_eq!(PrState::parse_gh("CLOSED"), Some(PrState::Closed));
         assert_eq!(PrState::parse_gh("closed"), Some(PrState::Closed));
         assert_eq!(PrState::parse_gh("draft"), None);
+    }
+
+    #[test]
+    fn stale_check_runs_are_failing_even_alongside_success_or_pending() {
+        use serde_json::json;
+
+        for conclusion in ["STALE", "stale"] {
+            let stale = json!({"status": "COMPLETED", "conclusion": conclusion});
+            for checks in [
+                vec![stale.clone()],
+                vec![json!({"state": "SUCCESS"}), stale.clone()],
+                vec![json!({"status": "IN_PROGRESS"}), stale],
+            ] {
+                assert_eq!(
+                    rollup_status_checks(&checks),
+                    PrChecks::Failing,
+                    "{checks:?}"
+                );
+            }
+        }
     }
 
     #[test]
