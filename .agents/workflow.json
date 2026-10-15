@@ -572,6 +572,10 @@
     "068-worktrees-toolbar-polish": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "069-palette-recognition-polish": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }

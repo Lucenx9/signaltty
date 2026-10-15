@@ -2613,6 +2613,8 @@ fn palette_keyboard_selection_stays_visible_while_search_keeps_focus() {
     let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
     application.register(None::<&gio::Cancellable>).unwrap();
     application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    gtk4::IconTheme::for_display(&gtk4::gdk::Display::default().unwrap())
+        .add_resource_path("/dev/signaltty/gui/icons");
     let window = adw::ApplicationWindow::new(&application);
     window.set_default_size(720, 600);
     window.present();
@@ -2737,10 +2739,13 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
     let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
     application.register(None::<&gio::Cancellable>).unwrap();
     application.set_resource_base_path(Some("/dev/signaltty/gui"));
+    gtk4::IconTheme::for_display(&gtk4::gdk::Display::default().unwrap())
+        .add_resource_path("/dev/signaltty/gui/icons");
     let window = adw::ApplicationWindow::new(&application);
     window.set_default_size(360, 640);
     window.present();
     let settings = gtk4::Settings::default().unwrap();
+    let old_direction = gtk4::Widget::default_direction();
     let old_font = settings.gtk_font_name();
     let old_motion = settings.is_gtk_enable_animations();
     let old_scheme = adw::StyleManager::default().color_scheme();
@@ -2753,8 +2758,16 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
     for (name, scheme, large) in [
         ("light", adw::ColorScheme::ForceLight, false),
         ("dark", adw::ColorScheme::ForceDark, false),
+        ("rtl", adw::ColorScheme::ForceDark, false),
         ("large-high-contrast", adw::ColorScheme::ForceLight, true),
     ] {
+        let direction = if name == "rtl" {
+            gtk4::TextDirection::Rtl
+        } else {
+            gtk4::TextDirection::Ltr
+        };
+        gtk4::Widget::set_default_direction(direction);
+        window.set_direction(direction);
         adw::StyleManager::default().set_color_scheme(scheme);
         if scheme == adw::ColorScheme::ForceDark {
             window.add_css_class("dark");
@@ -2807,6 +2820,15 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
             !title.layout().is_ellipsized(),
             "shortcut must not truncate a short command name"
         );
+        let icon = find_widget::<gtk4::Image>(row.upcast_ref()).expect("command prefix");
+        assert_eq!(icon.accessible_role(), gtk4::AccessibleRole::Presentation);
+        let icon_bounds = icon.compute_bounds(&row).unwrap();
+        let title_bounds = title.compute_bounds(&row).unwrap();
+        if name == "rtl" {
+            assert!(icon_bounds.x() >= title_bounds.x() + title_bounds.width());
+        } else {
+            assert!(icon_bounds.x() + icon_bounds.width() <= title_bounds.x());
+        }
         assert!(window.width() <= 360);
         assert!(dialog.width() <= window.width());
         let bounds = hint.compute_bounds(&window).unwrap();
@@ -2816,11 +2838,19 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
         capture_workflow(&window, &format!("palette-results-narrow-{name}"));
         assert!(window.width() <= 360);
         assert!(has_label(&body, workspaces[0].name.as_str()));
+        let workspace = list.selected_row().unwrap();
+        let mark = find_matching_widget::<gtk4::Label>(workspace.upcast_ref(), &|label| {
+            label.has_css_class("ws-mark")
+        })
+        .expect("workspace prefix");
+        assert_eq!(mark.accessible_role(), gtk4::AccessibleRole::Presentation);
+        assert_eq!(mark.text(), crate::sidebar::monogram(&workspaces[0].name));
         entry.emit_activate();
         wait_ui(|| activated.borrow().as_deref() == Some("long"));
         activated.replace(None);
         wait_ui(|| window.visible_dialog().is_none());
     }
+    gtk4::Widget::set_default_direction(old_direction);
     settings.set_gtk_font_name(old_font.as_deref());
     settings.set_gtk_enable_animations(old_motion);
     adw::StyleManager::default().set_color_scheme(old_scheme);
@@ -3243,6 +3273,14 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
             &list.row_at_index(0).unwrap().header().unwrap(),
             "Workspaces"
         ));
+        let workspace = action_row_with_title(&dialog.child().unwrap(), "a").unwrap();
+        let mark = find_matching_widget::<gtk4::Label>(workspace.upcast_ref(), &|label| {
+            label.has_css_class("ws-mark")
+        })
+        .expect("workspace result should repeat its sidebar identity");
+        assert_eq!(mark.text(), crate::sidebar::monogram("a"));
+        assert!(mark.has_css_class(&format!("tint-{}", crate::sidebar::mark_tint("a"))));
+        assert_eq!(mark.accessible_role(), gtk4::AccessibleRole::Presentation);
         entry.set_text("Show Changes");
         wait_ui(|| {
             list.selected_row().is_some_and(|row| {
@@ -3251,6 +3289,12 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
         });
         let selected = list.selected_row().unwrap();
         assert!(has_label(&selected.header().unwrap(), "Commands"));
+        let icon = find_matching_widget::<gtk4::Image>(selected.upcast_ref(), &|image| {
+            image.icon_name().as_deref() == Some("signaltty-changes-symbolic")
+        })
+        .expect("command result should carry its app-owned symbolic role");
+        assert_eq!(icon.pixel_size(), 16);
+        assert_eq!(icon.accessible_role(), gtk4::AccessibleRole::Presentation);
         entry.set_text("");
         capture_workflow(&app.window, &format!("palette-{theme}"));
         drop(selected);
@@ -6231,6 +6275,13 @@ fn owned_icon_roles_resolve_and_render_without_external_themes() {
     theme.set_theme_name(Some("Adwaita"));
     theme.set_search_path(&[]);
     theme.add_resource_path("/dev/signaltty/gui/icons");
+    for action in crate::actions::ACTIONS {
+        assert!(
+            theme.has_icon(action.icon),
+            "palette artwork must be bundled: {}",
+            action.icon
+        );
+    }
     let application = adw::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
     application.register(None::<&gio::Cancellable>).unwrap();
     let window = adw::ApplicationWindow::new(&application);
