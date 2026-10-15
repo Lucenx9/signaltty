@@ -7,5 +7,6 @@
 - [Connection and window state](connections.md): responsive GTK, reconnect, activation and restore.
 - [Host shutdown](host-shutdown.md): logind delay inhibitor saves resume metadata before the host stops.
 
-Clipboard, IME, folder chooser, divider dragging, desktop notification clicks and
-live paid agent sessions need separate coverage; these helpers do not certify them.
+Xvfb covers terminal copy, paste and text-size chords. Wayland clipboard, IME,
+assistive technology, the folder chooser, divider dragging, desktop notification
+clicks and live paid agent sessions need separate coverage.

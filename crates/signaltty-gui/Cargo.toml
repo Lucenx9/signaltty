@@ -21,7 +21,7 @@ tracing.workspace = true
 base64 = "0.22"
 gtk4 = { version = "0.11", features = ["v4_18"] }
 libadwaita = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
-vte4 = "0.10"
+vte4 = { version = "0.10", features = ["v0_76"] }
 notify-rust = "4"
 clap = { version = "4", features = ["derive"] }
 

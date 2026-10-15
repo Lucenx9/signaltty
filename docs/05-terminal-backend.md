@@ -178,3 +178,28 @@ the top line to history instead of dropping it. vt100's own scrollback
 buffer was evaluated and rejected: its public API exposes only a
 screen-sized viewport with an offset, so scrolled-off rows are not
 enumerable without O(history) paging per feed.
+
+## GUI widget
+
+[ADR-0040](adr/0040-pane-local-vte-interactions.md) records the input and
+screen reconciliation boundary.
+
+The GUI does not own the PTY. It keeps one VTE widget per pane and feeds
+the server snapshot, then later bytes, into that widget. `replace_screen`
+sends one ordered sequence: leave the alternate grid (`CSI ?1049l`), clear
+origin mode and margins (`CSI ?6l`, `CSI r`), erase each visible row
+(`CUP` plus `EL2`), soft-reset with DECSTR (`CSI !p`), then the canonical
+snapshot. VTE `reset` is not used. Scrollback already retained by that
+widget survives the restore. The snapshot is the active grid plus input
+modes; it does not name a saved main screen, so a TUI's hidden grid is
+not reconstructed. DECSTR clears modes, and the snapshot's own mode bytes
+put bracketed paste and mouse tracking back. A closed GUI does not
+recover history: the server ring is a read API, not a replay into VTE.
+
+VTE 0.80 delivers `commit` as a C string plus a declared size. On a
+realized widget an embedded NUL keeps that size while the marshaller
+copies only the bytes before the NUL. The GUI forwards the declared
+prefix when it still fits the C string, including the terminator, so
+Ctrl+Space is one NUL. A size past those bytes is dropped whole. Bytes
+after the NUL are not reconstructed. Input still uses `pane.input`. An
+exited pane sends nothing.

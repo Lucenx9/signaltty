@@ -57,6 +57,13 @@ cargo test -p signaltty-gui <name> -- --exact --ignored --test-threads=1`:
 - `app::tests::file_diff_reader_uses_native_numbered_selectable_controls`
 - `app::tests::pane_zoom_keeps_hidden_terminals_and_restores_latest_ratios`
 - `terminal::tests::terminal_search_is_literal_and_keeps_the_terminal`
+- `terminal::tests::realized_terminal_forwards_commit_bytes_and_refuses_truncated_nul`
+- `terminal::tests::paste_started_before_exit_is_not_delivered_after_resume`
+- `terminal::tests::terminal_chords_copy_paste_and_stay_consumed_when_unavailable`
+- `terminal::tests::replace_screen_keeps_one_history_marker_and_restores_modes`
+- `terminal::tests::terminal_text_scale_follows_real_chords_and_stays_per_pane`
+- `terminal::tests::terminal_text_scale_uses_unshifted_italian_layout_keys`
+- `terminal::tests::terminal_scale_and_menu_render_light_and_dark`
 
 Set `SIGNALTTY_UI_EVIDENCE=/absolute/evidence/path` for the navigation
 test to export actual GTK window renders of palette/worktrees/changes in light
@@ -70,6 +77,19 @@ shortcuts after widening; compact shortcuts stay below titles. The owned-icon
 test resolves all registry glyphs without external icon paths.
 Terminal search and zoom tests export their scenes to the same
 path when supported. Inspect every saved image before accepting it.
+
+`xdotool`, ImageMagick's `import` and `setxkbmap` are development-only doctor tools
+(`scripts/dev-packages.txt`, `scripts/verify.py`). The keyboard tests
+above drive real Ctrl+Shift chords and a pointer click; they do not skip
+when the tool is missing. Xvfb does not certify Wayland clipboard, IME or
+assistive technology. `terminal_scale_and_menu_render_light_and_dark`
+writes `terminal-scale-{light,dark}.png` and
+`terminal-scale-menu-{light,dark}.png` when `SIGNALTTY_UI_EVIDENCE` is set.
+The menu files are root-window captures so the VTE popover is included.
+The paste-lifetime test observes actor bytes across exit/resume, Unicode
+newlines, bracketed paste and dropping the pane while a read is pending.
+The Italian-key test changes the keymap only inside its own child Xvfb
+server; it never changes the outer desktop layout.
 
 Observe shell branch/path fallback, preserved agent summary, cleared context and
 separator after the last workspace, and header controls inside 360px in both

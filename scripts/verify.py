@@ -36,7 +36,7 @@ def doctor(mode):
         errors.append('run verification as an unprivileged user; filesystem-permission tests cannot run as root')
     required = ['cargo', 'rustc', 'rustfmt', 'git', 'pkg-config', 'cc', 'node']
     if mode in {'doctor', 'full', 'desktop'}:
-        required += ['xvfb-run', 'Xvfb', 'xauth', 'dbus-run-session']
+        required += ['xvfb-run', 'Xvfb', 'xauth', 'dbus-run-session', 'xdotool', 'import', 'setxkbmap']
     for executable in required:
         if not shutil.which(executable):
             errors.append(f'missing {executable}; run scripts/setup-dev.sh --system')

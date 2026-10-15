@@ -14,3 +14,6 @@ at-spi2-core
 dbus-x11
 xvfb
 xauth
+xdotool
+imagemagick
+x11-xkb-utils

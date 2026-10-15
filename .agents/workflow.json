@@ -584,6 +584,10 @@
     "070-diff-revision-path-collision": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "070-vte-terminal-interactions": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }
