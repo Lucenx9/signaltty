@@ -576,6 +576,10 @@
     "069-palette-recognition-polish": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "070-details-reading-polish": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }

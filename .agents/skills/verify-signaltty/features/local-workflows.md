@@ -158,3 +158,8 @@ handoff. Run the icon, toolbar and Details fixtures with
 `ADW_DEBUG_HIGH_CONTRAST=1` for native high-contrast sheets/scenes.
 
 Changes reading hierarchy: `changes_panel_scopes_to_the_latest_turn` checks a mapped Changes title, visible Working tree/Latest turn controls fitting 360px with Sans 18 and mirrored RTL, selected scope and absence of resize-triggered reads. `file_diff_reader_uses_native_numbered_selectable_controls` checks hunk-to-code separation, unchanged clipboard text, high-contrast number foreground when requested, long literal paths/code in a narrow RTL panel, internal horizontal scrolling and existing Back/stale-response/selection invariants. Standalone scene windows mirror App dark/high-contrast CSS classes. Use `ADW_DEBUG_HIGH_CONTRAST=1` on these exact tests for native high contrast; screenshots require review.
+
+The native `breadcrumb_opens_the_workspace_details_card` test also checks separate
+task title/state, long branch/task tooltips, narrow content/action bounds, enlarged
+and DejaVu text, high-contrast class and RTL. It verifies exact long-path and
+original clipboard contents, Changes navigation and the same mounted VTE.
