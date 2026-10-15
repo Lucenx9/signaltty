@@ -16,3 +16,19 @@ The first RTL fixture only changed the parent direction, leaving the separate di
 Independent code-review Spec and Standards axes each report zero findings on the pinned range. Spec reviewed FR001–004 and desktop/narrow/RTL captures; Standards checked repository rules and Fowler heuristics. Finalization delta adds only this evidence and task readiness.
 
 Final full report is external at `/tmp/palette-recognition-full-20261015`; actual result/revision and GitHub CI artifact belong to the PR body after execution. This document freezes before that run and makes no advance success claim. Not run: real-desktop screen reader, on-screen keyboard, IME or paid provider sessions. Native roles/renders do not certify assistive technology operation. No model, persistence, IPC or dependency change; rollback is GUI-only.
+
+## CI correction, 2026-10-15
+
+The first proposed-merge run 38752638254 failed gtk-15 on 91a4e17. Its real wide-font screenshot is retained as ci-wide-font-before.png: at 360px and large text the trailing shortcut squeezed New Workspace. The same assertion was reproduced locally using DejaVu Sans 18, so this was a genuine allocation defect, not a retryable environment failure.
+
+| Before | After | Why |
+| --- | --- | --- |
+| Shortcut competes horizontally with title under 480sp | Native command subtitle shows shortcut beneath title | Retain both complete labels with wider font metrics |
+| Only generic Sans 18 coverage | Additional DejaVu Sans 18 stress case | Exercise the metrics that exposed the CI failure |
+| No resize placement check | Narrow→wide→narrow assertions | Prove trailing hint restores without duplicate subtitle |
+
+Exact narrow test passed after native breakpoint setters. The original no-ellipsis assertion remains. Test now checks the mapped shortcut because its trailing copy is intentionally hidden in compact mode. wide-font-after.png and shortcut-restored-wide.png show actual native results; current narrow/RTL images reflect the corrected presentation. The change does not touch search, target mapping, activation or workspace path subtitles.
+
+Independent Spec and Standards delta reviews each report zero findings on 91a4e175…5142b4fa. Both reviewed the actual wide-font/native restoration captures and the unchanged no-truncation assertion. Finalization after 5142b4fa adds only evidence and task readiness.
+
+Fresh full execution report for this corrected source will be /tmp/palette-recognition-ci-fix-full-20261015, with actual verified revision/result in the updated PR body. Earlier full success belongs to 91a4e17 and is not proof of corrected source. This paragraph freezes before the new run and does not claim its outcome.
