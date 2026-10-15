@@ -420,13 +420,13 @@ pub fn worktrees(
     create.set_child(Some(
         &adw::ButtonContent::builder()
             .icon_name("list-add-symbolic")
-            .label("Create Worktree…")
+            .label("New")
             .can_shrink(true)
             .build(),
     ));
     create.set_tooltip_text(Some("Create a separate checkout and open its workspace"));
     create.update_property(&[gtk4::accessible::Property::Label("Create Worktree")]);
-    create.add_css_class("suggested-action");
+    create.add_css_class("flat");
     compact.add_setter(&create.child().unwrap(), "label", Some(&"".to_value()));
     compact.add_setter(&scroll, "min-content-height", Some(&160.to_value()));
     compact.add_setter(

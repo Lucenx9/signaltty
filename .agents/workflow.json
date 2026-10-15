@@ -568,6 +568,10 @@
     "067-board-density-polish": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "068-worktrees-toolbar-polish": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }
