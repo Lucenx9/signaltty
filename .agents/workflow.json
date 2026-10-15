@@ -556,6 +556,10 @@
     "064-changes-reading-polish": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "065-subprocess-lifetime": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }

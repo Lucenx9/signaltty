@@ -4,7 +4,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -222,18 +221,22 @@ async fn git_raw(cwd: &str, args: &[&str], index: Option<&Path>) -> Result<Vec<u
         .arg("-C")
         .arg(cwd)
         .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .env("GIT_TERMINAL_PROMPT", "0");
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
     }
-    let output = tokio::time::timeout(SNAPSHOT_TIMEOUT, command.output())
-        .await
-        .map_err(|_| (code::TIMEOUT.into(), "Git snapshot timed out".into()))?
-        .map_err(|e| (code::IO_ERROR.into(), e.to_string()))?;
+    let output = crate::subprocess::run(
+        &mut command,
+        Some(SNAPSHOT_TIMEOUT),
+        crate::subprocess::CaptureLimits::default(),
+    )
+    .await
+    .map_err(|error| match error {
+        crate::subprocess::Error::Timeout => {
+            (code::TIMEOUT.into(), "Git snapshot timed out".into())
+        }
+        error => (code::IO_ERROR.into(), error.to_string()),
+    })?;
     if !output.status.success() {
         return Err(bad_params(
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
@@ -352,6 +355,39 @@ mod tests {
         assert_eq!(turns.get("ws").unwrap().tree.unwrap(), "tree5");
         turns.forget("ws");
         assert!(turns.get("ws").is_none());
+    }
+
+    #[tokio::test]
+    async fn cancelled_snapshot_stops_git_filter_descendants() {
+        let repo = signaltty_testkit::TempGitRepo::new();
+        std::fs::write(
+            repo.path().join(".gitattributes"),
+            "README.md filter=slow\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.path().join("filter.sh"),
+            "printf started > filter-started\nsleep 1\nprintf late > filter-late\ncat\n",
+        )
+        .unwrap();
+        repo.git(&["config", "filter.slow.clean", "sh filter.sh"]);
+        std::fs::write(repo.path().join("README.md"), "changed\n").unwrap();
+        let cwd = repo.path().to_str().unwrap().to_owned();
+        let capture = tokio::spawn(async move { snapshot(&cwd).await });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !repo.path().join("filter-started").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("filter must start before cancellation");
+        capture.abort();
+        assert!(matches!(capture.await, Err(error) if error.is_cancelled()));
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(
+            !repo.path().join("filter-late").exists(),
+            "a canceled snapshot left its Git filter running"
+        );
     }
 
     #[tokio::test]

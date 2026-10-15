@@ -13,6 +13,7 @@ Use `status --feature <slug> --evidence <run>` to inspect current proof.
 | [062-cli-output-gaps](062-cli-output-gaps/spec.md) | enrolled | [spec.md](062-cli-output-gaps/spec.md), [plan.md](062-cli-output-gaps/plan.md), [tasks.md](062-cli-output-gaps/tasks.md) |  |
 | [063-submodule-diff-visibility](063-submodule-diff-visibility/spec.md) | enrolled | [spec.md](063-submodule-diff-visibility/spec.md), [plan.md](063-submodule-diff-visibility/plan.md), [tasks.md](063-submodule-diff-visibility/tasks.md) |  |
 | [064-changes-reading-polish](064-changes-reading-polish/spec.md) | enrolled | [spec.md](064-changes-reading-polish/spec.md), [plan.md](064-changes-reading-polish/plan.md), [tasks.md](064-changes-reading-polish/tasks.md) |  |
+| [065-subprocess-lifetime](065-subprocess-lifetime/spec.md) | enrolled | [spec.md](065-subprocess-lifetime/spec.md), [plan.md](065-subprocess-lifetime/plan.md), [tasks.md](065-subprocess-lifetime/tasks.md) |  |
 
 ## Completed
 

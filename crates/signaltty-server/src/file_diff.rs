@@ -6,13 +6,11 @@ use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::OpenOptionsExt;
-use std::process::Stdio;
 use std::time::Duration;
 
 use nix::libc;
 use signaltty_core::diff::{parse_patch, untracked_text, DiffContent, FileDiff, MAX_PREVIEW_BYTES};
 use signaltty_proto::code;
-use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::time::timeout;
 
 use crate::params::{bad_params, ParamError};
@@ -326,46 +324,15 @@ fn snapshot(root: &str, path: &str) -> Result<Option<Vec<u8>>, SnapshotError> {
     unreachable!("validated nonempty path")
 }
 
-pub(crate) struct ProcessGroup(pub(crate) Option<i32>);
-
-impl Drop for ProcessGroup {
-    fn drop(&mut self) {
-        if let Some(pid) = self.0 {
-            let _ = nix::sys::signal::killpg(
-                nix::unistd::Pid::from_raw(pid),
-                nix::sys::signal::Signal::SIGKILL,
-            );
-        }
-    }
-}
-
 struct GitOutput {
     bytes: Vec<u8>,
     success: bool,
     too_large: bool,
 }
 
-async fn bounded(reader: impl AsyncRead + Unpin, limit: usize) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader
-        .take((limit + 1) as u64)
-        .read_to_end(&mut bytes)
-        .await?;
-    if bytes.len() > limit {
-        return Err(if limit == MAX_PREVIEW_BYTES {
-            std::io::Error::new(
-                std::io::ErrorKind::FileTooLarge,
-                "Git output exceeds preview limit",
-            )
-        } else {
-            std::io::Error::other("Git stderr exceeds the 8 KiB diagnostic limit")
-        });
-    }
-    Ok(bytes)
-}
-
 async fn git(cwd: &str, args: &[&str], require_success: bool) -> Result<GitOutput, ParamError> {
-    let mut child = tokio::process::Command::new("git")
+    let mut command = tokio::process::Command::new("git");
+    command
         .arg("--literal-pathspecs")
         .arg("-C")
         .arg(cwd)
@@ -388,50 +355,39 @@ async fn git(cwd: &str, args: &[&str], require_success: bool) -> Result<GitOutpu
         .args(args)
         .env_remove("GIT_DIFF_OPTS")
         .env("LC_ALL", "C")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| (code::IO_ERROR.into(), e.to_string()))?;
-    let mut group = ProcessGroup(Some(child.id().unwrap() as i32));
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let output = tokio::try_join!(
-        child.wait(),
-        bounded(stdout, MAX_PREVIEW_BYTES),
-        bounded(stderr, STDERR_LIMIT)
-    );
+        .env("GIT_TERMINAL_PROMPT", "0");
+    let output = crate::subprocess::run(
+        &mut command,
+        None,
+        crate::subprocess::CaptureLimits {
+            stdout: Some(MAX_PREVIEW_BYTES),
+            stderr: Some(STDERR_LIMIT),
+        },
+    )
+    .await;
     match output {
-        Ok((status, bytes, error)) => {
-            // The child is reaped; avoid killing a recycled process group id.
-            group.0 = None;
-            if require_success && !status.success() {
+        Ok(output) => {
+            if require_success && !output.status.success() {
                 return Err((
                     code::IO_ERROR.into(),
-                    String::from_utf8_lossy(&error).trim().into(),
+                    String::from_utf8_lossy(&output.stderr).trim().into(),
                 ));
             }
             Ok(GitOutput {
-                bytes,
-                success: status.success(),
+                bytes: output.stdout,
+                success: output.status.success(),
                 too_large: false,
             })
         }
-        Err(error) => {
-            drop(group);
-            let _ = child.wait().await;
-            if error.kind() == std::io::ErrorKind::FileTooLarge {
-                Ok(GitOutput {
-                    bytes: Vec::new(),
-                    success: false,
-                    too_large: true,
-                })
-            } else {
-                Err((code::IO_ERROR.into(), error.to_string()))
-            }
-        }
+        Err(crate::subprocess::Error::StdoutLimit) => Ok(GitOutput {
+            bytes: Vec::new(),
+            success: false,
+            too_large: true,
+        }),
+        Err(crate::subprocess::Error::StderrLimit) => Err((
+            code::IO_ERROR.into(),
+            "Git stderr exceeds the 8 KiB diagnostic limit".into(),
+        )),
+        Err(error) => Err((code::IO_ERROR.into(), error.to_string())),
     }
 }
