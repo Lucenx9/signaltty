@@ -45,7 +45,8 @@ class VerificationCLI(unittest.TestCase):
             'rustfmt': 'exit 0', 'git': f'exec "{GIT}" "$@"',
             'pkg-config': 'echo 99.0', 'cc': 'exit 0', 'node': 'exit 0',
             'xvfb-run': 'exit 0', 'Xvfb': 'exit 0', 'xauth': 'exit 0',
-            'dbus-run-session': 'exit 0',
+            'dbus-run-session': 'exit 0', 'xdotool': 'exit 0', 'import': 'exit 0',
+            'setxkbmap': 'exit 0',
         }.items():
             tool = tools / name
             tool.write_text('#!/bin/sh\n' + body + '\n')

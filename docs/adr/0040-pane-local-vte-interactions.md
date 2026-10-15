@@ -21,6 +21,10 @@ text through VTE's paste path so terminal paste modes still apply.
 Multiple requested pastes remain independent: starting another read does not
 cancel an earlier command in the same live process.
 
+Match terminal chords against the active layout's unshifted key before
+falling back to shifted aliases. This avoids treating Italian Shift+0 as
+the US increase-size alias and lets Italian Shift+plus adjust text size.
+
 Reconcile snapshots with one ordered VTE feed. Leave a stale alternate screen, reset origin and margins, erase each visible row in place, perform DECSTR, then append the unchanged canonical snapshot. On VTE 0.80.1, DECSTR calls the emulator's soft reset without clearing history. Per-row erasure prevents old visible rows from entering history. The actor remains the only owner of output offsets and overlap trimming.
 
 ## Consequences

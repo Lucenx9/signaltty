@@ -4,7 +4,7 @@ Branch: `t3/vte-terminal-improvements`. Spec: [spec.md](spec.md). Date: 2026-10-
 
 ## Summary and technical context
 
-Rust 2021, minimum 1.92 and development 1.94. GTK4 4.18, libadwaita 1.7, VTE 0.80 through existing Rust bindings. All four changes stay in the GUI. No persisted data, server ownership or socket contract changes. Enable the existing binding's v0_76 feature for native VTE context menus if necessary; the reference runtime already requires VTE 0.80. Native tests use xdotool for keyboard input and ImageMagick's import for popover captures, declared in the development package manifest, display doctor and verification-runner fixture. The application gains no runtime dependency.
+Rust 2021, minimum 1.92 and development 1.94. GTK4 4.18, libadwaita 1.7, VTE 0.80 through existing Rust bindings. All four changes stay in the GUI. No persisted data, server ownership or socket contract changes. Enable the existing binding's v0_76 feature for native VTE context menus if necessary; the reference runtime already requires VTE 0.80. Native tests use xdotool for keyboard input, ImageMagick's import for popover captures and setxkbmap for a private Xvfb keymap, declared in the development package manifest, display doctor and verification-runner fixture. The application gains no runtime dependency.
 
 ## Grounding and design
 

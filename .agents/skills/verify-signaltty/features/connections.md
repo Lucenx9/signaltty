@@ -25,6 +25,7 @@ Event-cursor and new-work wait coverage is in [orchestration](orchestration.md).
 
 ## Gotchas
 
-The current VT screen is restored; this does not promise disconnected scrollback
-history. Saved lifecycle metadata remains historical while live state determines
-current presentation. GTK Peer.Ping is not a main-loop responsiveness probe.
+The current VT screen is restored from the server snapshot. A living GUI keeps
+VTE scrollback across that restore. A closed GUI does not recover scrollback,
+and the snapshot cannot name a TUI's saved main grid. Saved lifecycle metadata
+remains historical while live state determines current presentation. GTK Peer.Ping is not a main-loop responsiveness probe.

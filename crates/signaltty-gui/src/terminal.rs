@@ -80,6 +80,53 @@ fn decision_is_primary(id: &str, label: &str) -> bool {
 
 const PCRE2_MULTILINE: u32 = 0x00000400;
 
+/// The menu item's enabled flag is not the shortcut result: a disabled
+/// `SimpleAction` reports the key as unhandled and VTE would deliver
+/// Ctrl+C or Ctrl+V.
+#[derive(Clone, Copy)]
+enum TerminalCommand {
+    Copy,
+    Paste,
+    IncreaseTextSize,
+    DecreaseTextSize,
+    ResetTextSize,
+}
+
+const TEXT_TENTH_MIN: i32 = -5;
+const TEXT_TENTH_MAX: i32 = 10;
+
+fn text_factor(tenths: i32) -> f64 {
+    f64::from(10 + tenths) / 10.0
+}
+
+/// The keypad and synthetic key events may use shifted aliases.
+fn terminal_chord(
+    key: gtk4::gdk::Key,
+    modifiers: gtk4::gdk::ModifierType,
+) -> Option<TerminalCommand> {
+    if !modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK)
+        || !modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK)
+        || modifiers.contains(gtk4::gdk::ModifierType::ALT_MASK)
+        || modifiers.contains(gtk4::gdk::ModifierType::SUPER_MASK)
+    {
+        return None;
+    }
+    match key {
+        gtk4::gdk::Key::c | gtk4::gdk::Key::C => Some(TerminalCommand::Copy),
+        gtk4::gdk::Key::v | gtk4::gdk::Key::V => Some(TerminalCommand::Paste),
+        gtk4::gdk::Key::plus | gtk4::gdk::Key::equal | gtk4::gdk::Key::KP_Add => {
+            Some(TerminalCommand::IncreaseTextSize)
+        }
+        gtk4::gdk::Key::minus | gtk4::gdk::Key::underscore | gtk4::gdk::Key::KP_Subtract => {
+            Some(TerminalCommand::DecreaseTextSize)
+        }
+        gtk4::gdk::Key::_0 | gtk4::gdk::Key::parenright | gtk4::gdk::Key::KP_0 => {
+            Some(TerminalCommand::ResetTextSize)
+        }
+        _ => None,
+    }
+}
+
 type ActionCallback = Box<dyn Fn(&str, PaneAction)>;
 
 pub struct PaneCallbacks {
@@ -113,7 +160,10 @@ pub struct PaneWidget {
     pane_id: String,
     actor: IpcHandle,
     live: Cell<bool>,
+    paste_cancel: RefCell<gtk4::gio::Cancellable>,
     last_size: Cell<(u16, u16)>,
+    text_tenths: Cell<i32>,
+    commands: gtk4::gio::SimpleActionGroup,
 }
 
 impl PaneWidget {
@@ -279,6 +329,8 @@ impl PaneWidget {
         root.append(&search_root);
         root.append(&scroller);
 
+        let commands = gtk4::gio::SimpleActionGroup::new();
+
         let w = Rc::new(PaneWidget {
             root,
             term,
@@ -303,7 +355,10 @@ impl PaneWidget {
             pane_id: pane_id.to_string(),
             actor,
             live: Cell::new(true),
+            paste_cancel: RefCell::new(gtk4::gio::Cancellable::new()),
             last_size: Cell::new((80, 24)),
+            text_tenths: Cell::new(0),
+            commands,
         });
         w.apply_style(Theme::Signal);
         w.term.search_set_wrap_around(true);
@@ -358,22 +413,107 @@ impl PaneWidget {
         w.search.entry.add_controller(keys);
 
         // Input: VTE translates keys to bytes; forward to the server PTY.
+        // connect_local keeps the GValue string pointer. The generated
+        // connect_commit converts that pointer to UTF-8 and drops a NUL.
         {
             let weak = Rc::downgrade(&w);
-            w.term.connect_commit(move |_, text: &str, _| {
-                let Some(w) = weak.upgrade() else { return };
-                if !w.live.get() {
-                    return;
+            w.term.connect_local("commit", false, move |values| {
+                let w = weak.upgrade()?;
+                let bytes = Self::commit_bytes(values)?;
+                if bytes.is_empty() || !w.live.get() {
+                    return None;
                 }
-                use base64::Engine;
-                w.send(
-                    "pane.input",
-                    json!({
-                        "pane_id": w.pane_id,
-                        "data_b64": base64::engine::general_purpose::STANDARD.encode(text.as_bytes()),
-                    }),
-                );
+                w.send_input(&bytes);
+                None
             });
+        }
+        w.term.insert_action_group("term", Some(&w.commands));
+        {
+            for (name, command, enabled) in [
+                ("copy", TerminalCommand::Copy, false),
+                ("paste", TerminalCommand::Paste, true),
+                (
+                    "increase-text-size",
+                    TerminalCommand::IncreaseTextSize,
+                    true,
+                ),
+                (
+                    "decrease-text-size",
+                    TerminalCommand::DecreaseTextSize,
+                    true,
+                ),
+                ("reset-text-size", TerminalCommand::ResetTextSize, false),
+            ] {
+                let action = gtk4::gio::SimpleAction::new(name, None);
+                action.set_enabled(enabled);
+                let weak = Rc::downgrade(&w);
+                action.connect_activate(move |_, _| {
+                    if let Some(w) = weak.upgrade() {
+                        w.run_command(command);
+                    }
+                });
+                w.commands.add_action(&action);
+            }
+            let weak = Rc::downgrade(&w);
+            w.term.connect_selection_changed(move |term| {
+                let Some(w) = weak.upgrade() else {
+                    return;
+                };
+                w.set_command_enabled("copy", term.has_selection());
+            });
+            let weak = Rc::downgrade(&w);
+            w.term.connect_increase_font_size(move |_| {
+                if let Some(w) = weak.upgrade() {
+                    w.run_command(TerminalCommand::IncreaseTextSize);
+                }
+            });
+            let weak = Rc::downgrade(&w);
+            w.term.connect_decrease_font_size(move |_| {
+                if let Some(w) = weak.upgrade() {
+                    w.run_command(TerminalCommand::DecreaseTextSize);
+                }
+            });
+            let menu = gtk4::gio::Menu::new();
+            menu.append(Some("Copy"), Some("term.copy"));
+            menu.append(Some("Paste"), Some("term.paste"));
+            menu.append(Some("Increase Text Size"), Some("term.increase-text-size"));
+            menu.append(Some("Decrease Text Size"), Some("term.decrease-text-size"));
+            menu.append(Some("Reset Text Size"), Some("term.reset-text-size"));
+            w.term.set_context_menu_model(Some(&menu));
+            // Ancestor capture runs before VTE's own key controller.
+            // Only the focused terminal claims the chord, so search
+            // keeps the keys it already handles.
+            let keys = gtk4::EventControllerKey::new();
+            keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
+            let weak = Rc::downgrade(&w);
+            keys.connect_key_pressed(move |controller, key, keycode, modifiers| {
+                let unshifted = controller.current_event().and_then(|event| {
+                    let event = event.downcast::<gtk4::gdk::KeyEvent>().ok()?;
+                    event
+                        .display()?
+                        .translate_key(
+                            keycode,
+                            modifiers & !gtk4::gdk::ModifierType::SHIFT_MASK,
+                            event.layout() as i32,
+                        )
+                        .map(|(key, _, _, _)| key)
+                });
+                let Some(command) = unshifted
+                    .and_then(|key| terminal_chord(key, modifiers))
+                    .or_else(|| terminal_chord(key, modifiers))
+                else {
+                    return gtk4::glib::Propagation::Proceed;
+                };
+                let Some(w) = weak.upgrade() else {
+                    return gtk4::glib::Propagation::Stop;
+                };
+                if !w.term.has_focus() {
+                    return gtk4::glib::Propagation::Proceed;
+                }
+                w.run_command(command);
+                gtk4::glib::Propagation::Stop
+            });
+            w.root.add_controller(keys);
         }
         // Focus = explicit per-pane interaction: clear attention.
         {
@@ -491,6 +631,120 @@ impl PaneWidget {
             Some(&rgba(theme.pane_bg(sm.is_dark()))),
             &palette,
         );
+        self.apply_text_scale();
+    }
+
+    fn apply_text_scale(&self) {
+        self.term
+            .set_font_scale(text_factor(self.text_tenths.get()));
+    }
+
+    fn set_text_tenths(&self, tenths: i32) {
+        let tenths = tenths.clamp(TEXT_TENTH_MIN, TEXT_TENTH_MAX);
+        self.text_tenths.set(tenths);
+        self.apply_text_scale();
+        self.set_command_enabled("increase-text-size", tenths < TEXT_TENTH_MAX);
+        self.set_command_enabled("decrease-text-size", tenths > TEXT_TENTH_MIN);
+        self.set_command_enabled("reset-text-size", tenths != 0);
+    }
+
+    /// Accepted prefix of a VTE `commit` emission.
+    ///
+    /// The signal is a `G_TYPE_STRING` plus a declared byte count. On a
+    /// realized widget the native marshaller can keep that count after
+    /// copying only the bytes before an embedded NUL. The prefix is the
+    /// declared count when it still fits in the C string, including the
+    /// terminator so Ctrl+Space (size 1, empty text) is the single NUL.
+    /// A count past that storage is refused whole.
+    fn commit_bytes(values: &[gtk4::glib::Value]) -> Option<Vec<u8>> {
+        let declared = values.get(2)?.get::<u32>().ok()? as usize;
+        let value = values.get(1)?;
+        if value.type_() != gtk4::glib::Type::STRING {
+            return None;
+        }
+        // SAFETY: a string GValue holds a NUL-terminated pointer valid for
+        // this emission. The read stops at that terminator and is copied
+        // before the callback returns.
+        let available = unsafe {
+            use gtk4::glib::translate::ToGlibPtr;
+            let ptr = gtk4::glib::gobject_ffi::g_value_get_string(value.to_glib_none().0);
+            if ptr.is_null() {
+                Vec::new()
+            } else {
+                std::ffi::CStr::from_ptr(ptr).to_bytes_with_nul().to_vec()
+            }
+        };
+        if declared > available.len() {
+            None
+        } else {
+            Some(available[..declared].to_vec())
+        }
+    }
+
+    fn set_command_enabled(&self, name: &str, enabled: bool) {
+        if let Some(action) = self
+            .commands
+            .lookup_action(name)
+            .and_then(|action| action.downcast::<gtk4::gio::SimpleAction>().ok())
+        {
+            action.set_enabled(enabled);
+        }
+    }
+
+    fn run_command(self: &Rc<Self>, command: TerminalCommand) {
+        match command {
+            TerminalCommand::Copy => {
+                if self.term.has_selection() {
+                    self.term.copy_clipboard_format(vte4::Format::Text);
+                }
+            }
+            TerminalCommand::Paste => self.paste_from_clipboard(),
+            TerminalCommand::IncreaseTextSize => {
+                self.set_text_tenths(self.text_tenths.get() + 1);
+            }
+            TerminalCommand::DecreaseTextSize => {
+                self.set_text_tenths(self.text_tenths.get() - 1);
+            }
+            TerminalCommand::ResetTextSize => self.set_text_tenths(0),
+        }
+    }
+
+    /// The desktop clipboard answers after this call returns. A resume
+    /// keeps the widget, so the reply must not paste into the next process.
+    fn paste_from_clipboard(self: &Rc<Self>) {
+        if !self.live.get() {
+            return;
+        }
+        let cancel = self.paste_cancel.borrow().clone();
+        let weak = Rc::downgrade(self);
+        self.term
+            .clipboard()
+            .read_text_async(Some(&cancel.clone()), move |result| {
+                let Some(pane) = weak.upgrade() else {
+                    return;
+                };
+                if cancel.is_cancelled() || !pane.live.get() {
+                    return;
+                }
+                let Ok(Some(text)) = result else {
+                    return;
+                };
+                if text.is_empty() {
+                    return;
+                }
+                pane.term.paste_text(text.as_str());
+            });
+    }
+
+    fn send_input(&self, bytes: &[u8]) {
+        use base64::Engine;
+        self.send(
+            "pane.input",
+            json!({
+                "pane_id": self.pane_id,
+                "data_b64": base64::engine::general_purpose::STANDARD.encode(bytes),
+            }),
+        );
     }
 
     fn send(&self, method: &'static str, params: serde_json::Value) {
@@ -500,9 +754,25 @@ impl PaneWidget {
         });
     }
 
+    /// Replace the visible grid with one server snapshot and keep scrollback.
+    ///
+    /// The snapshot has no alternate-screen identity. Leave that grid, clear
+    /// origin and margins, erase each visible row, then soft-reset with
+    /// DECSTR before the snapshot. VTE 0.80.1 `reset` would either drop this
+    /// history or archive the previous visible rows. One feed keeps the
+    /// sequence ordered without spinning the main loop.
     pub fn replace_screen(&self, data: &[u8]) {
-        self.term.reset(true, true);
-        self.term.feed(data);
+        let rows = self.term.row_count().max(0) as usize;
+        let mut batch = Vec::with_capacity(data.len() + 32 + rows * 16);
+        batch.extend_from_slice(b"\x1b[?1049l\x1b[?6l\x1b[r");
+        for row in 1..=rows {
+            batch.extend_from_slice(b"\x1b[");
+            batch.extend_from_slice(row.to_string().as_bytes());
+            batch.extend_from_slice(b";1H\x1b[2K");
+        }
+        batch.extend_from_slice(b"\x1b[!p");
+        batch.extend_from_slice(data);
+        self.term.feed(&batch);
     }
 
     pub fn feed(&self, data: &[u8]) {
@@ -576,11 +846,15 @@ impl PaneWidget {
 
         let was_live = self.live.replace(live);
         if was_live && !live {
+            self.paste_cancel
+                .replace(gtk4::gio::Cancellable::new())
+                .cancel();
             self.term.feed(b"\r\n\x1b[2m[process exited]\x1b[0m\r\n");
         }
         // Resume affordance for restored/resumable tombstones.
         self.resume
             .set_visible(!live && pane.agent.resume_argv.is_some());
+        self.set_command_enabled("paste", live);
         self.sync_decision_bar(pane.pending_decision.as_ref());
     }
 
@@ -666,6 +940,12 @@ impl PaneWidget {
                 self.decision_bar.set_visible(true);
             }
         }
+    }
+}
+
+impl Drop for PaneWidget {
+    fn drop(&mut self) {
+        self.paste_cancel.get_mut().cancel();
     }
 }
 
@@ -1270,5 +1550,1065 @@ mod tests {
         assert!(!scaled(&snapshot()), "keyboard activation must not scale");
         window.close();
         gtk4::style_context_remove_provider_for_display(&display, &provider);
+    }
+
+    fn pump(ms: u64) {
+        let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+        while std::time::Instant::now() < end {
+            while gtk4::glib::MainContext::default().pending() {
+                gtk4::glib::MainContext::default().iteration(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn pump_until(mut done: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !done() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for the terminal"
+            );
+            while gtk4::glib::MainContext::default().pending() {
+                gtk4::glib::MainContext::default().iteration(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn present_pane(pane: &PaneWidget) -> gtk4::Window {
+        let window = gtk4::Window::new();
+        window.set_default_size(720, 420);
+        window.set_child(Some(&pane.root));
+        window.present();
+        pump_until(|| pane.term.is_realized() && pane.term.row_count() > 0);
+        pane.focus();
+        window
+    }
+
+    fn take_inputs(
+        requests: &mut tokio::sync::mpsc::UnboundedReceiver<crate::actor::ActorRequest>,
+        wait_for_payload: bool,
+    ) -> Vec<Vec<u8>> {
+        use base64::Engine;
+        let mut inputs = Vec::new();
+        let deadline = std::time::Instant::now()
+            + if wait_for_payload {
+                std::time::Duration::from_secs(1)
+            } else {
+                std::time::Duration::from_millis(250)
+            };
+        let mut quiet = std::time::Instant::now();
+        while std::time::Instant::now() < deadline {
+            while gtk4::glib::MainContext::default().pending() {
+                gtk4::glib::MainContext::default().iteration(false);
+            }
+            let mut saw = false;
+            while let Ok(request) = requests.try_recv() {
+                saw = true;
+                if let crate::actor::ActorRequest::Call {
+                    method,
+                    params,
+                    reply,
+                    ..
+                } = request
+                {
+                    if method == "pane.input" {
+                        let encoded = params
+                            .get("data_b64")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("");
+                        inputs.push(
+                            base64::engine::general_purpose::STANDARD
+                                .decode(encoded)
+                                .unwrap_or_default(),
+                        );
+                    }
+                    let _ = reply.send(Ok(serde_json::json!({})));
+                }
+            }
+            if saw {
+                quiet = std::time::Instant::now();
+            } else if !inputs.is_empty() && quiet.elapsed() > std::time::Duration::from_millis(40) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        inputs
+    }
+
+    fn sample_pane(live: LiveState) -> Pane {
+        let mut pane = Pane::new(
+            "ws".into(),
+            "tab".into(),
+            "/tmp".into(),
+            vec!["shell".into()],
+            signaltty_core::PtySize::new(80, 24).unwrap(),
+            chrono::Utc::now(),
+        );
+        pane.live = live;
+        pane
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn realized_terminal_forwards_commit_bytes_and_refuses_truncated_nul() {
+        libadwaita::init().unwrap();
+        let (actor, mut requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "input",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let window = present_pane(&pane);
+        let _ = take_inputs(&mut requests, false);
+
+        pane.term.feed_child(&[0]);
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec![vec![0]],
+            "Ctrl+Space must deliver one NUL"
+        );
+
+        pane.term.feed_child(&[0x03]);
+        assert_eq!(take_inputs(&mut requests, true), vec![vec![0x03]]);
+
+        pane.term.feed_child("héllo".as_bytes());
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec!["héllo".as_bytes().to_vec()]
+        );
+
+        pane.term.feed_child(b"one\ntwo");
+        assert_eq!(take_inputs(&mut requests, true), vec![b"one\ntwo".to_vec()]);
+
+        window.clipboard().set_text("α\nβ");
+        pane.term.paste_clipboard();
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec!["α\rβ".as_bytes().to_vec()],
+            "native paste maps the newline to CR and adds no further Enter"
+        );
+
+        pane.term.feed(b"\x1b[?2004h");
+        pump(80);
+        window.clipboard().set_text("paste");
+        pane.term.paste_clipboard();
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec![b"\x1b[200~paste\x1b[201~".to_vec()]
+        );
+
+        pane.term.feed_child(&[b'a', 0, b'b']);
+        assert_eq!(
+            take_inputs(&mut requests, false),
+            Vec::<Vec<u8>>::new(),
+            "a realized terminal must refuse an already-truncated embedded NUL"
+        );
+
+        pane.update_meta(&sample_pane(LiveState::Exited { code: None }));
+        pane.term.feed_child(b"x");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        window.close();
+    }
+
+    fn activate_paste(pane: &PaneWidget) {
+        pane.commands
+            .lookup_action("paste")
+            .expect("paste action")
+            .activate(None);
+    }
+
+    fn pending_inputs(
+        requests: &mut tokio::sync::mpsc::UnboundedReceiver<crate::actor::ActorRequest>,
+    ) -> Vec<Vec<u8>> {
+        use base64::Engine;
+        let mut inputs = Vec::new();
+        while let Ok(request) = requests.try_recv() {
+            if let crate::actor::ActorRequest::Call {
+                method,
+                params,
+                reply,
+                ..
+            } = request
+            {
+                if method == "pane.input" {
+                    let encoded = params
+                        .get("data_b64")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    inputs.push(
+                        base64::engine::general_purpose::STANDARD
+                            .decode(encoded)
+                            .unwrap_or_default(),
+                    );
+                }
+                let _ = reply.send(Ok(serde_json::json!({})));
+            }
+        }
+        inputs
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn paste_started_before_exit_is_not_delivered_after_resume() {
+        libadwaita::init().unwrap();
+        let (actor, mut requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "paste-race",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let window = present_pane(&pane);
+        let _ = take_inputs(&mut requests, false);
+
+        window.clipboard().set_text("α\nβ");
+        activate_paste(&pane);
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec!["α\rβ".as_bytes().to_vec()],
+            "paste keeps the newline as CR and adds no Enter"
+        );
+
+        activate_paste(&pane);
+        activate_paste(&pane);
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec!["α\rβ".as_bytes().to_vec(); 2],
+            "each paste command in the same live process must be delivered"
+        );
+
+        pane.term.feed(b"\x1b[?2004h");
+        pump(80);
+        window.clipboard().set_text("one\ntwo");
+        activate_paste(&pane);
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec![b"\x1b[200~one\rtwo\x1b[201~".to_vec()],
+            "paste keeps bracketed mode"
+        );
+
+        window.clipboard().set_text("STALE");
+        activate_paste(&pane);
+        assert_eq!(
+            pending_inputs(&mut requests),
+            Vec::<Vec<u8>>::new(),
+            "the clipboard read must still be in flight"
+        );
+        pane.update_meta(&sample_pane(LiveState::Exited { code: None }));
+        pane.update_meta(&sample_pane(LiveState::Live));
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            Vec::<Vec<u8>>::new(),
+            "stale clipboard text must not reach the resumed process"
+        );
+
+        window.clipboard().set_text("AFTER");
+        activate_paste(&pane);
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec![b"\x1b[200~AFTER\x1b[201~".to_vec()],
+            "a paste started after resume still reaches that process"
+        );
+
+        window.clipboard().set_text("GONE");
+        activate_paste(&pane);
+        assert_eq!(pending_inputs(&mut requests), Vec::<Vec<u8>>::new());
+        pane.update_meta(&sample_pane(LiveState::Exited { code: None }));
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            Vec::<Vec<u8>>::new(),
+            "an in-flight paste is dropped when the pane stays exited"
+        );
+        window.close();
+
+        let (actor, mut dropped_requests) = IpcHandle::test_channel();
+        let dropped = PaneWidget::new(
+            "paste-dropped",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let weak = Rc::downgrade(&dropped);
+        let dropped_window = present_pane(&dropped);
+        let _ = take_inputs(&mut dropped_requests, false);
+        dropped_window.clipboard().set_text("DROPPED");
+        activate_paste(&dropped);
+        assert_eq!(pending_inputs(&mut dropped_requests), Vec::<Vec<u8>>::new());
+        drop(dropped_window);
+        drop(dropped);
+        assert!(
+            weak.upgrade().is_none(),
+            "an in-flight paste must not keep the pane"
+        );
+        assert_eq!(
+            take_inputs(&mut dropped_requests, true),
+            Vec::<Vec<u8>>::new(),
+            "a dropped pane must not paste"
+        );
+    }
+
+    fn press_chord(title: &str, chord: &str) {
+        let output = std::process::Command::new("xdotool")
+            .args([
+                "search",
+                "--sync",
+                "--onlyvisible",
+                "--name",
+                title,
+                "windowfocus",
+                "--sync",
+                "key",
+                "--window",
+                "%1",
+                "--clearmodifiers",
+                chord,
+            ])
+            .output()
+            .unwrap_or_else(|error| panic!("xdotool {chord}: {error}"));
+        assert!(
+            output.status.success(),
+            "xdotool {chord}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        pump(200);
+    }
+
+    fn clipboard_text(widget: &impl gtk4::prelude::WidgetExt) -> String {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        widget
+            .clipboard()
+            .read_text_async(None::<&gtk4::gio::Cancellable>, move |result| {
+                let text = result
+                    .ok()
+                    .flatten()
+                    .map(|value| value.to_string())
+                    .unwrap_or_default();
+                let _ = sender.send(text);
+            });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            while gtk4::glib::MainContext::default().pending() {
+                gtk4::glib::MainContext::default().iteration(false);
+            }
+            if let Ok(text) = receiver.try_recv() {
+                return text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "clipboard read timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display and xdotool; run with dbus-run-session"]
+    fn terminal_chords_copy_paste_and_stay_consumed_when_unavailable() {
+        unsafe {
+            std::env::set_var("GDK_BACKEND", "x11");
+            std::env::remove_var("WAYLAND_DISPLAY");
+        }
+        libadwaita::init().unwrap();
+        let (actor, mut requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "keys",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let title = format!("signaltty-vte-keys-{}", std::process::id());
+        let window = present_pane(&pane);
+        window.set_title(Some(&title));
+        pump(100);
+        let _ = take_inputs(&mut requests, false);
+
+        window.clipboard().set_text("KEEP");
+        pump(50);
+        press_chord(&title, "ctrl+shift+c");
+        assert_eq!(
+            take_inputs(&mut requests, false),
+            Vec::<Vec<u8>>::new(),
+            "Copy with no selection must not reach the child as Ctrl+C"
+        );
+        assert_eq!(clipboard_text(&window), "KEEP");
+
+        pane.term.feed(b"COPY_TOKEN");
+        pump(80);
+        pane.term.select_all();
+        pump(40);
+        press_chord(&title, "ctrl+shift+c");
+        assert!(
+            clipboard_text(&window).contains("COPY_TOKEN"),
+            "clipboard was {:?}",
+            clipboard_text(&window)
+        );
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+
+        window.clipboard().set_text("PASTE_TOKEN");
+        pump(40);
+        press_chord(&title, "ctrl+shift+v");
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec![b"PASTE_TOKEN".to_vec()]
+        );
+
+        pane.term.feed(b"\x1b[?2004h");
+        pump(80);
+        press_chord(&title, "ctrl+shift+v");
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec![b"\x1b[200~PASTE_TOKEN\x1b[201~".to_vec()]
+        );
+
+        pane.update_meta(&sample_pane(LiveState::Exited { code: None }));
+        press_chord(&title, "ctrl+shift+v");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+
+        pane.update_meta(&sample_pane(LiveState::Live));
+        press_chord(&title, "ctrl+c");
+        assert_eq!(take_inputs(&mut requests, true), vec![vec![0x03]]);
+        press_chord(&title, "ctrl+v");
+        assert_eq!(take_inputs(&mut requests, true), vec![vec![0x16]]);
+
+        pane.present_search();
+        pump(40);
+        press_chord(&title, "ctrl+shift+c");
+        assert_eq!(
+            take_inputs(&mut requests, false),
+            Vec::<Vec<u8>>::new(),
+            "search keeps its own key handling"
+        );
+
+        pane.close_search();
+        assert!(pane.term.grab_focus());
+        pump(40);
+        let _ = take_inputs(&mut requests, false);
+        press_chord(&title, "Menu");
+        assert!(
+            menu_is_open(&window),
+            "Menu opens the terminal context menu"
+        );
+        press_chord(&title, "Escape");
+        assert!(
+            !menu_is_open(&window),
+            "Escape dismisses the terminal context menu"
+        );
+        assert_eq!(
+            take_inputs(&mut requests, false),
+            Vec::<Vec<u8>>::new(),
+            "Menu and Escape must not reach the child"
+        );
+        press_chord(&title, "shift+F10");
+        assert!(
+            menu_is_open(&window),
+            "Shift+F10 opens the terminal context menu"
+        );
+        press_chord(&title, "Escape");
+        assert!(
+            !menu_is_open(&window),
+            "Escape dismisses the Shift+F10 menu"
+        );
+        assert_eq!(
+            take_inputs(&mut requests, false),
+            Vec::<Vec<u8>>::new(),
+            "Shift+F10 and Escape must not reach the child"
+        );
+
+        let model = pane
+            .term
+            .context_menu_model()
+            .expect("terminal context menu");
+        let labels: Vec<String> = (0..model.n_items())
+            .filter_map(|index| {
+                model
+                    .item_attribute_value(index, "label", None)
+                    .and_then(|value| value.str().map(str::to_string))
+            })
+            .collect();
+        assert!(labels.iter().any(|label| label == "Copy"));
+        assert!(labels.iter().any(|label| label == "Paste"));
+        window.close();
+    }
+
+    fn terminal_contents(term: &vte4::Terminal) -> String {
+        let stream = gtk4::gio::MemoryOutputStream::new_resizable();
+        term.write_contents_sync(
+            &stream,
+            vte4::WriteFlags::Default,
+            None::<&gtk4::gio::Cancellable>,
+        )
+        .expect("terminal contents");
+        stream
+            .close(None::<&gtk4::gio::Cancellable>)
+            .expect("close contents");
+        String::from_utf8_lossy(&stream.steal_as_bytes()).into_owned()
+    }
+
+    fn visible_text(term: &vte4::Terminal) -> String {
+        term.text_format(vte4::Format::Text)
+            .map(|text| text.to_string())
+            .unwrap_or_default()
+    }
+
+    fn click_window(title: &str, x: i32, y: i32, button: &str) {
+        let listed = std::process::Command::new("xdotool")
+            .args(["search", "--sync", "--onlyvisible", "--name", title])
+            .output()
+            .unwrap_or_else(|error| panic!("xdotool search: {error}"));
+        assert!(
+            listed.status.success(),
+            "xdotool search: {}",
+            String::from_utf8_lossy(&listed.stderr)
+        );
+        let id = String::from_utf8_lossy(&listed.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        assert!(!id.is_empty(), "xdotool found no window {title}");
+        let focused = std::process::Command::new("xdotool")
+            .args(["windowfocus", "--sync", &id])
+            .status()
+            .unwrap_or_else(|error| panic!("xdotool focus: {error}"));
+        assert!(focused.success(), "xdotool focus failed");
+        let geometry = std::process::Command::new("xdotool")
+            .args(["getwindowgeometry", "--shell", &id])
+            .output()
+            .unwrap_or_else(|error| panic!("xdotool geometry: {error}"));
+        assert!(geometry.status.success());
+        let mut origin_x = 0;
+        let mut origin_y = 0;
+        for line in String::from_utf8_lossy(&geometry.stdout).lines() {
+            if let Some(value) = line.strip_prefix("X=") {
+                origin_x = value.parse().expect("window x");
+            } else if let Some(value) = line.strip_prefix("Y=") {
+                origin_y = value.parse().expect("window y");
+            }
+        }
+        // XTEST, not XSendEvent: GTK discards send_event button clicks.
+        let output = std::process::Command::new("xdotool")
+            .args([
+                "mousemove",
+                &(origin_x + x).to_string(),
+                &(origin_y + y).to_string(),
+                "click",
+                button,
+            ])
+            .output()
+            .unwrap_or_else(|error| panic!("xdotool click: {error}"));
+        assert!(
+            output.status.success(),
+            "xdotool click: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        pump(200);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display and xdotool; run with dbus-run-session"]
+    fn replace_screen_keeps_one_history_marker_and_restores_modes() {
+        unsafe {
+            std::env::set_var("GDK_BACKEND", "x11");
+            std::env::remove_var("WAYLAND_DISPLAY");
+        }
+        libadwaita::init().unwrap();
+        let (actor, mut requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "screen",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let title = format!("signaltty-vte-screen-{}", std::process::id());
+        let window = present_pane(&pane);
+        window.set_title(Some(&title));
+        let _ = take_inputs(&mut requests, false);
+
+        pane.term.feed(b"HISTORY_MARKER\r\n");
+        let extra = pane.term.row_count().max(1) as usize + 4;
+        for index in 0..extra {
+            pane.term.feed(format!("filler-{index:02}\r\n").as_bytes());
+        }
+        pane.term.feed(b"OLD_VISIBLE");
+        pump(80);
+        let before = terminal_contents(&pane.term);
+        assert_eq!(
+            before.matches("HISTORY_MARKER").count(),
+            1,
+            "history must be seeded once before reconnect"
+        );
+
+        let snapshot = b"\x1b[0m\x1b[H\x1b[JMAIN_CANON\x1b[?2004h\x1b[?1000h\x1b[?1006h";
+        pane.replace_screen(snapshot);
+        pane.feed(b"LIVE_TAIL");
+        pump(80);
+        assert!(
+            visible_text(&pane.term).contains("MAIN_CANON"),
+            "queued live output follows the restored screen"
+        );
+        assert!(visible_text(&pane.term).contains("LIVE_TAIL"));
+        pane.replace_screen(snapshot);
+        pump(80);
+
+        let all = terminal_contents(&pane.term);
+        let visible = visible_text(&pane.term);
+        assert_eq!(
+            all.matches("HISTORY_MARKER").count(),
+            1,
+            "two reconnects keep the earlier line once: {all}"
+        );
+        assert_eq!(all.matches("MAIN_CANON").count(), 1, "{all}");
+        assert_eq!(visible.matches("MAIN_CANON").count(), 1, "{visible}");
+        assert_eq!(all.matches("OLD_VISIBLE").count(), 0, "{all}");
+        assert_eq!(
+            all.matches("LIVE_TAIL").count(),
+            0,
+            "the next snapshot replaces queued live bytes without archiving them: {all}"
+        );
+
+        window.clipboard().set_text("paste");
+        pane.term.paste_clipboard();
+        assert_eq!(
+            take_inputs(&mut requests, true),
+            vec![b"\x1b[200~paste\x1b[201~".to_vec()],
+            "the snapshot restores bracketed paste after DECSTR"
+        );
+        let point = pane
+            .term
+            .compute_point(
+                &window,
+                &gtk4::graphene::Point::new(
+                    pane.term.width() as f32 / 2.0,
+                    pane.term.height() as f32 / 2.0,
+                ),
+            )
+            .expect("terminal coordinates");
+        click_window(
+            &title,
+            point.x().round() as i32,
+            point.y().round() as i32,
+            "1",
+        );
+        let reports = take_inputs(&mut requests, true);
+        let blob: Vec<u8> = reports.into_iter().flatten().collect();
+        assert!(
+            blob.windows(3).any(|seq| seq == b"\x1b[<"),
+            "the snapshot restores SGR mouse tracking: {blob:?}"
+        );
+        window.close();
+
+        let (actor, _requests) = IpcHandle::test_channel();
+        let alt = PaneWidget::new(
+            "alt",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let alt_window = present_pane(&alt);
+        alt.term.feed(b"HISTORY_MARKER\r\n");
+        let extra = alt.term.row_count().max(1) as usize + 4;
+        for index in 0..extra {
+            alt.term.feed(format!("filler-{index:02}\r\n").as_bytes());
+        }
+        alt.term.feed(b"MAIN_VISIBLE\x1b[?1049h\x1b[HALT_OLD");
+        pump(80);
+        let alt_snapshot = b"\x1b[0m\x1b[H\x1b[JALT_CANON";
+        alt.replace_screen(alt_snapshot);
+        alt.replace_screen(alt_snapshot);
+        pump(80);
+        let all = terminal_contents(&alt.term);
+        let visible = visible_text(&alt.term);
+        assert_eq!(all.matches("HISTORY_MARKER").count(), 1, "{all}");
+        assert_eq!(all.matches("ALT_CANON").count(), 1, "{all}");
+        assert_eq!(visible.matches("ALT_CANON").count(), 1, "{visible}");
+        assert_eq!(all.matches("ALT_OLD").count(), 0, "{all}");
+        alt_window.close();
+    }
+
+    fn assert_scale(term: &vte4::Terminal, expected: f64) {
+        let actual = term.font_scale();
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "font scale {actual} != {expected}"
+        );
+    }
+
+    fn command_enabled(pane: &PaneWidget, name: &str) -> bool {
+        pane.commands.lookup_action(name).expect(name).is_enabled()
+    }
+
+    #[test]
+    #[ignore = "requires Xvfb, xdotool and setxkbmap"]
+    fn terminal_text_scale_uses_unshifted_italian_layout_keys() {
+        const CHILD_FLAG: &str = "SIGNALTTY_TEST_IT_KEYMAP_CHILD";
+        const TEST_NAME: &str =
+            "terminal::tests::terminal_text_scale_uses_unshifted_italian_layout_keys";
+        if std::env::var_os(CHILD_FLAG).is_none() {
+            let output = std::process::Command::new("xvfb-run")
+                .args([
+                    "-a",
+                    "-s",
+                    "-screen 0 1600x1200x24 -noreset",
+                    "dbus-run-session",
+                    "--",
+                    "sh",
+                    "-c",
+                    "setxkbmap it && setxkbmap -query && exec \"$1\" \"$2\" --exact --ignored --test-threads=1",
+                    "sh",
+                ])
+                .arg(std::env::current_exe().unwrap())
+                .arg(TEST_NAME)
+                .env(CHILD_FLAG, "1")
+                .env("GDK_BACKEND", "x11")
+                .env_remove("WAYLAND_DISPLAY")
+                .output()
+                .expect("isolated Italian keymap test");
+            assert!(
+                output.status.success(),
+                "Italian keymap child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        libadwaita::init().unwrap();
+        let (actor, mut requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "zoom-it",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let title = format!("signaltty-vte-zoom-it-{}", std::process::id());
+        let window = present_pane(&pane);
+        window.set_title(Some(&title));
+        let _ = take_inputs(&mut requests, false);
+
+        for (chord, scale) in [
+            ("ctrl+shift+plus", 1.1),
+            ("ctrl+shift+minus", 1.0),
+            ("ctrl+shift+plus", 1.1),
+            ("ctrl+shift+0", 1.0),
+        ] {
+            press_chord(&title, chord);
+            assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+            assert_scale(&pane.term, scale);
+        }
+        window.close();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display and xdotool; run with dbus-run-session"]
+    fn terminal_text_scale_follows_real_chords_and_stays_per_pane() {
+        unsafe {
+            std::env::set_var("GDK_BACKEND", "x11");
+            std::env::remove_var("WAYLAND_DISPLAY");
+        }
+        libadwaita::init().unwrap();
+        let (actor, mut requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "zoom-a",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let (other_actor, mut other_requests) = IpcHandle::test_channel();
+        let other = PaneWidget::new(
+            "zoom-b",
+            other_actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let title = format!("signaltty-vte-zoom-a-{}", std::process::id());
+        let window = present_pane(&pane);
+        window.set_title(Some(&title));
+        let other_window = present_pane(&other);
+        other_window.set_title(Some(&format!(
+            "signaltty-vte-zoom-b-{}",
+            std::process::id()
+        )));
+        let same_term = pane.term.clone();
+        let face = pane.term.font().expect("desktop font").to_string();
+        let _ = take_inputs(&mut requests, false);
+        let _ = take_inputs(&mut other_requests, false);
+        assert_scale(&pane.term, 1.0);
+        assert_scale(&other.term, 1.0);
+
+        press_chord(&title, "ctrl+shift+plus");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 1.1);
+        assert_scale(&other.term, 1.0);
+
+        press_chord(&title, "ctrl+shift+equal");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 1.2);
+        pane.apply_style(signaltty_core::Theme::Signal);
+        assert_scale(&pane.term, 1.2);
+        assert!(
+            (pane.term.cell_height_scale() - 1.1).abs() < 0.001,
+            "leading stays on the desktop cell height"
+        );
+        assert_eq!(pane.term.font().expect("font").to_string(), face);
+
+        press_chord(&title, "ctrl+shift+minus");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 1.1);
+        press_chord(&title, "ctrl+shift+underscore");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 1.0);
+
+        press_chord(&title, "ctrl+shift+minus");
+        assert_scale(&pane.term, 0.9);
+        press_chord(&title, "ctrl+shift+0");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 1.0);
+
+        press_chord(&title, "ctrl+shift+equal");
+        assert_scale(&pane.term, 1.1);
+        press_chord(&title, "ctrl+shift+parenright");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 1.0);
+
+        press_chord(&title, "ctrl+shift+KP_Add");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 1.1);
+        press_chord(&title, "ctrl+shift+KP_Subtract");
+        assert_scale(&pane.term, 1.0);
+        press_chord(&title, "ctrl+shift+KP_0");
+        assert_scale(&pane.term, 1.0);
+
+        for _ in 0..12 {
+            press_chord(&title, "ctrl+shift+plus");
+        }
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 2.0);
+        assert!(!command_enabled(&pane, "increase-text-size"));
+        press_chord(&title, "ctrl+shift+plus");
+        assert_eq!(
+            take_inputs(&mut requests, false),
+            Vec::<Vec<u8>>::new(),
+            "zoom at the upper bound must not reach the child"
+        );
+        assert_scale(&pane.term, 2.0);
+
+        for _ in 0..20 {
+            press_chord(&title, "ctrl+shift+minus");
+        }
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 0.5);
+        assert!(!command_enabled(&pane, "decrease-text-size"));
+        press_chord(&title, "ctrl+shift+minus");
+        assert_eq!(take_inputs(&mut requests, false), Vec::<Vec<u8>>::new());
+        assert_scale(&pane.term, 0.5);
+
+        press_chord(&title, "ctrl+shift+0");
+        assert_scale(&pane.term, 1.0);
+        assert!(!command_enabled(&pane, "reset-text-size"));
+        assert!(command_enabled(&pane, "increase-text-size"));
+        assert!(command_enabled(&pane, "decrease-text-size"));
+        assert_scale(&other.term, 1.0);
+        assert_eq!(pane.term, same_term);
+        assert_ne!(pane.term, other.term);
+        pane.present_search();
+        assert_eq!(pane.term, same_term);
+
+        let model = pane.term.context_menu_model().expect("menu");
+        let labels: Vec<String> = (0..model.n_items())
+            .filter_map(|index| {
+                model
+                    .item_attribute_value(index, "label", None)
+                    .and_then(|value| value.str().map(str::to_string))
+            })
+            .collect();
+        assert!(labels.iter().any(|label| label == "Increase Text Size"));
+        assert!(labels.iter().any(|label| label == "Decrease Text Size"));
+        assert!(labels.iter().any(|label| label == "Reset Text Size"));
+        window.close();
+        other_window.close();
+    }
+
+    fn visible_popover(widget: &impl IsA<gtk4::Widget>) -> bool {
+        let widget = widget.as_ref();
+        if widget.is_visible() && widget.downcast_ref::<gtk4::Popover>().is_some() {
+            return true;
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            if visible_popover(&next) {
+                return true;
+            }
+            child = next.next_sibling();
+        }
+        false
+    }
+
+    fn menu_is_open(window: &gtk4::Window) -> bool {
+        visible_popover(window) || gtk4::Window::list_toplevels().iter().any(visible_popover)
+    }
+
+    fn popdown_popovers(widget: &impl IsA<gtk4::Widget>) {
+        let widget = widget.as_ref();
+        if let Some(popover) = widget.downcast_ref::<gtk4::Popover>() {
+            popover.popdown();
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            popdown_popovers(&next);
+            child = next.next_sibling();
+        }
+    }
+
+    fn capture_window(window: &gtk4::Window, path: &std::path::Path) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(120);
+        while std::time::Instant::now() < deadline {
+            while gtk4::glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let paintable = gtk4::WidgetPaintable::new(Some(window));
+        let snapshot = gtk4::Snapshot::new();
+        paintable.snapshot(&snapshot, window.width() as f64, window.height() as f64);
+        let renderer = gtk4::gsk::CairoRenderer::new();
+        renderer
+            .realize_for_display(&gtk4::prelude::WidgetExt::display(window))
+            .unwrap();
+        let texture = renderer.render_texture(snapshot.to_node().unwrap(), None);
+        renderer.unrealize();
+        texture.save_to_png(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display and xdotool; run with dbus-run-session"]
+    fn terminal_scale_and_menu_render_light_and_dark() {
+        unsafe {
+            std::env::set_var("GDK_BACKEND", "x11");
+            std::env::remove_var("WAYLAND_DISPLAY");
+        }
+        libadwaita::init().unwrap();
+        let (actor, _) = IpcHandle::test_channel();
+        let large = PaneWidget::new(
+            "large",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        let (actor, _) = IpcHandle::test_channel();
+        let small = PaneWidget::new(
+            "small",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        large.set_text_tenths(10);
+        small.set_text_tenths(-5);
+        let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        row.append(&large.root);
+        row.append(&small.root);
+        let window = gtk4::Window::new();
+        let title = format!("signaltty-vte-evidence-{}", std::process::id());
+        window.set_title(Some(&title));
+        window.set_default_size(960, 420);
+        window.set_child(Some(&row));
+        window.present();
+        pump_until(|| {
+            large.term.is_realized()
+                && small.term.is_realized()
+                && large.term.row_count() > 0
+                && small.term.row_count() > 0
+        });
+        let style = libadwaita::StyleManager::default();
+        let old_scheme = style.color_scheme();
+        let directory = std::env::var_os("SIGNALTTY_UI_EVIDENCE").map(std::path::PathBuf::from);
+        if let Some(directory) = &directory {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        for (name, scheme) in [
+            ("light", libadwaita::ColorScheme::ForceLight),
+            ("dark", libadwaita::ColorScheme::ForceDark),
+        ] {
+            for top in gtk4::Window::list_toplevels() {
+                popdown_popovers(&top);
+            }
+            pump(40);
+            style.set_color_scheme(scheme);
+            if scheme == libadwaita::ColorScheme::ForceDark {
+                window.add_css_class("dark");
+            } else {
+                window.remove_css_class("dark");
+            }
+            large.apply_style(signaltty_core::Theme::Signal);
+            small.apply_style(signaltty_core::Theme::Signal);
+            large.term.feed(b"\x1b[HLARGE TEXT\r\n");
+            small.term.feed(b"\x1b[Hsmall text\r\n");
+            pump(80);
+            large.term.select_all();
+            pump(40);
+            assert!(
+                large.term.has_selection() && command_enabled(&large, "copy"),
+                "selection={} copy={}",
+                large.term.has_selection(),
+                command_enabled(&large, "copy")
+            );
+            assert!(!command_enabled(&large, "increase-text-size"));
+            large.focus();
+            let point = large
+                .term
+                .compute_point(
+                    &window,
+                    &gtk4::graphene::Point::new(
+                        large.term.width() as f32 / 2.0,
+                        large.term.height() as f32 / 2.0,
+                    ),
+                )
+                .expect("terminal coordinates");
+            click_window(
+                &title,
+                point.x().round() as i32,
+                point.y().round() as i32,
+                "3",
+            );
+            if let Some(directory) = &directory {
+                capture_window(
+                    &window,
+                    &directory.join(format!("terminal-scale-{name}.png")),
+                );
+                let root = directory.join(format!("terminal-scale-menu-{name}.png"));
+                let status = std::process::Command::new("import")
+                    .args(["-window", "root", root.to_str().unwrap()])
+                    .status()
+                    .expect("import");
+                assert!(status.success(), "root capture failed");
+            }
+            assert!(menu_is_open(&window), "right click shows the terminal menu");
+            pump(40);
+        }
+        style.set_color_scheme(old_scheme);
+        window.close();
     }
 }

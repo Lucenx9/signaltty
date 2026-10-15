@@ -365,6 +365,23 @@ their output. It never persists a divider change. Returning to the split uses
 the latest server layout and ratios; switching workspace/tab or focusing another
 pane restores the ordinary view. Hidden widgets do not send resize requests.
 
+The focused terminal also owns copy, paste and text size. Ctrl+Shift+C copies
+the selection. Ctrl+Shift+V pastes through VTE once, and only while the pane is
+live, so bracketed paste is unchanged and no extra Enter is added. The clipboard
+read for these commands is cancelled when the pane exits; its result cannot
+reach a later resumed process. The VTE context menu (right click, Menu and
+Shift+F10) lists the same commands. A matched chord is consumed even when that
+menu item is disabled, so Copy with no selection does not become Ctrl+C, and a
+zoom chord at a bound does not reach the child. Plain Ctrl+C and Ctrl+V still
+do. Shifted keyvals are resolved through the active layout's unshifted key
+before matching; this keeps Italian Shift+0 (`equal`) as Reset. Shifted aliases
+and VTE's keypad font-size signals call the same text-size commands. Text size
+is a per-pane step from 0.5× to 2× around the desktop face. Reset returns to 1×.
+A theme restyle keeps the step, the face and the 1.1 leading. This is not pane
+zoom and it is not saved. Search keeps the keys it already handles. See
+[05](05-terminal-backend.md) for the snapshot feed and the VTE limit on bytes
+after an embedded NUL.
+
 Worktrees opens a native registered-checkout list with branch and open-workspace
 context. Create asks for an absolute path and a new branch; Open reuses an
 existing workspace when present. A newly opened empty workspace starts a shell
