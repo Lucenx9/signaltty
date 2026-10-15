@@ -564,6 +564,10 @@
     "066-worktree-newline-registration": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "067-board-density-polish": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }

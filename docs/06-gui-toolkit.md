@@ -544,3 +544,9 @@ inside narrow windows with enlarged text. Compact content reserves height for
 wrapped guidance and a scroll viewport; row controls align with the branch, and
 native viewport scrolling keeps focused actions visible. Action names, tooltips and server calls retain their meaning.
 See [spec053](../specs/053-icon-hierarchy-polish/spec.md) for scope and proof.
+
+Task Board cards keep a two-line title above up to three full-width context lines,
+with worker state on its own leading line. Completed stays explicit without a filled
+success badge. The opening content height is 440px and stays stable during live
+updates; existing native column scrolling and state navigation handle overflow
+(`specs/067-board-density-polish`).

@@ -940,6 +940,13 @@ button.worktree-remove:not(:disabled):hover {
   font-weight: 600;
 }
 
+.board-card-pill.task-completed {
+  background-color: transparent;
+  box-shadow: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 /* ---- pressable pills -------------------------------------------------- */
 
 button.pill,

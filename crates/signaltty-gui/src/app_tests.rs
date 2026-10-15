@@ -4613,6 +4613,27 @@ fn task_board_shows_columns_and_navigates_to_pane() {
             "Done",
             "1"
         ));
+        assert!(
+            dialog.content_height() <= 460,
+            "sparse board should leave workspace visible"
+        );
+        let context = find_matching_widget::<gtk4::Label>(&dialog.child().unwrap(), &|label| {
+            label.has_css_class("board-card-meta") && label.text().contains("orch/board")
+        })
+        .unwrap();
+        let state = find_matching_widget::<gtk4::Label>(&dialog.child().unwrap(), &|label| {
+            label.has_css_class("board-card-pill") && label.text() == "Working"
+        })
+        .unwrap();
+        assert!(context.wraps());
+        assert_eq!(context.lines(), 3);
+        assert_eq!(
+            context.parent(),
+            state.parent(),
+            "context and state are vertical siblings"
+        );
+        let body = context.parent().unwrap().downcast::<gtk4::Box>().unwrap();
+        assert_eq!(body.orientation(), gtk4::Orientation::Vertical);
         assert!(has_label(&dialog.child().unwrap(), "Implement Task Board"));
         assert!(has_label(
             &dialog.child().unwrap(),
