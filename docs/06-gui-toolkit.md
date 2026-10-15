@@ -563,3 +563,10 @@ command subtitle so enlarged or wider font metrics cannot squeeze the title.
 Workspace paths retain their subtitle. Prefixes are decorative and native ActionRow
 layout mirrors in RTL. The action registry owns command artwork and activation
 identity (`specs/069-palette-recognition-polish`).
+
+Workspace Details emphasizes the branch and treats path/agent context as secondary.
+The task title wraps to two lines with its worker state on a separate leading line,
+so a long name cannot hide the state. Complete branch/task text stays in tooltips;
+Copy Path continues to use the original full path. The task row uses the bundled
+Board role. An AdwClamp caps the card's preferred width at 300px, keeping long
+labels inside narrow windows (`specs/070-details-reading-polish`).

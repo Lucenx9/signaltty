@@ -18,6 +18,7 @@ Use `status --feature <slug> --evidence <run>` to inspect current proof.
 | [067-board-density-polish](067-board-density-polish/spec.md) | enrolled | [spec.md](067-board-density-polish/spec.md), [plan.md](067-board-density-polish/plan.md), [tasks.md](067-board-density-polish/tasks.md) |  |
 | [068-worktrees-toolbar-polish](068-worktrees-toolbar-polish/spec.md) | enrolled | [spec.md](068-worktrees-toolbar-polish/spec.md), [plan.md](068-worktrees-toolbar-polish/plan.md), [tasks.md](068-worktrees-toolbar-polish/tasks.md) |  |
 | [069-palette-recognition-polish](069-palette-recognition-polish/spec.md) | enrolled | [spec.md](069-palette-recognition-polish/spec.md), [plan.md](069-palette-recognition-polish/plan.md), [tasks.md](069-palette-recognition-polish/tasks.md) |  |
+| [070-details-reading-polish](070-details-reading-polish/spec.md) | enrolled | [spec.md](070-details-reading-polish/spec.md), [plan.md](070-details-reading-polish/plan.md), [tasks.md](070-details-reading-polish/tasks.md) |  |
 | [070-diff-revision-path-collision](070-diff-revision-path-collision/spec.md) | enrolled | [spec.md](070-diff-revision-path-collision/spec.md), [plan.md](070-diff-revision-path-collision/plan.md), [tasks.md](070-diff-revision-path-collision/tasks.md) |  |
 
 ## Completed
