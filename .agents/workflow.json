@@ -576,6 +576,10 @@
     "069-palette-recognition-polish": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "070-diff-revision-path-collision": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }
