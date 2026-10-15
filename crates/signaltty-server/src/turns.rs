@@ -185,6 +185,7 @@ pub async fn changed_files(
             "--ignore-submodules=untracked",
             base,
             current,
+            "--",
         ],
         None,
     )
@@ -402,6 +403,31 @@ mod tests {
         assert_eq!(status(&repo), before, "index untouched");
         let listed = repo.git(&["ls-tree", "--name-only", &snap.tree]).stdout;
         assert_eq!(String::from_utf8(listed).unwrap(), "README.md\nnew.txt\n");
+    }
+
+    #[tokio::test]
+    async fn comparison_trees_do_not_collide_with_filenames() {
+        let repo = signaltty_testkit::TempGitRepo::new();
+        let cwd = repo.path().to_str().unwrap();
+        let base = snapshot(cwd).await.unwrap();
+        std::fs::write(repo.path().join(&base.tree), "new\n").unwrap();
+        let current = snapshot(cwd).await.unwrap();
+        std::fs::remove_file(repo.path().join(&base.tree)).unwrap();
+        let before = std::fs::read(repo.path().join(".git/index")).unwrap();
+        for collision in [&base.tree, &current.tree] {
+            std::fs::write(repo.path().join(collision), "collision\n").unwrap();
+            let files = changed_files(cwd, &base.tree, &current.tree)
+                .await
+                .expect("tree-named files must not hide turn changes");
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].path, base.tree);
+            assert_eq!((files[0].added, files[0].removed), (1, 0));
+            std::fs::remove_file(repo.path().join(collision)).unwrap();
+        }
+        assert_eq!(
+            std::fs::read(repo.path().join(".git/index")).unwrap(),
+            before
+        );
     }
 
     #[tokio::test]

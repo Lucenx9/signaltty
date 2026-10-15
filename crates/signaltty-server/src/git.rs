@@ -75,6 +75,7 @@ pub fn git_diff(cwd: &str) -> Option<WorktreeDiff> {
             "--no-relative",
             "--ignore-submodules=untracked",
             &base,
+            "--",
         ],
     )?;
     // A non-UTF-8 path is skipped, never the whole diff (as in task_git_diff).
@@ -179,6 +180,7 @@ pub fn task_git_diff(
             "--no-relative",
             "--ignore-submodules=untracked",
             base,
+            "--",
         ],
     )
     .ok_or_else(|| {

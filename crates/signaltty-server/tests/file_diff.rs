@@ -830,3 +830,56 @@ async fn git_deadline_kills_filter_descendants_and_other_control_calls_stay_resp
     }
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn summary_revisions_do_not_collide_with_filenames() {
+    let repo = Repository::new();
+    repo.write("tracked.txt", "old\n");
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-qm", "base"]);
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&repo.0)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(head.status.success());
+    let head = String::from_utf8(head.stdout).unwrap().trim().to_owned();
+    repo.write(&head, "untracked\n");
+    repo.write("tracked.txt", "new\n");
+    let staged_entries = || {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repo.0)
+            .args(["ls-files", "--stage", "-z"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        output.stdout
+    };
+    let before = staged_entries();
+    let server = TestServer::start().await;
+    let mut client = server.client().await;
+    let workspace = repo.workspace(&mut client).await;
+    let diff = client
+        .call("workspace.diff", json!({"workspace_id":workspace["id"]}))
+        .await
+        .expect("a revision-named file must not hide workspace changes");
+    assert_eq!(diff["added"], 1);
+    assert_eq!(diff["removed"], 1);
+    let files = diff["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    assert!(files
+        .iter()
+        .any(|f| f["path"] == head && f["untracked"] == true));
+    let task_diff = signaltty_server::git::task_git_diff(repo.0.to_str().unwrap(), &head)
+        .expect("a revision-named file must not hide task changes");
+    assert_eq!((task_diff.added, task_diff.removed), (2, 1));
+    assert_eq!(task_diff.files.len(), 2);
+    assert!(task_diff
+        .files
+        .iter()
+        .any(|f| f.path == head && f.untracked));
+    assert_eq!(staged_entries(), before);
+    server.shutdown().await;
+}
