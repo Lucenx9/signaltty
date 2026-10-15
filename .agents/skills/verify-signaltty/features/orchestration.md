@@ -82,7 +82,8 @@ ordering and preservation of the latest successful facts after a failed attempt.
 The CLI `cli_task_orchestration` test checks stage in JSON and normal task output.
 
 The ignored GTK test `task_board_shows_columns_and_navigates_to_pane` renders
-ready, draft, and failed-refresh PR cards in light and dark. It verifies expired
+ready, draft, and failed-refresh PR cards in light and dark, including the compact
+opening height and independent wrapped card context/state hierarchy. It verifies expired
 readiness moves columns when the board reevaluates without a server event.
 These fixtures do not certify live GitHub branch rules or perform a remote merge.
 
