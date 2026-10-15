@@ -6,6 +6,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4::prelude::*;
+use libadwaita as adw;
 use serde::Deserialize;
 use serde_json::json;
 use signaltty_core::{Pane, PrChecks, PrState, Workspace};
@@ -146,6 +147,7 @@ pub struct DetailsCard {
     agents: (gtk4::Widget, gtk4::Label),
     task_section: gtk4::Box,
     task: gtk4::Label,
+    task_state: gtk4::Label,
     pr: (gtk4::Button, gtk4::Label, gtk4::Label),
     stat: gtk4::Box,
     cwd: RefCell<String>,
@@ -161,8 +163,10 @@ impl DetailsCard {
 
         let place = section();
         let (branch_row, branch, _) = row("signaltty-branch-symbolic", false);
+        branch.add_css_class("details-branch");
         place.append(&branch_row);
         let (path_row, path, path_trailing) = row("signaltty-folder-symbolic", false);
+        path.add_css_class("details-secondary");
         path.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
         let copy = gtk4::Button::from_icon_name("edit-copy-symbolic");
         copy.add_css_class("flat");
@@ -172,12 +176,25 @@ impl DetailsCard {
         path_trailing.append(&copy);
         place.append(&path_row);
         let (agents_row, agents, _) = row("signaltty-terminal-symbolic", false);
+        agents.add_css_class("details-secondary");
         place.append(&agents_row);
         content.append(&place);
 
         let task_section = section();
-        let (task_row, task, _) = row("system-run-symbolic", false);
+        let (task_row, task, _) = row("signaltty-board-symbolic", false);
+        task_row.add_css_class("details-task-row");
+        task.set_wrap(true);
+        task.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+        task.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        task.set_lines(2);
         task_section.append(&task_row);
+        let task_state = gtk4::Label::new(None);
+        task_state.add_css_class("details-task-state");
+        task_state.set_halign(gtk4::Align::Start);
+        task_state.set_margin_start(34);
+        task_state.set_margin_end(8);
+        task_state.set_margin_bottom(6);
+        task_section.append(&task_state);
         let (pr_row, pr_text, pr_trailing) = row("signaltty-pull-request-symbolic", true);
         let pr_status = gtk4::Label::new(None);
         pr_status.add_css_class("details-pr-status");
@@ -201,7 +218,12 @@ impl DetailsCard {
         content.append(&actions);
 
         let popover = gtk4::Popover::new();
-        popover.set_child(Some(&content));
+        let clamp = adw::Clamp::builder()
+            .maximum_size(300)
+            .tightening_threshold(300)
+            .child(&content)
+            .build();
+        popover.set_child(Some(&clamp));
         popover.set_has_arrow(false);
         popover.set_position(gtk4::PositionType::Bottom);
         popover.add_css_class("details-popover");
@@ -213,6 +235,7 @@ impl DetailsCard {
             agents: (agents_row, agents),
             task_section,
             task,
+            task_state,
             pr: (pr_row.downcast().unwrap(), pr_text, pr_status),
             stat,
             cwd: RefCell::new(String::new()),
@@ -278,6 +301,7 @@ impl DetailsCard {
         let (branch_row, branch) = &self.branch;
         branch_row.set_visible(details.branch.is_some());
         branch.set_text(details.branch.as_deref().unwrap_or_default());
+        branch.set_tooltip_text(details.branch.as_deref());
         self.path.set_text(&details.path);
         self.path.set_tooltip_text(Some(&details.cwd));
         *self.cwd.borrow_mut() = details.cwd;
@@ -289,8 +313,9 @@ impl DetailsCard {
         let (pr_row, pr_text, pr_status) = &self.pr;
         match details.task {
             Some(task) => {
-                self.task
-                    .set_text(&format!("Task {} · {}", task.label, task.state));
+                self.task.set_text(&format!("Task {}", task.label));
+                self.task.set_tooltip_text(Some(&task.label));
+                self.task_state.set_text(task.state);
                 pr_row.set_visible(task.pr.is_some());
                 if let Some(pr) = &task.pr {
                     pr_text.set_text(&format!("#{}", pr.number));

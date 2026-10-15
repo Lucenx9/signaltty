@@ -6235,7 +6235,13 @@ fn breadcrumb_opens_the_workspace_details_card() {
         &card,
         &crate::util::tilde(&snapshot.workspace.cwd)
     ));
-    assert!(has_label(&card, "Task fix-parser · Working"));
+    assert!(has_label(&card, "Task fix-parser"));
+    assert!(has_label(&card, "Working"));
+    let task_title =
+        find_matching_widget::<gtk4::Label>(&card, &|label| label.text() == "Task fix-parser")
+            .unwrap();
+    assert!(task_title.wraps());
+    assert_eq!(task_title.lines(), 2);
     assert!(has_label(&card, "#77") && has_label(&card, "Checks passing"));
     for role in ["signaltty-folder-symbolic", "signaltty-changes-symbolic"] {
         let icon = find_matching_widget::<gtk4::Image>(&card, &|image| {
@@ -6255,6 +6261,158 @@ fn breadcrumb_opens_the_workspace_details_card() {
     }
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::Default);
 
+    let settings = gtk4::Settings::default().unwrap();
+    let old_font = settings.gtk_font_name();
+    let old_direction = gtk4::Widget::default_direction();
+    let terminal = find_widget::<vte4::Terminal>(app.window.upcast_ref()).unwrap();
+    let long_branch = format!("feature/{}", "workspace-reading-context-".repeat(6));
+    let long_task = "Refine keyboard navigation and preserve terminal session state across every workspace and parallel coding task";
+    let long_path = format!(
+        "/tmp/area di lavoro/<repo>&/{}/é",
+        "nested-project/".repeat(8)
+    );
+    let long_details = crate::details::Details {
+        branch: Some(long_branch.clone()),
+        path: long_path.clone(),
+        cwd: long_path.clone(),
+        agents: "Codex, Claude Code".into(),
+        task: Some(crate::details::TaskDetail {
+            label: long_task.into(),
+            state: "Working",
+            pr: Some(crate::details::PrDetail {
+                number: 77,
+                url: "https://github.com/example/repo/pull/77".into(),
+                status: "Checks passing",
+                class: "pr-passing",
+            }),
+        }),
+    };
+    for (name, font, direction, scheme, contrast) in [
+        (
+            "narrow-light",
+            "Sans 11",
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceLight,
+            false,
+        ),
+        (
+            "narrow-dark",
+            "Sans 11",
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceDark,
+            false,
+        ),
+        (
+            "large-high-contrast",
+            "Sans 18",
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceLight,
+            true,
+        ),
+        (
+            "wide-font",
+            "DejaVu Sans 18",
+            gtk4::TextDirection::Ltr,
+            adw::ColorScheme::ForceLight,
+            true,
+        ),
+        (
+            "rtl",
+            "Sans 11",
+            gtk4::TextDirection::Rtl,
+            adw::ColorScheme::ForceDark,
+            false,
+        ),
+    ] {
+        app.details.popover.popdown();
+        wait_ui(|| !app.details.popover.is_visible());
+        settings.set_gtk_font_name(Some(font));
+        gtk4::Widget::set_default_direction(direction);
+        app.window.set_direction(direction);
+        adw::StyleManager::default().set_color_scheme(scheme);
+        app.window.remove_css_class("high-contrast");
+        if contrast {
+            app.window.add_css_class("high-contrast");
+        }
+        app.window.set_default_size(360, 680);
+        wait_ui(|| app.window.width() <= 360);
+        app.crumb_button.popup();
+        let (_, reply) = call_named(&mut requests, "workspace.diff");
+        reply
+            .send(Ok(json!({"added":0,"removed":0,"files":[]})))
+            .unwrap();
+        app.details.fill(long_details.clone(), "fix", &app.actor);
+        let (_, reply) = call_named(&mut requests, "workspace.diff");
+        reply
+            .send(Ok(json!({"added":0,"removed":0,"files":[]})))
+            .unwrap();
+        wait_ui(|| has_label(&card, "No changes"));
+        capture_workflow(&app.details.popover, &format!("details-{name}"));
+        assert_eq!(app.window.has_css_class("high-contrast"), contrast);
+        let content = try_descendant(&card, "details-card").unwrap();
+        assert!(
+            content.width() <= app.window.width(),
+            "Details content must fit its narrow parent"
+        );
+        let title = find_matching_widget::<gtk4::Label>(&card, &|label| {
+            label.text() == format!("Task {long_task}")
+        })
+        .unwrap();
+        assert!(title.wraps() && title.layout().line_count() <= 2);
+        assert_eq!(title.tooltip_text().as_deref(), Some(long_task));
+        let branch =
+            find_matching_widget::<gtk4::Label>(&card, &|label| label.text() == long_branch)
+                .unwrap();
+        assert_eq!(branch.tooltip_text().as_deref(), Some(long_branch.as_str()));
+        let state = find_matching_widget::<gtk4::Label>(&card, &|label| {
+            label.has_css_class("details-task-state")
+        })
+        .unwrap();
+        assert_eq!(state.text(), "Working");
+        assert!(state.is_mapped() && !state.layout().is_ellipsized());
+        assert!(has_label(&card, "#77") && has_label(&card, "Checks passing"));
+        for tooltip in ["Copy Path", "Show Changes (Ctrl+Shift+D)"] {
+            let button = button_with_tooltip(&card, tooltip).unwrap();
+            let bounds = button.compute_bounds(&card).unwrap();
+            assert!(button.is_mapped() && bounds.width() >= 28.0 && bounds.height() >= 28.0);
+            assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= card.width() as f32);
+        }
+        if name == "narrow-light" {
+            button_with_tooltip(&card, "Copy Path")
+                .unwrap()
+                .emit_clicked();
+            let copied = Rc::new(RefCell::new(None));
+            let result = copied.clone();
+            card.clipboard()
+                .read_text_async(None::<&gio::Cancellable>, move |value| {
+                    *result.borrow_mut() = Some(value.unwrap().unwrap().to_string());
+                });
+            wait_ui(|| copied.borrow().is_some());
+            assert_eq!(copied.borrow().as_deref(), Some(long_path.as_str()));
+        }
+    }
+    app.details.popover.popdown();
+    wait_ui(|| !app.details.popover.is_visible());
+    settings.set_gtk_font_name(old_font.as_deref());
+    gtk4::Widget::set_default_direction(old_direction);
+    app.window.set_direction(old_direction);
+    app.window.remove_css_class("high-contrast");
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::Default);
+    app.window.set_default_size(1280, 760);
+    wait_ui(|| app.window.width() >= 1200 && !app.changes_split.is_collapsed());
+    // Docking can reveal the panel after the narrow-window modes.
+    app.changes_split.set_show_sidebar(false);
+    app.crumb_button.popup();
+    let (_, reply) = call_named(&mut requests, "workspace.diff");
+    reply
+        .send(Ok(json!({"added":0,"removed":0,"files":[]})))
+        .unwrap();
+    wait_ui(|| has_label(&card, "Task fix-parser") && card.is_mapped());
+    assert_eq!(
+        find_widget::<vte4::Terminal>(app.window.upcast_ref()).unwrap(),
+        terminal
+    );
+
     // Copy Path puts the full path on the clipboard.
     button_with_tooltip(&card, "Copy Path")
         .unwrap()
@@ -6272,6 +6430,7 @@ fn breadcrumb_opens_the_workspace_details_card() {
     );
 
     // Changes hands over to the docked panel and closes the card.
+    assert!(!app.changes_split.shows_sidebar(), "Changes starts closed");
     button_with_tooltip(&card, "Show Changes (Ctrl+Shift+D)")
         .unwrap()
         .emit_clicked();

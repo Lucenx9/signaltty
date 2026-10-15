@@ -475,6 +475,15 @@ button.details-row {
 .details-icon {
   color: alpha(currentColor, 0.6);
 }
+.details-branch { font-weight: 600; }
+.details-secondary {
+  font-size: 0.9em;
+  color: alpha(currentColor, 0.78);
+}
+.high-contrast .details-secondary { color: inherit; }
+.details-task-row { padding-bottom: 2px; }
+.details-task-state { font-size: 0.9em; }
+
 .details-copy-button {
   border-radius: 6px;
 }
