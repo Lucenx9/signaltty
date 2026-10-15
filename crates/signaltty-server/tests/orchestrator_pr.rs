@@ -587,6 +587,28 @@ async fn test_task_pr_refresh_mapping() {
     fs::write(
         &env.gh_fixture,
         json!({
+            "state":"OPEN", "reviewDecision":"APPROVED", "headRefOid":"stale-check-head",
+            "isDraft":false, "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN",
+            "statusCheckRollup":[{"status":"COMPLETED","conclusion":"STALE"}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let stale = c
+        .call("task.pr_refresh", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(stale["tasks"][0]["stage"], "needs_you");
+    assert_eq!(stale["tasks"][0]["pr"]["checks"], "failing");
+    let stored = c
+        .call("task.get", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(stored["task"]["stage"], "needs_you");
+
+    fs::write(
+        &env.gh_fixture,
+        json!({
             "state":"OPEN", "reviewDecision":"APPROVED", "headRefOid":"unknown-check-head",
             "isDraft":false, "mergeable":"MERGEABLE", "mergeStateStatus":"CLEAN",
             "statusCheckRollup":[{"status":"completed","conclusion":"NEW_VALUE"}]
