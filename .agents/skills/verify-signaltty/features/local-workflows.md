@@ -62,6 +62,8 @@ Set `SIGNALTTY_UI_EVIDENCE=/absolute/evidence/path` for the navigation
 test to export actual GTK window renders of palette/worktrees/changes in light
 and dark themes. This fixture loads production CSS and checks branch/path
 hierarchy, compact checkout content and filtered palette group/target mapping.
+It also checks the flat, untruncated New control in the Worktrees header and
+its label restoration after narrow/enlarged-text navigation.
 Terminal search and zoom tests export their scenes to the same
 path when supported. Inspect every saved image before accepting it.
 

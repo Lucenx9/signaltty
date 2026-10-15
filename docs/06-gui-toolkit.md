@@ -550,3 +550,8 @@ with worker state on its own leading line. Completed stays explicit without a fi
 success badge. The opening content height is 440px and stays stable during live
 updates; existing native column scrolling and state navigation handle overflow
 (`specs/067-board-density-polish`).
+
+The Worktrees header uses a flat plus/New control. Its window title supplies the
+checkout context while the complete Create Worktree accessible name and explanatory
+tooltip remain. The existing narrow breakpoint keeps the plus icon and restores New
+when space returns (`specs/068-worktrees-toolbar-polish`).

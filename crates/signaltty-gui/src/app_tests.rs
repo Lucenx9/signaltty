@@ -3328,7 +3328,28 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
             "Create a separate checkout and open its workspace",
         )
         .unwrap();
-        wait_ui(|| has_label(create.upcast_ref(), "Create Worktree…"));
+        wait_ui(|| create.is_mapped());
+        let content = create
+            .child()
+            .unwrap()
+            .downcast::<adw::ButtonContent>()
+            .unwrap();
+        assert_eq!(
+            content.label(),
+            "New",
+            "dialog title supplies the worktree context"
+        );
+        assert!(create.has_css_class("flat"));
+        assert!(!create.has_css_class("suggested-action"));
+        let label = find_matching_widget::<gtk4::Label>(create.upcast_ref(), &|label| {
+            label.text() == "New"
+        })
+        .unwrap();
+        wait_ui(|| label.width() > 0);
+        assert!(
+            !label.layout().is_ellipsized(),
+            "creation label must fit without truncation"
+        );
         assert!(
             create.ancestor(adw::HeaderBar::static_type()).is_some(),
             "window action belongs in its header"
@@ -3403,7 +3424,12 @@ fn navigation_palette_fast_enter_and_git_dialogs_use_native_controls() {
     capture_workflow(&app.window, "worktrees-narrow-large-row-focus");
     settings.set_gtk_font_name(old_font.as_deref());
     app.window.set_default_size(920, 680);
-    wait_ui(|| has_label(create.upcast_ref(), "Create Worktree…"));
+    wait_ui(|| has_label(create.upcast_ref(), "New"));
+    let label =
+        find_matching_widget::<gtk4::Label>(create.upcast_ref(), &|label| label.text() == "New")
+            .unwrap();
+    wait_ui(|| label.width() > 0);
+    assert!(!label.layout().is_ellipsized());
     assert!(has_label(&narrow.child().unwrap(), "Open"));
     assert!(has_label(&narrow.child().unwrap(), "Remove…"));
     narrow.close();
