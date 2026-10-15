@@ -14,6 +14,7 @@ Use `status --feature <slug> --evidence <run>` to inspect current proof.
 | [063-submodule-diff-visibility](063-submodule-diff-visibility/spec.md) | enrolled | [spec.md](063-submodule-diff-visibility/spec.md), [plan.md](063-submodule-diff-visibility/plan.md), [tasks.md](063-submodule-diff-visibility/tasks.md) |  |
 | [064-changes-reading-polish](064-changes-reading-polish/spec.md) | enrolled | [spec.md](064-changes-reading-polish/spec.md), [plan.md](064-changes-reading-polish/plan.md), [tasks.md](064-changes-reading-polish/tasks.md) |  |
 | [065-subprocess-lifetime](065-subprocess-lifetime/spec.md) | enrolled | [spec.md](065-subprocess-lifetime/spec.md), [plan.md](065-subprocess-lifetime/plan.md), [tasks.md](065-subprocess-lifetime/tasks.md) |  |
+| [066-worktree-newline-registration](066-worktree-newline-registration/spec.md) | enrolled | [spec.md](066-worktree-newline-registration/spec.md), [plan.md](066-worktree-newline-registration/plan.md), [tasks.md](066-worktree-newline-registration/tasks.md) |  |
 
 ## Completed
 

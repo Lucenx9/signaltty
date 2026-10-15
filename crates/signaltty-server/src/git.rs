@@ -491,20 +491,21 @@ pub fn porcelain_clean(cwd: &str, args: &[&str]) -> Result<bool, String> {
 /// guard: a leftover directory may be force-deleted only after git says it
 /// is not a registered worktree). Fail-closed: when git itself fails, the
 /// path counts as registered so callers never `remove_dir_all` blind.
+/// NUL-delimited porcelain keeps a newline inside the path in one field;
+/// line splitting would hide that checkout and let the guard delete it.
 pub fn is_worktree_registered(repo: &str, path: &str) -> bool {
-    let out = match git_output(repo, &["worktree", "list", "--porcelain"]) {
+    let out = match git_output(repo, &["worktree", "list", "--porcelain", "-z"]) {
         Ok(out) if out.status.success() => out,
         _ => return true,
     };
-    let stdout = String::from_utf8_lossy(&out.stdout);
     let canon = std::path::Path::new(path)
         .canonicalize()
-        .map(|p| p.to_string_lossy().to_string())
+        .map(|p| p.to_string_lossy().into_owned())
         .ok();
-    stdout
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .any(|w| w == path || canon.as_deref().is_some_and(|c| w == c))
+    out.stdout
+        .split(|byte| *byte == 0)
+        .filter_map(|field| std::str::from_utf8(field).ok()?.strip_prefix("worktree "))
+        .any(|registered| registered == path || canon.as_deref() == Some(registered))
 }
 
 /// Resolve base_ref into a 40-character commit SHA. A best-effort
@@ -1072,6 +1073,42 @@ mod tests {
         assert!(out.status.success());
         assert!(!is_worktree_registered(dir_str, &wt_str));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn newline_in_a_registered_worktree_path_stays_registered() {
+        let dir = fixture_repo("newline-wt");
+        let dir_str = dir.to_str().unwrap();
+        let parent = std::env::temp_dir().join(format!(
+            "signaltty-nlwt-{}-{}",
+            std::process::id(),
+            signaltty_core::ids::new_pane_id()
+        ));
+        let wt = parent.join("line\nname");
+        std::fs::create_dir_all(&parent).unwrap();
+        let wt_str = wt.to_str().unwrap();
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["worktree", "add", "-b", "nl-path", "--", wt_str])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "worktree add failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            is_worktree_registered(dir_str, wt_str),
+            "registered path containing a newline must not look unregistered"
+        );
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["worktree", "remove", "--force", "--", wt_str])
+            .output();
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&parent).ok();
     }
 
     #[test]
