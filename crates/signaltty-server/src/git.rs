@@ -491,20 +491,26 @@ pub fn porcelain_clean(cwd: &str, args: &[&str]) -> Result<bool, String> {
 /// guard: a leftover directory may be force-deleted only after git says it
 /// is not a registered worktree). Fail-closed: when git itself fails, the
 /// path counts as registered so callers never `remove_dir_all` blind.
+/// NUL-delimited porcelain keeps a newline inside the path in one field;
+/// line splitting would hide that checkout and let the guard delete it.
+/// Fields are compared lossily. Git stores the canonical bytes of a symlink,
+/// and those bytes may not be UTF-8; skipping the field would hide it too.
 pub fn is_worktree_registered(repo: &str, path: &str) -> bool {
-    let out = match git_output(repo, &["worktree", "list", "--porcelain"]) {
+    let out = match git_output(repo, &["worktree", "list", "--porcelain", "-z"]) {
         Ok(out) if out.status.success() => out,
         _ => return true,
     };
-    let stdout = String::from_utf8_lossy(&out.stdout);
     let canon = std::path::Path::new(path)
         .canonicalize()
-        .map(|p| p.to_string_lossy().to_string())
+        .map(|p| p.to_string_lossy().into_owned())
         .ok();
-    stdout
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .any(|w| w == path || canon.as_deref().is_some_and(|c| w == c))
+    out.stdout.split(|byte| *byte == 0).any(|field| {
+        let field = String::from_utf8_lossy(field);
+        let Some(registered) = field.strip_prefix("worktree ") else {
+            return false;
+        };
+        registered == path || canon.as_deref() == Some(registered)
+    })
 }
 
 /// Resolve base_ref into a 40-character commit SHA. A best-effort
@@ -1072,6 +1078,83 @@ mod tests {
         assert!(out.status.success());
         assert!(!is_worktree_registered(dir_str, &wt_str));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn newline_in_a_registered_worktree_path_stays_registered() {
+        let dir = fixture_repo("newline-wt");
+        let dir_str = dir.to_str().unwrap();
+        let parent = std::env::temp_dir().join(format!(
+            "signaltty-nlwt-{}-{}",
+            std::process::id(),
+            signaltty_core::ids::new_pane_id()
+        ));
+        let wt = parent.join("line\nname");
+        std::fs::create_dir_all(&parent).unwrap();
+        let wt_str = wt.to_str().unwrap();
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["worktree", "add", "-b", "nl-path", "--", wt_str])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "worktree add failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            is_worktree_registered(dir_str, wt_str),
+            "registered path containing a newline must not look unregistered"
+        );
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["worktree", "remove", "--force", "--", wt_str])
+            .output();
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    #[test]
+    fn utf8_symlink_to_a_non_utf8_worktree_stays_registered() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = fixture_repo("nonutf8-wt");
+        let dir_str = dir.to_str().unwrap();
+        let parent = std::env::temp_dir().join(format!(
+            "signaltty-nuwt-{}-{}",
+            std::process::id(),
+            signaltty_core::ids::new_pane_id()
+        ));
+        std::fs::create_dir_all(&parent).unwrap();
+        let raw = parent.join(std::ffi::OsStr::from_bytes(b"caf\xfe"));
+        std::fs::create_dir(&raw).unwrap();
+        let link = parent.join("utf8-link");
+        std::os::unix::fs::symlink(&raw, &link).unwrap();
+        let link_str = link.to_str().unwrap();
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["worktree", "add", "-b", "nu-path", "--", link_str])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "worktree add failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            is_worktree_registered(dir_str, link_str),
+            "a UTF-8 symlink to a non-UTF-8 checkout must stay registered"
+        );
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["worktree", "remove", "--force", "--", link_str])
+            .output();
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&parent).ok();
     }
 
     #[test]

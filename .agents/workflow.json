@@ -560,6 +560,10 @@
     "065-subprocess-lifetime": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "066-worktree-newline-registration": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }
