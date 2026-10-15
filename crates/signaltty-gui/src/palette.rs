@@ -6,12 +6,12 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use signaltty_core::Workspace;
 
-use crate::actions::ACTIONS;
+use crate::actions::{ActionDef, ACTIONS};
 use crate::util::tilde;
 
 #[derive(Clone)]
 enum Target {
-    Action(String),
+    Action(&'static ActionDef),
     Workspace(String),
 }
 
@@ -37,6 +37,11 @@ pub fn present(
     dialog.set_title("Commands and Workspaces");
     dialog.set_content_width(560);
     dialog.set_content_height(480);
+    dialog.set_size_request(280, 200);
+    let compact = adw::Breakpoint::new(
+        adw::BreakpointCondition::parse("max-width: 480sp").expect("breakpoint"),
+    );
+    dialog.add_breakpoint(compact.clone());
     let body = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     body.append(&adw::HeaderBar::new());
     let entry = gtk4::SearchEntry::new();
@@ -92,7 +97,7 @@ pub fn present(
                 detail: "Command".into(),
                 subtitle: None,
                 accelerator: action.accel,
-                target: Target::Action(format!("win.{}", action.name)),
+                target: Target::Action(action),
             })
         }))
         .collect();
@@ -142,12 +147,27 @@ pub fn present(
         let row = adw::ActionRow::new();
         row.set_use_markup(false);
         row.set_title(&choice.label);
+        match &choice.target {
+            Target::Workspace(id) => {
+                let mark = crate::sidebar::mark();
+                crate::sidebar::set_mark(&mark, id, &choice.label);
+                row.add_prefix(&mark);
+            }
+            Target::Action(action) => {
+                let icon = gtk4::Image::from_icon_name(action.icon);
+                icon.set_pixel_size(16);
+                icon.set_valign(gtk4::Align::Center);
+                icon.set_accessible_role(gtk4::AccessibleRole::Presentation);
+                icon.add_css_class("palette-command-icon");
+                row.add_prefix(&icon);
+            }
+        }
         let shortcut = choice
             .accelerator
             .and_then(gtk4::accelerator_parse)
             .map(|(key, modifiers)| gtk4::accelerator_get_label(key, modifiers));
-        // Commands are one line with their shortcut as a trailing hint
-        // (t3code palette); workspaces keep their location underneath.
+        // Roomy command rows trail the shortcut; compact rows put it below
+        // the title so enlarged text keeps its width. Workspace paths stay below.
         if let Some(subtitle) = &choice.subtitle {
             row.set_subtitle(subtitle);
         }
@@ -156,6 +176,8 @@ pub fn present(
             hint.add_css_class("palette-shortcut");
             hint.add_css_class("numeric");
             hint.set_valign(gtk4::Align::Center);
+            compact.add_setter(&hint, "visible", Some(&false.to_value()));
+            compact.add_setter(&row, "subtitle", Some(&shortcut.to_value()));
             row.add_suffix(&hint);
         }
         row.set_title_lines(2);
@@ -242,9 +264,13 @@ pub fn present(
     dialog.connect_closed(move |_| {
         on_closed();
         match pending.borrow_mut().take() {
-            Some(Target::Action(name)) => {
+            Some(Target::Action(action)) => {
                 if let Some(window) = weak_window.upgrade() {
-                    let _ = gtk4::prelude::WidgetExt::activate_action(&window, &name, None);
+                    let _ = gtk4::prelude::WidgetExt::activate_action(
+                        &window,
+                        &format!("win.{}", action.name),
+                        None,
+                    );
                 }
             }
             Some(Target::Workspace(id)) => on_workspace(&id),

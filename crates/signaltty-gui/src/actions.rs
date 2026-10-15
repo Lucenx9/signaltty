@@ -43,6 +43,8 @@ pub struct ActionDef {
     /// Short name (`"new-workspace"`); builders add the `"win."` prefix.
     pub name: &'static str,
     pub handler: HandlerKind,
+    /// Bundled symbolic artwork for command recognition; labels remain authoritative.
+    pub icon: &'static str,
     /// Menu label; `None` keeps the action out of the menu.
     pub label: Option<&'static str>,
     /// Menu section; entries render grouped and ordered by it.
@@ -55,6 +57,7 @@ pub struct ActionDef {
 pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         name: "show-changes",
+        icon: "signaltty-changes-symbolic",
         handler: HandlerKind::ShowChanges,
         label: Some("Show Changes"),
         section: 0,
@@ -62,6 +65,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "show-board",
+        icon: "signaltty-board-symbolic",
         handler: HandlerKind::ShowBoard,
         label: Some("Show Task Board"),
         section: 0,
@@ -69,6 +73,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "worktrees",
+        icon: "signaltty-branch-symbolic",
         handler: HandlerKind::Worktrees,
         label: Some("Worktrees"),
         section: 0,
@@ -76,6 +81,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "zoom-pane",
+        icon: "signaltty-terminal-symbolic",
         handler: HandlerKind::ZoomPane,
         label: Some("Zoom Pane"),
         section: 1,
@@ -83,6 +89,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "search-terminal",
+        icon: "signaltty-search-symbolic",
         handler: HandlerKind::SearchTerminal,
         label: Some("Find in Terminal"),
         section: 1,
@@ -90,6 +97,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "rename-workspace",
+        icon: "signaltty-folder-symbolic",
         handler: HandlerKind::RenameWorkspace,
         label: Some("Rename Workspace"),
         section: 0,
@@ -97,6 +105,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "command-palette",
+        icon: "signaltty-search-symbolic",
         handler: HandlerKind::Palette,
         label: Some("Commands and Workspaces"),
         section: 0,
@@ -104,6 +113,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "new-workspace",
+        icon: "signaltty-folder-symbolic",
         handler: HandlerKind::NewWorkspace,
         label: Some("New Workspace"),
         section: 0,
@@ -111,6 +121,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "close-workspace",
+        icon: "signaltty-folder-symbolic",
         handler: HandlerKind::CloseWorkspace,
         label: Some("Close Workspace"),
         section: 0,
@@ -118,6 +129,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "new-tab",
+        icon: "signaltty-tab-new-symbolic",
         handler: HandlerKind::NewTab,
         label: Some("New Tab"),
         section: 0,
@@ -125,6 +137,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "split-right",
+        icon: "signaltty-split-right-symbolic",
         handler: HandlerKind::SplitRight,
         label: Some("Split Right"),
         section: 1,
@@ -132,6 +145,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "split-down",
+        icon: "signaltty-split-down-symbolic",
         handler: HandlerKind::SplitDown,
         label: Some("Split Down"),
         section: 1,
@@ -139,6 +153,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "close-pane",
+        icon: "signaltty-terminal-symbolic",
         handler: HandlerKind::ClosePane,
         label: Some("Close Pane"),
         section: 1,
@@ -146,6 +161,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "next-attention",
+        icon: "signaltty-unread-symbolic",
         handler: HandlerKind::NextAttention,
         label: Some("Next Pane Needing Attention"),
         section: 2,
@@ -153,6 +169,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "preferences",
+        icon: "signaltty-settings-symbolic",
         handler: HandlerKind::Preferences,
         label: Some("Preferences"),
         section: 3,
@@ -160,6 +177,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "about",
+        icon: "dev.signaltty.gui-symbolic",
         handler: HandlerKind::About,
         label: Some("About signaltty"),
         section: 3,
@@ -167,6 +185,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         name: "toggle-sidebar",
+        icon: "signaltty-terminal-symbolic",
         handler: HandlerKind::ToggleSidebar,
         label: None,
         section: 0,

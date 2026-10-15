@@ -555,3 +555,11 @@ The Worktrees header uses a flat plus/New control. Its window title supplies the
 checkout context while the complete Create Worktree accessible name and explanatory
 tooltip remain. The existing narrow breakpoint keeps the plus icon and restores New
 when space returns (`specs/068-worktrees-toolbar-polish`).
+
+Palette results repeat each workspace’s sidebar mark, stable tint and name/path
+hierarchy. Commands use a neutral 16px bundled symbolic glyph in the same leading
+lane, with shortcut hints trailing at spacious widths. Below 480sp they move to the
+command subtitle so enlarged or wider font metrics cannot squeeze the title.
+Workspace paths retain their subtitle. Prefixes are decorative and native ActionRow
+layout mirrors in RTL. The action registry owns command artwork and activation
+identity (`specs/069-palette-recognition-polish`).

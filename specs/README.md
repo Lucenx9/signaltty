@@ -17,6 +17,7 @@ Use `status --feature <slug> --evidence <run>` to inspect current proof.
 | [066-worktree-newline-registration](066-worktree-newline-registration/spec.md) | enrolled | [spec.md](066-worktree-newline-registration/spec.md), [plan.md](066-worktree-newline-registration/plan.md), [tasks.md](066-worktree-newline-registration/tasks.md) |  |
 | [067-board-density-polish](067-board-density-polish/spec.md) | enrolled | [spec.md](067-board-density-polish/spec.md), [plan.md](067-board-density-polish/plan.md), [tasks.md](067-board-density-polish/tasks.md) |  |
 | [068-worktrees-toolbar-polish](068-worktrees-toolbar-polish/spec.md) | enrolled | [spec.md](068-worktrees-toolbar-polish/spec.md), [plan.md](068-worktrees-toolbar-polish/plan.md), [tasks.md](068-worktrees-toolbar-polish/tasks.md) |  |
+| [069-palette-recognition-polish](069-palette-recognition-polish/spec.md) | enrolled | [spec.md](069-palette-recognition-polish/spec.md), [plan.md](069-palette-recognition-polish/plan.md), [tasks.md](069-palette-recognition-polish/tasks.md) |  |
 
 ## Completed
 

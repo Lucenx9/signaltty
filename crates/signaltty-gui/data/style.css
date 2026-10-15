@@ -150,6 +150,14 @@
   min-height: 40px;
 }
 
+/* Share the workspace mark's prefix lane without adding another badge. */
+.palette-command-icon {
+  min-width: 20px;
+  min-height: 20px;
+  color: alpha(currentColor, 0.78);
+}
+.high-contrast .palette-command-icon { color: inherit; }
+
 /* The shortcut is a quiet trailing hint, not a second line. */
 .palette-shortcut {
   font-size: 0.82em;
