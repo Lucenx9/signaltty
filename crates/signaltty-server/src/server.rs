@@ -721,7 +721,13 @@ mod tests {
 
     #[tokio::test]
     async fn startup_serves_ipc_on_absent_and_stale_socket_paths() {
+        let subscriber = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::DEBUG)
+            .finish();
+        let _trace = tracing::subscriber::set_default(subscriber);
         for stale in [false, true] {
+            eprintln!("testing startup with stale socket: {stale}");
             let (ctx, base, _) = test_context();
             let socket = ctx.config.socket_path.clone();
             if stale {
@@ -744,8 +750,13 @@ mod tests {
                     .await
                     .unwrap();
             };
+            let server = async {
+                let result = serve(ctx.config.clone()).await;
+                eprintln!("startup server returned: {result:?}");
+                result
+            };
             let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                tokio::join!(serve(ctx.config.clone()), interaction)
+                tokio::join!(server, interaction)
             })
             .await;
             std::fs::remove_dir_all(base).unwrap();

@@ -53,6 +53,12 @@ not prove absence of OS calls in source; that remains a code-review responsibili
 
 ## Binaries
 
+The server's private `subprocess` module owns prepared command lifetime for
+selected-file diffs, turn capture, worktree operations and task commands.
+Callers retain command construction, deadlines, output limits and error policy;
+process groups, concurrent pipe capture and cleanup stay inside the module.
+See [ADR-0039](adr/0039-subprocess-lifetime.md).
+
 `signaltty-server` (daemon), `signaltty` (CLI), `signaltty-gui`
 (Phase 3). One version for the whole workspace; `server.status`
 reports it and IPC refuses cross-major mismatches.

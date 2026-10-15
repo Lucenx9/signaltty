@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -12,7 +11,6 @@ use serde_json::{json, Value};
 use signaltty_core::model::{GitInfo, LiveState, Workspace};
 use signaltty_core::new_ws_id;
 use signaltty_proto::{code, event};
-use tokio::io::AsyncReadExt;
 
 use crate::params::{
     bad_params, ParamError, WorkspaceId, WorktreeCreate, WorktreeOpen, WorktreeRemove,
@@ -153,22 +151,6 @@ fn source(ctx: &Ctx, id: &str) -> Result<Workspace, ParamError> {
     Ok(store.workspaces[&id].clone())
 }
 
-struct GitProcessGroup(Option<nix::unistd::Pid>);
-
-impl GitProcessGroup {
-    fn kill(&mut self) {
-        if let Some(pid) = self.0.take() {
-            let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL);
-        }
-    }
-}
-
-impl Drop for GitProcessGroup {
-    fn drop(&mut self) {
-        self.kill();
-    }
-}
-
 async fn git(cwd: &str, args: &[&str]) -> Result<Vec<u8>, ParamError> {
     git_with_timeout(cwd, args, Duration::from_secs(20)).await
 }
@@ -200,45 +182,19 @@ pub(crate) async fn git_status_with_timeout(
         .arg("-C")
         .arg(cwd)
         .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .kill_on_drop(true);
-    let mut child = command
-        .spawn()
-        .map_err(|e| (code::IO_ERROR.into(), e.to_string()))?;
-    let mut group = GitProcessGroup(child.id().map(|pid| nix::unistd::Pid::from_raw(pid as i32)));
-    let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
-    let output = tokio::time::timeout(deadline, async {
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let (status, _, _) = tokio::try_join!(
-            child.wait(),
-            stdout.read_to_end(&mut out),
-            stderr.read_to_end(&mut err)
-        )?;
-        Ok::<_, std::io::Error>(std::process::Output {
-            status,
-            stdout: out,
-            stderr: err,
-        })
-    })
-    .await;
-    match output {
-        Ok(Ok(out)) => Ok(out),
-        failure => {
-            group.kill();
-            let _ = child.wait().await;
-            Err(match failure {
-                Err(_) => (code::TIMEOUT.into(), "Git operation timed out".into()),
-                Ok(Err(error)) => (code::IO_ERROR.into(), error.to_string()),
-                Ok(Ok(_)) => unreachable!(),
-            })
+        .env("GIT_TERMINAL_PROMPT", "0");
+    crate::subprocess::run(
+        &mut command,
+        Some(deadline),
+        crate::subprocess::CaptureLimits::default(),
+    )
+    .await
+    .map_err(|error| match error {
+        crate::subprocess::Error::Timeout => {
+            (code::TIMEOUT.into(), "Git operation timed out".into())
         }
-    }
+        error => (code::IO_ERROR.into(), error.to_string()),
+    })
 }
 
 fn utf8(bytes: &[u8]) -> Result<String, ParamError> {

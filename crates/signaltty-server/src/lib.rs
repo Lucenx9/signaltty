@@ -17,6 +17,7 @@ pub mod router;
 pub mod server;
 pub mod store;
 pub mod submit;
+mod subprocess;
 pub mod tasks;
 pub mod turns;
 pub mod worktrees;

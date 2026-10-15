@@ -1,10 +1,8 @@
 //! Task orchestration: task lifecycle, worktree checkout, agent worker pane spawn,
 //! and background prompt delivery.
 
-use crate::file_diff::ProcessGroup;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -1923,56 +1921,36 @@ async fn run_cli(
     let mut cmd = tokio::process::Command::new(program);
     cmd.current_dir(cwd)
         .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GH_PROMPT_DISABLED", "1")
-        .process_group(0)
-        .kill_on_drop(true);
-
-    let child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err((
-                code::SPAWN_FAILED.to_string(),
-                format!("{program} binary not found"),
-                Value::Null,
-            ));
-        }
-        Err(e) => {
-            return Err((
-                code::IO_ERROR.to_string(),
-                format!("{program} spawn failed: {e}"),
-                Value::Null,
-            ));
-        }
-    };
-
-    let pid = child.id().map(|id| id as i32);
-    let mut group = ProcessGroup(pid);
-
-    let res = match tokio::time::timeout(Duration::from_secs(60), child.wait_with_output()).await {
-        Ok(Ok(output)) => {
-            group.0 = None;
-            output
-        }
-        Ok(Err(e)) => {
-            return Err((
-                code::IO_ERROR.to_string(),
-                format!("{program} failed: {e}"),
-                Value::Null,
-            ));
-        }
-        Err(_) => {
-            drop(group);
-            return Err((
-                code::TIMEOUT.to_string(),
-                format!("{program} timed out after 60s"),
-                Value::Null,
-            ));
-        }
-    };
+        .env("GH_PROMPT_DISABLED", "1");
+    let res = crate::subprocess::run(
+        &mut cmd,
+        Some(Duration::from_secs(60)),
+        crate::subprocess::CaptureLimits::default(),
+    )
+    .await
+    .map_err(|error| match error {
+        crate::subprocess::Error::Spawn(e) if e.kind() == std::io::ErrorKind::NotFound => (
+            code::SPAWN_FAILED.to_string(),
+            format!("{program} binary not found"),
+            Value::Null,
+        ),
+        crate::subprocess::Error::Spawn(e) => (
+            code::IO_ERROR.to_string(),
+            format!("{program} spawn failed: {e}"),
+            Value::Null,
+        ),
+        crate::subprocess::Error::Timeout => (
+            code::TIMEOUT.to_string(),
+            format!("{program} timed out after 60s"),
+            Value::Null,
+        ),
+        error => (
+            code::IO_ERROR.to_string(),
+            format!("{program} failed: {error}"),
+            Value::Null,
+        ),
+    })?;
 
     if !res.status.success() {
         let stderr = String::from_utf8_lossy(&res.stderr).trim().to_string();
