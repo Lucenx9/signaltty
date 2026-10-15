@@ -236,7 +236,6 @@ impl CardWidgets {
         row.set_widget_name(&card.id);
         row.set_selectable(false);
         let body = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-        let top = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         let title = gtk4::Label::new(None);
         title.add_css_class("board-card-title");
         title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
@@ -249,16 +248,18 @@ impl CardWidgets {
         let pill = gtk4::Label::new(None);
         pill.add_css_class("task-chip");
         pill.add_css_class("board-card-pill");
-        pill.set_halign(gtk4::Align::End);
+        pill.set_halign(gtk4::Align::Start);
         body.append(&title);
         let meta = gtk4::Label::new(None);
         meta.add_css_class("board-card-meta");
         meta.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        meta.set_wrap(true);
+        meta.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+        meta.set_lines(3);
         meta.set_xalign(0.0);
         meta.set_hexpand(true);
-        top.append(&meta);
-        top.append(&pill);
-        body.append(&top);
+        body.append(&meta);
+        body.append(&pill);
         row.set_child(Some(&body));
         let widgets = Self {
             row,
@@ -720,7 +721,7 @@ pub fn present(
     dialog.add_css_class("signaltty-dialog");
     dialog.set_title("Task Board");
     dialog.set_content_width(1200);
-    dialog.set_content_height(600);
+    dialog.set_content_height(440);
     let body = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     body.append(&libadwaita::HeaderBar::new());
     let stack = gtk4::Stack::new();
