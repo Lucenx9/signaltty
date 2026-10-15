@@ -12,6 +12,8 @@ Ranked hypotheses:
 
 The correct cause is hypothesis 1. `git worktree list --porcelain` without `-z` emits the newline inside the path as a line break. `lines()` therefore never sees the full path, the guard returns false, and `remove_worktree_checkout` may `remove_dir_all` a checkout Git still owns when `git worktree remove` fails.
 
+Review of `3b74908` found a second hole in the strict UTF-8 field parse. Git stores the canonical bytes when a UTF-8 path is a symlink, and those bytes may not be UTF-8. Skipping that field made `utf8_symlink_to_a_non_utf8_worktree_stays_registered` fail. Lossy comparison of each NUL field matches the caller's lossy canonical path. An unrelated non-UTF-8 worktree does not mark every path registered. The same test passes after that change.
+
 ## Delivery proof
 
 Run `scripts/verify.sh full --output target/verification/worktree-newline-registration-full` against final staged content, then `scripts/agent.sh check --phase delivery --feature 066-worktree-newline-registration --evidence target/verification/worktree-newline-registration-full`. The report records the result. GitHub must pass the latest PR workflow's workflow-lint, rust and minimum-rust jobs for the reviewed head and base before merge.

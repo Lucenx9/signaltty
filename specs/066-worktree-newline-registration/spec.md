@@ -10,7 +10,7 @@ Task cleanup may delete a leftover directory only after Git says that path is no
 
 ## Requirements
 
-- **FR-001**: `is_worktree_registered` reports a checkout registered when `git worktree list --porcelain -z` lists that path, including when the path contains a newline.
+- **FR-001**: `is_worktree_registered` reports a checkout registered when `git worktree list --porcelain -z` lists that path, including when the path contains a newline or when a UTF-8 symlink's canonical bytes are not UTF-8.
 - **FR-002**: A path Git does not list stays unregistered. When Git itself fails, the path stays registered (fail closed).
 - **FR-003**: The comparison still accepts the caller's path or its canonical form. No IPC, persisted data, or cleanup policy change.
 
@@ -19,6 +19,7 @@ Task cleanup may delete a leftover directory only after Git says that path is no
 1. A worktree added at an absolute path containing a newline is registered.
 2. The existing guard still reports a normal path unregistered before add, registered after add, and unregistered after remove.
 3. A failed Git listing does not become "not registered".
+4. A UTF-8 symlink whose canonical worktree path is not UTF-8 stays registered.
 
 ## Success criteria
 
