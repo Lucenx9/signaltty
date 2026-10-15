@@ -17,4 +17,6 @@ The native test passed with exact long-path clipboard bytes, original-path copy,
 
 Grok 4.7 High independently audited the original captures and source. Adopted Details hierarchy and retained the centered shell identity. State appears below the title to avoid horizontal competition. Its separate suggestion to ellipsize approval choices was rejected because permission scope must remain readable without hover. Pane tools were already correct and remain untouched.
 
-The isolated Xvfb run exercises native GTK, system fonts and class-based high contrast. Manual screen-reader order/names, on-screen keyboard, IME, external URI/folder launch and a real desktop high-contrast preference were not run. The full verification report and final reviews are recorded with the PR.
+The isolated Xvfb run exercises native GTK, system fonts and class-based high contrast. Manual screen-reader order/names, on-screen keyboard, IME, external URI/folder launch and a real desktop high-contrast preference were not run. The full verification report is recorded with the PR. Independent reviews are in `reviews.md`.
+
+The first Standards review found that changing color scheme after applying the test high-contrast class cleared that class for the Sans 18 capture. The test now changes scheme first and asserts the class after each capture. The regenerated Sans 18 and DejaVu 18 images both retain high contrast. This is a test/evidence correction; the production layout is unchanged.

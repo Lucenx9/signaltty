@@ -6329,11 +6329,11 @@ fn breadcrumb_opens_the_workspace_details_card() {
         settings.set_gtk_font_name(Some(font));
         gtk4::Widget::set_default_direction(direction);
         app.window.set_direction(direction);
+        adw::StyleManager::default().set_color_scheme(scheme);
         app.window.remove_css_class("high-contrast");
         if contrast {
             app.window.add_css_class("high-contrast");
         }
-        adw::StyleManager::default().set_color_scheme(scheme);
         app.window.set_default_size(360, 680);
         wait_ui(|| app.window.width() <= 360);
         app.crumb_button.popup();
@@ -6348,6 +6348,7 @@ fn breadcrumb_opens_the_workspace_details_card() {
             .unwrap();
         wait_ui(|| has_label(&card, "No changes"));
         capture_workflow(&app.details.popover, &format!("details-{name}"));
+        assert_eq!(app.window.has_css_class("high-contrast"), contrast);
         let content = try_descendant(&card, "details-card").unwrap();
         assert!(
             content.width() <= app.window.width(),
