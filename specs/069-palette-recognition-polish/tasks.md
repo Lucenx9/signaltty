@@ -8,3 +8,5 @@
 - [x] T006 [FR-001] [FR-002] [FR-003] [FR-004] Freeze source for full/delivery verification and PR publication.
 
 Sequential T001→T006. Final full/delivery outcomes and publication follow frozen source and are recorded externally and in the PR body.
+
+- [ ] T007 [FR-003] [FR-004] Reproduce the CI wide-font truncation and adapt shortcut placement with native breakpoint; verify resize/RTL/large text, review delta and freeze corrected source for fresh full/delivery proof.

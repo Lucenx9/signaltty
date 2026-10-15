@@ -65,7 +65,9 @@ hierarchy, compact checkout content and filtered palette group/target mapping.
 It also checks the flat, untruncated New control in the Worktrees header and
 its label restoration after narrow/enlarged-text navigation. Palette cases check
 shared workspace marks, decorative command roles and logical prefix placement in
-RTL. The owned-icon test resolves all registry glyphs without external icon paths.
+RTL. The narrow test also exercises wide-font large text and restores trailing
+shortcuts after widening; compact shortcuts stay below titles. The owned-icon
+test resolves all registry glyphs without external icon paths.
 Terminal search and zoom tests export their scenes to the same
 path when supported. Inspect every saved image before accepting it.
 

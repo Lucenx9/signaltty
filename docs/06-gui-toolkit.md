@@ -558,6 +558,8 @@ when space returns (`specs/068-worktrees-toolbar-polish`).
 
 Palette results repeat each workspace’s sidebar mark, stable tint and name/path
 hierarchy. Commands use a neutral 16px bundled symbolic glyph in the same leading
-lane, with shortcut hints trailing. Prefixes are decorative and native ActionRow
+lane, with shortcut hints trailing at spacious widths. Below 480sp they move to the
+command subtitle so enlarged or wider font metrics cannot squeeze the title.
+Workspace paths retain their subtitle. Prefixes are decorative and native ActionRow
 layout mirrors in RTL. The action registry owns command artwork and activation
 identity (`specs/069-palette-recognition-polish`).

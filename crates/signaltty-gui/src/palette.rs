@@ -37,6 +37,11 @@ pub fn present(
     dialog.set_title("Commands and Workspaces");
     dialog.set_content_width(560);
     dialog.set_content_height(480);
+    dialog.set_size_request(280, 200);
+    let compact = adw::Breakpoint::new(
+        adw::BreakpointCondition::parse("max-width: 480sp").expect("breakpoint"),
+    );
+    dialog.add_breakpoint(compact.clone());
     let body = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     body.append(&adw::HeaderBar::new());
     let entry = gtk4::SearchEntry::new();
@@ -161,8 +166,8 @@ pub fn present(
             .accelerator
             .and_then(gtk4::accelerator_parse)
             .map(|(key, modifiers)| gtk4::accelerator_get_label(key, modifiers));
-        // Commands are one line with their shortcut as a trailing hint
-        // (t3code palette); workspaces keep their location underneath.
+        // Roomy command rows trail the shortcut; compact rows put it below
+        // the title so enlarged text keeps its width. Workspace paths stay below.
         if let Some(subtitle) = &choice.subtitle {
             row.set_subtitle(subtitle);
         }
@@ -171,6 +176,8 @@ pub fn present(
             hint.add_css_class("palette-shortcut");
             hint.add_css_class("numeric");
             hint.set_valign(gtk4::Align::Center);
+            compact.add_setter(&hint, "visible", Some(&false.to_value()));
+            compact.add_setter(&row, "subtitle", Some(&shortcut.to_value()));
             row.add_suffix(&hint);
         }
         row.set_title_lines(2);

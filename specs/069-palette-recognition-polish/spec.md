@@ -35,3 +35,5 @@ No matches, long workspace names and unbroken paths, 360px windows, enlarged tex
 Reuse existing bundled artwork and system typography; use category glyphs for actions without a dedicated existing glyph. Labels remain authoritative. No new icon family, font, dependency, animation, operation or IPC. Shell title centering stays unchanged.
 ## Clarifications
 2026-10-15: user authorizes autonomous polish and three PR merges. Earlier Task Board #122 and Worktrees #123 are merged. Existing grouped palette stays; this slice adds recognition and alignment, not a new command model or ranking.
+
+2026-10-15 CI clarification: wider system-font metrics at 360px with large text can truncate a command beside its shortcut. Compact rows must put the shortcut beneath the title; wider rows retain the trailing hint. Labels and shortcuts both remain visible, including after resizing.

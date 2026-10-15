@@ -2760,6 +2760,7 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
         ("dark", adw::ColorScheme::ForceDark, false),
         ("rtl", adw::ColorScheme::ForceDark, false),
         ("large-high-contrast", adw::ColorScheme::ForceLight, true),
+        ("large-wide-font", adw::ColorScheme::ForceLight, true),
     ] {
         let direction = if name == "rtl" {
             gtk4::TextDirection::Rtl
@@ -2775,7 +2776,11 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
             window.remove_css_class("dark");
         }
         if large {
-            settings.set_gtk_font_name(Some("Sans 18"));
+            settings.set_gtk_font_name(Some(if name == "large-wide-font" {
+                "DejaVu Sans 18"
+            } else {
+                "Sans 18"
+            }));
             window.add_css_class("high-contrast");
         }
         let chosen = activated.clone();
@@ -2808,7 +2813,7 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
         wait_ui(|| scroll.is_mapped() && !empty.is_visible());
         let row = list.selected_row().unwrap();
         let hint = find_matching_widget::<gtk4::Label>(row.upcast_ref(), &|label| {
-            label.text().contains("Ctrl") && label.text().contains('N')
+            label.is_mapped() && label.text().contains("Ctrl") && label.text().contains('N')
         })
         .expect("command result should teach its existing shortcut");
         capture_workflow(&window, &format!("palette-shortcut-narrow-{name}"));
@@ -2833,6 +2838,22 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
         assert!(dialog.width() <= window.width());
         let bounds = hint.compute_bounds(&window).unwrap();
         assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= window.width() as f32);
+        if name == "light" {
+            let suffix = find_matching_widget::<gtk4::Label>(row.upcast_ref(), &|label| {
+                label.has_css_class("palette-shortcut")
+            })
+            .unwrap();
+            let command = row.clone().downcast::<adw::ActionRow>().unwrap();
+            assert!(!suffix.is_mapped());
+            assert!(command.subtitle().is_some_and(|text| text.contains("Ctrl")));
+            window.set_default_size(920, 640);
+            wait_ui(|| dialog.width() > 480 && suffix.is_mapped());
+            assert!(command.subtitle().is_none_or(|text| text.is_empty()));
+            capture_workflow(&window, "palette-shortcut-restored-wide");
+            window.set_default_size(360, 640);
+            wait_ui(|| dialog.width() <= 360 && !suffix.is_mapped());
+            assert!(command.subtitle().is_some_and(|text| text.contains("Ctrl")));
+        }
         entry.set_text("");
         wait_ui(|| list.selected_row().is_some_and(|row| row.index() == 0));
         capture_workflow(&window, &format!("palette-results-narrow-{name}"));

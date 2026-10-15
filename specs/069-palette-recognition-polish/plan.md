@@ -15,3 +15,6 @@ Extend existing native palette tests first and demonstrate red for missing prefi
 
 ## Constitution and contracts
 Rust 1.94 development/minimum 1.92, existing GTK4/libadwaita. No domain model, persisted data or IPC contract changes; UI registry remains toolkit-facing. No load-bearing architecture choice. Display tests necessary for allocation and native accessibility roles; manual AT/IME not certified by Xvfb. All principles satisfied.
+
+## CI correction
+The proposed-merge CI exposed command truncation at 360px with wider font metrics. Reproduce with DejaVu Sans18, then use the native max-width480sp breakpoint to move shortcut text to the command subtitle and hide its trailing copy. Restore both properties automatically at spacious widths. Keep workspace subtitles unchanged. Verify narrow→wide→narrow restoration, both font families, RTL and class high contrast. No assertion is weakened; repeat independent delta review and full/delivery on frozen corrected source.
