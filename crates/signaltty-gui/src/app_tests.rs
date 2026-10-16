@@ -6197,6 +6197,10 @@ fn breadcrumb_opens_the_workspace_details_card() {
     app.window.set_default_size(1280, 760);
     app.window.present();
     assert!(!app.crumb_button.is_sensitive(), "no workspace, no details");
+    assert!(
+        !app.crumb_button.is_visible(),
+        "empty chrome must not repeat the sidebar wordmark in the content header"
+    );
 
     let snapshot = chip_scene_snapshot();
     let mut task = chip_scene_task("fix-parser");
