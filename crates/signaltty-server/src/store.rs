@@ -1149,6 +1149,36 @@ impl Store {
         Some(ev)
     }
 
+    /// A hook blocker supersedes stale liveness evidence, but keeps finished
+    /// turn messages and structured decisions authoritative.
+    pub fn task_input_required_on_hook_blocker(&mut self, task_id: &str) -> Option<StoredEvent> {
+        let evidence = json!({"reason": "hook_blocked"});
+        let task = self.tasks.get_mut(task_id)?;
+        let now = Utc::now();
+        let prev_state = if task.state == TaskState::InputRequired {
+            if !matches!(
+                task.status_reason
+                    .as_ref()
+                    .and_then(|reason| reason.get("reason"))
+                    .and_then(Value::as_str),
+                Some("worker_silent" | SUBMIT_UNCONFIRMED | "screen_blocked")
+            ) {
+                return None;
+            }
+            task.status_reason = Some(evidence);
+            task.updated_at = now;
+            None
+        } else {
+            let prev = task.state;
+            if !task.apply_turn_ended_without_report(Some(evidence), now) {
+                return None;
+            }
+            Some(prev)
+        };
+        let task = task.clone();
+        Some(self.emit_task_updated(&task, prev_state))
+    }
+
     pub fn task_for_pane(&self, pane_id: &str) -> Option<&Task> {
         self.tasks
             .values()

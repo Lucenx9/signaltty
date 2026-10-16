@@ -11,11 +11,16 @@ authoritative; this correction covers adapter-reported native interruptions.
 
 - **FR-001**: An adapter-classified blocked worker without a structured decision
   parks its task at input_required with hook_blocked evidence. Initial submit
-  reconciles a blocker reached before the background commit.
+  reconciles a blocker reached before the background commit. Existing
+  `worker_silent`, `submit_unconfirmed` or `screen_blocked` interruptions refresh
+  to `hook_blocked`; a finished turn retains its reason and last message.
 - **FR-002**: An explicit new prompt or a finished turn resolves only attributable
   interruptions. Tool hooks alone preserve the existing blocked-state guard,
   because overlapping subagent traffic does not prove a main approval was answered. A still-pending structured native decision remains authoritative;
-  a delivered native answer resumes its task. Repeated blockers preserve state
+  a delivered native answer resumes its task. A native `UserPromptSubmit` also
+  resumes an earlier turn-end interruption after an idle notification; preserve
+  its last message until that prompt, and never resume from tool traffic alone.
+  Repeated blockers preserve state
   and do not duplicate task events. Accepted terminal results remain immutable.
 - **FR-003**: Isolated real IPC regressions cover Claude permission and idle
   notifications, legacy Codex permission payloads, and initial/follow-up races.

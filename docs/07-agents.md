@@ -459,8 +459,11 @@ worker task at `input_required` with `reason: hook_blocked`. Examples include
 Claude permission/idle notifications and legacy Codex permission payloads.
 Initial submission reconciles these blockers; an explicit new prompt resumes the
 attributed interruption. Tool traffic alone retains the existing blocked-state
-guard because it can belong to an overlapping subagent. Native decisions keep their own evidence and answer
-channel. See [the harness audit](../specs/072-harness-task-interruptions/research.md)
+guard because it can belong to an overlapping subagent. A hook blocker replaces
+stale `worker_silent`, `submit_unconfirmed` or `screen_blocked` evidence. An
+idle notification after Stop preserves `turn_ended_without_report` and its last
+message until an explicit `UserPromptSubmit` begins another turn. Native
+decisions keep their own evidence and answer channel. See [the harness audit](../specs/072-harness-task-interruptions/research.md)
 for automatic-launch and permission-telemetry boundaries.
 
 

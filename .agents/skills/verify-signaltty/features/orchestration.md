@@ -135,3 +135,10 @@ initial-submit and real follow-up pane.submit reconciliation, duplicate
 interruption stability and explicit prompt resumption. Existing native permission tests verify delivered answers still resume
 and disconnect/timeout/session loss never grant a request. These fixtures simulate
 provider hooks; they do not certify authenticated live provider telemetry.
+
+`hook_blocker_refreshes_a_silent_interrupt_without_losing_turn_end_evidence`
+verifies that a real watchdog interruption gains current hook evidence and
+resumes on a new prompt, while duplicate hooks and Stop followed by idle
+notifications preserve the appropriate task timestamp and turn-end message.
+It also verifies that tool traffic keeps that interruption and a subsequent
+explicit prompt resumes the task.

@@ -154,6 +154,170 @@ async fn hook_blockers_without_structured_decisions_park_worker_tasks() {
     srv.shutdown().await;
 }
 
+#[tokio::test]
+async fn hook_blocker_refreshes_a_silent_interrupt_without_losing_turn_end_evidence() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start_with_env(&[("SIGNALTTY_WORKER_SILENT_TIMEOUT_S", "1")]).await;
+    let mut c = srv.client().await;
+    let started = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path(), "agent": "claude", "argv": ["cat"],
+                "contract": {"objective": "Refresh stale interruption"}, "submit_delay_ms": 10,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = started["task"]["id"].as_str().unwrap();
+    let pane_id = started["pane"]["id"].as_str().unwrap();
+    let worktree = PathBuf::from(started["task"]["worktree_path"].as_str().unwrap());
+    let driver = FakeAgentPane::new(pane_id, "claude");
+    driver.session_start(&mut c, &worktree).await.unwrap();
+    wait_for_worker_prompt(&mut c, pane_id, "Refresh stale interruption").await;
+    driver.prompt_submit(&mut c).await.unwrap();
+    let silent = c
+        .call(
+            "task.wait",
+            json!({
+                "task_id": task_id, "until": "input_required", "timeout_s": 5,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(silent["satisfied"], true);
+    let before = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(before["task"]["status_reason"]["reason"], "worker_silent");
+    let notification = |kind| {
+        json!({
+            "pane_id":pane_id, "agent":"claude", "event":"Notification",
+            "payload":{"session_id": driver.session_id, "notification_type":kind},
+        })
+    };
+    c.call("hook-event", notification("permission_prompt"))
+        .await
+        .unwrap();
+    let blocked = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(blocked["task"]["state"], "input_required");
+    assert_eq!(
+        blocked["task"]["status_reason"],
+        json!({"reason":"hook_blocked"})
+    );
+    c.call("hook-event", notification("permission_prompt"))
+        .await
+        .unwrap();
+    let repeated = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        repeated["task"]["updated_at"],
+        blocked["task"]["updated_at"]
+    );
+    driver.prompt_submit(&mut c).await.unwrap();
+    let resumed = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(resumed["task"]["state"], "working");
+    assert!(resumed["task"]["status_reason"].is_null());
+
+    c.call(
+        "hook-event",
+        json!({
+            "pane_id":pane_id,"agent":"claude","event":"Stop",
+            "payload":{"session_id":driver.session_id, "last_assistant_message":"Review complete, report pending"},
+        }),
+    )
+    .await
+    .unwrap();
+    let ended = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        ended["task"]["status_reason"]["reason"],
+        "turn_ended_without_report"
+    );
+    assert_eq!(
+        ended["task"]["status_reason"]["last_message"],
+        "Review complete, report pending"
+    );
+    c.call("hook-event", notification("idle_prompt"))
+        .await
+        .unwrap();
+    let idle = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        idle["task"], ended["task"],
+        "idle notification must preserve the finished turn evidence"
+    );
+    c.call(
+        "hook-event",
+        json!({
+            "pane_id":pane_id, "agent":"claude", "event":"PreToolUse",
+            "payload":{"session_id":driver.session_id,"tool_name":"Read"},
+        }),
+    )
+    .await
+    .unwrap();
+    let tool = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        tool["task"], idle["task"],
+        "tool traffic cannot resume a blocked turn"
+    );
+    driver.prompt_submit(&mut c).await.unwrap();
+    let new_turn = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        new_turn["task"]["state"], "working",
+        "an explicit new prompt resumes after the idle notification"
+    );
+    assert!(new_turn["task"]["status_reason"].is_null());
+    c.call(
+        "hook-event",
+        json!({
+            "pane_id":pane_id,"agent":"claude","event":"PermissionRequest",
+            "payload":{"session_id":driver.session_id},
+            "decision":{"id":"keep-decision","prompt":"Allow command?",
+                "options":[{"id":"once","label":"Allow once"}]},
+        }),
+    )
+    .await
+    .unwrap();
+    let approval = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        approval["task"]["status_reason"]["reason"],
+        "decision_required"
+    );
+    driver.prompt_submit(&mut c).await.unwrap();
+    let prompted = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        prompted["task"], approval["task"],
+        "new prompt reconciliation must preserve decision recovery policy"
+    );
+    srv.shutdown().await;
+}
+
 async fn wait_for_worker_prompt(c: &mut TestClient, pane_id: &str, text: &str) {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
