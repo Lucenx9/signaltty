@@ -48,7 +48,9 @@ impl Config {
             history_tail_bytes: 64 * 1024,
             plugin_dir: paths::plugin_dir(),
             agents_dir: paths::agents_dir(),
-            integration_home: std::env::var_os("SIGNALTTY_INTEGRATION_HOME").map(PathBuf::from),
+            integration_home: std::env::var_os("SIGNALTTY_INTEGRATION_HOME")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from),
             max_parallel_tasks,
             worker_silent_timeout_s,
             merge_timeout_ms: std::env::var("SIGNALTTY_MERGE_TIMEOUT_MS")
@@ -134,5 +136,19 @@ mod tests {
         assert!(Config::try_from_env().unwrap_err().contains("at least 1"));
 
         std::env::remove_var("SIGNALTTY_MAX_PARALLEL_TASKS");
+
+        std::env::remove_var("SIGNALTTY_INTEGRATION_HOME");
+        assert!(Config::from_env().integration_home.is_none());
+        std::env::set_var("SIGNALTTY_INTEGRATION_HOME", "");
+        assert!(
+            Config::from_env().integration_home.is_none(),
+            "SIGNALTTY_INTEGRATION_HOME= must not become an empty PathBuf"
+        );
+        std::env::set_var("SIGNALTTY_INTEGRATION_HOME", "/tmp/signaltty-home");
+        assert_eq!(
+            Config::from_env().integration_home.as_deref(),
+            Some(std::path::Path::new("/tmp/signaltty-home"))
+        );
+        std::env::remove_var("SIGNALTTY_INTEGRATION_HOME");
     }
 }
