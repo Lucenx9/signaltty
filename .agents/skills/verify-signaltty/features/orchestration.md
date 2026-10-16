@@ -112,7 +112,9 @@ resume shapes. Antigravity defaults and bare explicit argv inherit from automati
 Codex/Claude/Antigravity parents; worker options remain literal. The
 `antigravity_*permission*` tests in screen_detection exercise a real PTY and
 `task.wait` across screen-blocked and resumed states, including initial-submit
-and follow-up submit races. Store tests also verify duplicate classifications
+and follow-up submit races. The `screen_blocker_*` tests verify raw PTY input:
+an existing blocker receives no follow-up bytes, and a blocker reached after
+paste receives no delayed Enter. Store tests also verify duplicate classifications
 emit no events and accepted terminal results retain priority. The bundled 1.4.0 permission fixture verifies screenshot text classification.
 
 The isolated ignored GTK tests

@@ -154,8 +154,11 @@ create new tasks. The merge target defaults to the recorded
 branch currently checked out in the source repo (`BAD_PARAMS` with
 `details: {expected, actual}` otherwise).
 
-`pane.submit` rechecks decisions immediately before its delayed Enter. If a
-permission request or pending decision arrived after paste, it returns
+`pane.submit` refuses an active screen blocker with `AGENT_BUSY` before any
+write. Resolve that blocker in the terminal before sending a follow-up. Native
+idle-input notifications retain their ordinary prompt submission behavior.
+It rechecks screen blockers and decisions immediately before delayed Enter. If a
+screen blocker, permission request or pending decision arrived after paste, it returns
 `AGENT_BUSY` with `details: {stage: "delayed_enter", paste_delivered: true}`
 without writing Enter. The pasted text is already in the worker input box;
 inspect and resolve the decision before sending more input. Automatic Enter
