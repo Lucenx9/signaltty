@@ -147,44 +147,62 @@ async fn antigravity_task_permission(block_on_submit: bool, followup_blocker: bo
     let srv = TestServer::start().await;
     let directory = srv.socket.parent().unwrap();
     let ready = directory.join("ready");
+    let bootstrap = directory.join("bootstrap");
     let working = directory.join("working");
     let blocked = directory.join("blocked");
     let resumed = directory.join("resumed");
     let followup = directory.join("followup");
     let agy = directory.join("agy");
-    let busy = r"printf '\033[2J\033[H⠙ Reading files\n'";
-    let idle = r"printf '\033[2J\033[H> \n? for shortcuts\n'";
-    let permission = r"printf '\033[2J\033[HRequesting permission for:\n  command -v codexbar\nRun this command?\n> 1. Yes, run command\n  2. No, cancel\n↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel\n'";
+    let busy = "\x1b[2J\x1b[H⠙ Reading files\n";
+    let idle = "\x1b[2J\x1b[H> \n? for shortcuts\n";
+    let permission = "\x1b[2J\x1b[HRequesting permission for:\n  command -v codexbar\nRun this command?\n> 1. Yes, run command\n  2. No, cancel\n↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel\n";
     let first_activity = if block_on_submit { "" } else { busy };
     let resume_output = if followup_blocker { idle } else { busy };
     let after_resume = if followup_blocker {
-        format!(
-            "while [ ! -e '{}' ]; do sleep 0.05; done\n{permission}",
-            followup.display()
-        )
+        format!("wait_for({})\nemit({})", json!(followup), json!(permission))
     } else {
         String::new()
     };
+    // In-process waits keep /proc refresh scoped to agy instead of a shell
+    // helper such as sleep.
     std::fs::write(
         &agy,
         format!(
-            r"#!/bin/sh
-printf '⠙ Starting\n'
-while [ ! -e '{}' ]; do sleep 0.05; done
-{idle}
-while [ ! -e '{}' ]; do sleep 0.05; done
-{first_activity}
-while [ ! -e '{}' ]; do sleep 0.05; done
-{permission}
-while [ ! -e '{}' ]; do sleep 0.05; done
-{resume_output}
+            r#"#!/usr/bin/python3
+from pathlib import Path
+import sys, time
+
+def wait_for(path):
+    while not Path(path).exists():
+        time.sleep(0.05)
+
+def emit(text):
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+wait_for({bootstrap})
+emit("⠙ Starting\n")
+wait_for({ready})
+emit({idle})
+wait_for({working})
+emit({first_activity})
+wait_for({blocked})
+emit({permission})
+wait_for({resumed})
+emit({resume_output})
 {after_resume}
-while read line; do :; done
-",
-            ready.display(),
-            working.display(),
-            blocked.display(),
-            resumed.display()
+for line in sys.stdin:
+    pass
+"#,
+            bootstrap = json!(bootstrap),
+            ready = json!(ready),
+            idle = json!(idle),
+            working = json!(working),
+            first_activity = json!(first_activity),
+            blocked = json!(blocked),
+            permission = json!(permission),
+            resumed = json!(resumed),
+            resume_output = json!(resume_output),
         ),
     )
     .unwrap();
@@ -203,7 +221,19 @@ while read line; do :; done
         .unwrap();
     let pane_id = start["pane"]["id"].as_str().unwrap();
     let task_id = start["task"]["id"].as_str().unwrap();
+    if block_on_submit {
+        // Classify startup output only after the first periodic /proc scan.
+        tokio::time::sleep(std::time::Duration::from_secs(11)).await;
+    }
+    std::fs::write(&bootstrap, b"").unwrap();
     wait(&mut c, pane_id, "working", 5).await.unwrap();
+    if block_on_submit {
+        let explanation = c
+            .call("pane.explain", json!({"pane_id":pane_id}))
+            .await
+            .unwrap();
+        assert_eq!(explanation["process"], "agy");
+    }
     std::fs::write(&ready, b"").unwrap();
     wait(&mut c, pane_id, "done", 5).await.unwrap();
     // Let the server paste the prompt before the fixture starts its turn.
