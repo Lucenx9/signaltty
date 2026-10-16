@@ -588,6 +588,14 @@
     "070-vte-terminal-interactions": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "071-agy-task-orchestration": {
+      "lifecycle": "active",
+      "enrolled": true
+    },
+    "072-harness-task-interruptions": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }

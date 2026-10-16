@@ -121,7 +121,10 @@ Without `after`, an already matching current state succeeds immediately.
 When `task.start` supplies `agent` without `argv`, a same-provider worker
 inherits the native automatic execution prefix recorded in `parent_pane_id`'s
 launch command. Explicit worker argv, unknown parents and other providers remain
-unchanged. See [automatic execution](07-agents.md#automatic-execution).
+unchanged, except bare Antigravity argv also inherit that choice. `agent: agy`,
+`antigravity` and `antigravity-cli` supply default generic workers without argv;
+they inherit from an automatic Codex, Claude or Antigravity parent. Explicit
+worker options remain literal. See [automatic execution](07-agents.md#automatic-execution).
 
 `task.start` requires `agent` or `argv` (else `BAD_PARAMS`) and runs cap →
 base → worktree → spawn synchronously: over-cap starts are refused with
@@ -139,7 +142,13 @@ waits for the worker pane to reach `idle`/`done` (default
 same activity gate: a newer `working` or `blocked` transition within
 `stall_timeout_s` (default 5) moves the task to `working`; a stall (after one Enter retry halfway through the gate) parks it
 at `input_required` with `{reason: submit_unconfirmed, stage: activity_gate}`,
-and the worker turning `working` later resumes it. Closing a worker from
+and the worker turning `working` later resumes it. A screen-blocked worker parks
+the task at `input_required` with `reason: screen_blocked`; new working activity
+resumes this interruption, and `task.wait` with `settled` observes it immediately.
+Adapter-reported blockers without structured decisions use `reason: hook_blocked`
+and settle immediately; an explicit new prompt resumes them. Tool traffic alone
+retains the blocked-state guard. Native decision evidence
+remains authoritative. Closing a worker from
 `task.finish`/`task.cancel` clears its attention; any pane exit drops
 `input_required`/`permission_required` to `unread`. A repeated `client_request_id` returns the
 existing task and pane instead of creating another; without it retries
@@ -149,8 +158,11 @@ create new tasks. The merge target defaults to the recorded
 branch currently checked out in the source repo (`BAD_PARAMS` with
 `details: {expected, actual}` otherwise).
 
-`pane.submit` rechecks decisions immediately before its delayed Enter. If a
-permission request or pending decision arrived after paste, it returns
+`pane.submit` refuses an active screen blocker with `AGENT_BUSY` before any
+write. Resolve that blocker in the terminal before sending a follow-up. Native
+idle-input notifications retain their ordinary prompt submission behavior.
+It rechecks screen blockers and decisions immediately before delayed Enter. If a
+screen blocker, permission request or pending decision arrived after paste, it returns
 `AGENT_BUSY` with `details: {stage: "delayed_enter", paste_delivered: true}`
 without writing Enter. The pasted text is already in the worker input box;
 inspect and resolve the decision before sending more input. Automatic Enter

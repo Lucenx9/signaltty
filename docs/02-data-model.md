@@ -205,8 +205,8 @@ See [ADR-0034](adr/0034-verified-pr-readiness.md).
 | `pending → working` | server-owned background step: waits for the worker pane to reach `idle`/`done` (default 30 s), writes the composed prompt, moves to `working` on write success |
 | `pending → failed` | background failure with `{stage: ready_timeout\|submit_refused, …}` evidence (pane missing/exited/never idle, or submit write refused) |
 | `* → canceled` (non-terminal) | `task.cancel`, or `finish --discard` from a non-terminal state |
-| `working → input_required` | worker turn ended with no report (`turn_ended_without_report` + `last_message?`); silent-worker watchdog (`worker_silent` + `timeout_s`, default 600 s, `0` disables); pending decision on the worker pane (`decision_required` + `decision_id`) |
-| `input_required → working` | accepted follow-up `pane.submit` on the worker pane when no decision remains pending (also clears `status_reason`); answering the pending decision |
+| `working → input_required` | worker turn ended with no report (`turn_ended_without_report` + `last_message?`); silent-worker watchdog (`worker_silent` + `timeout_s`, default 600 s, `0` disables); pending decision on the worker pane (`decision_required` + `decision_id`); screen-blocked worker (`screen_blocked`); adapter-reported blocker without a structured decision (`hook_blocked`), also reconciled during initial submit |
+| `input_required → working` | accepted follow-up `pane.submit` on the worker pane when no decision remains pending (also clears `status_reason`); answering the pending decision; a new working turn after `screen_blocked`, or an explicit new prompt after `hook_blocked` |
 | `working/input_required/pending → completed/failed/rejected` | First accepted `task.report`; an identical terminal retry is a no-op, other terminal reports are refused |
 | `working/input_required/pending → failed` | worker pane death or restart recovery, with evidence, exactly once |
 

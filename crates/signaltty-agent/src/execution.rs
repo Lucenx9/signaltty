@@ -27,6 +27,27 @@ fn automatic_flags(program: &str) -> &'static [&'static str] {
     }
 }
 
+fn has_automatic_prefix(argv: &[String]) -> bool {
+    let flags = automatic_flags(program(argv));
+    !flags.is_empty()
+        && argv
+            .get(1..1 + flags.len())
+            .is_some_and(|args| args.iter().map(String::as_str).eq(flags.iter().copied()))
+}
+
+/// Antigravity task workers may inherit an automatic parent from any supported
+/// provider. Explicit worker options remain authoritative.
+pub fn inherit_task_permissions(source: &[String], target: &[String]) -> Vec<String> {
+    if target.len() == 1
+        && matches!(program(target), "agy" | "antigravity" | "antigravity-cli")
+        && has_automatic_prefix(source)
+    {
+        automatic_launch_argv(target)
+    } else {
+        inherit_automatic_permissions(source, target)
+    }
+}
+
 /// Carry our explicit automatic launch prefix into a default same-provider
 /// worker or minimal native resume. Commands with explicit options win.
 pub fn inherit_automatic_permissions(source: &[String], target: &[String]) -> Vec<String> {
@@ -41,10 +62,7 @@ pub fn inherit_automatic_permissions(source: &[String], target: &[String]) -> Ve
         )
         && !target[2].is_empty()
         && !target[2].starts_with('-');
-    let automatic = !flags.is_empty()
-        && source
-            .get(1..1 + flags.len())
-            .is_some_and(|args| args.iter().map(String::as_str).eq(flags.iter().copied()));
+    let automatic = has_automatic_prefix(source);
     if automatic && program(target) == name && (target.len() == 1 || standard_resume) {
         let mut inherited = target.to_vec();
         inherited.splice(1..1, flags.iter().map(|s| (*s).into()));
@@ -78,6 +96,61 @@ mod tests {
             assert_eq!(
                 inherit_automatic_permissions(&expected, &resume),
                 expected_resume
+            );
+        }
+    }
+
+    #[test]
+    fn antigravity_task_permissions_require_an_automatic_parent_and_a_bare_worker() {
+        for source in [
+            &["codex", "--dangerously-bypass-approvals-and-sandbox"][..],
+            &["claude", "--dangerously-skip-permissions"][..],
+            &[
+                "agy",
+                "--dangerously-skip-permissions",
+                "--mode",
+                "accept-edits",
+            ][..],
+        ] {
+            for worker in ["agy", "antigravity", "antigravity-cli", "/opt/agy"] {
+                assert_eq!(
+                    inherit_task_permissions(&argv(source), &argv(&[worker])),
+                    argv(&[
+                        worker,
+                        "--dangerously-skip-permissions",
+                        "--mode",
+                        "accept-edits"
+                    ])
+                );
+            }
+            for worker in [
+                &["agy", "--mode", "plan"][..],
+                &["agy", "--model", "configured-model"][..],
+                &["agy", "--sandbox"][..],
+                &["agy-wrapper"][..],
+            ] {
+                assert_eq!(
+                    inherit_task_permissions(&argv(source), &argv(worker)),
+                    argv(worker)
+                );
+            }
+        }
+        for source in [
+            &[][..],
+            &["agy"][..],
+            &["codex"][..],
+            &["claude"][..],
+            &["agy", "--mode", "plan"][..],
+            &[
+                "sh",
+                "-c",
+                "codex --dangerously-bypass-approvals-and-sandbox",
+            ][..],
+            &["codex", "--", "--dangerously-bypass-approvals-and-sandbox"][..],
+        ] {
+            assert_eq!(
+                inherit_task_permissions(&argv(source), &argv(&["agy"])),
+                argv(&["agy"])
             );
         }
     }

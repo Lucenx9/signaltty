@@ -575,6 +575,10 @@ fn resolve_agent_and_argv(
             "task.start requires either 'agent' or 'argv'".to_string(),
         )),
         (Some(agent_name), None) => {
+            if matches!(agent_name, "agy" | "antigravity" | "antigravity-cli") {
+                let argv = inherit_task_permissions(ctx, p, &[agent_name.to_string()]);
+                return Ok((argv, AgentKind::Generic, None));
+            }
             let Some(adapter) = signaltty_agent::adapter_for_name(agent_name) else {
                 return Err((
                     code::BAD_PARAMS.to_string(),
@@ -593,19 +597,7 @@ fn resolve_agent_and_argv(
                 ));
             }
             let argv = vec![adapter.metadata().binaries[0].to_string()];
-            let argv = {
-                let store = ctx.store.read().unwrap();
-                p.parent_pane_id
-                    .as_ref()
-                    .and_then(|id| store.panes.get(id))
-                    .map(|parent| {
-                        signaltty_agent::execution::inherit_automatic_permissions(
-                            &parent.argv,
-                            &argv,
-                        )
-                    })
-                    .unwrap_or(argv)
-            };
+            let argv = inherit_task_permissions(ctx, p, &argv);
             Ok((argv, kind, Some(agent_name.to_string())))
         }
         (Some(agent_name), Some(argv)) => {
@@ -618,7 +610,8 @@ fn resolve_agent_and_argv(
             // Store the canonical kind (or nothing), never the raw name: the
             // hook handler compares it with the incoming adapter's kind.
             let kind = AgentKind::parse(agent_name).unwrap_or_else(|| ctx.detect_kind(argv));
-            Ok((argv.clone(), kind, canonical_agent_name(kind)))
+            let argv = inherit_bare_antigravity_permissions(ctx, p, argv);
+            Ok((argv, kind, canonical_agent_name(kind)))
         }
         (None, Some(argv)) => {
             if argv.is_empty() {
@@ -628,8 +621,35 @@ fn resolve_agent_and_argv(
                 ));
             }
             let kind = ctx.detect_kind(argv);
-            Ok((argv.clone(), kind, canonical_agent_name(kind)))
+            let argv = inherit_bare_antigravity_permissions(ctx, p, argv);
+            Ok((argv, kind, canonical_agent_name(kind)))
         }
+    }
+}
+
+fn inherit_task_permissions(ctx: &Ctx, p: &params::TaskStart, argv: &[String]) -> Vec<String> {
+    let store = ctx.store.read().unwrap();
+    p.parent_pane_id
+        .as_ref()
+        .and_then(|id| store.panes.get(id))
+        .map(|parent| signaltty_agent::execution::inherit_task_permissions(&parent.argv, argv))
+        .unwrap_or_else(|| argv.to_vec())
+}
+
+fn inherit_bare_antigravity_permissions(
+    ctx: &Ctx,
+    p: &params::TaskStart,
+    argv: &[String],
+) -> Vec<String> {
+    if argv.len() == 1
+        && matches!(
+            signaltty_agent::process::process_name(argv).as_str(),
+            "agy" | "antigravity" | "antigravity-cli"
+        )
+    {
+        inherit_task_permissions(ctx, p, argv)
+    } else {
+        argv.to_vec()
     }
 }
 

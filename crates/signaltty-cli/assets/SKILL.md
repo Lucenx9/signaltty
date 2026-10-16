@@ -123,8 +123,16 @@ worker sooner, wait on its task id. Follow up on tasks at `input_required`.
 Use `--until terminal` to wait until every task reaches a terminal state.
 `signaltty schema` is the exact contract when in doubt.
 
-Workers must be agents whose hooks report readiness (`--agent claude`,
-`codex`, …); a plain shell never gets ready and fails with `ready_timeout`.
+Use workers with hooks (`--agent claude`, `codex`, …) or bundled screen readiness
+(`--agent agy`, `antigravity`, `antigravity-cli`). A plain shell never gets ready
+and fails with `ready_timeout`. Bare Antigravity workers inherit automatic
+execution from a recorded automatic Codex/Claude/Antigravity parent. Worker
+options remain literal; include `--dangerously-skip-permissions --mode accept-edits`
+explicitly when needed alongside model or effort options. A screen permission
+prompt parks the task at `input_required` with `reason: screen_blocked`; new
+working activity resumes it. While that screen blocker remains active, ordinary
+`pane.submit` returns `AGENT_BUSY`. Resolve the blocker in the terminal before
+sending a follow-up.
 A repo the agent has never trusted stops the worker on its folder-trust
 prompt: the failed task's `status_reason.screen_tail` shows that screen.
 Trust the repo once in the agent, then retry. A prompt typed but never

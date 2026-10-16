@@ -541,8 +541,8 @@ impl Store {
             progress.lifecycle_seq = ev.seq;
             progress.transitions.insert(next.as_str(), ev.seq);
         }
-        // A worker that starts after its submit went unconfirmed (late Enter,
-        // slow hooks) took the prompt after all: back to working. A turn that
+        // New activity resolves an unconfirmed submit or screen interruption.
+        // A turn that
         // already ended refreshes the evidence to turn_ended_without_report.
         if matches!(next, Lifecycle::Working | Lifecycle::Done) {
             let unconfirmed = self
@@ -551,8 +551,13 @@ impl Store {
                 .find(|t| {
                     t.pane_id.as_deref() == Some(pane_id)
                         && t.state == TaskState::InputRequired
-                        && t.status_reason.as_ref().and_then(|r| r.get("reason"))
-                            == Some(&json!(SUBMIT_UNCONFIRMED))
+                        && matches!(
+                            t.status_reason
+                                .as_ref()
+                                .and_then(|r| r.get("reason"))
+                                .and_then(Value::as_str),
+                            Some(SUBMIT_UNCONFIRMED | "screen_blocked" | "hook_blocked")
+                        )
                 })
                 .map(|t| t.id.clone());
             if let Some(tid) = unconfirmed {
@@ -636,6 +641,14 @@ impl Store {
             }
         }
         events.extend(raised);
+        if let Some(task_id) = self.task_for_pane(pane_id).map(|t| t.id.clone()) {
+            if state == ScreenState::Blocked {
+                events.extend(self.task_input_required_on_turn_end(
+                    &task_id,
+                    Some(json!({"reason": "screen_blocked"})),
+                ));
+            }
+        }
         events
     }
 
@@ -747,12 +760,14 @@ impl Store {
             .values()
             .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::InputRequired)
             .map(|t| t.id.clone());
-        let mut ev = task_id.and_then(|tid| self.task_resume_working(&tid));
-
-        if blocked {
-            ev = self.set_lifecycle(pane_id, Lifecycle::Working).or(ev);
-        }
-        ev
+        let ev = if blocked {
+            self.set_lifecycle(pane_id, Lifecycle::Working)
+        } else {
+            None
+        };
+        task_id
+            .and_then(|tid| self.task_resume_working(&tid))
+            .or(ev)
     }
 
     /// Drop the pending decision without answering. `None` when absent.
@@ -869,7 +884,7 @@ impl Store {
             // lifecycle done with no report: park in input_required here, in
             // the same write, instead of a working state nobody will end.
             // Idle is not turn end.
-            if let Some(evidence) = Self::decision_evidence(&self.panes, task) {
+            if let Some(evidence) = Self::blocker_evidence(&self.panes, &self.progress, task) {
                 task.transition_to(TaskState::InputRequired, now).ok()?;
                 task.status_reason = Some(evidence);
             } else if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
@@ -891,6 +906,21 @@ impl Store {
             .pending_decision
             .as_ref()?;
         Some(json!({"reason": "decision_required", "decision_id": decision.id}))
+    }
+
+    fn blocker_evidence(
+        panes: &HashMap<String, Pane>,
+        progress: &HashMap<String, PaneProgress>,
+        task: &Task,
+    ) -> Option<Value> {
+        Self::decision_evidence(panes, task).or_else(|| {
+            let pane_id = task.pane_id.as_deref()?;
+            let pane = panes.get(pane_id)?;
+            let source = progress.get(pane_id)?;
+            (pane.lifecycle == Lifecycle::Blocked).then(
+                || json!({"reason": if source.hooked { "hook_blocked" } else { "screen_blocked" }}),
+            )
+        })
     }
 
     /// Evidence for a turn that ended with no report: the worker pane
@@ -994,7 +1024,7 @@ impl Store {
                 .as_deref()
                 .and_then(|pid| self.panes.get(pid))
                 .is_some_and(|p| matches!(p.lifecycle, Lifecycle::Working | Lifecycle::Blocked));
-            if let Some(evidence) = Self::decision_evidence(&self.panes, task) {
+            if let Some(evidence) = Self::blocker_evidence(&self.panes, &self.progress, task) {
                 task.transition_to(TaskState::InputRequired, now).ok()?;
                 task.status_reason = Some(evidence);
                 (task.clone(), prev_state)
@@ -1119,6 +1149,36 @@ impl Store {
         Some(ev)
     }
 
+    /// A hook blocker supersedes stale liveness evidence, but keeps finished
+    /// turn messages and structured decisions authoritative.
+    pub fn task_input_required_on_hook_blocker(&mut self, task_id: &str) -> Option<StoredEvent> {
+        let evidence = json!({"reason": "hook_blocked"});
+        let task = self.tasks.get_mut(task_id)?;
+        let now = Utc::now();
+        let prev_state = if task.state == TaskState::InputRequired {
+            if !matches!(
+                task.status_reason
+                    .as_ref()
+                    .and_then(|reason| reason.get("reason"))
+                    .and_then(Value::as_str),
+                Some("worker_silent" | SUBMIT_UNCONFIRMED | "screen_blocked")
+            ) {
+                return None;
+            }
+            task.status_reason = Some(evidence);
+            task.updated_at = now;
+            None
+        } else {
+            let prev = task.state;
+            if !task.apply_turn_ended_without_report(Some(evidence), now) {
+                return None;
+            }
+            Some(prev)
+        };
+        let task = task.clone();
+        Some(self.emit_task_updated(&task, prev_state))
+    }
+
     pub fn task_for_pane(&self, pane_id: &str) -> Option<&Task> {
         self.tasks
             .values()
@@ -1141,9 +1201,18 @@ impl Store {
                 return None;
             }
             let now = Utc::now();
-            // A follow-up whose Stop arrives before the resume commits must
-            // land: refresh the turn-end evidence instead of going working.
-            if let Some(evidence) = Self::turn_end_evidence(&self.panes, task) {
+            // A follow-up can reach another blocker or end before its submit
+            // commits. Preserve that evidence instead of going working.
+            if let Some(evidence) = Self::blocker_evidence(&self.panes, &self.progress, task)
+                .or_else(|| Self::turn_end_evidence(&self.panes, task))
+            {
+                if matches!(
+                    evidence.get("reason").and_then(Value::as_str),
+                    Some("screen_blocked" | "hook_blocked")
+                ) && task.status_reason.as_ref() == Some(&evidence)
+                {
+                    return None;
+                }
                 task.status_reason = Some(evidence);
                 task.updated_at = now;
                 (task.clone(), None)
@@ -1767,6 +1836,25 @@ mod tests {
         assert_eq!(ev.name, "task.updated");
         assert_eq!(store.tasks[&task_id].state, TaskState::Working);
 
+        let mut pane = pane_with(Attention::None, 0);
+        pane.id = "p1".into();
+        store.panes.insert(pane.id.clone(), pane.clone());
+        store.publish_pane(&pane, false);
+        use signaltty_agent::screen::ScreenState::{Blocked, Idle, Working};
+        store.apply_screen_state("p1", Blocked);
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        let seq = store.seq;
+        assert!(store.apply_screen_state("p1", Blocked).is_empty());
+        assert_eq!(store.seq, seq);
+        store.apply_screen_state("p1", Idle);
+        // A follow-up submit accepts a new blocker as activity before trying
+        // to resume the interrupted task.
+        store.apply_screen_state("p1", Blocked);
+        assert!(store.task_resume_working(&task_id).is_none());
+        assert_eq!(store.tasks[&task_id].state, TaskState::InputRequired);
+        store.apply_screen_state("p1", Working);
+        assert_eq!(store.tasks[&task_id].state, TaskState::Working);
+
         // 3. Turn end without report
         let ev = store
             .task_input_required_on_turn_end(
@@ -1789,6 +1877,15 @@ mod tests {
         assert_eq!(res_ev.name, "task.result");
         assert_eq!(upd_ev.name, "task.updated");
         assert_eq!(store.tasks[&task_id].state, TaskState::Completed);
+        let accepted = store.tasks[&task_id].clone();
+        let seq = store.seq;
+        store.apply_screen_state("p1", Blocked);
+        store.apply_screen_state("p1", Working);
+        assert_eq!(store.tasks[&task_id].state, TaskState::Completed);
+        assert_eq!(store.tasks[&task_id].result, accepted.result);
+        assert!(!store.events.iter().any(|event| {
+            event.seq > seq && event.name == signaltty_proto::event::TASK_UPDATED
+        }));
 
         // Report on terminal task is refused
         assert!(store

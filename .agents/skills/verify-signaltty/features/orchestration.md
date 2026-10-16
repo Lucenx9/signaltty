@@ -108,7 +108,14 @@ arguments. Existing sessions keep their recorded launch mode.
 Codex resume arguments after snapshot restoration, default same-provider native
 worker inheritance, explicit worker argv and cross-provider precedence. Pure
 argument tests in signaltty-agent cover all three native prefixes and standard
-resume shapes; Antigravity workers still require explicit argv.
+resume shapes. Antigravity defaults and bare explicit argv inherit from automatic
+Codex/Claude/Antigravity parents; worker options remain literal. The
+`antigravity_*permission*` tests in screen_detection exercise a real PTY and
+`task.wait` across screen-blocked and resumed states, including initial-submit
+and follow-up submit races. The `screen_blocker_*` tests verify raw PTY input:
+an existing blocker receives no follow-up bytes, and a blocker reached after
+paste receives no delayed Enter. Store tests also verify duplicate classifications
+emit no events and accepted terminal results retain priority. The bundled 1.4.0 permission fixture verifies screenshot text classification.
 
 The isolated ignored GTK tests
 `app::tests::automatic_agent_permissions_are_persistent_native_controls` and
@@ -117,3 +124,21 @@ exercise preference save/load, native light/dark controls and actual form
 submission arguments. Full verification runs both; the first emits
 `automatic-permissions-light.png` and `automatic-permissions-dark.png`. These
 fixtures do not authenticate providers or certify paid turns or remote installations.
+
+
+## Native hook interruptions without decisions
+
+`cargo test -p signaltty-server --test orchestrator_tasks hook_blockers_without_structured_decisions_park_worker_tasks`
+uses real IPC and isolated PTYs for Claude permission/idle notifications and legacy
+Codex permission payloads. It verifies `input_required`, immediate settled waits,
+initial-submit and real follow-up pane.submit reconciliation, duplicate
+interruption stability and explicit prompt resumption. Existing native permission tests verify delivered answers still resume
+and disconnect/timeout/session loss never grant a request. These fixtures simulate
+provider hooks; they do not certify authenticated live provider telemetry.
+
+`hook_blocker_refreshes_a_silent_interrupt_without_losing_turn_end_evidence`
+verifies that a real watchdog interruption gains current hook evidence and
+resumes on a new prompt, while duplicate hooks and Stop followed by idle
+notifications preserve the appropriate task timestamp and turn-end message.
+It also verifies that tool traffic keeps that interruption and a subsequent
+explicit prompt resumes the task.

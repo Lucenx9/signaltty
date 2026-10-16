@@ -2379,6 +2379,36 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             }
         }
     }
+    // Reconcile blockers after decision ingestion. Only an explicit new prompt
+    // resumes older turn-end evidence; overlapping tool traffic cannot do so.
+    {
+        let mut s = ctx.store.write().unwrap();
+        let blocked = s.panes.get(&pid).is_some_and(|pane| {
+            pane.lifecycle == Lifecycle::Blocked && pane.pending_decision.is_none()
+        });
+        let new_prompt = hook.eq_ignore_ascii_case("UserPromptSubmit")
+            && s.panes
+                .get(&pid)
+                .is_some_and(|pane| pane.lifecycle == Lifecycle::Working);
+        let task_id = s.task_for_pane(&pid).map(|task| task.id.clone());
+        if let Some(task_id) = task_id {
+            if blocked {
+                s.task_input_required_on_hook_blocker(&task_id);
+            } else if new_prompt
+                && s.tasks.get(&task_id).is_some_and(|task| {
+                    matches!(
+                        task.status_reason
+                            .as_ref()
+                            .and_then(|reason| reason.get("reason"))
+                            .and_then(Value::as_str),
+                        Some("turn_ended_without_report" | "worker_silent")
+                    )
+                })
+            {
+                s.task_resume_working(&task_id);
+            }
+        }
+    }
     if let Some(message) = decision.message.or(decision_prompt) {
         let mut s = ctx.store.write().unwrap();
         if let Some(p) = s.panes.get_mut(&pid) {

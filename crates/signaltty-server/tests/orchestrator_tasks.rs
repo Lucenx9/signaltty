@@ -7,7 +7,347 @@ use signaltty_core::model::{
     Contract, Disposition, DispositionOutcome, Relationship, Task, TaskResult, TaskResultStatus,
 };
 use signaltty_core::state::TaskState;
-use signaltty_testkit::{FakeAgentPane, TempGitRepo, TestServer};
+use signaltty_testkit::{FakeAgentPane, TempGitRepo, TestClient, TestServer};
+
+#[tokio::test]
+async fn hook_blockers_without_structured_decisions_park_worker_tasks() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    for (agent, hook, payload, during_submit) in [
+        (
+            "claude",
+            "Notification",
+            json!({"notification_type":"permission_prompt", "message":"Approve this command"}),
+            false,
+        ),
+        (
+            "claude",
+            "Notification",
+            json!({"notification_type":"idle_prompt", "message":"Choose an option"}),
+            false,
+        ),
+        (
+            "codex",
+            "PermissionRequest",
+            json!({"prompt":"Approve this command"}),
+            false,
+        ),
+        (
+            "claude",
+            "Notification",
+            json!({"notification_type":"permission_prompt", "message":"Approve initial command"}),
+            true,
+        ),
+    ] {
+        let started = c
+            .call(
+                "task.start",
+                json!({
+                    "repo":repo.path(), "agent":agent, "argv":["cat"],
+                    "contract":{"objective":"Review harness interruptions"},
+                    "submit_delay_ms":10,
+                }),
+            )
+            .await
+            .unwrap();
+        let task_id = started["task"]["id"].as_str().unwrap();
+        let pane_id = started["pane"]["id"].as_str().unwrap();
+        let worktree = PathBuf::from(started["task"]["worktree_path"].as_str().unwrap());
+        let driver = FakeAgentPane::new(pane_id, agent);
+        driver.session_start(&mut c, &worktree).await.unwrap();
+        wait_for_worker_prompt(&mut c, pane_id, "Review harness interruptions").await;
+        if !during_submit {
+            driver.prompt_submit(&mut c).await.unwrap();
+            c.call(
+                "task.wait",
+                json!({"task_id":task_id,"until":"working","timeout_s":5}),
+            )
+            .await
+            .unwrap();
+        }
+        let mut payload = payload;
+        payload["session_id"] = json!(driver.session_id);
+        c.call(
+            "hook-event",
+            json!({"pane_id":pane_id,"agent":agent,"event":hook,"payload":payload}),
+        )
+        .await
+        .unwrap();
+        let pane = c
+            .call("pane.get", json!({"pane_id":pane_id}))
+            .await
+            .unwrap();
+        assert_eq!(pane["pane"]["lifecycle"], "blocked");
+        assert!(pane["pane"]["pending_decision"].is_null());
+        c.call(
+            "task.wait",
+            json!({"task_id":task_id,"until":"settled","timeout_s":5}),
+        )
+        .await
+        .unwrap();
+        let task = c
+            .call("task.get", json!({"task_id":task_id}))
+            .await
+            .unwrap();
+        assert_eq!(task["task"]["state"], "input_required", "{agent} {hook}");
+        assert_eq!(task["task"]["status_reason"]["reason"], "hook_blocked");
+        c.call(
+            "task.wait",
+            json!({"task_id":task_id,"until":"settled","timeout_s":1}),
+        )
+        .await
+        .unwrap();
+        let interrupted_at = task["task"]["updated_at"].clone();
+        c.call(
+            "hook-event",
+            json!({"pane_id":pane_id,"agent":agent,"event":hook,"payload":payload}),
+        )
+        .await
+        .unwrap();
+        let repeated = c
+            .call("task.get", json!({"task_id":task_id}))
+            .await
+            .unwrap();
+        assert_eq!(repeated["task"]["updated_at"], interrupted_at);
+        driver.prompt_submit(&mut c).await.unwrap();
+        let task = c
+            .call("task.get", json!({"task_id":task_id}))
+            .await
+            .unwrap();
+        assert_eq!(task["task"]["state"], "working");
+        if payload["notification_type"] == "permission_prompt" && !during_submit {
+            driver.stop(&mut c).await.unwrap();
+            let mut submit_client = srv.client().await;
+            let submit_pane = pane_id.to_string();
+            let submit = tokio::spawn(async move {
+                submit_client
+                    .call_raw_resp(
+                        "pane.submit",
+                        json!({
+                            "pane_id":submit_pane,"text":"Follow-up harness review",
+                            "submit_delay_ms":1500,"stall_timeout_s":5,
+                        }),
+                    )
+                    .await
+            });
+            wait_for_worker_prompt(&mut c, pane_id, "Follow-up harness review").await;
+            c.call(
+                "hook-event",
+                json!({"pane_id":pane_id,"agent":agent,"event":hook,"payload":payload}),
+            )
+            .await
+            .unwrap();
+            let response = submit.await.unwrap().unwrap();
+            let error = response
+                .error
+                .expect("permission arrived before delayed Enter");
+            assert_eq!(error.code, signaltty_proto::code::AGENT_BUSY);
+            assert_eq!(
+                error.details,
+                json!({"stage":"delayed_enter", "paste_delivered":true})
+            );
+            let task = c
+                .call("task.get", json!({"task_id":task_id}))
+                .await
+                .unwrap();
+            assert_eq!(task["task"]["state"], "input_required");
+            assert_eq!(
+                task["task"]["status_reason"]["reason"],
+                "turn_ended_without_report"
+            );
+        }
+        c.call("task.cancel", json!({"task_id":task_id}))
+            .await
+            .unwrap();
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
+async fn hook_blocker_refreshes_a_silent_interrupt_without_losing_turn_end_evidence() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start_with_env(&[("SIGNALTTY_WORKER_SILENT_TIMEOUT_S", "1")]).await;
+    let mut c = srv.client().await;
+    let started = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path(), "agent": "claude", "argv": ["cat"],
+                "contract": {"objective": "Refresh stale interruption"}, "submit_delay_ms": 10,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = started["task"]["id"].as_str().unwrap();
+    let pane_id = started["pane"]["id"].as_str().unwrap();
+    let worktree = PathBuf::from(started["task"]["worktree_path"].as_str().unwrap());
+    let driver = FakeAgentPane::new(pane_id, "claude");
+    driver.session_start(&mut c, &worktree).await.unwrap();
+    wait_for_worker_prompt(&mut c, pane_id, "Refresh stale interruption").await;
+    driver.prompt_submit(&mut c).await.unwrap();
+    let silent = c
+        .call(
+            "task.wait",
+            json!({
+                "task_id": task_id, "until": "input_required", "timeout_s": 5,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(silent["satisfied"], true);
+    let before = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(before["task"]["status_reason"]["reason"], "worker_silent");
+    let notification = |kind| {
+        json!({
+            "pane_id":pane_id, "agent":"claude", "event":"Notification",
+            "payload":{"session_id": driver.session_id, "notification_type":kind},
+        })
+    };
+    c.call("hook-event", notification("permission_prompt"))
+        .await
+        .unwrap();
+    let blocked = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(blocked["task"]["state"], "input_required");
+    assert_eq!(
+        blocked["task"]["status_reason"],
+        json!({"reason":"hook_blocked"})
+    );
+    c.call("hook-event", notification("permission_prompt"))
+        .await
+        .unwrap();
+    let repeated = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        repeated["task"]["updated_at"],
+        blocked["task"]["updated_at"]
+    );
+    driver.prompt_submit(&mut c).await.unwrap();
+    let resumed = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(resumed["task"]["state"], "working");
+    assert!(resumed["task"]["status_reason"].is_null());
+
+    c.call(
+        "hook-event",
+        json!({
+            "pane_id":pane_id,"agent":"claude","event":"Stop",
+            "payload":{"session_id":driver.session_id, "last_assistant_message":"Review complete, report pending"},
+        }),
+    )
+    .await
+    .unwrap();
+    let ended = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        ended["task"]["status_reason"]["reason"],
+        "turn_ended_without_report"
+    );
+    assert_eq!(
+        ended["task"]["status_reason"]["last_message"],
+        "Review complete, report pending"
+    );
+    c.call("hook-event", notification("idle_prompt"))
+        .await
+        .unwrap();
+    let idle = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        idle["task"], ended["task"],
+        "idle notification must preserve the finished turn evidence"
+    );
+    c.call(
+        "hook-event",
+        json!({
+            "pane_id":pane_id, "agent":"claude", "event":"PreToolUse",
+            "payload":{"session_id":driver.session_id,"tool_name":"Read"},
+        }),
+    )
+    .await
+    .unwrap();
+    let tool = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        tool["task"], idle["task"],
+        "tool traffic cannot resume a blocked turn"
+    );
+    driver.prompt_submit(&mut c).await.unwrap();
+    let new_turn = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        new_turn["task"]["state"], "working",
+        "an explicit new prompt resumes after the idle notification"
+    );
+    assert!(new_turn["task"]["status_reason"].is_null());
+    c.call(
+        "hook-event",
+        json!({
+            "pane_id":pane_id,"agent":"claude","event":"PermissionRequest",
+            "payload":{"session_id":driver.session_id},
+            "decision":{"id":"keep-decision","prompt":"Allow command?",
+                "options":[{"id":"once","label":"Allow once"}]},
+        }),
+    )
+    .await
+    .unwrap();
+    let approval = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        approval["task"]["status_reason"]["reason"],
+        "decision_required"
+    );
+    driver.prompt_submit(&mut c).await.unwrap();
+    let prompted = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        prompted["task"], approval["task"],
+        "new prompt reconciliation must preserve decision recovery policy"
+    );
+    srv.shutdown().await;
+}
+
+async fn wait_for_worker_prompt(c: &mut TestClient, pane_id: &str, text: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let read = c
+            .call(
+                "pane.read",
+                json!({"pane_id":pane_id,"mode":"tail","lines":100}),
+            )
+            .await
+            .unwrap();
+        if read["text"].as_str().unwrap().contains(text) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "prompt not pasted: {text}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
 
 #[tokio::test]
 async fn legacy_snapshot_without_tasks_or_lineage_loads_cleanly() {

@@ -1080,4 +1080,21 @@ mod tests {
             "idle_fallback",
         );
     }
+
+    #[test]
+    fn antigravity_1_4_command_permission_is_blocked() {
+        let screen = "Antigravity CLI 1.4.0\n\
+            Command\n\
+            ──────────────────────────────\n\
+            Requesting permission for:\n\
+              command -v codexbar && codexbar --version\n\
+            Run this command?\n\
+            > 1. Yes, run command\n\
+              2. No, cancel\n\
+            ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\n\
+            esc to cancel                                      Gemini 4 Argon · medium\n";
+        for process in ["agy", "antigravity", "antigravity-cli"] {
+            assert_program(process, screen, ScreenState::Blocked, "permission_prompt");
+        }
+    }
 }

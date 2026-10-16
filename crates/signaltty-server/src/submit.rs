@@ -109,13 +109,13 @@ impl From<SubmitError> for (String, String) {
 ///    whole, before the readiness gate and before any PTY write.
 /// 3. Gate on pane lifecycle (`idle` or `done`) and live state.
 ///    - If `!allow_pending_task` and worker pane is still `pending`, refuse `AGENT_NOT_READY`.
-///    - If working/blocked, refuse `AGENT_BUSY`.
+///    - If working or screen-blocked, refuse `AGENT_BUSY`. Hooked idle-input prompts may accept.
 ///    - If unknown/failed, refuse `AGENT_NOT_READY`.
 ///    - If exited, refuse `PANE_EXITED`.
 /// 4. Record pre-submit `WaitBaseline`.
 /// 5. Write bracketed paste (`\x1b[200~text\x1b[201~`).
 /// 6. Sleep `submit_delay`.
-/// 7. Recheck live/decision state and write `\r`; a new decision returns
+/// 7. Recheck live/blocker/decision state and write `\r`; a new blocker returns
 ///    `AGENT_BUSY` with `paste_delivered: true`, leaving it unanswered.
 /// 8. Activity gate (if `check_activity`): wait up to `stall_timeout` for a newer `working` or `blocked` transition.
 /// 9. If worker pane belongs to an `input_required` task, resume it to `working`.
@@ -192,8 +192,9 @@ pub async fn submit_prompt(
                 ));
             }
             Lifecycle::Blocked => {
-                let can_submit =
-                    pane.attention == Attention::InputRequired && pane.pending_decision.is_none();
+                let can_submit = pane.attention == Attention::InputRequired
+                    && pane.pending_decision.is_none()
+                    && s.is_hooked(pane_id);
                 if !can_submit {
                     return Err(SubmitError::new(
                         code::AGENT_BUSY,
@@ -255,11 +256,12 @@ pub async fn submit_prompt(
                 format!("pane '{pane_id}' has exited"),
             ));
         }
-        // A permission may arrive while the TUI is settling the paste. Enter
-        // now belongs to that decision, not to the prompt we already wrote.
+        // A screen blocker or decision may arrive while the TUI settles the
+        // paste. Enter could answer that gate instead of submitting the prompt.
         if pane.pending_decision.is_some()
             || pane.attention == Attention::PermissionRequired
-            || (pane.lifecycle == Lifecycle::Blocked && pane.attention != Attention::InputRequired)
+            || (pane.lifecycle == Lifecycle::Blocked
+                && (pane.attention != Attention::InputRequired || !s.is_hooked(pane_id)))
         {
             return Err(SubmitError::with_details(
                 code::AGENT_BUSY,
