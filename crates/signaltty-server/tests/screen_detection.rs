@@ -147,7 +147,6 @@ async fn antigravity_task_permission(block_on_submit: bool, followup_blocker: bo
     let srv = TestServer::start().await;
     let directory = srv.socket.parent().unwrap();
     let ready = directory.join("ready");
-    let bootstrap = directory.join("bootstrap");
     let working = directory.join("working");
     let blocked = directory.join("blocked");
     let resumed = directory.join("resumed");
@@ -180,7 +179,6 @@ def emit(text):
     sys.stdout.write(text)
     sys.stdout.flush()
 
-wait_for({bootstrap})
 emit("⠙ Starting\n")
 wait_for({ready})
 emit({idle})
@@ -194,7 +192,6 @@ emit({resume_output})
 for line in sys.stdin:
     pass
 "#,
-            bootstrap = json!(bootstrap),
             ready = json!(ready),
             idle = json!(idle),
             working = json!(working),
@@ -221,19 +218,21 @@ for line in sys.stdin:
         .unwrap();
     let pane_id = start["pane"]["id"].as_str().unwrap();
     let task_id = start["task"]["id"].as_str().unwrap();
-    if block_on_submit {
-        // Classify startup output only after the first periodic /proc scan.
-        tokio::time::sleep(std::time::Duration::from_secs(11)).await;
-    }
-    std::fs::write(&bootstrap, b"").unwrap();
     wait(&mut c, pane_id, "working", 5).await.unwrap();
     if block_on_submit {
+        // Keep startup busy across the first periodic /proc scan.
+        tokio::time::sleep(std::time::Duration::from_secs(11)).await;
         let explanation = c
             .call("pane.explain", json!({"pane_id":pane_id}))
             .await
             .unwrap();
         assert_eq!(explanation["process"], "agy");
     }
+    let pending = c
+        .call("task.get", json!({"task_id":task_id}))
+        .await
+        .unwrap();
+    assert_eq!(pending["task"]["state"], "pending");
     std::fs::write(&ready, b"").unwrap();
     wait(&mut c, pane_id, "done", 5).await.unwrap();
     // Let the server paste the prompt before the fixture starts its turn.

@@ -122,11 +122,11 @@ async fn hook_blockers_without_structured_decisions_park_worker_tasks() {
             let submit_pane = pane_id.to_string();
             let submit = tokio::spawn(async move {
                 submit_client
-                    .call(
+                    .call_raw_resp(
                         "pane.submit",
                         json!({
                             "pane_id":submit_pane,"text":"Follow-up harness review",
-                            "submit_delay_ms":10,"stall_timeout_s":5,
+                            "submit_delay_ms":1500,"stall_timeout_s":5,
                         }),
                     )
                     .await
@@ -138,14 +138,24 @@ async fn hook_blockers_without_structured_decisions_park_worker_tasks() {
             )
             .await
             .unwrap();
-            let outcome = submit.await.unwrap().unwrap();
-            assert_eq!(outcome["lifecycle"], "blocked");
+            let response = submit.await.unwrap().unwrap();
+            let error = response
+                .error
+                .expect("permission arrived before delayed Enter");
+            assert_eq!(error.code, signaltty_proto::code::AGENT_BUSY);
+            assert_eq!(
+                error.details,
+                json!({"stage":"delayed_enter", "paste_delivered":true})
+            );
             let task = c
                 .call("task.get", json!({"task_id":task_id}))
                 .await
                 .unwrap();
             assert_eq!(task["task"]["state"], "input_required");
-            assert_eq!(task["task"]["status_reason"]["reason"], "hook_blocked");
+            assert_eq!(
+                task["task"]["status_reason"]["reason"],
+                "turn_ended_without_report"
+            );
         }
         c.call("task.cancel", json!({"task_id":task_id}))
             .await
