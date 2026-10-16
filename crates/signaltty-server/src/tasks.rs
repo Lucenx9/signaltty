@@ -837,8 +837,9 @@ pub fn h_task_list(ctx: &Ctx, req: &Request, params: &Value) -> (Response, ConnE
         .collect();
 
     tasks.sort_by_key(|t| t.created_at);
+    // Tasks are never pruned: keep the newest `limit`, oldest first.
     let limit = p.limit.unwrap_or(100).min(1000);
-    tasks.truncate(limit);
+    tasks.drain(..tasks.len().saturating_sub(limit));
 
     let now = Utc::now();
     let views: Vec<_> = tasks.iter().map(|task| task_view(task, now)).collect();
