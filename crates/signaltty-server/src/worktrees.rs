@@ -205,16 +205,23 @@ async fn registered(cwd: &str) -> Result<Vec<Worktree>, ParamError> {
     let bytes = git(cwd, &["worktree", "list", "--porcelain", "-z"]).await?;
     let mut trees = Vec::new();
     let mut current: Option<Worktree> = None;
+    let mut first = true;
     for field in bytes.split(|b| *b == 0) {
         if let Some(path) = field.strip_prefix(b"worktree ") {
             if let Some(tree) = current.take() {
                 trees.push(tree);
             }
+            let main = std::mem::replace(&mut first, false);
+            // A checkout at a non-UTF-8 path can't be listed or opened; skip it
+            // rather than failing every worktree operation on the repository.
+            let Ok(path) = std::str::from_utf8(path) else {
+                continue;
+            };
             current = Some(Worktree {
-                path: utf8(path)?,
+                path: path.to_owned(),
                 branch: None,
                 head: None,
-                main: trees.is_empty(),
+                main,
                 bare: false,
                 locked: false,
                 prunable: false,
@@ -609,6 +616,51 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[tokio::test]
+    async fn non_utf8_checkout_does_not_hide_the_other_worktrees() {
+        use std::os::unix::ffi::OsStrExt;
+        let repo = HookRepository::new().await;
+        std::fs::remove_file(repo.0.join(".git/hooks/post-checkout")).unwrap();
+        let cwd = repo.0.to_str().unwrap();
+        let odd = repo.0.join(std::ffi::OsStr::from_bytes(b"odd-\xff"));
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo.0)
+            .args(["worktree", "add", "-q", "-b", "odd"])
+            .arg(&odd)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let linked = repo.0.join("linked");
+        git(
+            cwd,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "linked",
+                linked.to_str().unwrap(),
+            ],
+        )
+        .await
+        .unwrap();
+
+        let trees = registered(cwd)
+            .await
+            .expect("one odd path must not fail the list");
+        let paths: Vec<_> = trees.iter().map(|t| (t.path.as_str(), t.main)).collect();
+        let main = repo.0.canonicalize().unwrap();
+        let linked = linked.canonicalize().unwrap();
+        assert_eq!(
+            paths,
+            [
+                (main.to_str().unwrap(), true),
+                (linked.to_str().unwrap(), false)
+            ]
+        );
     }
 
     #[tokio::test]
