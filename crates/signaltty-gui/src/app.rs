@@ -366,6 +366,9 @@ impl App {
         crumb_button
             .update_property(&[gtk4::accessible::Property::Description("Workspace Details")]);
         crumb_button.set_sensitive(false);
+        // No workspace yet: the sidebar wordmark already names the app, and the
+        // status page describes the empty state — hide the redundant title.
+        crumb_button.set_visible(false);
         let title_lane = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         title_lane.add_css_class("workspace-title-lane");
         title_lane.append(&crumb_button);
@@ -1311,6 +1314,7 @@ impl App {
                 self.title.set_tooltip_text(None);
                 self.title_mark.set_visible(false);
                 self.crumb_button.set_sensitive(false);
+                self.crumb_button.set_visible(false);
                 self.crumb_button
                     .set_tooltip_text(Some("Workspace Details"));
                 self.crumb_button
@@ -1568,6 +1572,7 @@ impl App {
         self.follow_changes();
         sidebar::set_mark(&self.title_mark, &ws.id, &ws.name);
         self.title_mark.set_visible(true);
+        self.crumb_button.set_visible(true);
         self.crumb_button.set_sensitive(true);
         let agents = sidebar::summarize(&ws, &snapshot.panes).agents;
         let place = tilde(&ws.cwd);
