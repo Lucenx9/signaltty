@@ -17,3 +17,15 @@ toolkit dependency, GUI behavior or state schema is required.
 Validation: targeted argument and PTY regression tests, then the full shared
 verification runner. Paid provider turns and changes to running workers are out
 of scope. Verification evidence remains under ignored target/verification.
+
+## Process-refresh fixture correction
+
+A combined full run exposed an intermittent initial spinner timeout before
+prompt submission. A delayed-start probe reproduced it deterministically:
+`pane.explain` reported `process: sleep`, no rules, and the visible Starting
+spinner. The shell fixture's polling child replaced the scoped program during
+/proc refresh. The executable `agy` fixture now uses Python and in-process
+marker waits while emitting the same terminal text. The initial-submit case
+releases its first screen after a periodic process scan and asserts the program
+remains `agy`. This probe failed with the shell fixture and passes with Python;
+it changes no production classification or timeout.

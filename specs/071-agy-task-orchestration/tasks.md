@@ -6,3 +6,5 @@
 - [x] T004 [FR-005] Verify targeted regressions and independent reviews; document the full verification command and provider proof limits in the plan. Full delivery proof is the verification runner report.
 
 - [x] T005 [FR-006] Reproduce follow-up and delayed-Enter writes into screen blockers, refuse both gates and verify raw PTY bytes plus existing hook idle-input behavior.
+
+- [x] T006 [FR-005] Reproduce startup loss after process refresh and keep the executable Antigravity fixture identifiable through in-process marker waits.
