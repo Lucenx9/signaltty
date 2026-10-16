@@ -142,3 +142,115 @@ async fn default_worker_inherits_automatic_mode_but_explicit_and_other_providers
     }
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn antigravity_workers_inherit_the_automatic_parent_choice() {
+    let repo = TempGitRepo::new();
+    let bin = repo.path().join("fixture-bin");
+    let codex = agent_fixture(&bin, "codex");
+    for name in ["agy", "antigravity", "antigravity-cli"] {
+        agent_fixture(&bin, name);
+    }
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let server = TestServer::start_with_env(&[("PATH", &path)]).await;
+    let mut client = server.client().await;
+    let ws = client
+        .call("workspace.create", json!({"cwd": repo.path()}))
+        .await
+        .unwrap();
+    let parent = client
+        .call(
+            "pane.spawn",
+            json!({
+                "workspace_id": ws["workspace"]["id"],
+                "argv": [codex, "--dangerously-bypass-approvals-and-sandbox"],
+            }),
+        )
+        .await
+        .unwrap();
+    let parent_id = parent["pane"]["id"].as_str().unwrap();
+    for (agent, explicit, parent, expected) in [
+        (
+            "agy",
+            None,
+            Some(parent_id),
+            json!([
+                "agy",
+                "--dangerously-skip-permissions",
+                "--mode",
+                "accept-edits"
+            ]),
+        ),
+        (
+            "antigravity",
+            None,
+            Some(parent_id),
+            json!([
+                "antigravity",
+                "--dangerously-skip-permissions",
+                "--mode",
+                "accept-edits"
+            ]),
+        ),
+        (
+            "antigravity-cli",
+            None,
+            Some(parent_id),
+            json!([
+                "antigravity-cli",
+                "--dangerously-skip-permissions",
+                "--mode",
+                "accept-edits"
+            ]),
+        ),
+        (
+            "agy",
+            Some(json!([bin.join("agy")])),
+            Some(parent_id),
+            json!([
+                bin.join("agy"),
+                "--dangerously-skip-permissions",
+                "--mode",
+                "accept-edits"
+            ]),
+        ),
+        (
+            "agy",
+            Some(json!(["agy", "--mode", "plan"])),
+            Some(parent_id),
+            json!(["agy", "--mode", "plan"]),
+        ),
+        ("agy", None, None, json!(["agy"])),
+    ] {
+        let mut params = json!({"repo":repo.path(), "agent":agent, "parent_pane_id":parent, "contract":{"objective":"Review without unnecessary confirmations"}});
+        if let Some(argv) = explicit {
+            params["argv"] = argv;
+        }
+        let start = client.call("task.start", params).await.unwrap();
+        assert_eq!(start["pane"]["argv"], expected);
+        assert_eq!(start["task"]["worker_cmd"], expected);
+        assert_eq!(start["pane"]["agent"]["kind"], "generic");
+        if expected
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg == "--dangerously-skip-permissions")
+        {
+            wait_for_arg(
+                &mut client,
+                start["pane"]["id"].as_str().unwrap(),
+                "--dangerously-skip-permissions",
+            )
+            .await;
+        }
+        client
+            .call("task.cancel", json!({"task_id":start["task"]["id"]}))
+            .await
+            .unwrap();
+    }
+    server.shutdown().await;
+}

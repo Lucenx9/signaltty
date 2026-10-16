@@ -291,7 +291,10 @@ program); copy the bundled file to adjust it.
 `working` → `done` + `unread`, after `blocked` → `idle`, otherwise nothing.
 Leaving `blocked`, or the first hook taking the pane over, withdraws the
 `input_required` a screen rule raised. No match changes nothing. A bad state, region, line count or regex rejects the
-manifest at load. See ADR-0024.
+manifest at load. A screen-blocked task worker also moves its task to
+`input_required` with `reason: screen_blocked`, including during the initial
+submit. A new working/finished turn resolves that screen interruption while
+native decisions and accepted results stay authoritative. See ADR-0024.
 
 Grok remains a generic agent with detection rules and launcher discovery.
 Grok currently emits OSC progress only for recognized terminal brands
@@ -484,8 +487,12 @@ Standard `codex resume ID`, `claude --resume ID` and self-reported
 `agy --conversation ID` commands, including matching Antigravity alias commands, retain this generated prefix exactly once.
 Explicit resume options win. A `task.start` using `agent` without `argv`
 inherits the prefix from its recorded `parent_pane_id` only for the same supported
-native provider, Codex or Claude. Antigravity workers still require explicit argv.
-Explicit worker argv and different providers are unchanged. Arbitrary
+native provider, Codex or Claude. Antigravity workers accept `agent: agy`,
+`antigravity` or `antigravity-cli` without argv. These defaults and bare explicit
+Antigravity argv inherit from an automatic Codex, Claude or Antigravity parent.
+Worker options such as `--mode plan`, `--sandbox` or `--model` remain literal;
+include the native automatic flags explicitly when combining them with options.
+Other providers retain their existing same-provider inheritance. Arbitrary
 initial provider flags and runtime permission changes inside a TUI are not inferred.
 
 The setting affects new launches. Unchecking it leaves an existing session's
@@ -493,4 +500,5 @@ recorded mode intact for resume. Running processes and pending decisions are
 unchanged; Once/Deny still serves sessions using provider-managed approvals.
 Authentication, hook trust and managed provider restrictions remain native.
 No provider configuration or live permission request is rewritten.
-See [ADR-0036](adr/0036-automatic-agent-permissions.md).
+See [ADR-0036](adr/0036-automatic-agent-permissions.md) and
+[ADR-0041](adr/0041-antigravity-task-orchestration.md).

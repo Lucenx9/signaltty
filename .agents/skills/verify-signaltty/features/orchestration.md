@@ -108,7 +108,12 @@ arguments. Existing sessions keep their recorded launch mode.
 Codex resume arguments after snapshot restoration, default same-provider native
 worker inheritance, explicit worker argv and cross-provider precedence. Pure
 argument tests in signaltty-agent cover all three native prefixes and standard
-resume shapes; Antigravity workers still require explicit argv.
+resume shapes. Antigravity defaults and bare explicit argv inherit from automatic
+Codex/Claude/Antigravity parents; worker options remain literal. The
+`antigravity_*permission*` tests in screen_detection exercise a real PTY and
+`task.wait` across screen-blocked and resumed states, including initial-submit
+and follow-up submit races. Store tests also verify duplicate classifications
+emit no events and accepted terminal results retain priority. The bundled 1.4.0 permission fixture verifies screenshot text classification.
 
 The isolated ignored GTK tests
 `app::tests::automatic_agent_permissions_are_persistent_native_controls` and

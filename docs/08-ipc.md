@@ -121,7 +121,10 @@ Without `after`, an already matching current state succeeds immediately.
 When `task.start` supplies `agent` without `argv`, a same-provider worker
 inherits the native automatic execution prefix recorded in `parent_pane_id`'s
 launch command. Explicit worker argv, unknown parents and other providers remain
-unchanged. See [automatic execution](07-agents.md#automatic-execution).
+unchanged, except bare Antigravity argv also inherit that choice. `agent: agy`,
+`antigravity` and `antigravity-cli` supply default generic workers without argv;
+they inherit from an automatic Codex, Claude or Antigravity parent. Explicit
+worker options remain literal. See [automatic execution](07-agents.md#automatic-execution).
 
 `task.start` requires `agent` or `argv` (else `BAD_PARAMS`) and runs cap →
 base → worktree → spawn synchronously: over-cap starts are refused with
@@ -139,7 +142,9 @@ waits for the worker pane to reach `idle`/`done` (default
 same activity gate: a newer `working` or `blocked` transition within
 `stall_timeout_s` (default 5) moves the task to `working`; a stall (after one Enter retry halfway through the gate) parks it
 at `input_required` with `{reason: submit_unconfirmed, stage: activity_gate}`,
-and the worker turning `working` later resumes it. Closing a worker from
+and the worker turning `working` later resumes it. A screen-blocked worker parks
+the task at `input_required` with `reason: screen_blocked`; new working activity
+resumes this interruption, and `task.wait` with `settled` observes it immediately. Closing a worker from
 `task.finish`/`task.cancel` clears its attention; any pane exit drops
 `input_required`/`permission_required` to `unread`. A repeated `client_request_id` returns the
 existing task and pane instead of creating another; without it retries

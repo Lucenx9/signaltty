@@ -21,6 +21,7 @@ Use `status --feature <slug> --evidence <run>` to inspect current proof.
 | [070-details-reading-polish](070-details-reading-polish/spec.md) | enrolled | [spec.md](070-details-reading-polish/spec.md), [plan.md](070-details-reading-polish/plan.md), [tasks.md](070-details-reading-polish/tasks.md) |  |
 | [070-diff-revision-path-collision](070-diff-revision-path-collision/spec.md) | enrolled | [spec.md](070-diff-revision-path-collision/spec.md), [plan.md](070-diff-revision-path-collision/plan.md), [tasks.md](070-diff-revision-path-collision/tasks.md) |  |
 | [070-vte-terminal-interactions](070-vte-terminal-interactions/spec.md) | enrolled | [spec.md](070-vte-terminal-interactions/spec.md), [plan.md](070-vte-terminal-interactions/plan.md), [tasks.md](070-vte-terminal-interactions/tasks.md) |  |
+| [071-agy-task-orchestration](071-agy-task-orchestration/spec.md) | enrolled | [spec.md](071-agy-task-orchestration/spec.md), [plan.md](071-agy-task-orchestration/plan.md), [tasks.md](071-agy-task-orchestration/tasks.md) |  |
 
 ## Completed
 

@@ -2,7 +2,178 @@
 //! rules classify hook-less panes; hooks always dominate.
 
 use serde_json::{json, Value};
-use signaltty_testkit::{TestClient, TestServer};
+use signaltty_testkit::{TempGitRepo, TestClient, TestServer};
+
+#[tokio::test]
+async fn antigravity_permission_parks_the_task_until_work_resumes() {
+    antigravity_task_permission(false, false).await;
+}
+
+#[tokio::test]
+async fn antigravity_permission_during_initial_submit_parks_the_task() {
+    antigravity_task_permission(true, false).await;
+}
+
+#[tokio::test]
+async fn antigravity_followup_permission_keeps_the_task_interrupted() {
+    antigravity_task_permission(false, true).await;
+}
+
+async fn antigravity_task_permission(block_on_submit: bool, followup_blocker: bool) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let directory = srv.socket.parent().unwrap();
+    let ready = directory.join("ready");
+    let working = directory.join("working");
+    let blocked = directory.join("blocked");
+    let resumed = directory.join("resumed");
+    let followup = directory.join("followup");
+    let agy = directory.join("agy");
+    let busy = r"printf '\033[2J\033[H⠙ Reading files\n'";
+    let idle = r"printf '\033[2J\033[H> \n? for shortcuts\n'";
+    let permission = r"printf '\033[2J\033[HRequesting permission for:\n  command -v codexbar\nRun this command?\n> 1. Yes, run command\n  2. No, cancel\n↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel\n'";
+    let first_activity = if block_on_submit { "" } else { busy };
+    let resume_output = if followup_blocker { idle } else { busy };
+    let after_resume = if followup_blocker {
+        format!(
+            "while [ ! -e '{}' ]; do sleep 0.05; done\n{permission}",
+            followup.display()
+        )
+    } else {
+        String::new()
+    };
+    std::fs::write(
+        &agy,
+        format!(
+            r"#!/bin/sh
+printf '⠙ Starting\n'
+while [ ! -e '{}' ]; do sleep 0.05; done
+{idle}
+while [ ! -e '{}' ]; do sleep 0.05; done
+{first_activity}
+while [ ! -e '{}' ]; do sleep 0.05; done
+{permission}
+while [ ! -e '{}' ]; do sleep 0.05; done
+{resume_output}
+{after_resume}
+while read line; do :; done
+",
+            ready.display(),
+            working.display(),
+            blocked.display(),
+            resumed.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut c = srv.client().await;
+    let start = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path(), "argv": [agy],
+                "contract": {"objective": "Review diagnostics"},
+                "submit_delay_ms": 10, "stall_timeout_s": 10,
+            }),
+        )
+        .await
+        .unwrap();
+    let pane_id = start["pane"]["id"].as_str().unwrap();
+    let task_id = start["task"]["id"].as_str().unwrap();
+    wait(&mut c, pane_id, "working", 5).await.unwrap();
+    std::fs::write(&ready, b"").unwrap();
+    wait(&mut c, pane_id, "done", 5).await.unwrap();
+    // Let the server paste the prompt before the fixture starts its turn.
+    wait_for_screen_text(&mut c, pane_id, "Review diagnostics").await;
+    if block_on_submit {
+        std::fs::write(&blocked, b"").unwrap();
+    }
+    std::fs::write(&working, b"").unwrap();
+    if !block_on_submit {
+        c.call(
+            "task.wait",
+            json!({"task_id": task_id, "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+        std::fs::write(&blocked, b"").unwrap();
+    }
+    wait(&mut c, pane_id, "blocked", 5).await.unwrap();
+    c.call(
+        "task.wait",
+        json!({"task_id": task_id, "until": "settled", "timeout_s": 5}),
+    )
+    .await
+    .unwrap();
+    let task = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(task["task"]["state"], "input_required");
+    assert_eq!(task["task"]["status_reason"]["reason"], "screen_blocked");
+    c.call(
+        "task.wait",
+        json!({"task_id": task_id, "until": "settled", "timeout_s": 1}),
+    )
+    .await
+    .unwrap();
+    std::fs::write(&resumed, b"").unwrap();
+    if followup_blocker {
+        wait(&mut c, pane_id, "idle", 5).await.unwrap();
+        let mut submit_client = srv.client().await;
+        let submit_pane = pane_id.to_string();
+        let submit = tokio::spawn(async move {
+            submit_client
+                .call(
+                    "pane.submit",
+                    json!({
+                        "pane_id": submit_pane, "text": "Follow-up review",
+                        "submit_delay_ms": 10, "stall_timeout_s": 5,
+                    }),
+                )
+                .await
+        });
+        wait_for_screen_text(&mut c, pane_id, "Follow-up review").await;
+        std::fs::write(&followup, b"").unwrap();
+        let outcome = submit.await.unwrap().unwrap();
+        assert_eq!(outcome["lifecycle"], "blocked");
+        let task = c
+            .call("task.get", json!({"task_id": task_id}))
+            .await
+            .unwrap();
+        assert_eq!(task["task"]["state"], "input_required");
+        assert_eq!(task["task"]["status_reason"]["reason"], "screen_blocked");
+    } else {
+        wait(&mut c, pane_id, "working", 5).await.unwrap();
+        let task = c
+            .call("task.get", json!({"task_id": task_id}))
+            .await
+            .unwrap();
+        assert_eq!(task["task"]["state"], "working");
+        assert!(task["task"]["status_reason"].is_null());
+    }
+    srv.shutdown().await;
+}
+
+async fn wait_for_screen_text(c: &mut TestClient, pane_id: &str, text: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let read = c
+            .call("pane.read", json!({"pane_id": pane_id, "mode": "screen"}))
+            .await
+            .unwrap();
+        if read["text"].as_str().unwrap().contains(text) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "screen did not contain {text}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
 
 const RULES: &str = r#"
 [agent]
