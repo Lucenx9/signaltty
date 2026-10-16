@@ -417,12 +417,16 @@ pub(crate) fn spawn_primary_root_backfill(ctx: std::sync::Arc<crate::router::Ctx
                 .arg("-C")
                 .arg(&cwd)
                 .args(["worktree", "list", "--porcelain", "-z"])
-                .kill_on_drop(true);
-            let result =
-                tokio::time::timeout(std::time::Duration::from_secs(2), command.output()).await;
+                .env("GIT_TERMINAL_PROMPT", "0");
+            // Same process-group kill path as other async Git probes (#120).
+            let result = crate::subprocess::run(
+                &mut command,
+                Some(std::time::Duration::from_secs(2)),
+                crate::subprocess::CaptureLimits::default(),
+            )
+            .await;
             let Some(primary) = result
                 .ok()
-                .and_then(Result::ok)
                 .filter(|out| out.status.success())
                 .and_then(|out| primary_root_from_porcelain(&out.stdout))
             else {
