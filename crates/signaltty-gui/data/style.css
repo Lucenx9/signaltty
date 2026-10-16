@@ -166,7 +166,8 @@
 
 .empty-state-shortcut {
   font-size: 0.82em;
-  color: alpha(currentColor, 0.65);
+  /* Quiet hint, but small type still needs ~AA contrast on Adwaita surfaces. */
+  color: alpha(currentColor, 0.78);
 }
 
 .palette-group {
