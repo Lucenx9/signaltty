@@ -144,7 +144,11 @@ same activity gate: a newer `working` or `blocked` transition within
 at `input_required` with `{reason: submit_unconfirmed, stage: activity_gate}`,
 and the worker turning `working` later resumes it. A screen-blocked worker parks
 the task at `input_required` with `reason: screen_blocked`; new working activity
-resumes this interruption, and `task.wait` with `settled` observes it immediately. Closing a worker from
+resumes this interruption, and `task.wait` with `settled` observes it immediately.
+Adapter-reported blockers without structured decisions use `reason: hook_blocked`
+and settle immediately; an explicit new prompt resumes them. Tool traffic alone
+retains the blocked-state guard. Native decision evidence
+remains authoritative. Closing a worker from
 `task.finish`/`task.cancel` clears its attention; any pane exit drops
 `input_required`/`permission_required` to `unread`. A repeated `client_request_id` returns the
 existing task and pane instead of creating another; without it retries

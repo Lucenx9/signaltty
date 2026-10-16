@@ -454,6 +454,16 @@ setup steps instead of suggesting socket chmod.
 
 Native approval answers and provider lifecycle hook/session-report APIs are also excluded from MCP; real harness hooks remain the source of agent identity and lifecycle evidence.
 
+Adapter-reported `blocked` hooks without a structured decision also park their
+worker task at `input_required` with `reason: hook_blocked`. Examples include
+Claude permission/idle notifications and legacy Codex permission payloads.
+Initial submission reconciles these blockers; an explicit new prompt resumes the
+attributed interruption. Tool traffic alone retains the existing blocked-state
+guard because it can belong to an overlapping subagent. Native decisions keep their own evidence and answer
+channel. See [the harness audit](../specs/072-harness-task-interruptions/research.md)
+for automatic-launch and permission-telemetry boundaries.
+
+
 ## Automatic workspace titles
 
 New GUI workspaces can use the first Codex/Claude UserPromptSubmit payload.prompt

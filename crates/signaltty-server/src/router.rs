@@ -2379,6 +2379,19 @@ fn h_hook_event_inner(ctx: &Ctx, params: &Value, native_route: bool) -> Handler 
             }
         }
     }
+    // A lifecycle hook can block without an answerable decision (for example,
+    // Claude's permission/idle notifications). Keep its worker task observable.
+    {
+        let mut s = ctx.store.write().unwrap();
+        let task_id = s.panes.get(&pid).and_then(|pane| {
+            (pane.lifecycle == Lifecycle::Blocked && pane.pending_decision.is_none())
+                .then(|| s.task_for_pane(&pid).map(|task| task.id.clone()))
+                .flatten()
+        });
+        if let Some(task_id) = task_id {
+            s.task_input_required_on_turn_end(&task_id, Some(json!({"reason":"hook_blocked"})));
+        }
+    }
     if let Some(message) = decision.message.or(decision_prompt) {
         let mut s = ctx.store.write().unwrap();
         if let Some(p) = s.panes.get_mut(&pid) {

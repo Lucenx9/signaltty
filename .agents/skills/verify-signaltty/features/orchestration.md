@@ -122,3 +122,14 @@ exercise preference save/load, native light/dark controls and actual form
 submission arguments. Full verification runs both; the first emits
 `automatic-permissions-light.png` and `automatic-permissions-dark.png`. These
 fixtures do not authenticate providers or certify paid turns or remote installations.
+
+
+## Native hook interruptions without decisions
+
+`cargo test -p signaltty-server --test orchestrator_tasks hook_blockers_without_structured_decisions_park_worker_tasks`
+uses real IPC and isolated PTYs for Claude permission/idle notifications and legacy
+Codex permission payloads. It verifies `input_required`, immediate settled waits,
+initial-submit and real follow-up pane.submit reconciliation, duplicate
+interruption stability and explicit prompt resumption. Existing native permission tests verify delivered answers still resume
+and disconnect/timeout/session loss never grant a request. These fixtures simulate
+provider hooks; they do not certify authenticated live provider telemetry.

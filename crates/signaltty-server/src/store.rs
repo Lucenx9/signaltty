@@ -556,7 +556,7 @@ impl Store {
                                 .as_ref()
                                 .and_then(|r| r.get("reason"))
                                 .and_then(Value::as_str),
-                            Some(SUBMIT_UNCONFIRMED | "screen_blocked")
+                            Some(SUBMIT_UNCONFIRMED | "screen_blocked" | "hook_blocked")
                         )
                 })
                 .map(|t| t.id.clone());
@@ -760,12 +760,14 @@ impl Store {
             .values()
             .find(|t| t.pane_id.as_deref() == Some(pane_id) && t.state == TaskState::InputRequired)
             .map(|t| t.id.clone());
-        let mut ev = task_id.and_then(|tid| self.task_resume_working(&tid));
-
-        if blocked {
-            ev = self.set_lifecycle(pane_id, Lifecycle::Working).or(ev);
-        }
-        ev
+        let ev = if blocked {
+            self.set_lifecycle(pane_id, Lifecycle::Working)
+        } else {
+            None
+        };
+        task_id
+            .and_then(|tid| self.task_resume_working(&tid))
+            .or(ev)
     }
 
     /// Drop the pending decision without answering. `None` when absent.
@@ -915,8 +917,9 @@ impl Store {
             let pane_id = task.pane_id.as_deref()?;
             let pane = panes.get(pane_id)?;
             let source = progress.get(pane_id)?;
-            (pane.lifecycle == Lifecycle::Blocked && !source.hooked)
-                .then(|| json!({"reason": "screen_blocked"}))
+            (pane.lifecycle == Lifecycle::Blocked).then(
+                || json!({"reason": if source.hooked { "hook_blocked" } else { "screen_blocked" }}),
+            )
         })
     }
 
@@ -1173,8 +1176,10 @@ impl Store {
             if let Some(evidence) = Self::blocker_evidence(&self.panes, &self.progress, task)
                 .or_else(|| Self::turn_end_evidence(&self.panes, task))
             {
-                if evidence.get("reason").and_then(Value::as_str) == Some("screen_blocked")
-                    && task.status_reason.as_ref() == Some(&evidence)
+                if matches!(
+                    evidence.get("reason").and_then(Value::as_str),
+                    Some("screen_blocked" | "hook_blocked")
+                ) && task.status_reason.as_ref() == Some(&evidence)
                 {
                     return None;
                 }
