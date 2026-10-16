@@ -231,7 +231,8 @@ async fn registered(cwd: &str) -> Result<Vec<Worktree>, ParamError> {
             if let Some(head) = field.strip_prefix(b"HEAD ") {
                 tree.head = Some(utf8(head)?);
             } else if let Some(branch) = field.strip_prefix(b"branch refs/heads/") {
-                tree.branch = Some(utf8(branch)?);
+                // Display only; keep non-UTF-8 branches listed (lossy) rather than failing.
+                tree.branch = Some(String::from_utf8_lossy(branch).into_owned());
             } else if field == b"bare" {
                 tree.bare = true;
             } else if field == b"locked" || field.starts_with(b"locked ") {
@@ -661,6 +662,92 @@ mod tests {
                 (linked.to_str().unwrap(), false)
             ]
         );
+    }
+
+    fn run_git(dir: &Path, args: &[&std::ffi::OsStr]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=test", "-c", "user.email=t@example.invalid"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[tokio::test]
+    async fn non_utf8_branch_does_not_hide_the_worktree() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let repo = HookRepository::new().await;
+        std::fs::remove_file(repo.0.join(".git/hooks/post-checkout")).unwrap();
+        let cwd = repo.0.to_str().unwrap();
+        let linked = repo.0.join("linked");
+        let branch = OsStr::from_bytes(b"b-\xff");
+        run_git(
+            &repo.0,
+            &[
+                OsStr::new("worktree"),
+                OsStr::new("add"),
+                OsStr::new("-q"),
+                OsStr::new("-b"),
+                branch,
+                linked.as_os_str(),
+            ],
+        );
+        let trees = registered(cwd)
+            .await
+            .expect("a non-UTF-8 branch must not fail the list");
+        let linked = linked.canonicalize().unwrap();
+        let tree = trees
+            .iter()
+            .find(|t| t.path == linked.to_str().unwrap())
+            .expect("linked checkout is listed");
+        assert_eq!(tree.branch.as_deref(), Some("b-\u{fffd}"));
+        assert!(!tree.main);
+    }
+
+    #[tokio::test]
+    async fn non_utf8_main_checkout_leaves_linked_one_not_main() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let root = std::env::temp_dir().join(format!(
+            "signaltty-odd-main-{}-{}",
+            std::process::id(),
+            signaltty_core::ids::new_pane_id()
+        ));
+        let main = root.join(OsStr::from_bytes(b"main-\xff"));
+        std::fs::create_dir_all(&main).unwrap();
+        run_git(&main, &[OsStr::new("init"), OsStr::new("-q")]);
+        std::fs::write(main.join("f"), "x\n").unwrap();
+        run_git(&main, &[OsStr::new("add"), OsStr::new(".")]);
+        run_git(
+            &main,
+            &[OsStr::new("commit"), OsStr::new("-qm"), OsStr::new("base")],
+        );
+        let linked = root.join("linked");
+        run_git(
+            &main,
+            &[
+                OsStr::new("worktree"),
+                OsStr::new("add"),
+                OsStr::new("-q"),
+                OsStr::new("-b"),
+                OsStr::new("linked"),
+                linked.as_os_str(),
+            ],
+        );
+        let trees = registered(linked.to_str().unwrap()).await;
+        let linked_canon = linked.canonicalize().unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        let trees = trees.expect("odd main path must not fail the list");
+        let got: Vec<_> = trees.iter().map(|t| (t.path.as_str(), t.main)).collect();
+        assert_eq!(got, [(linked_canon.to_str().unwrap(), false)]);
     }
 
     #[tokio::test]
