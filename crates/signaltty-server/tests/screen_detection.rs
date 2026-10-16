@@ -19,6 +19,127 @@ async fn antigravity_followup_permission_keeps_the_task_interrupted() {
     antigravity_task_permission(false, true).await;
 }
 
+#[tokio::test]
+async fn screen_blocker_refuses_followup_without_writing_to_the_pty() {
+    screen_blocker_refuses_submit(true).await;
+}
+
+#[tokio::test]
+async fn screen_blocker_after_paste_refuses_delayed_enter() {
+    screen_blocker_refuses_submit(false).await;
+}
+
+async fn screen_blocker_refuses_submit(block_before_submit: bool) {
+    use std::time::Duration;
+
+    let srv = server_with("generic").await;
+    let mut c = srv.client().await;
+    let blocked = srv.state_dir.join("block-now");
+    let input = srv.state_dir.join("received-input");
+    let ready = srv.state_dir.join("ready-now");
+    let recorder = r#"import os, select, sys, time, tty
+from pathlib import Path
+tty.setraw(0)
+blocked, received, ready = map(Path, sys.argv[1:])
+with received.open('wb', buffering=0) as out:
+ print('working...\r', flush=True)
+ while not ready.exists():
+  time.sleep(0.01)
+ print('\033[2J\033[Hready>\r', flush=True)
+ shown = False
+ while True:
+  if blocked.exists() and not shown:
+   print('\033[2J\033[HAllow? [y/n]\r', flush=True)
+   shown = True
+  if select.select([0], [], [], 0.01)[0]:
+   out.write(os.read(0, 4096))
+"#;
+    let pane_id = spawn_program(
+        &mut c,
+        json!(["python3", "-c", recorder, blocked, input, ready]),
+    )
+    .await;
+    let working = wait(&mut c, &pane_id, "working", 5).await.unwrap();
+    assert_eq!(working["satisfied"], true);
+    std::fs::write(&ready, b"").unwrap();
+    let ready = wait(&mut c, &pane_id, "done", 5).await.unwrap();
+    assert_eq!(ready["satisfied"], true);
+    if block_before_submit {
+        std::fs::write(&blocked, b"").unwrap();
+        let blocked = wait(&mut c, &pane_id, "blocked", 5).await.unwrap();
+        assert_eq!(blocked["satisfied"], true);
+    }
+    let mut submit_client = srv.client().await;
+    let submit_pane = pane_id.clone();
+    let submit = tokio::spawn(async move {
+        submit_client
+            .call_raw_resp(
+                "pane.submit",
+                json!({
+                    "pane_id": submit_pane, "text": "Do not approve this command",
+                    "submit_delay_ms": 1500, "stall_timeout_s": 1,
+                }),
+            )
+            .await
+    });
+    let expected = if block_before_submit {
+        Vec::new()
+    } else {
+        let pasted = b"\x1b[200~Do not approve this command\x1b[201~".to_vec();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while std::fs::read(&input).unwrap() != pasted {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("prompt pasted before blocker");
+        std::fs::write(&blocked, b"").unwrap();
+        let blocked = wait(&mut c, &pane_id, "blocked", 5).await.unwrap();
+        assert_eq!(blocked["satisfied"], true);
+        pasted
+    };
+    let response = submit.await.unwrap().unwrap();
+    // Drain the recorder after any incorrectly accepted prompt or Enter.
+    c.call(
+        "pane.input",
+        json!({
+            "pane_id": pane_id, "data_b64": "UkVDT1JERVJfQkFSUklFUg==",
+        }),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !std::fs::read(&input)
+            .unwrap()
+            .ends_with(b"RECORDER_BARRIER")
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("recorder drained");
+    assert_eq!(
+        std::fs::read(&input).unwrap(),
+        [expected, b"RECORDER_BARRIER".to_vec()].concat(),
+        "ordinary follow-up must not write prompt bytes or Enter into a screen blocker"
+    );
+    let error = response
+        .error
+        .expect("screen blocker refuses ordinary follow-up");
+    assert_eq!(error.code, signaltty_proto::code::AGENT_BUSY);
+    if !block_before_submit {
+        assert_eq!(
+            error.details,
+            json!({"stage":"delayed_enter", "paste_delivered":true})
+        );
+    }
+    let current = pane(&mut c, &pane_id).await;
+    assert_eq!(current["lifecycle"], "blocked");
+    assert_eq!(current["attention"], "input_required");
+    assert!(current["pending_decision"].is_null());
+    srv.shutdown().await;
+}
+
 async fn antigravity_task_permission(block_on_submit: bool, followup_blocker: bool) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -126,19 +247,27 @@ while read line; do :; done
         let submit_pane = pane_id.to_string();
         let submit = tokio::spawn(async move {
             submit_client
-                .call(
+                .call_raw_resp(
                     "pane.submit",
                     json!({
                         "pane_id": submit_pane, "text": "Follow-up review",
-                        "submit_delay_ms": 10, "stall_timeout_s": 5,
+                        "submit_delay_ms": 1500, "stall_timeout_s": 5,
                     }),
                 )
                 .await
         });
         wait_for_screen_text(&mut c, pane_id, "Follow-up review").await;
         std::fs::write(&followup, b"").unwrap();
-        let outcome = submit.await.unwrap().unwrap();
-        assert_eq!(outcome["lifecycle"], "blocked");
+        wait(&mut c, pane_id, "blocked", 5).await.unwrap();
+        let response = submit.await.unwrap().unwrap();
+        let error = response
+            .error
+            .expect("blocker arrived before delayed Enter");
+        assert_eq!(error.code, signaltty_proto::code::AGENT_BUSY);
+        assert_eq!(
+            error.details,
+            json!({"stage":"delayed_enter", "paste_delivered":true})
+        );
         let task = c
             .call("task.get", json!({"task_id": task_id}))
             .await

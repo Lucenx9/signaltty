@@ -30,6 +30,11 @@ options remain authoritative. No global default or live approval is changed.
 - **FR-005**: Real isolated PTY/IPC tests verify arguments and blocked/resumed
   states. The 1.4.0 permission-screen fixture must remain classified as blocked.
 
+- **FR-006**: Ordinary `pane.submit` MUST refuse an active screen blocker
+  before writing prompt bytes and recheck before delayed Enter. Resolve the
+  blocker in the terminal before a follow-up; native idle-input hooks retain
+  their existing submit behavior.
+
 ## Acceptance
 
 An automatic parent starts a bare/default agy worker with automatic flags. A

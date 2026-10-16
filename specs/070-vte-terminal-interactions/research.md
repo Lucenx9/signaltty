@@ -16,3 +16,14 @@ Native repeat-snapshot experiments reject `reset(true, false)` alone because the
 Clipboard stays with VTE's selection and paste APIs. Add only terminal-local controls and use the native context-menu model. Text scale is runtime state per pane; the desktop font and the existing 1.1 leading remain authoritative for face and spacing. Existing font-size signals can invoke the same commands without capturing additional plain Ctrl chords.
 
 Working artifacts, prototypes, failed probes and the decision trail are under ignored `target/vte-work/`. Final regressions are committed at the existing project test seams. ADR-0040 records the decision and current snapshot limits.
+
+## CI keyboard injection correction, 2026-10-16
+
+The terminal chord test passed with GTK 4.18.6/VTE 0.80.1 on Debian but
+failed consistently with GTK 4.22.4/VTE 0.84.0 on Ubuntu 26.04 at Shift+F10.
+An isolated Ubuntu container reproduced the CI failure. Temporary event
+instrumentation showed the terminal retained focus and received F10 with
+Shift **and Alt** from xdotool's symbolic lookup. The test now resolves the
+unmodified F10 keycode through GDK and asks xdotool to send Shift plus that
+keycode. Production keyboard handling is unchanged. The existing menu-open,
+Escape-dismissal and zero-child-input assertions remain the acceptance seam.

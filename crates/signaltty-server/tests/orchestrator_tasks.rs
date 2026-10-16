@@ -819,6 +819,43 @@ async fn task_get_and_list_roundtrip() {
 }
 
 #[tokio::test]
+async fn task_list_limit_keeps_the_newest_tasks() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+
+    let mut ids = Vec::new();
+    for i in 1..=3 {
+        let started = c
+            .call(
+                "task.start",
+                json!({
+                    "repo": repo.path().to_string_lossy(),
+                    "contract": {"objective": format!("Task {i}")},
+                    "branch": format!("limit-{i}"),
+                    "argv": ["sh"],
+                }),
+            )
+            .await
+            .unwrap();
+        ids.push(started["task"]["id"].as_str().unwrap().to_string());
+    }
+
+    // Tasks are never pruned, so a capped list must drop the oldest ones,
+    // not hide every task started after the cap was reached.
+    let list = c.call("task.list", json!({"limit": 2})).await.unwrap();
+    let listed: Vec<&str> = list["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(listed, [ids[1].as_str(), ids[2].as_str()]);
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn task_start_agent_and_argv_resolution() {
     use std::os::unix::fs::PermissionsExt;
 

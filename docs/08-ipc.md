@@ -99,7 +99,7 @@ through the ordinary Store transition. No additional project IPC method is neede
 | `focus.next_unread` | — | `{pane_id?}` (severity→recency order) |
 | `task.start` | `{repo, contract: {objective, constraints?, output_format?, acceptance_criteria?}, agent?, label?, parent_pane_id?, context_id?, client_request_id?, base_ref?, fetch_first?, branch?, path?, ready_timeout_s?, stall_timeout_s?, submit_delay_ms?, argv?}` | `{task, pane}` (starts worker at `pending`; background ready-wait and prompt submit transitions to `working`; objective over 32 KiB, or a composed prompt over 32 KiB plus the fixed preamble, is `BAD_PARAMS` and creates no worktree; the same `client_request_id` returns the existing task and pane instead of creating another; `repo` and `path` must be absolute, and the task exists before its worker starts, so an immediate report finds it) |
 | `task.get` | `{task_id}` | `{task}` (includes computed `task.stage`) |
-| `task.list` | `{context_id?, state?, limit?}` | `{tasks: [...]}` (each task includes computed `stage`) |
+| `task.list` | `{context_id?, state?, limit?}` (default 100, max 1000) | `{tasks: [...]}`: the newest `limit` tasks, oldest first (each task includes computed `stage`) |
 | `task.wait` | `{task_id?, context_id?, until?: string\|string[], timeout_s?}` | `{satisfied, tasks: [...]}` (default `until: settled`) |
 | `task.cancel` | `{task_id}` | `{task}` |
 | `task.report` | `{task_id?, pane_id?, status: completed\|failed\|rejected, summary, artifacts?, evidence?}` (task resolved via explicit `task_id`, else the task owning `pane_id`; one of the two is required) | `{task}` (first report stores the result and emits `task.result` + `task.updated`; identical accepted-content retries return the current task without mutation or events; other terminal reports → `BAD_PARAMS`) |
@@ -158,8 +158,11 @@ create new tasks. The merge target defaults to the recorded
 branch currently checked out in the source repo (`BAD_PARAMS` with
 `details: {expected, actual}` otherwise).
 
-`pane.submit` rechecks decisions immediately before its delayed Enter. If a
-permission request or pending decision arrived after paste, it returns
+`pane.submit` refuses an active screen blocker with `AGENT_BUSY` before any
+write. Resolve that blocker in the terminal before sending a follow-up. Native
+idle-input notifications retain their ordinary prompt submission behavior.
+It rechecks screen blockers and decisions immediately before delayed Enter. If a
+screen blocker, permission request or pending decision arrived after paste, it returns
 `AGENT_BUSY` with `details: {stage: "delayed_enter", paste_delivered: true}`
 without writing Enter. The pasted text is already in the worker input box;
 inspect and resolve the decision before sending more input. Automatic Enter

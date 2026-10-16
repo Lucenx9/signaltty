@@ -2009,7 +2009,17 @@ mod tests {
             Vec::<Vec<u8>>::new(),
             "Menu and Escape must not reach the child"
         );
-        press_chord(&title, "shift+F10");
+        // xdotool's keysym lookup can add Alt for F10 on newer XKB maps.
+        // Use the unmodified keycode so this exercises exactly Shift+F10.
+        let f10 = pane
+            .term
+            .display()
+            .map_keyval(gtk4::gdk::Key::F10)
+            .expect("F10 keymap")
+            .into_iter()
+            .find(|key| key.group() == 0 && key.level() == 0)
+            .expect("unmodified F10");
+        press_chord(&title, &format!("shift+{}", f10.keycode()));
         assert!(
             menu_is_open(&window),
             "Shift+F10 opens the terminal context menu"
