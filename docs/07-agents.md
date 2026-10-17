@@ -102,7 +102,9 @@ BEL only).
   `$CLAUDE_CODE_SESSION_ID`; survives `-p --resume`.
 - Shim: settings snippet installed by `signaltty integration install
   claude` (user-scoped, non-destructive merge). `Notification` →
-  attention directly; `Stop` → done+unread.
+  attention directly; informational types (`auth_success`,
+  `elicitation_complete`, `elicitation_response`, `agent_completed`,
+  `quota_auto_resume_fired`) change no state; `Stop` → done+unread.
 
 ### OpenCode (`opencode`)
 
