@@ -490,6 +490,9 @@ impl Surface {
         if self.screen.is_empty() {
             // Factory-fresh parser: blank grid, cursor at (0,0). Size the
             // screen vec blindly; simulation and reconciles fill it in.
+            // Rows start at seq 0 ("oldest retained"): minting here would
+            // push `head` past `dropped_floor` on a restored surface and
+            // un-drop pre-restart cursors. Full reads keep seq-0 rows.
             for _ in 0..self.rows {
                 self.screen.push(RingLine {
                     seq: 0,
@@ -1036,7 +1039,10 @@ impl Surface {
     }
 
     fn rendered(&self, after_seq: u64, max_lines: usize) -> RenderedRead {
-        let picked: Vec<&RingLine> = self.content().filter(|l| l.seq > after_seq).collect();
+        let picked: Vec<&RingLine> = self
+            .content()
+            .filter(|l| after_seq == 0 || l.seq > after_seq)
+            .collect();
         let total = picked.len();
         let take = max_lines.min(total);
         // Newest `take` by position; still cursor-continuous.
@@ -1047,7 +1053,12 @@ impl Surface {
             .collect::<Vec<_>>()
             .join("\n");
         RenderedRead {
-            seq: lines.first().map(|l| l.seq).unwrap_or(self.head),
+            // First real cursor; seq-0 blank rows carry none.
+            seq: lines
+                .iter()
+                .map(|l| l.seq)
+                .find(|&q| q != 0)
+                .unwrap_or(self.head),
             next_seq: self.head,
             dropped: after_seq != 0
                 && (after_seq <= self.dropped_floor
@@ -1322,6 +1333,41 @@ mod tests {
         assert_eq!(r.text, "spin 49");
         assert!(!r.dropped);
         assert!(!r.truncated);
+    }
+
+    #[test]
+    fn rendered_full_read_keeps_blank_lines_like_tail() {
+        // A blank line between two printed lines is content: a full
+        // rendered read (`after_seq` 0) must return it, as `tail` does,
+        // whether it is still on screen or already scrolled into history,
+        // and on the fast (plain ASCII) and slow (escape) paths alike.
+        for (rows, input) in [
+            (24, &b"a\r\n\r\nb\r\n"[..]),
+            (24, b"\x1b[1ma\x1b[0m\r\n\r\nb\r\n"),
+            (24, b"\r\n\r\nhello\r\n"),
+            (4, b"a\r\n\r\nb\r\nc\r\nd\r\ne\r\nf\r\n"),
+        ] {
+            let mut b = HeadlessBackend::new();
+            b.create_surface("p", 80, rows);
+            b.feed_output("p", input);
+            let tail = b.tail("p", 5000, false).unwrap().join("\n");
+            let r = b.rendered("p", 0, 5000).unwrap();
+            assert_eq!(r.text, tail, "rows={rows} input={input:?}");
+            assert!(!r.dropped && !r.truncated, "rows={rows} input={input:?}");
+        }
+    }
+
+    #[test]
+    fn rendered_pre_restore_cursor_stays_dropped() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"a\r\n");
+        let old = b.rendered("p", 0, 5000).unwrap().next_seq;
+        let tail = b.tail("p", 5000, false).unwrap();
+        let mut b2 = HeadlessBackend::new();
+        b2.restore_surface("p", 80, 24, tail);
+        b2.feed_output("p", b"b\r\n");
+        assert!(b2.rendered("p", old, 5000).unwrap().dropped);
     }
 
     #[test]
