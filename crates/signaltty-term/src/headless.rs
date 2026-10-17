@@ -490,13 +490,12 @@ impl Surface {
         if self.screen.is_empty() {
             // Factory-fresh parser: blank grid, cursor at (0,0). Size the
             // screen vec blindly; simulation and reconciles fill it in.
-            // Every row takes a sequence, as `fit_len` gives the legacy
-            // path: a row left blank keeps it, and seq 0 would hide that
-            // blank line from every rendered read (`seq > after_seq`).
+            // Rows start at seq 0 ("oldest retained"): minting here would
+            // push `head` past `dropped_floor` on a restored surface and
+            // un-drop pre-restart cursors. Full reads keep seq-0 rows.
             for _ in 0..self.rows {
-                self.head += 1;
                 self.screen.push(RingLine {
-                    seq: self.head,
+                    seq: 0,
                     text: String::new(),
                 });
             }
@@ -1040,7 +1039,10 @@ impl Surface {
     }
 
     fn rendered(&self, after_seq: u64, max_lines: usize) -> RenderedRead {
-        let picked: Vec<&RingLine> = self.content().filter(|l| l.seq > after_seq).collect();
+        let picked: Vec<&RingLine> = self
+            .content()
+            .filter(|l| after_seq == 0 || l.seq > after_seq)
+            .collect();
         let total = picked.len();
         let take = max_lines.min(total);
         // Newest `take` by position; still cursor-continuous.
@@ -1051,7 +1053,12 @@ impl Surface {
             .collect::<Vec<_>>()
             .join("\n");
         RenderedRead {
-            seq: lines.first().map(|l| l.seq).unwrap_or(self.head),
+            // First real cursor; seq-0 blank rows carry none.
+            seq: lines
+                .iter()
+                .map(|l| l.seq)
+                .find(|&q| q != 0)
+                .unwrap_or(self.head),
             next_seq: self.head,
             dropped: after_seq != 0
                 && (after_seq <= self.dropped_floor
@@ -1348,6 +1355,19 @@ mod tests {
             assert_eq!(r.text, tail, "rows={rows} input={input:?}");
             assert!(!r.dropped && !r.truncated, "rows={rows} input={input:?}");
         }
+    }
+
+    #[test]
+    fn rendered_pre_restore_cursor_stays_dropped() {
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"a\r\n");
+        let old = b.rendered("p", 0, 5000).unwrap().next_seq;
+        let tail = b.tail("p", 5000, false).unwrap();
+        let mut b2 = HeadlessBackend::new();
+        b2.restore_surface("p", 80, 24, tail);
+        b2.feed_output("p", b"b\r\n");
+        assert!(b2.rendered("p", old, 5000).unwrap().dropped);
     }
 
     #[test]
