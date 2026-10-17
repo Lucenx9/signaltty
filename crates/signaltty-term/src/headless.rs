@@ -490,9 +490,13 @@ impl Surface {
         if self.screen.is_empty() {
             // Factory-fresh parser: blank grid, cursor at (0,0). Size the
             // screen vec blindly; simulation and reconciles fill it in.
+            // Every row takes a sequence, as `fit_len` gives the legacy
+            // path: a row left blank keeps it, and seq 0 would hide that
+            // blank line from every rendered read (`seq > after_seq`).
             for _ in 0..self.rows {
+                self.head += 1;
                 self.screen.push(RingLine {
-                    seq: 0,
+                    seq: self.head,
                     text: String::new(),
                 });
             }
@@ -1322,6 +1326,28 @@ mod tests {
         assert_eq!(r.text, "spin 49");
         assert!(!r.dropped);
         assert!(!r.truncated);
+    }
+
+    #[test]
+    fn rendered_full_read_keeps_blank_lines_like_tail() {
+        // A blank line between two printed lines is content: a full
+        // rendered read (`after_seq` 0) must return it, as `tail` does,
+        // whether it is still on screen or already scrolled into history,
+        // and on the fast (plain ASCII) and slow (escape) paths alike.
+        for (rows, input) in [
+            (24, &b"a\r\n\r\nb\r\n"[..]),
+            (24, b"\x1b[1ma\x1b[0m\r\n\r\nb\r\n"),
+            (24, b"\r\n\r\nhello\r\n"),
+            (4, b"a\r\n\r\nb\r\nc\r\nd\r\ne\r\nf\r\n"),
+        ] {
+            let mut b = HeadlessBackend::new();
+            b.create_surface("p", 80, rows);
+            b.feed_output("p", input);
+            let tail = b.tail("p", 5000, false).unwrap().join("\n");
+            let r = b.rendered("p", 0, 5000).unwrap();
+            assert_eq!(r.text, tail, "rows={rows} input={input:?}");
+            assert!(!r.dropped && !r.truncated, "rows={rows} input={input:?}");
+        }
     }
 
     #[test]
