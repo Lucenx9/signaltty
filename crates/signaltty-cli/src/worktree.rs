@@ -40,6 +40,8 @@ pub enum WorktreeOp {
 }
 
 pub async fn run(client: &mut Client, op: WorktreeOp, json_mode: bool) -> Result<(), CliError> {
+    // Like every other CLI path, a relative one names a path from the
+    // caller's directory, not the server's.
     let (method, params) = match op {
         WorktreeOp::List { workspace } => ("worktree.list", json!({"workspace_id":workspace})),
         WorktreeOp::Create {
@@ -49,7 +51,7 @@ pub async fn run(client: &mut Client, op: WorktreeOp, json_mode: bool) -> Result
             name,
         } => (
             "worktree.create",
-            json!({"workspace_id":workspace,"path":path,"branch":branch,"name":name}),
+            json!({"workspace_id":workspace,"path":crate::absolute_path(&path)?,"branch":branch,"name":name}),
         ),
         WorktreeOp::Open {
             workspace,
@@ -57,11 +59,11 @@ pub async fn run(client: &mut Client, op: WorktreeOp, json_mode: bool) -> Result
             name,
         } => (
             "worktree.open",
-            json!({"workspace_id":workspace,"path":path,"name":name}),
+            json!({"workspace_id":workspace,"path":crate::absolute_path(&path)?,"name":name}),
         ),
         WorktreeOp::Remove { workspace, path } => (
             "worktree.remove",
-            json!({"workspace_id":workspace,"path":path}),
+            json!({"workspace_id":workspace,"path":crate::absolute_path(&path)?}),
         ),
     };
     let result = client.call(method, params).await?;
