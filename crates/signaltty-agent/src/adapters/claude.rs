@@ -16,6 +16,21 @@ use crate::types::{
 
 pub struct ClaudeAdapter;
 
+/// Notification types that report something already resolved or outside this
+/// turn, not a prompt waiting on the user. Unknown or untyped ones still block.
+fn informational(ev: &AdapterEvent) -> bool {
+    matches!(
+        ev.payload_str("notification_type").as_deref(),
+        Some(
+            "auth_success"
+                | "elicitation_complete"
+                | "elicitation_response"
+                | "agent_completed"
+                | "quota_auto_resume_fired"
+        )
+    )
+}
+
 impl AgentAdapter for ClaudeAdapter {
     fn identify(&self, proc: &ProcessInfo) -> bool {
         matches!(proc.bin_name(), "claude")
@@ -50,6 +65,7 @@ impl AgentAdapter for ClaudeAdapter {
                     message: Some(msg),
                 }
             }
+            "Notification" if informational(ev) => LifecycleDecision::default(),
             "Notification" => {
                 // idle_prompt (agent waiting on user) vs permission prompt.
                 let kind = ev.payload_str("notification_type").unwrap_or_default();
@@ -103,6 +119,7 @@ impl AgentAdapter for ClaudeAdapter {
                     .or_else(|| ev.payload_str("message")),
                 severity: NotificationSeverity::Warning,
             }),
+            "Notification" if informational(ev) => None,
             "Notification" => {
                 let kind = ev.payload_str("notification_type").unwrap_or_default();
                 let permission = kind.contains("permission");
@@ -174,6 +191,45 @@ mod tests {
         let n = a.notification_event(&e).unwrap();
         assert_eq!(n.title, "Claude needs input");
         assert_eq!(n.body, Some("done?".to_string()));
+    }
+
+    #[test]
+    fn informational_notifications_do_not_block() {
+        // These fire after the gate is gone or outside this turn; treating
+        // them as "needs input" parks a working pane (and its task) blocked.
+        let a = ClaudeAdapter;
+        for kind in [
+            "auth_success",
+            "elicitation_complete",
+            "elicitation_response",
+            "agent_completed",
+            "quota_auto_resume_fired",
+        ] {
+            let e = ev(
+                "Notification",
+                json!({"notification_type": kind, "message": "m", "session_id": "s"}),
+            );
+            let d = a.lifecycle_state(&e);
+            assert_eq!(d.lifecycle, None, "{kind}");
+            assert_eq!(d.attention, None, "{kind}");
+            assert!(a.notification_event(&e).is_none(), "{kind}");
+        }
+        // Waiting types and untyped (older) payloads still ask for input.
+        for kind in [
+            None,
+            Some("elicitation_dialog"),
+            Some("elicitation_url_dialog"),
+            Some("agent_needs_input"),
+            Some("quota_auto_resume_stale"),
+        ] {
+            let mut payload = json!({"message": "m"});
+            if let Some(kind) = kind {
+                payload["notification_type"] = json!(kind);
+            }
+            let d = a.lifecycle_state(&ev("Notification", payload));
+            assert_eq!(d.lifecycle, Some(Lifecycle::Blocked), "{kind:?}");
+            assert_eq!(d.attention, Some(Attention::InputRequired), "{kind:?}");
+        }
     }
 
     #[test]

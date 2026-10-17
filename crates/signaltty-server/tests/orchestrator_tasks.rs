@@ -10,6 +10,66 @@ use signaltty_core::state::TaskState;
 use signaltty_testkit::{FakeAgentPane, TempGitRepo, TestClient, TestServer};
 
 #[tokio::test]
+async fn informational_claude_notifications_keep_worker_tasks_working() {
+    let repo = TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let started = c
+        .call(
+            "task.start",
+            json!({
+                "repo":repo.path(), "agent":"claude", "argv":["cat"],
+                "contract":{"objective":"Keep working after notices"},
+                "submit_delay_ms":10,
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = started["task"]["id"].as_str().unwrap();
+    let pane_id = started["pane"]["id"].as_str().unwrap();
+    let worktree = PathBuf::from(started["task"]["worktree_path"].as_str().unwrap());
+    let driver = FakeAgentPane::new(pane_id, "claude");
+    driver.session_start(&mut c, &worktree).await.unwrap();
+    wait_for_worker_prompt(&mut c, pane_id, "Keep working after notices").await;
+    driver.prompt_submit(&mut c).await.unwrap();
+    c.call(
+        "task.wait",
+        json!({"task_id":task_id,"until":"working","timeout_s":5}),
+    )
+    .await
+    .unwrap();
+    for kind in [
+        "auth_success",
+        "elicitation_complete",
+        "elicitation_response",
+        "agent_completed",
+        "quota_auto_resume_fired",
+    ] {
+        c.call(
+            "hook-event",
+            json!({
+                "pane_id":pane_id, "agent":"claude", "event":"Notification",
+                "payload":{"session_id": driver.session_id, "notification_type":kind,
+                           "message":"notice"},
+            }),
+        )
+        .await
+        .unwrap();
+        let pane = c
+            .call("pane.get", json!({"pane_id":pane_id}))
+            .await
+            .unwrap();
+        assert_eq!(pane["pane"]["lifecycle"], "working", "{kind}");
+        assert_eq!(pane["pane"]["attention"], "none", "{kind}");
+        let task = c
+            .call("task.get", json!({"task_id":task_id}))
+            .await
+            .unwrap();
+        assert_eq!(task["task"]["state"], "working", "{kind}");
+    }
+}
+
+#[tokio::test]
 async fn hook_blockers_without_structured_decisions_park_worker_tasks() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;
