@@ -127,6 +127,63 @@ async fn cli_relative_cwd_uses_the_callers_directory() {
 }
 
 #[tokio::test]
+async fn cli_relative_worktree_path_uses_the_callers_directory() {
+    let repo = signaltty_testkit::TempGitRepo::new();
+    let srv = TestServer::start().await;
+    let run = |args: &[&str]| {
+        let output = Command::new(bin_path("signaltty"))
+            .arg("--socket")
+            .arg(&srv.socket)
+            .arg("--json")
+            .args(args)
+            .current_dir(repo.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let source = run(&["new", "--cwd", ".", "--", "true"]);
+    let source = source["workspace_id"].as_str().unwrap();
+    let linked = repo.path().join("linked");
+    let created = run(&[
+        "worktree",
+        "create",
+        "--workspace",
+        source,
+        "--path",
+        "linked",
+        "--branch",
+        "relative-linked",
+    ]);
+    assert_eq!(created["path"], linked.to_str().unwrap());
+    let opened = run(&[
+        "worktree",
+        "open",
+        "--workspace",
+        source,
+        "--path",
+        "linked",
+    ]);
+    assert_eq!(opened["reused"], true);
+    run(&[
+        "workspace",
+        "close",
+        created["workspace"]["id"].as_str().unwrap(),
+    ]);
+    let removed = run(&[
+        "worktree",
+        "remove",
+        "--workspace",
+        source,
+        "--path",
+        "linked",
+    ]);
+    assert_eq!(removed["removed"], true);
+    assert!(!linked.exists());
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn cli_status_and_new_json() {
     let srv = TestServer::start().await;
     let st = cli_json(&srv.socket, &["status"]);
