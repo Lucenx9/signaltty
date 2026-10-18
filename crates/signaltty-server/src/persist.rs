@@ -270,11 +270,15 @@ fn rotate_snapshot_history(state_dir: &Path) -> Result<(), String> {
     };
     names.sort();
     // Names are `snapshot-<UTC %Y%m%dT%H%M%SZ>.json`, so they sort by time.
-    // A future stamp (clock moved back, copied state dir) is not recent.
+    // A future stamp (clock moved back, copied state dir) is not recent, and
+    // must not hide the newest past copy that is.
+    let now = Utc::now();
     let recent = names
-        .last()
-        .and_then(|newest| history_stamp(newest))
-        .is_some_and(|t| (0..HISTORY_INTERVAL_SECS).contains(&(Utc::now() - t).num_seconds()));
+        .iter()
+        .filter_map(|name| history_stamp(name))
+        .filter(|t| *t <= now)
+        .max()
+        .is_some_and(|t| (now - t).num_seconds() < HISTORY_INTERVAL_SECS);
     if recent {
         return Ok(());
     }
@@ -429,6 +433,36 @@ mod tests {
         fs::write(snapshots_dir.join(recent), "{}").unwrap();
         fs::write(snapshots_dir.join("snapshot-zzz.json"), "{}").unwrap();
         rotate_snapshot_history(&state_dir).unwrap();
+        assert_eq!(fs::read_dir(&snapshots_dir).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn future_stamp_does_not_defeat_the_interval_gate() {
+        // After the clock steps back, the future copy sorts last; the recent
+        // real copy must still hold the 15-minute gate, or every flush
+        // copies and prunes away the older history.
+        let state_dir = test_state_dir();
+        let snapshots_dir = state_dir.join("snapshots");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        fs::write(
+            state_dir.join("snapshot.json"),
+            make_snapshot_json(&["ws-1"]),
+        )
+        .unwrap();
+        let stamp = |t: DateTime<Utc>| format!("snapshot-{}.json", t.format("%Y%m%dT%H%M%SZ"));
+        fs::write(
+            snapshots_dir.join(stamp(Utc::now() - chrono::Duration::minutes(5))),
+            "{}",
+        )
+        .unwrap();
+        fs::write(
+            snapshots_dir.join(stamp(Utc::now() + chrono::Duration::hours(2))),
+            "{}",
+        )
+        .unwrap();
+
+        rotate_snapshot_history(&state_dir).unwrap();
+
         assert_eq!(fs::read_dir(&snapshots_dir).unwrap().count(), 2);
     }
 
