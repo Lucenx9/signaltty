@@ -569,6 +569,13 @@ mod tests {
 
     /// Enter in `entry`: GtkText's Enter binding emits `activate`.
     fn press_enter(entry: &adw::EntryRow) {
+        // `settle` can return before the dialog is mapped; wait for it.
+        let context = gtk4::glib::MainContext::default();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !entry.is_mapped() && std::time::Instant::now() < deadline {
+            context.iteration(false);
+        }
+        assert!(entry.is_mapped(), "entry is shown before Enter");
         entry.grab_focus();
         settle();
         entry
