@@ -797,7 +797,8 @@ impl PaneWidget {
     }
 
     /// Report widget-driven size when it changed (called on a 250ms tick;
-    /// gtk4 0.11 has no size-allocate signal). Last-writer-wins.
+    /// gtk4 0.11 has no size-allocate signal). Last-writer-wins. Exited
+    /// panes report too: `pane.resume` spawns at the stored size.
     pub fn sync_size(&self) {
         if !self.root.is_mapped() {
             return;
@@ -808,12 +809,10 @@ impl PaneWidget {
             return;
         }
         self.last_size.set((cols, rows));
-        if self.live.get() {
-            self.send(
-                "pane.resize",
-                json!({"pane_id": self.pane_id, "cols": cols, "rows": rows}),
-            );
-        }
+        self.send(
+            "pane.resize",
+            json!({"pane_id": self.pane_id, "cols": cols, "rows": rows}),
+        );
     }
 
     /// Refresh header + ring from fresh pane state.
@@ -1854,6 +1853,70 @@ mod tests {
             Vec::<Vec<u8>>::new(),
             "a dropped pane must not paste"
         );
+    }
+
+    fn resize_calls(
+        requests: &mut tokio::sync::mpsc::UnboundedReceiver<crate::actor::ActorRequest>,
+    ) -> Vec<(u64, u64)> {
+        let mut sizes = Vec::new();
+        pump(50);
+        while let Ok(request) = requests.try_recv() {
+            if let crate::actor::ActorRequest::Call {
+                method,
+                params,
+                reply,
+                ..
+            } = request
+            {
+                if method == "pane.resize" {
+                    sizes.push((
+                        params["cols"].as_u64().unwrap(),
+                        params["rows"].as_u64().unwrap(),
+                    ));
+                }
+                let _ = reply.send(Ok(serde_json::json!({})));
+            }
+        }
+        sizes
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn exited_pane_reports_its_size_for_resume() {
+        libadwaita::init().unwrap();
+        let (actor, mut requests) = IpcHandle::test_channel();
+        let pane = PaneWidget::new(
+            "restored",
+            actor,
+            PaneCallbacks {
+                on_focus: Box::new(|_| {}),
+                on_action: Box::new(|_, _| {}),
+            },
+        );
+        pane.update_meta(&sample_pane(LiveState::Exited { code: None }));
+        let window = present_pane(&pane);
+        let shown = || {
+            (
+                pane.term.column_count() as u64,
+                pane.term.row_count() as u64,
+            )
+        };
+        pump_until(|| shown() != (80, 24));
+        pane.sync_size();
+        assert_eq!(
+            resize_calls(&mut requests),
+            vec![shown()],
+            "a resume spawns at the stored size, so a tombstone must report it"
+        );
+
+        pane.update_meta(&sample_pane(LiveState::Live));
+        pane.sync_size();
+        assert_eq!(
+            resize_calls(&mut requests),
+            Vec::<(u64, u64)>::new(),
+            "resume keeps the widget, so its unchanged size is not sent again"
+        );
+        window.close();
     }
 
     fn press_chord(title: &str, chord: &str) {
