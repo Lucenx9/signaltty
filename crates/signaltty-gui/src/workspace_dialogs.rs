@@ -19,6 +19,8 @@ pub fn rename(window: &adw::ApplicationWindow, actor: IpcHandle, workspace: &Wor
     let entry = adw::EntryRow::new();
     entry.set_title("Name");
     entry.set_text(&workspace.name);
+    // Enter in the field confirms the default Rename response.
+    entry.set_activates_default(true);
     let group = adw::PreferencesGroup::new();
     group.add(&entry);
     dialog.set_extra_child(Some(&group));
@@ -332,6 +334,9 @@ impl WorktreeDialog {
         path.set_title("Absolute checkout path");
         let branch = adw::EntryRow::new();
         branch.set_title("New branch");
+        // Enter in either field confirms Create once both are valid.
+        path.set_activates_default(true);
+        branch.set_activates_default(true);
         group.add(&path);
         group.add(&branch);
         dialog.set_extra_child(Some(&group));
@@ -538,5 +543,133 @@ mod tests {
             worktree_remove_blocker(&tree),
             Some("Close the open workspace before removing this checkout")
         );
+    }
+
+    fn find_all<T: IsA<gtk4::Widget>>(root: &gtk4::Widget, out: &mut Vec<T>) {
+        if let Some(found) = root.downcast_ref::<T>() {
+            out.push(found.clone());
+        }
+        let mut child = root.first_child();
+        while let Some(widget) = child {
+            find_all(&widget, out);
+            child = widget.next_sibling();
+        }
+    }
+
+    fn entries(window: &adw::ApplicationWindow) -> Vec<adw::EntryRow> {
+        let mut out = Vec::new();
+        find_all(window.upcast_ref(), &mut out);
+        out
+    }
+
+    fn settle() {
+        let context = gtk4::glib::MainContext::default();
+        while context.iteration(false) {}
+    }
+
+    /// Enter in `entry`: GtkText's Enter binding emits `activate`.
+    fn press_enter(entry: &adw::EntryRow) {
+        entry.grab_focus();
+        settle();
+        entry
+            .delegate()
+            .expect("text delegate")
+            .emit_by_name::<()>("activate", &[]);
+    }
+
+    fn next_call(
+        requests: &mut tokio::sync::mpsc::UnboundedReceiver<crate::actor::ActorRequest>,
+    ) -> Option<(String, Value)> {
+        let context = gtk4::glib::MainContext::default();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            context.iteration(false);
+            if let Ok(crate::actor::ActorRequest::Call { method, params, .. }) = requests.try_recv()
+            {
+                return Some((method, params));
+            }
+        }
+        None
+    }
+
+    fn window() -> adw::ApplicationWindow {
+        adw::init().unwrap();
+        let application = adw::Application::new(None, gtk4::gio::ApplicationFlags::NON_UNIQUE);
+        application
+            .register(None::<&gtk4::gio::Cancellable>)
+            .unwrap();
+        let window = adw::ApplicationWindow::new(&application);
+        window.present();
+        window
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn enter_in_the_name_field_renames_the_workspace() {
+        let window = window();
+        let now = chrono::Utc::now();
+        let workspace = Workspace {
+            naming: Default::default(),
+            id: "ws_1".into(),
+            name: "old".into(),
+            handle: "old".into(),
+            cwd: "/tmp".into(),
+            git: Default::default(),
+            tabs: vec![],
+            active_tab_id: None,
+            auto_resume: false,
+            created_at: now,
+            updated_at: now,
+        };
+        let (actor, mut requests) = IpcHandle::test_channel();
+        rename(&window, actor, &workspace);
+        settle();
+        let [entry] = entries(&window).try_into().expect("one name field");
+        entry.set_text("new name");
+        press_enter(&entry);
+        assert_eq!(
+            next_call(&mut requests),
+            Some((
+                "workspace.rename".to_string(),
+                json!({"workspace_id": "ws_1", "name": "new name"})
+            )),
+            "Enter confirms the default Rename response"
+        );
+        window.destroy();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with dbus-run-session"]
+    fn enter_in_a_worktree_field_creates_the_worktree() {
+        let window = window();
+        let (actor, mut requests) = IpcHandle::test_channel();
+        worktrees(&window, actor, "ws_1", |_| {});
+        // The list read fails (reply dropped), leaving the dialog idle.
+        assert_eq!(next_call(&mut requests).unwrap().0, "worktree.list");
+        settle();
+        let mut buttons: Vec<gtk4::Button> = Vec::new();
+        find_all(window.upcast_ref(), &mut buttons);
+        buttons
+            .iter()
+            .find(|b| {
+                b.tooltip_text().as_deref()
+                    == Some("Create a separate checkout and open its workspace")
+            })
+            .expect("New button")
+            .emit_clicked();
+        settle();
+        let [path, branch] = entries(&window).try_into().expect("path and branch");
+        path.set_text("/tmp/checkout");
+        branch.set_text("feature");
+        press_enter(&branch);
+        assert_eq!(
+            next_call(&mut requests),
+            Some((
+                "worktree.create".to_string(),
+                json!({"workspace_id": "ws_1", "path": "/tmp/checkout", "branch": "feature"})
+            )),
+            "Enter confirms the default Create response"
+        );
+        window.destroy();
     }
 }
