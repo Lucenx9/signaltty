@@ -108,8 +108,25 @@ fn shell_from(shell: Option<String>) -> String {
 
 /// Directory scanned for plugin packages (`<name>/plugin.toml`).
 pub fn plugin_dir() -> PathBuf {
-    path_override(std::env::var("SIGNALTTY_PLUGIN_DIR").ok())
-        .unwrap_or_else(|| config_dir().join("plugins"))
+    plugin_dir_from(
+        std::env::var("SIGNALTTY_PLUGIN_DIR").ok(),
+        std::env::var("SIGNALTTY_PLUGIN_NAME").ok(),
+        config_dir().join("plugins"),
+    )
+}
+
+/// Hooks and `plugin run` commands export `SIGNALTTY_PLUGIN_DIR` as their
+/// own package dir (`<root>/<name>`, enforced at load) next to
+/// `SIGNALTTY_PLUGIN_NAME`. Inside one, the root is that dir's parent, so a
+/// nested `signaltty plugin run` (or a server it starts) finds every plugin.
+fn plugin_dir_from(dir: Option<String>, name: Option<String>, default: PathBuf) -> PathBuf {
+    let Some(dir) = path_override(dir) else {
+        return default;
+    };
+    match (non_empty(name), dir.parent()) {
+        (Some(name), Some(root)) if dir.file_name() == Some(name.as_ref()) => root.to_path_buf(),
+        _ => dir,
+    }
 }
 
 /// Directory scanned for agent detection overlays (`<name>.toml`).
@@ -171,6 +188,39 @@ mod tests {
         assert_eq!(
             socket_path_from(None, "/run/x".into()),
             PathBuf::from("/run/x/signaltty.sock")
+        );
+    }
+
+    #[test]
+    fn plugin_dir_inside_a_plugin_is_the_plugins_root() {
+        // Hooks and `plugin run` commands get SIGNALTTY_PLUGIN_DIR set to
+        // their own package dir; a nested `signaltty plugin run` must still
+        // scan the root, not `<root>/<name>/*/plugin.toml`.
+        let default = || PathBuf::from("/home/u/.config/signaltty/plugins");
+        assert_eq!(
+            plugin_dir_from(
+                Some("/srv/plugins/chain".into()),
+                Some("chain".into()),
+                default()
+            ),
+            PathBuf::from("/srv/plugins")
+        );
+        assert_eq!(
+            plugin_dir_from(Some("/srv/plugins".into()), None, default()),
+            PathBuf::from("/srv/plugins")
+        );
+        // A name that is not the dir's own leaves the override alone.
+        assert_eq!(
+            plugin_dir_from(Some("/srv/plugins".into()), Some("chain".into()), default()),
+            PathBuf::from("/srv/plugins")
+        );
+        assert_eq!(
+            plugin_dir_from(None, Some("chain".into()), default()),
+            default()
+        );
+        assert_eq!(
+            plugin_dir_from(Some(String::new()), Some("chain".into()), default()),
+            default()
         );
     }
 
