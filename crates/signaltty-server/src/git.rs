@@ -627,7 +627,8 @@ pub fn default_worktree_path(repo: &str, branch: &str) -> PathBuf {
 }
 
 /// Validate a branch name per `git check-ref-format --branch`.
-/// Rejects empty string, leading '-', any name containing `refs/` or `@{`,
+/// Rejects empty string, leading '-', any name with a `refs/` path
+/// component (`prefs/x` is fine) or containing `@{`,
 /// and any name whose `--branch` expansion differs from the input (e.g.
 /// `@{-1}` expands to the previous branch; `refs/heads/<current>` would
 /// otherwise create a nested ref whose commits a later merge silently drops).
@@ -638,9 +639,9 @@ pub fn validate_branch_name(branch: &str) -> Result<(), String> {
             "invalid branch name '{branch}': cannot start with '-' or be empty"
         ));
     }
-    if branch.contains("refs/") || branch.contains("@{") {
+    if branch.starts_with("refs/") || branch.contains("/refs/") || branch.contains("@{") {
         return Err(format!(
-            "invalid branch name '{branch}': must not contain 'refs/' or '@{{'"
+            "invalid branch name '{branch}': must not contain a 'refs/' component or '@{{'"
         ));
     }
     let out = Command::new("git")
@@ -931,6 +932,9 @@ mod tests {
         assert!(validate_branch_name(&format!("refs/heads/{current}")).is_err());
         assert!(validate_branch_name("refs/heads/other").is_err());
         assert!(validate_branch_name("task/refs/x").is_err());
+        // Only a whole `refs` component is a ref path: `prefs/` is not.
+        assert!(validate_branch_name("prefs/theme").is_ok());
+        assert!(validate_branch_name("ui/hrefs/fix").is_ok());
         // `@{-1}` expands via stdout; stdout must equal the input.
         assert!(validate_branch_name("@{-1}").is_err());
         assert!(validate_branch_name("foo@{").is_err());
