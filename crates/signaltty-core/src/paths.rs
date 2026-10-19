@@ -123,6 +123,9 @@ fn plugin_dir_from(dir: Option<String>, name: Option<String>, default: PathBuf) 
     let Some(dir) = path_override(dir) else {
         return default;
     };
+    // Resolve a relative override now: plugin commands and hooks run from
+    // their package dir, so a relative export would no longer point here.
+    let dir = std::path::absolute(&dir).unwrap_or(dir);
     match (non_empty(name), dir.parent()) {
         (Some(name), Some(root)) if dir.file_name() == Some(name.as_ref()) => root.to_path_buf(),
         _ => dir,
