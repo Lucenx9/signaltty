@@ -75,6 +75,9 @@ pub struct PtyHandle {
     /// Held per output chunk, so injected output (`clear`) never interleaves
     /// with the reader's chunks and stream offsets stay in order.
     output: Arc<Mutex<OscScanner>>,
+    /// Dropping it releases the reader's master descriptor, so closing the
+    /// pane hangs up the terminal like closing a terminal window.
+    _reader_hangup: std::os::fd::OwnedFd,
 }
 
 impl Drop for PtyHandle {
@@ -249,7 +252,7 @@ impl PtyManager {
         cmd.env("SIGNALTTY_PANE", &req.pane_id);
         cmd.env("SIGNALTTY_SOCKET", &req.socket_path);
 
-        let (writer, reader) = pty_io::open(pair.master.as_ref())
+        let (writer, reader, reader_hangup) = pty_io::open(pair.master.as_ref())
             .map_err(|e| format!("pty descriptors failed: {e}"))?;
         let child = pair
             .slave
@@ -272,6 +275,7 @@ impl PtyManager {
                 }),
                 child_pid,
                 output: output.clone(),
+                _reader_hangup: reader_hangup,
             },
         );
         drop(previous);
@@ -303,6 +307,9 @@ impl PtyManager {
                 Err(_) => break, // EIO after child death is normal.
             }
         }
+        // Release the last master descriptor before waiting: a closed pane's
+        // child sees the hangup only once every master descriptor is gone.
+        drop(reader);
         let code = child.wait().ok().map(|s| s.exit_code() as i32);
         self.on_exit(&pane_id, code);
     }
@@ -604,6 +611,68 @@ mod tests {
     use std::sync::RwLock;
     use std::task::Poll;
     use std::time::Duration;
+
+    #[test]
+    fn destroy_hangs_up_a_child_that_ignores_term() {
+        let repo = signaltty_testkit::TempGitRepo::new();
+        let pid_file = repo.path().join("pid");
+        let (bcast, _) = broadcast::channel(64);
+        let ptys = PtyManager::new(
+            Arc::new(RwLock::new(crate::store::Store::new())),
+            bcast,
+            Arc::new(AtomicBool::new(false)),
+        );
+        // Like an interactive shell: TERM is ignored, a hangup still ends it.
+        let script = format!(
+            "trap '' TERM; echo $$ > '{}'; while :; do sleep 0.05; done",
+            pid_file.display()
+        );
+        ptys.spawn(SpawnRequest {
+            pane_id: "shell".to_string(),
+            cwd: repo.path().to_string_lossy().into_owned(),
+            argv: vec!["sh".to_string(), "-c".to_string(), script],
+            env: HashMap::new(),
+            size: PtySize { cols: 80, rows: 24 },
+            socket_path: repo
+                .path()
+                .join("unused.sock")
+                .to_string_lossy()
+                .into_owned(),
+        })
+        .unwrap();
+        let started = Instant::now();
+        let pid = loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+            {
+                break pid;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "child never started"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        ptys.destroy("shell", None);
+        let alive = |pid| {
+            std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                !stat
+                    .rsplit_once(") ")
+                    .is_some_and(|(_, f)| f.starts_with('Z'))
+            })
+        };
+        let closed = Instant::now();
+        while alive(pid) && closed.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let survived = alive(pid);
+        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::SIGKILL);
+        assert!(
+            !survived,
+            "closed pane left its TERM-ignoring child running"
+        );
+    }
 
     #[test]
     fn same_pane_waiters_leave_blocking_pool_available() {
