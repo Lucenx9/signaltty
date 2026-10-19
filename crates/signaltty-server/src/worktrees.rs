@@ -416,14 +416,13 @@ pub async fn create(ctx: &Ctx, p: WorktreeCreate) -> Result<Value, ParamError> {
     if p.name.as_ref().is_some_and(|n| n.trim().is_empty()) {
         return Err(bad_params("workspace name must not be empty"));
     }
-    if p.branch.starts_with('-') || p.branch.trim().is_empty() {
-        return Err(bad_params("invalid branch name"));
-    }
+    // Same rules as task.start: bare check-ref-format still accepts
+    // refs/heads/... (nested refs) and @{-1} (expands to another branch).
+    crate::git::validate_branch_name(&p.branch).map_err(bad_params)?;
     let _mutation = ctx.worktrees.mutations.lock().await;
     let ws = source(ctx, &p.workspace_id)?;
     let path = absolute_target(&p.path, false)?;
     let path = utf8(path.as_os_str().as_encoded_bytes())?;
-    git(&ws.cwd, &["check-ref-format", "--branch", &p.branch]).await?;
     registered(&ws.cwd).await?;
     git(
         &ws.cwd,
