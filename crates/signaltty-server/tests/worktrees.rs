@@ -280,6 +280,15 @@ async fn worktree_inputs_are_typed_and_foreign_paths_and_duplicate_branches_are_
         (repo.0.to_str().unwrap(), "feature"),
         (repo.0.join("invalid").to_str().unwrap(), "--force"),
         (repo.0.join("invalid").to_str().unwrap(), "bad branch"),
+        // Same traps task.start rejects: check-ref-format alone still accepts
+        // these and worktree add -b would nest refs/heads/refs/heads/... or
+        // expand @{-1} to another branch.
+        (
+            repo.0.join("invalid").to_str().unwrap(),
+            "refs/heads/sneaky",
+        ),
+        (repo.0.join("invalid").to_str().unwrap(), "@{-1}"),
+        (repo.0.join("invalid").to_str().unwrap(), "task/refs/x"),
     ] {
         refusal(
             &mut c,
@@ -289,6 +298,33 @@ async fn worktree_inputs_are_typed_and_foreign_paths_and_duplicate_branches_are_
         )
         .await;
     }
+    assert!(!repo.0.join("invalid").exists());
+    // Legitimate names that contain the substring "refs" must still work.
+    let prefs = repo.0.join("prefs-theme");
+    c.call(
+        "worktree.create",
+        json!({"workspace_id":source,"path":prefs,"branch":"prefs/theme"}),
+    )
+    .await
+    .unwrap();
+    let prefs_ref = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo.main())
+        .args(["rev-parse", "--verify", "refs/heads/prefs/theme"])
+        .output()
+        .unwrap();
+    assert!(prefs_ref.status.success(), "{:?}", prefs_ref.stderr);
+    let show_ref = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo.main())
+        .args(["show-ref"])
+        .output()
+        .unwrap();
+    assert!(show_ref.status.success());
+    assert!(!show_ref
+        .stdout
+        .windows(b"refs/heads/refs/heads/".len())
+        .any(|w| w == b"refs/heads/refs/heads/"));
     let path = repo.0.join("one");
     c.call(
         "worktree.create",
