@@ -2,12 +2,13 @@
 
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::fd::{AsFd, BorrowedFd};
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+use nix::unistd::pipe2;
 use signaltty_proto::code;
 
 pub const INPUT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -49,7 +50,11 @@ impl std::fmt::Display for InputError {
     }
 }
 
-pub fn open(master: &dyn portable_pty::MasterPty) -> io::Result<(File, PtyReader)> {
+/// Writer, reader, and the reader's hangup handle. The reader holds its own
+/// descriptor of the master, so closing the master elsewhere never hangs up
+/// the terminal while the reader is parked; dropping the handle releases the
+/// reader, and with it the last master descriptor.
+pub fn open(master: &dyn portable_pty::MasterPty) -> io::Result<(File, PtyReader, OwnedFd)> {
     let raw = master
         .as_raw_fd()
         .ok_or_else(|| io::Error::other("native PTY has no descriptor"))?;
@@ -58,9 +63,14 @@ pub fn open(master: &dyn portable_pty::MasterPty) -> io::Result<(File, PtyReader
     // The master remains owned by the caller while its descriptor is borrowed
     // and duplicated. Both clones share O_NONBLOCK; the reader accounts for it.
     let fd = unsafe { BorrowedFd::borrow_raw(raw) };
+    let (released, hangup) = pipe2(OFlag::O_CLOEXEC)?;
     Ok((
         File::from(fd.try_clone_to_owned()?),
-        PtyReader(File::from(fd.try_clone_to_owned()?)),
+        PtyReader {
+            master: File::from(fd.try_clone_to_owned()?),
+            released,
+        },
+        hangup,
     ))
 }
 
@@ -119,29 +129,38 @@ pub fn write(
     Ok(written)
 }
 
-pub struct PtyReader(File);
+/// Reads until the child side closes or the hangup handle is dropped.
+pub struct PtyReader {
+    master: File,
+    released: OwnedFd,
+}
 
 impl Read for PtyReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         loop {
-            match self.0.read(buf) {
+            let mut fds = [
+                PollFd::new(self.master.as_fd(), PollFlags::POLLIN),
+                PollFd::new(self.released.as_fd(), PollFlags::POLLIN),
+            ];
+            match poll(&mut fds, PollTimeout::NONE) {
+                Ok(_) => {}
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(e) => return Err(e.into()),
+            }
+            if fds[1].revents().is_some_and(|flags| !flags.is_empty()) {
+                return Ok(0);
+            }
+            let flags = fds[0].revents().unwrap_or(PollFlags::empty());
+            match self.master.read(buf) {
                 Err(e) if e.raw_os_error() == Some(nix::libc::EIO) => return Ok(0),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    let mut fds = [PollFd::new(self.0.as_fd(), PollFlags::POLLIN)];
-                    match poll(&mut fds, PollTimeout::NONE) {
-                        Ok(_) => {
-                            let flags = fds[0].revents().unwrap_or(PollFlags::empty());
-                            if !flags.contains(PollFlags::POLLIN)
-                                && flags.intersects(
-                                    PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL,
-                                )
-                            {
-                                return Ok(0);
-                            }
-                        }
-                        Err(nix::errno::Errno::EINTR) => continue,
-                        Err(e) => return Err(e.into()),
+                    if !flags.contains(PollFlags::POLLIN)
+                        && flags.intersects(
+                            PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL,
+                        )
+                    {
+                        return Ok(0);
                     }
                 }
                 result => return result,
