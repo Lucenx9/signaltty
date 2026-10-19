@@ -723,6 +723,94 @@ async fn cli_plugin_list_run_json() {
 }
 
 #[test]
+fn cli_plugin_command_can_run_another_plugin_command() {
+    // `plugin run` exports SIGNALTTY_PLUGIN_DIR as the plugin's own dir;
+    // a nested `signaltty plugin run` must still find the plugins root.
+    let base = std::env::temp_dir().join(format!(
+        "signaltty-plugnest-{}-{}",
+        std::process::id(),
+        signaltty_core::ids::new_pane_id()
+    ));
+    let sub = base.join("plugins").join("chain");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(
+        sub.join("plugin.toml"),
+        "[plugin]\nname = \"chain\"\nversion = \"1.0\"\n\n\
+         [[command]]\nname = \"outer\"\nrun = [\"./outer.sh\"]\n\n\
+         [[command]]\nname = \"inner\"\nrun = [\"./inner.sh\"]\n",
+    )
+    .unwrap();
+    let cli = bin_path("signaltty");
+    std::fs::write(
+        sub.join("outer.sh"),
+        format!(
+            "#!/bin/sh\nexec '{}' plugin run chain inner\n",
+            cli.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(sub.join("inner.sh"), "#!/bin/sh\necho inner-ran\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for script in ["outer.sh", "inner.sh"] {
+            std::fs::set_permissions(sub.join(script), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+    }
+    let out = Command::new(&cli)
+        .args(["plugin", "run", "chain", "outer"])
+        .env("SIGNALTTY_PLUGIN_DIR", base.join("plugins"))
+        .env_remove("SIGNALTTY_PLUGIN_NAME")
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&base).ok();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("inner-ran"), "{stdout}");
+}
+
+#[test]
+fn cli_plugin_command_can_run_another_plugin_command_with_a_relative_root() {
+    // A relative SIGNALTTY_PLUGIN_DIR must be resolved before the command
+    // runs from its own package dir, or the nested `plugin run` looks in
+    // `plugins/chain/plugins`.
+    let base = std::env::temp_dir().join(format!(
+        "signaltty-plugnest-rel-{}-{}",
+        std::process::id(),
+        signaltty_core::ids::new_pane_id()
+    ));
+    let sub = base.join("plugins").join("chain");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(
+        sub.join("plugin.toml"),
+        "[plugin]\nname = \"chain\"\nversion = \"1.0\"\n\n\
+         [[command]]\nname = \"outer\"\nrun = [\"sh\", \"outer.sh\"]\n\n\
+         [[command]]\nname = \"inner\"\nrun = [\"sh\", \"inner.sh\"]\n",
+    )
+    .unwrap();
+    let cli = bin_path("signaltty");
+    std::fs::write(
+        sub.join("outer.sh"),
+        format!("exec '{}' plugin run chain inner\n", cli.display()),
+    )
+    .unwrap();
+    std::fs::write(sub.join("inner.sh"), "echo inner-ran\n").unwrap();
+    let out = Command::new(&cli)
+        .args(["plugin", "run", "chain", "outer"])
+        .current_dir(&base)
+        .env("SIGNALTTY_PLUGIN_DIR", "plugins")
+        .env_remove("SIGNALTTY_PLUGIN_NAME")
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&base).ok();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("inner-ran"), "{stdout}");
+}
+
+#[test]
 fn integration_rejects_invalid_configuration_without_rewriting() {
     let home = std::env::temp_dir().join(format!("signaltty-invalid-hooks-{}", std::process::id()));
     let file = home.join(".claude/settings.json");

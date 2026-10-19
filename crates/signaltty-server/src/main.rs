@@ -51,7 +51,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.state_dir = d;
     }
     if let Some(d) = args.plugin_dir {
-        config.plugin_dir = d;
+        // Hooks export this as SIGNALTTY_PLUGIN_DIR and run from their
+        // package dir, so a relative path must be resolved here.
+        config.plugin_dir = std::path::absolute(&d).unwrap_or(d);
     }
     if let Some(d) = args.agents_dir {
         config.agents_dir = d;
