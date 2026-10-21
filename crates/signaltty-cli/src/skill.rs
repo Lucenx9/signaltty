@@ -41,14 +41,15 @@ pub fn install(home: &Path, json: bool) -> Result<(), CliError> {
     let mut files = Vec::new();
     for dir in skill_dirs(home) {
         let path = skill_file(&dir);
-        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        let current =
+            String::from_utf8_lossy(&std::fs::read(&path).unwrap_or_default()).into_owned();
         files.push(path.display().to_string());
         if current == TEXT {
             continue;
         }
         // Foreign (unmarked) content must survive; outdated installs we
         // previously wrote (marker line present) are refreshed to TEXT.
-        if !current.is_empty() && !marked(&current) {
+        if path.symlink_metadata().is_ok() && !marked(&current) {
             continue;
         }
         std::fs::create_dir_all(&dir).map_err(|e| CliError::Io(e.to_string()))?;
