@@ -438,6 +438,15 @@ async fn cli_skill_cat_check_install() {
     );
     // Foreign content wins: install must not overwrite it.
     assert_eq!(std::fs::read_to_string(&foreign).unwrap(), "mine\n");
+    for content in [b"".as_slice(), b"\xff"] {
+        std::fs::write(&foreign, content).unwrap();
+        let out = run(&["skill", "install", "--home", &home_s]);
+        assert!(out.status.success());
+        assert!(
+            std::fs::read(&foreign).unwrap() == content,
+            "install overwrote an unmarked skill with bytes {content:?}"
+        );
+    }
     std::fs::remove_file(&foreign).unwrap();
     let out = run(&["skill", "install", "--home", &home_s]);
     assert!(out.status.success());

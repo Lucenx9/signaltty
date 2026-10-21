@@ -48,7 +48,7 @@ pub fn install(home: &Path, json: bool) -> Result<(), CliError> {
         }
         // Foreign (unmarked) content must survive; outdated installs we
         // previously wrote (marker line present) are refreshed to TEXT.
-        if !current.is_empty() && !marked(&current) {
+        if path.symlink_metadata().is_ok() && !marked(&current) {
             continue;
         }
         std::fs::create_dir_all(&dir).map_err(|e| CliError::Io(e.to_string()))?;
