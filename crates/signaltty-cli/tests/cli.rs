@@ -447,6 +447,13 @@ async fn cli_skill_cat_check_install() {
             "install overwrote an unmarked skill with bytes {content:?}"
         );
     }
+    std::fs::write(&foreign, b"<!-- signaltty-skill -->\n\xff").unwrap();
+    let out = run(&["skill", "install", "--home", &home_s]);
+    assert!(out.status.success());
+    assert!(
+        std::fs::read(&foreign).unwrap() == body.as_bytes(),
+        "install did not refresh a marked skill with a non-UTF-8 body"
+    );
     std::fs::remove_file(&foreign).unwrap();
     let out = run(&["skill", "install", "--home", &home_s]);
     assert!(out.status.success());
