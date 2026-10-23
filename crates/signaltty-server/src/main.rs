@@ -64,6 +64,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(w) = args.worker_silent_timeout_s {
         config.worker_silent_timeout_s = w;
     }
+    // Panes and plugin hooks inherit SIGNALTTY_SOCKET but run in their own
+    // directories, so a relative socket path must be resolved here.
+    config.socket_path = std::path::absolute(&config.socket_path).unwrap_or(config.socket_path);
     serve(config).await
 }
 
