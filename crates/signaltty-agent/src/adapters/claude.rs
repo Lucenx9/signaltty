@@ -38,6 +38,15 @@ impl AgentAdapter for ClaudeAdapter {
 
     fn lifecycle_state(&self, ev: &AdapterEvent) -> LifecycleDecision {
         match ev.hook.as_str() {
+            // Compaction is not a turn boundary: auto compaction runs
+            // mid-turn and the agent keeps working; a manual `/compact`
+            // runs at the prompt. Neither may move the pane's state.
+            "SessionStart" if ev.payload_str("source").as_deref() == Some("compact") => {
+                LifecycleDecision::default()
+            }
+            "PreCompact" if ev.payload_str("trigger").as_deref() == Some("manual") => {
+                LifecycleDecision::default()
+            }
             "SessionStart" => LifecycleDecision {
                 lifecycle: Some(Lifecycle::Idle),
                 attention: None,
@@ -250,6 +259,27 @@ mod tests {
             vec!["claude", "--resume", "abc"]
         );
     }
+    #[test]
+    fn compaction_never_moves_the_turn_state() {
+        let a = ClaudeAdapter;
+        for (hook, payload) in [
+            (
+                "SessionStart",
+                json!({"source": "compact", "session_id": "s"}),
+            ),
+            ("PreCompact", json!({"trigger": "manual"})),
+            ("PostCompact", json!({"trigger": "auto"})),
+        ] {
+            let d = a.lifecycle_state(&ev(hook, payload));
+            assert_eq!(d.lifecycle, None, "{hook}");
+            assert_eq!(d.message, None, "{hook}");
+        }
+        let d = a.lifecycle_state(&ev("SessionStart", json!({"source": "startup"})));
+        assert_eq!(d.lifecycle, Some(Lifecycle::Idle));
+        let d = a.lifecycle_state(&ev("PreCompact", json!({"trigger": "auto"})));
+        assert_eq!(d.lifecycle, Some(Lifecycle::Working));
+    }
+
     #[test]
     fn tool_hooks_map_to_working_and_subagent_stop_changes_nothing() {
         let a = ClaudeAdapter;
