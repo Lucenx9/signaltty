@@ -827,6 +827,42 @@ fn cli_plugin_command_can_run_another_plugin_command_with_a_relative_root() {
 }
 
 #[test]
+fn cli_plugin_run_exports_an_absolute_socket() {
+    // Plugin commands run from their own package dir, so a relative
+    // `--socket` must be resolved first or scripts calling back into the
+    // server look for it under the plugin dir.
+    let base = std::env::temp_dir().join(format!(
+        "signaltty-plugsock-{}-{}",
+        std::process::id(),
+        signaltty_core::ids::new_pane_id()
+    ));
+    let sub = base.join("plugins").join("sock");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(
+        sub.join("plugin.toml"),
+        "[plugin]\nname = \"sock\"\nversion = \"1.0\"\n\n\
+         [[command]]\nname = \"show\"\nrun = [\"sh\", \"show.sh\"]\n",
+    )
+    .unwrap();
+    std::fs::write(sub.join("show.sh"), "echo \"SOCK=$SIGNALTTY_SOCKET\"\n").unwrap();
+    let out = Command::new(bin_path("signaltty"))
+        .args(["--socket", "s.sock", "plugin", "run", "sock", "show"])
+        .current_dir(&base)
+        .env("SIGNALTTY_PLUGIN_DIR", base.join("plugins"))
+        .env_remove("SIGNALTTY_PLUGIN_NAME")
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&base).ok();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+    assert_eq!(
+        stdout.trim(),
+        format!("SOCK={}", base.join("s.sock").display())
+    );
+}
+
+#[test]
 fn integration_rejects_invalid_configuration_without_rewriting() {
     let home = std::env::temp_dir().join(format!("signaltty-invalid-hooks-{}", std::process::id()));
     let file = home.join(".claude/settings.json");
