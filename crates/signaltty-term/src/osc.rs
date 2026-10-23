@@ -1,5 +1,6 @@
 //! OSC scanner over the raw PTY byte stream. Extracts:
 //! - OSC 9;4 `<state>[;<value>]` → retained progress evidence
+//! - OSC 9;9 `<cwd>` (ConEmu) → ignored, never a notification
 //! - OSC 9 `<msg>` (iTerm2/ConEmu) → notification
 //! - OSC 99 `<meta>;<body>` (Kitty, lenient) → notification
 //! - OSC 777 `notify;<title>;<body>` (rxvt/Ghostty/WezTerm) → notification
@@ -153,6 +154,8 @@ fn parse_osc(payload: &[u8]) -> Option<OscEvent> {
             // Progress is reserved, including malformed messages: never notify.
             parse_progress(pt).map(OscEvent::Progress)
         }
+        // ConEmu `9;9;<cwd>`: a prompt's directory report, not a message.
+        b"9" if pt.starts_with(b"9;") => None,
         b"9" => {
             let body = text(pt);
             if body.is_empty() {
@@ -319,6 +322,23 @@ mod tests {
         }
         assert_eq!(scanner.push(b"\x1b]9;hello\x07\x07").len(), 2);
         assert_eq!(scanner.progress(), "4;1;25");
+    }
+
+    #[test]
+    fn conemu_cwd_report_is_not_a_notification() {
+        // Shell prompts (oh-my-posh `pwd = osc99`, Windows Terminal setups)
+        // send OSC 9;9 on every prompt to report the working directory.
+        let ev = scan(&[b"\x1b]9;9;/home/me/project\x1b\\", b"\x1b]9;9;/tmp\x07"]);
+        assert!(ev.is_empty(), "{ev:?}");
+        // A plain OSC 9 message that merely starts with 9 still notifies.
+        assert_eq!(
+            scan(&[b"\x1b]9;99 tests passed\x07"]),
+            vec![OscEvent::Notify {
+                title: None,
+                body: "99 tests passed".into(),
+                source: "osc9",
+            }]
+        );
     }
 
     #[test]

@@ -82,7 +82,9 @@ notifications. It accepts `4;<state>[;<value>]` after `9;`, with state `0..4`
 and an omitted/empty value or integer `-1..100`. The `-1` sentinel supports
 Grok's busy signal. The retained ASCII payload is limited to 32 bytes.
 Malformed reserved progress is ignored rather than displayed as a notification.
-BEL and ST terminate progress without raising a bell. Ordinary OSC 9 messages
+BEL and ST terminate progress without raising a bell. ConEmu's OSC 9;9
+`<cwd>` directory report, which some shell prompts send on every prompt, is
+ignored too. Ordinary OSC 9 messages
 and bare BEL keep their previous behavior.
 
 The current PTY scanner owns the latest progress. The server's declarative
