@@ -584,9 +584,13 @@ enum IntegrationOp {
 }
 
 fn socket_path(args: &Args) -> PathBuf {
-    args.socket
+    let socket = args
+        .socket
         .clone()
-        .unwrap_or_else(signaltty_core::paths::socket_path)
+        .unwrap_or_else(signaltty_core::paths::socket_path);
+    // `plugin run` exports the socket to commands running in their own
+    // package dir, so a relative path must be resolved here.
+    std::path::absolute(&socket).unwrap_or(socket)
 }
 
 fn absolute_path(path: &str) -> Result<PathBuf, CliError> {
