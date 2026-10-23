@@ -524,8 +524,13 @@ impl Row {
         title.set_line_spacing(4);
         title.append(&identity);
         title.append(&status.widget);
-        grid.attach(&title, 0, 0, 2, 1);
-        grid.attach(&close, 2, 0, 1, 1);
+        // Title and close share a box, not grid columns: the spanning rows
+        // below would otherwise hand the close column spare width and pull
+        // the status slot off the trailing edge.
+        let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        header.append(&title);
+        header.append(&close);
+        grid.attach(&header, 0, 0, 3, 1);
         let activity = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
         let headline = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         headline.append(&message);
