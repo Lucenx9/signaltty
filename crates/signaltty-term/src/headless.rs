@@ -60,11 +60,11 @@ fn scroll_budget(batch: &[u8], cols: u16) -> ScrollBudget {
     while i < batch.len() {
         let b = batch[i];
         match b {
-            b'\n' | b'\x0b' | b'\x0c' | b'\x84' => linefeeds += 1,
+            b'\n' | b'\x0b' | b'\x0c' | b'\x84' => linefeeds = linefeeds.saturating_add(1),
             b'\x1b' => {
                 let mut j = i + 1;
                 if j < batch.len() && batch[j] == b'E' {
-                    linefeeds += 1; // NEL
+                    linefeeds = linefeeds.saturating_add(1); // NEL
                     i = j;
                 } else if j < batch.len() && batch[j] == b'[' {
                     j += 1;
@@ -78,7 +78,7 @@ fn scroll_budget(batch: &[u8], cols: u16) -> ScrollBudget {
                         j += 1;
                     }
                     if j < batch.len() && (batch[j] == b'S' || batch[j] == b'T') {
-                        linefeeds += if digits { val.max(1) } else { 1 };
+                        linefeeds = linefeeds.saturating_add(if digits { val.max(1) } else { 1 });
                         i = j;
                     } else if j < batch.len() && batch[j] == b'J' {
                         // ED can blank every row. Not a cursor linefeed.
@@ -92,7 +92,7 @@ fn scroll_budget(batch: &[u8], cols: u16) -> ScrollBudget {
         }
         i += 1;
     }
-    linefeeds += printable / (cols.max(1) as usize);
+    linefeeds = linefeeds.saturating_add(printable / (cols.max(1) as usize));
     ScrollBudget {
         bound: linefeeds.saturating_add(1).saturating_add(clear),
         linefeeds,
@@ -1215,6 +1215,47 @@ impl TerminalBackend for HeadlessBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_scroll_counts_keep_the_terminal_readable() {
+        let mut backend = HeadlessBackend::new();
+        backend.create_surface("p", 80, 24);
+        let output = format!("\x1b[{}S\x1b[1S\x1b[Hok", usize::MAX);
+        assert_eq!(oracle_contents(output.as_bytes(), 80, 24), "ok");
+        backend.feed_output("p", output.as_bytes());
+        assert_eq!(backend.snapshot("p"), "ok");
+        assert_eq!(backend.rendered("p", 0, 5000).unwrap().text, "ok");
+        backend.feed_output("p", b"\rnext");
+        assert_eq!(backend.snapshot("p"), "next");
+        assert_eq!(backend.rendered("p", 0, 5000).unwrap().text, "next");
+    }
+
+    #[test]
+    fn oversized_scroll_count_followed_by_text_keeps_the_terminal_readable() {
+        let mut backend = HeadlessBackend::new();
+        backend.create_surface("p", 1, 24);
+        let output = format!("\x1b[{}Sx", usize::MAX);
+        assert_eq!(oracle_contents(output.as_bytes(), 1, 24), "x");
+        backend.feed_output("p", output.as_bytes());
+        assert_eq!(backend.snapshot("p"), "x");
+        assert_eq!(backend.rendered("p", 0, 5000).unwrap().text, "x");
+        backend.feed_output("p", b"\ry");
+        assert_eq!(backend.snapshot("p"), "y");
+        assert_eq!(backend.rendered("p", 0, 5000).unwrap().text, "y");
+    }
+
+    #[test]
+    fn oversized_scroll_count_followed_by_line_motion_keeps_the_terminal_readable() {
+        for motion in ["\n", "\x0b", "\x0c", "\x1bE"] {
+            let mut backend = HeadlessBackend::new();
+            backend.create_surface("p", 80, 24);
+            let output = format!("\x1b[{}S{motion}\x1b[Hok", usize::MAX);
+            assert_eq!(oracle_contents(output.as_bytes(), 80, 24), "ok");
+            backend.feed_output("p", output.as_bytes());
+            assert_eq!(backend.snapshot("p"), "ok");
+            assert_eq!(backend.rendered("p", 0, 5000).unwrap().text, "ok");
+        }
+    }
 
     #[test]
     fn screen_and_tail() {
