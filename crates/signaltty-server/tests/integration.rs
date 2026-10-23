@@ -3241,6 +3241,46 @@ async fn tool_hooks_start_work_but_never_clear_blocked() {
     srv.shutdown().await;
 }
 
+/// Claude auto-compacts mid-turn and then fires `SessionStart` with
+/// `source: "compact"`; the agent keeps working, so the pane must too.
+/// A manual `/compact` at the prompt is not a turn either.
+#[tokio::test]
+async fn claude_compaction_keeps_the_turn_state() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let steps = [
+        ("SessionStart", json!({"source": "startup"}), "idle"),
+        ("UserPromptSubmit", json!({"prompt": "go"}), "working"),
+        ("PreCompact", json!({"trigger": "auto"}), "working"),
+        ("PostCompact", json!({"trigger": "auto"}), "working"),
+        ("SessionStart", json!({"source": "compact"}), "working"),
+        (
+            "Stop",
+            json!({"last_assistant_message": "all done"}),
+            "done",
+        ),
+        ("PreCompact", json!({"trigger": "manual"}), "done"),
+        ("PostCompact", json!({"trigger": "manual"}), "done"),
+        ("SessionStart", json!({"source": "compact"}), "done"),
+    ];
+    for (i, (event, mut payload, lifecycle)) in steps.into_iter().enumerate() {
+        payload["session_id"] = json!("s");
+        c.call(
+            "hook-event",
+            json!({"agent": "claude", "event": event, "pane_id": pane, "payload": payload}),
+        )
+        .await
+        .unwrap();
+        let p = c.call("pane.get", json!({"pane_id": pane})).await.unwrap();
+        assert_eq!(p["pane"]["lifecycle"], lifecycle, "step {i} {event}");
+        if i >= 5 {
+            assert_eq!(p["pane"]["last_message"], "all done", "step {i} {event}");
+        }
+    }
+    srv.shutdown().await;
+}
+
 /// A server whose test never calls `shutdown` (panic, early return) must
 /// still be reaped when it drops.
 #[tokio::test]
