@@ -596,6 +596,10 @@
     "072-harness-task-interruptions": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "073-scroll-budget-overflow": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }
