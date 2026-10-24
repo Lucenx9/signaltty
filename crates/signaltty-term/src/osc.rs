@@ -48,8 +48,63 @@ const MAX_KITTY_TEXT: usize = 4096;
 #[derive(Default)]
 struct KittyDraft {
     id: String,
-    title: String,
-    body: String,
+    title: KittyText,
+    body: KittyText,
+}
+
+/// Raw bytes of an OSC 99 title or body. `kitten notify` base64-encodes the
+/// whole text once and slices the encoding into chunks, so a chunk may end
+/// mid-quantum (`carry`) or mid-UTF-8 character: decode as a stream and build
+/// the string only when the notification completes.
+#[derive(Default)]
+struct KittyText {
+    bytes: Vec<u8>,
+    carry: String,
+    truncated: bool,
+}
+
+impl KittyText {
+    fn push_plain(&mut self, more: &str) {
+        self.push_bytes(more.as_bytes());
+    }
+
+    fn push_base64(&mut self, more: &str) {
+        let mut b64 = std::mem::take(&mut self.carry);
+        b64.extend(more.chars().filter(|c| !c.is_ascii_whitespace()));
+        // An undecodable chunk adds nothing rather than showing gibberish.
+        let valid = b64
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='));
+        if !valid {
+            return;
+        }
+        let split = b64.len() - b64.len() % 4;
+        if let Ok(bytes) = BASE64.decode(&b64[..split]) {
+            self.push_bytes(&bytes);
+            self.carry = b64[split..].to_string();
+        }
+    }
+
+    fn push_bytes(&mut self, more: &[u8]) {
+        let room = MAX_KITTY_TEXT.saturating_sub(self.bytes.len());
+        if more.len() > room {
+            self.truncated = true;
+        }
+        self.bytes.extend_from_slice(&more[..more.len().min(room)]);
+    }
+
+    fn finish(self) -> String {
+        let mut bytes = self.bytes;
+        if self.truncated {
+            // Drop a character the cap cut in half.
+            if let Err(e) = std::str::from_utf8(&bytes) {
+                if e.error_len().is_none() {
+                    bytes.truncate(e.valid_up_to());
+                }
+            }
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
 }
 
 impl OscScanner {
@@ -174,34 +229,31 @@ impl OscScanner {
                 ..KittyDraft::default()
             },
         };
-        // `e=1`: the chunk's text is base64 (how `kitten notify` sends it);
-        // an undecodable chunk adds nothing rather than showing gibberish.
-        let decoded;
-        let payload = if base64 && matches!(kind, "title" | "body") {
-            decoded = match BASE64.decode(payload.trim()) {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                Err(_) => String::new(),
-            };
-            decoded.as_str()
-        } else {
-            payload
+        // `e=1`: the text is base64, decoded as one stream across chunks.
+        let text = match kind {
+            "title" => Some(&mut draft.title),
+            "body" => Some(&mut draft.body),
+            _ => None, // icon data and buttons are never text to show
         };
-        match kind {
-            "title" => push_capped(&mut draft.title, payload),
-            "body" => push_capped(&mut draft.body, payload),
-            _ => {} // icon data and buttons are never text to show
+        if let Some(text) = text {
+            if base64 {
+                text.push_base64(payload);
+            } else {
+                text.push_plain(payload);
+            }
         }
         if !done {
             self.kitty = Some(draft);
             return None;
         }
+        let (title, body) = (draft.title.finish(), draft.body.finish());
         // A notification without a title uses its body as the title.
-        let (title, body) = if draft.body.is_empty() {
-            (None, draft.title)
-        } else if draft.title.is_empty() {
-            (None, draft.body)
+        let (title, body) = if body.is_empty() {
+            (None, title)
+        } else if title.is_empty() {
+            (None, body)
         } else {
-            (Some(draft.title), draft.body)
+            (Some(title), body)
         };
         if body.is_empty() {
             return None;
@@ -211,15 +263,6 @@ impl OscScanner {
             body,
             source: "osc99",
         })
-    }
-}
-
-fn push_capped(text: &mut String, more: &str) {
-    for c in more.chars() {
-        if text.len() + c.len_utf8() > MAX_KITTY_TEXT {
-            break;
-        }
-        text.push(c);
     }
 }
 
@@ -552,6 +595,51 @@ mod tests {
                 source: "osc99",
             }]
         );
+    }
+
+    #[test]
+    fn osc99_kitty_base64_streams_across_chunks() {
+        // `kitten notify` slices one base64 encoding, so a chunk can end
+        // mid-quantum: "Build done" split after "QnVpbGQgZ".
+        let ev = scan(&[
+            b"\x1b]99;i=1:d=0:e=1;QnVpbGQgZ\x1b\\",
+            b"\x1b]99;i=1:d=0:e=1;G9uZQ==\x1b\\",
+            b"\x1b]99;i=1;\x1b\\",
+        ]);
+        assert_eq!(
+            ev,
+            vec![OscEvent::Notify {
+                title: None,
+                body: "Build done".into(),
+                source: "osc99",
+            }]
+        );
+        // A chunk can also end mid-UTF-8 character ("aa\u{e9}").
+        let ev = scan(&[
+            b"\x1b]99;i=2:d=0:e=1:p=body;YWHD\x1b\\",
+            b"\x1b]99;i=2:e=1:p=body;qQ==\x1b\\",
+        ]);
+        assert_eq!(
+            ev,
+            vec![OscEvent::Notify {
+                title: None,
+                body: "aa\u{e9}".into(),
+                source: "osc99",
+            }]
+        );
+    }
+
+    #[test]
+    fn osc99_kitty_text_cap_keeps_whole_chars() {
+        let mut long = b"\x1b]99;i=9:p=body;a".to_vec();
+        long.extend("\u{e9}".repeat(3000).as_bytes());
+        long.extend_from_slice(b"\x1b\\");
+        let ev = scan(&[&long]);
+        let [OscEvent::Notify { body, .. }] = &ev[..] else {
+            panic!("expected one notification: {ev:?}");
+        };
+        assert_eq!(body.len(), MAX_KITTY_TEXT - 1);
+        assert!(!body.contains('\u{fffd}'));
     }
 
     #[test]
