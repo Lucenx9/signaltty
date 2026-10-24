@@ -1793,6 +1793,7 @@ dependencies = [
 name = "signaltty-term"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "serde",
  "signaltty-core",
  "vt100",

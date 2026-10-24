@@ -3,13 +3,16 @@
 //! - OSC 9;9 `<cwd>` (ConEmu) → ignored, never a notification
 //! - OSC 9 `<msg>` (iTerm2/ConEmu) → notification
 //! - OSC 99 `<meta>;<payload>` (Kitty, lenient) → notification once its
-//!   chunks (`i`/`d`/`p` keys) are complete
+//!   chunks (`i`/`d`/`p` keys, `e=1` base64 text) are complete
 //! - OSC 777 `notify;<title>;<body>` (rxvt/Ghostty/WezTerm) → notification
 //! - OSC 0/1/2 `<title>` → window/icon title
 //! - bare BEL → bell flag
 //!
 //! Runs independently of the screen parser so attention semantics never
 //! depend on VT emulation fidelity.
+
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OscEvent {
@@ -150,12 +153,13 @@ impl OscScanner {
             }
             None => ("", &s[..]),
         };
-        let (mut id, mut kind, mut done) = ("", "title", true);
+        let (mut id, mut kind, mut done, mut base64) = ("", "title", true, false);
         for pair in meta.split(':') {
             match pair.split_once('=') {
                 Some(("i", v)) => id = v,
                 Some(("p", v)) => kind = v,
                 Some(("d", v)) => done = v != "0",
+                Some(("e", v)) => base64 = v == "1",
                 _ => {}
             }
         }
@@ -169,6 +173,18 @@ impl OscScanner {
                 id: id.to_string(),
                 ..KittyDraft::default()
             },
+        };
+        // `e=1`: the chunk's text is base64 (how `kitten notify` sends it);
+        // an undecodable chunk adds nothing rather than showing gibberish.
+        let decoded;
+        let payload = if base64 && matches!(kind, "title" | "body") {
+            decoded = match BASE64.decode(payload.trim()) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(_) => String::new(),
+            };
+            decoded.as_str()
+        } else {
+            payload
         };
         match kind {
             "title" => push_capped(&mut draft.title, payload),
@@ -500,6 +516,39 @@ mod tests {
             vec![OscEvent::Notify {
                 title: None,
                 body: "Hello world".into(),
+                source: "osc99",
+            }]
+        );
+    }
+
+    #[test]
+    fn osc99_kitty_base64_payloads_are_decoded() {
+        // `kitten notify "Build done" "All 42 tests passed"`: metadata
+        // chunk, base64 (`e=1`) title and body chunks, then an empty one.
+        let ev = scan(&[
+            b"\x1b]99;i=7:d=0:w=-1;\x1b\\",
+            b"\x1b]99;i=7:d=0:e=1;QnVpbGQgZG9uZQ==\x1b\\",
+            b"\x1b]99;i=7:d=0:e=1:p=body;QWxsIDQyIHRlc3RzIHBhc3NlZA==\x1b\\",
+            b"\x1b]99;i=7;\x1b\\",
+        ]);
+        assert_eq!(
+            ev,
+            vec![OscEvent::Notify {
+                title: Some("Build done".into()),
+                body: "All 42 tests passed".into(),
+                source: "osc99",
+            }]
+        );
+        // A payload that is not valid base64 adds no text.
+        let ev = scan(&[
+            b"\x1b]99;i=8:d=0:e=1;not base64!\x1b\\",
+            b"\x1b]99;i=8:e=1:p=body;ZG9uZQ==\x1b\\",
+        ]);
+        assert_eq!(
+            ev,
+            vec![OscEvent::Notify {
+                title: None,
+                body: "done".into(),
                 source: "osc99",
             }]
         );

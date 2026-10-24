@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64 = "0.22"
 signaltty-core.workspace = true
 serde.workspace = true
 vt100 = "0.15"
