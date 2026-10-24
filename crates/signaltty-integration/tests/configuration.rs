@@ -151,6 +151,24 @@ fn mcp_honors_relative_provider_root_overrides() {
 }
 
 #[test]
+fn codex_hooks_include_interrupt() {
+    // Codex runs `Interrupt` instead of `Stop` when a turn is interrupted;
+    // without it an interrupted pane stays `working` until the next prompt.
+    let f = Fixture::new();
+    let report = f.hooks.install("codex").unwrap();
+    let root: Value = serde_json::from_str(&fs::read_to_string(&report.file).unwrap()).unwrap();
+    let hook = &root["hooks"]["Interrupt"][0]["hooks"][0];
+    let command = hook["command"].as_str().unwrap();
+    assert!(
+        command.contains("hook-event --agent codex --event Interrupt --payload-stdin"),
+        "{command}"
+    );
+    // Codex clamps Interrupt timeouts to 1..=3 seconds.
+    assert_eq!(hook["timeout"], 3);
+    assert!(!f.hooks.install("codex").unwrap().changed);
+}
+
+#[test]
 fn malformed_and_wrong_shape_are_never_rewritten() {
     let f = Fixture::new();
     for text in [

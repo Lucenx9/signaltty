@@ -28,6 +28,7 @@ fn hook_events(agent: &str) -> &'static [&'static str] {
             "UserPromptSubmit",
             "PermissionRequest",
             "Stop",
+            "Interrupt",
             "SessionEnd",
         ],
         "cursor" => &["sessionStart", "beforeSubmitPrompt", "stop", "sessionEnd"],

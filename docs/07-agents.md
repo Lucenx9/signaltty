@@ -58,7 +58,7 @@ BEL only).
 - Hooks: `~/.codex/hooks.json` / `[hooks]` in `config.toml`; events
   include `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
   `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`,
-  `SubagentStop`. Payload on stdin carries `session_id`,
+  `SubagentStop`, `Interrupt`. Payload on stdin carries `session_id`,
   `transcript_path`, `cwd`, `hook_event_name`, `turn_id`.
   No `Notification` event — use `notify = ["signaltty","hook-event",…]`
   (fires on `agent-turn-complete`) plus `tui.notifications` → BEL.
@@ -66,6 +66,10 @@ BEL only).
 - Shim: `notify` entry + hook commands calling `signaltty hook-event
   --agent codex`. Lifecycle: `UserPromptSubmit`→working,
   `PermissionRequest`→blocked+permission_required, `Stop`→done+unread.
+  An interrupted turn runs `Interrupt` instead of `Stop`
+  ([hooks docs](https://developers.openai.com/codex/hooks)): it maps to
+  done with attention cleared (and any pending gate withdrawn), since the
+  user caused it.
 - Verified against codex 0.157.1 (Sept 2026): hooks are trust-gated —
   new/changed entries sit at "review required" until the user picks
   "Trust all and continue" in an interactive session (hash recorded
