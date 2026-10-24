@@ -2,7 +2,8 @@
 //!
 //! Hooks (`~/.codex/hooks.json`, Claude-shaped schema): SessionStart,
 //! UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, Stop,
-//! SessionEnd, SubagentStop, PreCompact, PostCompact. Payload on stdin
+//! SessionEnd, SubagentStop, PreCompact, PostCompact, Interrupt (runs
+//! instead of Stop when the user interrupts a turn). Payload on stdin
 //! carries session_id, hook_event_name, cwd, turn_id, model,
 //! last_assistant_message. No Notification event — `notify = [...]` in
 //! config.toml fires on agent-turn-complete instead.
@@ -67,6 +68,13 @@ impl AgentAdapter for CodexAdapter {
                 lifecycle: Some(Lifecycle::Done),
                 attention: Some(Attention::Unread),
                 message: Some("session ended".to_string()),
+            },
+            // An interrupted turn never runs Stop. It is over, and any gate it
+            // raised went with it; the user interrupted it, so nothing is unread.
+            "Interrupt" => LifecycleDecision {
+                lifecycle: Some(Lifecycle::Done),
+                attention: Some(Attention::None),
+                message: Some("turn interrupted".to_string()),
             },
             // Subagent activity doesn't move the main pane's state.
             _ => LifecycleDecision::default(),
@@ -156,6 +164,23 @@ mod tests {
         assert_eq!(a.session_identity(&e), Some("sess-1".to_string()));
         let n = a.notification_event(&e).unwrap();
         assert_eq!(n.severity, NotificationSeverity::Info);
+    }
+
+    #[test]
+    fn interrupt_ends_the_turn_without_alerting() {
+        // Esc mid-turn runs `Interrupt`, never `Stop`: the turn is over and
+        // any gate it raised is gone, but the user caused it, so no unread.
+        let a = CodexAdapter;
+        let e = ev(
+            "Interrupt",
+            json!({"session_id": "sess-1", "turn_id": "t1"}),
+        );
+        let d = a.lifecycle_state(&e);
+        assert_eq!(d.lifecycle, Some(Lifecycle::Done));
+        assert_eq!(d.attention, Some(Attention::None));
+        assert_eq!(d.message.as_deref(), Some("turn interrupted"));
+        assert_eq!(a.session_identity(&e), Some("sess-1".to_string()));
+        assert!(a.notification_event(&e).is_none());
     }
 
     #[test]

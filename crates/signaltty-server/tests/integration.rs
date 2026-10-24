@@ -3717,6 +3717,38 @@ async fn fresh_turn_after_review_raises_attention_again() {
 }
 
 #[tokio::test]
+async fn codex_interrupt_ends_the_turn_and_withdraws_its_gate() {
+    // Codex runs `Interrupt` (never `Stop`) when the user interrupts a turn.
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let s1 = json!({"session_id": "s1", "turn_id": "t1"});
+    send_hook(&mut c, "codex", "UserPromptSubmit", &pane, s1.clone()).await;
+    let r = send_hook(&mut c, "codex", "Interrupt", &pane, s1.clone()).await;
+    assert_eq!(
+        (r["lifecycle"].as_str(), r["attention"].as_str()),
+        (Some("done"), Some("none"))
+    );
+
+    // Interrupting at an approval prompt also takes the prompt away.
+    send_hook(&mut c, "codex", "UserPromptSubmit", &pane, s1.clone()).await;
+    c.call(
+        "hook-event",
+        json!({"agent": "codex", "event": "PermissionRequest", "pane_id": pane,
+               "payload": s1, "decision": decision_payload("gate1")}),
+    )
+    .await
+    .unwrap();
+    send_hook(&mut c, "codex", "Interrupt", &pane, s1).await;
+    let p = pane_snapshot(&mut c, &pane).await;
+    assert_eq!(p["lifecycle"], "done");
+    assert_eq!(p["attention"], "none");
+    assert!(p["pending_decision"].is_null(), "{p}");
+    assert_eq!(p["last_message"], "turn interrupted");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn session_end_keeps_unanswered_permission_gate() {
     let srv = TestServer::start().await;
     let mut c = srv.client().await;
