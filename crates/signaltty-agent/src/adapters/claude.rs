@@ -67,6 +67,7 @@ impl AgentAdapter for ClaudeAdapter {
                 let msg = ev
                     .payload_str("prompt")
                     .or_else(|| ev.payload_str("message"))
+                    .or_else(|| ev.payload_str("tool_name"))
                     .unwrap_or_else(|| "permission requested".to_string());
                 LifecycleDecision {
                     lifecycle: Some(Lifecycle::Blocked),
@@ -125,7 +126,8 @@ impl AgentAdapter for ClaudeAdapter {
                 title: "Claude needs approval".to_string(),
                 body: ev
                     .payload_str("prompt")
-                    .or_else(|| ev.payload_str("message")),
+                    .or_else(|| ev.payload_str("message"))
+                    .or_else(|| ev.payload_str("tool_name")),
                 severity: NotificationSeverity::Warning,
             }),
             "Notification" if informational(ev) => None,
@@ -239,6 +241,23 @@ mod tests {
             assert_eq!(d.lifecycle, Some(Lifecycle::Blocked), "{kind:?}");
             assert_eq!(d.attention, Some(Attention::InputRequired), "{kind:?}");
         }
+    }
+
+    #[test]
+    fn permission_request_names_the_tool() {
+        // Claude's PermissionRequest carries tool_name/tool_input, never
+        // prompt or message (same contract as Codex).
+        let a = ClaudeAdapter;
+        let e = ev(
+            "PermissionRequest",
+            json!({"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}}),
+        );
+        let d = a.lifecycle_state(&e);
+        assert_eq!(d.lifecycle, Some(Lifecycle::Blocked));
+        assert_eq!(d.message.as_deref(), Some("Bash"));
+        let n = a.notification_event(&e).unwrap();
+        assert_eq!(n.title, "Claude needs approval");
+        assert_eq!(n.body.as_deref(), Some("Bash"));
     }
 
     #[test]
