@@ -2,7 +2,8 @@
 //! - OSC 9;4 `<state>[;<value>]` → retained progress evidence
 //! - OSC 9;9 `<cwd>` (ConEmu) → ignored, never a notification
 //! - OSC 9 `<msg>` (iTerm2/ConEmu) → notification
-//! - OSC 99 `<meta>;<body>` (Kitty, lenient) → notification
+//! - OSC 99 `<meta>;<payload>` (Kitty, lenient) → notification once its
+//!   chunks (`i`/`d`/`p` keys) are complete
 //! - OSC 777 `notify;<title>;<body>` (rxvt/Ghostty/WezTerm) → notification
 //! - OSC 0/1/2 `<title>` → window/icon title
 //! - bare BEL → bell flag
@@ -34,6 +35,18 @@ pub struct OscScanner {
     /// are payload, never a bell.
     discarding: bool,
     progress: String,
+    /// OSC 99 notification still waiting for its `d=1` chunk.
+    kitty: Option<KittyDraft>,
+}
+
+/// Bound on an assembled OSC 99 title or body.
+const MAX_KITTY_TEXT: usize = 4096;
+
+#[derive(Default)]
+struct KittyDraft {
+    id: String,
+    title: String,
+    body: String,
 }
 
 impl OscScanner {
@@ -42,6 +55,7 @@ impl OscScanner {
             pending: Vec::new(),
             discarding: false,
             progress: String::new(),
+            kitty: None,
         }
     }
 
@@ -74,7 +88,11 @@ impl OscScanner {
                 match find_osc_end(&buf, i + 2) {
                     Ok((end, term_len)) => {
                         let payload = &buf[i + 2..end];
-                        if let Some(ev) = parse_osc(payload) {
+                        let ev = match payload.strip_prefix(b"99;") {
+                            Some(pt) => self.kitty(pt),
+                            None => parse_osc(payload),
+                        };
+                        if let Some(ev) = ev {
                             if let OscEvent::Progress(ref progress) = ev {
                                 self.progress.clone_from(progress);
                             }
@@ -104,6 +122,88 @@ impl OscScanner {
             self.pending = trailing_esc(rest);
         }
         events
+    }
+}
+
+impl OscScanner {
+    /// Kitty OSC 99 (`meta;payload`). A notification is chunked: `d=0`
+    /// chunks with the same `i` accumulate its title (`p=title`, the
+    /// default) and body (`p=body`); it is shown once a chunk without `d=0`
+    /// arrives. Lenient: a head that is not metadata is a plain title.
+    fn kitty(&mut self, pt: &[u8]) -> Option<OscEvent> {
+        let s = String::from_utf8_lossy(pt);
+        let (meta, payload) = match s.find(';') {
+            Some(idx) if idx == 0 || s[..idx].contains('=') || s[..idx].contains(':') => {
+                (&s[..idx], &s[idx + 1..])
+            }
+            Some(idx) => {
+                let title = s[..idx].trim();
+                let body = &s[idx + 1..];
+                if body.is_empty() {
+                    return None;
+                }
+                return Some(OscEvent::Notify {
+                    title: (!title.is_empty()).then(|| title.to_string()),
+                    body: body.to_string(),
+                    source: "osc99",
+                });
+            }
+            None => ("", &s[..]),
+        };
+        let (mut id, mut kind, mut done) = ("", "title", true);
+        for pair in meta.split(':') {
+            match pair.split_once('=') {
+                Some(("i", v)) => id = v,
+                Some(("p", v)) => kind = v,
+                Some(("d", v)) => done = v != "0",
+                _ => {}
+            }
+        }
+        // Queries (`?`, `alive`) and `close` are not notification chunks.
+        if !matches!(kind, "title" | "body" | "icon" | "buttons") {
+            return None;
+        }
+        let mut draft = match self.kitty.take() {
+            Some(draft) if draft.id == id => draft,
+            _ => KittyDraft {
+                id: id.to_string(),
+                ..KittyDraft::default()
+            },
+        };
+        match kind {
+            "title" => push_capped(&mut draft.title, payload),
+            "body" => push_capped(&mut draft.body, payload),
+            _ => {} // icon data and buttons are never text to show
+        }
+        if !done {
+            self.kitty = Some(draft);
+            return None;
+        }
+        // A notification without a title uses its body as the title.
+        let (title, body) = if draft.body.is_empty() {
+            (None, draft.title)
+        } else if draft.title.is_empty() {
+            (None, draft.body)
+        } else {
+            (Some(draft.title), draft.body)
+        };
+        if body.is_empty() {
+            return None;
+        }
+        Some(OscEvent::Notify {
+            title,
+            body,
+            source: "osc99",
+        })
+    }
+}
+
+fn push_capped(text: &mut String, more: &str) {
+    for c in more.chars() {
+        if text.len() + c.len_utf8() > MAX_KITTY_TEXT {
+            break;
+        }
+        text.push(c);
     }
 }
 
@@ -165,33 +265,6 @@ fn parse_osc(payload: &[u8]) -> Option<OscEvent> {
                 title: None,
                 body,
                 source: "osc9",
-            })
-        }
-        b"99" => {
-            // Kitty form: `meta;body` where meta holds k=v pairs; be
-            // lenient: body is everything after the first ';' if the
-            // head looks like metadata, else the whole payload text.
-            let s = text(pt);
-            let (title, body) = match s.find(';') {
-                Some(idx) if s[..idx].contains('=') || s[..idx].contains(':') => {
-                    (None, s[idx + 1..].to_string())
-                }
-                Some(idx) => {
-                    let t = s[..idx].trim().to_string();
-                    (
-                        if t.is_empty() { None } else { Some(t) },
-                        s[idx + 1..].to_string(),
-                    )
-                }
-                None => (None, s),
-            };
-            if body.is_empty() {
-                return None;
-            }
-            Some(OscEvent::Notify {
-                title,
-                body,
-                source: "osc99",
             })
         }
         b"777" => {
@@ -369,12 +442,64 @@ mod tests {
 
     #[test]
     fn osc99_kitty_lenient() {
-        let ev = scan(&[b"\x1b]99;i=1:d=0:p=body;task finished\x1b\\"]);
+        let ev = scan(&[b"\x1b]99;i=1:p=body;task finished\x1b\\"]);
         assert_eq!(
             ev,
             vec![OscEvent::Notify {
                 title: None,
                 body: "task finished".into(),
+                source: "osc99",
+            }]
+        );
+    }
+
+    #[test]
+    fn osc99_kitty_chunks_make_one_notification() {
+        // Claude Code's kitty channel: title, body, then an empty `d=1` chunk.
+        let ev = scan(&[
+            b"\x1b]99;i=3766:d=0:p=title;Claude Code\x1b\\",
+            b"\x1b]99;i=3766:p=body;Claude is waiting for your input\x1b\\",
+            b"\x1b]99;i=3766:d=1:a=focus;\x1b\\",
+        ]);
+        assert_eq!(
+            ev,
+            vec![OscEvent::Notify {
+                title: Some("Claude Code".into()),
+                body: "Claude is waiting for your input".into(),
+                source: "osc99",
+            }]
+        );
+    }
+
+    #[test]
+    fn osc99_kitty_queries_and_icon_data_are_not_messages() {
+        let ev = scan(&[
+            b"\x1b]99;i=q:p=?;\x1b\\",
+            b"\x1b]99;i=a:p=alive;\x1b\\",
+            b"\x1b]99;i=n:p=close;\x1b\\",
+            b"\x1b]99;i=2:d=0;Build\x1b\\",
+            b"\x1b]99;i=2:d=0:p=icon:e=1;iVBORw0KGgo=\x1b\\",
+            b"\x1b]99;i=2:p=body;done\x1b\\",
+        ]);
+        assert_eq!(
+            ev,
+            vec![OscEvent::Notify {
+                title: Some("Build".into()),
+                body: "done".into(),
+                source: "osc99",
+            }]
+        );
+        // The documented one-shot form still notifies; a new id drops an
+        // unfinished draft instead of mixing it in.
+        let ev = scan(&[
+            b"\x1b]99;i=3:d=0;stale\x1b\\",
+            b"\x1b]99;;Hello world\x1b\\",
+        ]);
+        assert_eq!(
+            ev,
+            vec![OscEvent::Notify {
+                title: None,
+                body: "Hello world".into(),
                 source: "osc99",
             }]
         );
