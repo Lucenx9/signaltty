@@ -124,10 +124,19 @@ pub fn load(config: &Config) -> Option<LoadedSnapshot> {
         }
     };
     if snapshot.version != SNAPSHOT_VERSION {
-        tracing::error!(
-            "snapshot version {} != {}; refusing to load",
+        // Move it aside like a corrupt one: the empty session that follows
+        // saves over `snapshot.json`, which would destroy what we refused.
+        let backup = config.state_dir.join(format!(
+            "snapshot.v{}-{}",
             snapshot.version,
-            SNAPSHOT_VERSION
+            Utc::now().format("%Y%m%dT%H%M%S")
+        ));
+        let _ = fs::rename(&path, &backup);
+        tracing::error!(
+            "snapshot version {} != {}; refusing to load, moved to {:?}",
+            snapshot.version,
+            SNAPSHOT_VERSION,
+            backup
         );
         return None;
     }
@@ -357,6 +366,50 @@ mod tests {
             signaltty_core::model::WorkspaceNaming::Failed
         );
         assert_eq!(store.workspaces["in-flight"].name, "in-flight");
+    }
+
+    #[test]
+    fn refused_future_snapshot_survives_the_next_save() {
+        // A newer build's snapshot is refused, not misread; the empty
+        // session that follows must not then overwrite it.
+        let state_dir = test_state_dir();
+        let snapshots_dir = state_dir.join("snapshots");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        // A copy under 15 minutes old gates history rotation.
+        let recent = Utc::now() - chrono::Duration::minutes(5);
+        fs::write(
+            snapshots_dir.join(format!("snapshot-{}.json", recent.format("%Y%m%dT%H%M%SZ"))),
+            make_snapshot_json(&["older"]),
+        )
+        .unwrap();
+        let mut future: serde_json::Value =
+            serde_json::from_str(&make_snapshot_json(&["future-ws"])).unwrap();
+        future["version"] = serde_json::json!(SNAPSHOT_VERSION + 1);
+        let future = future.to_string();
+        fs::write(state_dir.join("snapshot.json"), &future).unwrap();
+        let config = Config {
+            socket_path: state_dir.join("test.sock"),
+            state_dir: state_dir.clone(),
+            history_tail_bytes: 1024,
+            plugin_dir: state_dir.join("plugins"),
+            agents_dir: state_dir.join("agents"),
+            integration_home: None,
+            max_parallel_tasks: crate::config::DEFAULT_MAX_PARALLEL_TASKS,
+            worker_silent_timeout_s: crate::config::DEFAULT_WORKER_SILENT_TIMEOUT_S,
+            merge_timeout_ms: crate::config::DEFAULT_MERGE_TIMEOUT_MS,
+            fetch_timeout_ms: crate::config::DEFAULT_FETCH_TIMEOUT_MS,
+        };
+
+        assert!(load(&config).is_none());
+        let store = std::sync::Arc::new(std::sync::RwLock::new(crate::store::Store::new()));
+        save(&store, &Mutex::new(HeadlessBackend::new()), &config).unwrap();
+
+        let kept = fs::read_dir(&state_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .any(|e| fs::read_to_string(e.path()).is_ok_and(|c| c == future));
+        assert!(kept, "the refused snapshot was overwritten");
     }
 
     #[test]

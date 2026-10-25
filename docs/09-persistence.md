@@ -75,7 +75,8 @@ points the server at a private bus. See
 - Snapshot writes are atomic; loader tolerates missing/corrupt files
   (backs up corrupt snapshot, starts empty, logs loudly).
 - `snapshot_version` field; unknown future versions refuse to load
-  with a clear error rather than misinterpreting.
+  with a clear error rather than misinterpreting, and are moved aside
+  like a corrupt snapshot so the next save cannot overwrite them.
 - Optional periodic snapshots every 60s regardless of activity.
 - Rotating snapshot history in `snapshots/`: retains up to 48 historical
   snapshots (at most one preserved every 15 minutes, never preserving an
