@@ -55,7 +55,14 @@ pub async fn ensure_running(socket: &Path, json: bool) -> Result<(), CliError> {
     let bin = server_binary()
         .ok_or_else(|| CliError::Usage("signaltty-server binary not found".to_string()))?;
     let log = signaltty_core::paths::state_dir().join("server.log");
-    std::fs::create_dir_all(log.parent().unwrap()).ok();
+    // The server keeps its state dir 0700 (docs/10); creating it here
+    // first must not leave it at the umask mode.
+    let state_dir = log.parent().unwrap();
+    if !state_dir.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(state_dir).ok();
+        std::fs::set_permissions(state_dir, std::fs::Permissions::from_mode(0o700)).ok();
+    }
     let log_file = std::fs::File::create(&log).map_err(|e| CliError::Io(e.to_string()))?;
     std::process::Command::new(&bin)
         .arg("--socket")

@@ -94,6 +94,9 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         crate::router::Overlays::default()
     });
     let overlays = std::sync::RwLock::new(Arc::new(overlays));
+    // The journal opens before the first snapshot: create the state dir
+    // 0700 here (docs/10), not with the umask mode `create_dir_all` gives.
+    crate::persist::ensure_dir(&config.state_dir)?;
     let audit = crate::audit::AuditLog::open(&config.state_dir)?;
     let sequence = crate::audit::EventSequence::open(&config.state_dir, audit.max_seq())?;
     store
