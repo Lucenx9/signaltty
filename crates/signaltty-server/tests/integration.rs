@@ -1136,6 +1136,43 @@ async fn hook_event_claude_notification_and_cursor_stop() {
 }
 
 #[tokio::test]
+async fn hook_event_cursor_stop_reports_turn_status() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let (_ws, pane) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    for (status, lifecycle, attention) in [
+        ("error", "failed", "error"),
+        ("aborted", "done", "none"),
+        ("completed", "done", "unread"),
+    ] {
+        let r = c
+            .call(
+                "hook-event",
+                json!({
+                    "agent": "cursor", "event": "beforeSubmitPrompt", "pane_id": pane,
+                    "payload": {"conversation_id": "chat-9"}
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["lifecycle"], "working");
+        let r = c
+            .call(
+                "hook-event",
+                json!({
+                    "agent": "cursor", "event": "stop", "pane_id": pane,
+                    "payload": {"conversation_id": "chat-9", "status": status, "loop_count": 0}
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["lifecycle"], lifecycle, "status {status}");
+        assert_eq!(r["attention"], attention, "status {status}");
+    }
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn hook_event_opencode_failure_keeps_error_attention_and_resume_identity() {
     let srv = TestServer::start().await;
     let mut c = srv.client().await;
