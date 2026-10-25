@@ -4,7 +4,8 @@
 //! sessionStart (stable session_id, but also fires in Cursor Desktop —
 //! the install recipe targets the CLI via SIGNALTTY_PANE presence),
 //! beforeSubmitPrompt, preToolUse, postToolUse, stop, sessionEnd.
-//! Payload on stdin carries hook_event_name and session fields.
+//! Payload on stdin carries hook_event_name and session fields; `stop`
+//! also carries `status` ("completed" | "aborted" | "error").
 
 use signaltty_core::model::{AgentKind, NotificationSeverity};
 use signaltty_core::state::{Attention, Lifecycle};
@@ -38,10 +39,23 @@ impl AgentAdapter for CursorAdapter {
                 attention: None,
                 message: None,
             },
-            "stop" => LifecycleDecision {
-                lifecycle: Some(Lifecycle::Done),
-                attention: Some(Attention::Unread),
-                message: Some("turn complete".to_string()),
+            "stop" => match ev.payload_str("status").as_deref() {
+                Some("error") => LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Failed),
+                    attention: Some(Attention::Error),
+                    message: Some("turn failed".to_string()),
+                },
+                // The user aborted the turn, so nothing is unread.
+                Some("aborted") => LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Done),
+                    attention: Some(Attention::None),
+                    message: Some("turn aborted".to_string()),
+                },
+                _ => LifecycleDecision {
+                    lifecycle: Some(Lifecycle::Done),
+                    attention: Some(Attention::Unread),
+                    message: Some("turn complete".to_string()),
+                },
             },
             "sessionEnd" => LifecycleDecision {
                 lifecycle: Some(Lifecycle::Done),
@@ -61,11 +75,19 @@ impl AgentAdapter for CursorAdapter {
 
     fn notification_event(&self, ev: &AdapterEvent) -> Option<NotificationDraft> {
         match ev.hook.as_str() {
-            "stop" => Some(NotificationDraft {
-                title: "Cursor turn complete".to_string(),
-                body: None,
-                severity: NotificationSeverity::Info,
-            }),
+            "stop" => match ev.payload_str("status").as_deref() {
+                Some("error") => Some(NotificationDraft {
+                    title: "Cursor turn failed".to_string(),
+                    body: None,
+                    severity: NotificationSeverity::Error,
+                }),
+                Some("aborted") => None,
+                _ => Some(NotificationDraft {
+                    title: "Cursor turn complete".to_string(),
+                    body: None,
+                    severity: NotificationSeverity::Info,
+                }),
+            },
             _ => None,
         }
     }
@@ -117,6 +139,27 @@ mod tests {
         let d = a.lifecycle_state(&ev("stop", json!({})));
         assert_eq!(d.lifecycle, Some(Lifecycle::Done));
         assert_eq!(d.attention, Some(Attention::Unread));
+    }
+
+    #[test]
+    fn stop_error_fails_the_turn() {
+        let a = CursorAdapter;
+        let e = ev("stop", json!({"status": "error", "loop_count": 0}));
+        let d = a.lifecycle_state(&e);
+        assert_eq!(d.lifecycle, Some(Lifecycle::Failed));
+        assert_eq!(d.attention, Some(Attention::Error));
+        let n = a.notification_event(&e).unwrap();
+        assert_eq!(n.severity, NotificationSeverity::Error);
+    }
+
+    #[test]
+    fn stop_aborted_ends_turn_quietly() {
+        let a = CursorAdapter;
+        let e = ev("stop", json!({"status": "aborted", "loop_count": 0}));
+        let d = a.lifecycle_state(&e);
+        assert_eq!(d.lifecycle, Some(Lifecycle::Done));
+        assert_eq!(d.attention, Some(Attention::None));
+        assert!(a.notification_event(&e).is_none());
     }
 
     #[test]
