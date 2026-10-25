@@ -418,6 +418,49 @@ fn opencode_plugin_v1_preserves_nested_and_legacy_errors() {
 }
 
 #[test]
+fn opencode_plugin_ignores_subagent_child_sessions() {
+    // A subagent (task tool) runs in a child session (`parentID`) on the same
+    // event stream; its turn ending must not end the parent's turn.
+    let v2 = run_opencode_plugin(
+        "v2",
+        json!([
+            {"type":"session.created", "data":{"sessionID":"ses_parent"}},
+            {"type":"session.execution.started", "data":{"sessionID":"ses_parent"}},
+            {"type":"session.created", "data":{"sessionID":"ses_child", "parentID":"ses_parent"}},
+            {"type":"session.execution.started", "data":{"sessionID":"ses_child"}},
+            {"type":"session.execution.failed", "data":{"sessionID":"ses_child", "error":{"message":"x"}}},
+            {"type":"session.execution.succeeded", "data":{"sessionID":"ses_child"}},
+            {"type":"session.execution.succeeded", "data":{"sessionID":"ses_parent"}}
+        ]),
+        true,
+    );
+    assert_eq!(
+        v2.iter().map(|r| r["payload"].clone()).collect::<Vec<_>>(),
+        vec![
+            json!({"session_id":"ses_parent"}),
+            json!({"session_id":"ses_parent", "status":"busy"}),
+            json!({"session_id":"ses_parent", "status":"idle"})
+        ]
+    );
+    let v1 = run_opencode_plugin(
+        "v1",
+        json!([
+            {"type":"session.created", "properties":{"sessionID":"ses_child",
+                "info":{"id":"ses_child", "parentID":"ses_parent"}}},
+            {"type":"session.status", "properties":{"sessionID":"ses_child", "status":{"type":"busy"}}},
+            {"type":"session.status", "properties":{"sessionID":"ses_child", "status":{"type":"idle"}}},
+            {"type":"session.idle", "properties":{"sessionID":"ses_child"}},
+            {"type":"session.idle", "properties":{"sessionID":"ses_parent"}}
+        ]),
+        true,
+    );
+    assert_eq!(
+        v1.iter().map(|r| r["payload"].clone()).collect::<Vec<_>>(),
+        vec![json!({"session_id":"ses_parent"})]
+    );
+}
+
+#[test]
 fn opencode_plugin_v2_retains_lifecycle_and_unmanaged_noop() {
     let events = json!([
         null,

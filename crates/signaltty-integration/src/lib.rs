@@ -579,8 +579,22 @@ function sessionId(event) {
   return p.sessionID ?? p.sessionId ?? p.session_id ?? event.sessionID ?? p.info?.id ?? null;
 }
 
+// Subagents (the task tool) run in child sessions on the same event stream.
+// Only the session the user drives is the pane's agent: a child starting,
+// finishing, or failing must not set the pane's session or end its turn.
+const childSessions = new Set();
+
+function parentId(event) {
+  const p = event.properties ?? {};
+  return p.parentID ?? p.info?.parentID ?? null;
+}
+
 function handleEvent(event) {
   const sid = sessionId(event);
+  if (sid && (event.type === "session.created" || event.type === "session.updated") && parentId(event)) {
+    childSessions.add(sid);
+  }
+  if (sid && childSessions.has(sid)) return;
   switch (event.type) {
     case "session.created":
       if (sid) report("session.created", { session_id: sid });
