@@ -65,6 +65,7 @@ impl Scope {
             Scope::Turn => "Latest turn",
         };
         match files {
+            Some(1) => format!("{label} · 1 file · +{added} −{removed}"),
             Some(files) => format!("{label} · {files} files · +{added} −{removed}"),
             None => label.to_owned(),
         }
@@ -171,6 +172,16 @@ fn row_path(row: &gtk4::ListBoxRow) -> Option<String> {
 /// `src/ui/app.rs` → (`src/ui`, `app.rs`); top-level files have no group.
 fn split_path(path: &str) -> (&str, &str) {
     path.rsplit_once('/').unwrap_or(("", path))
+}
+
+/// A folder outside Git is a fact about the workspace, not a failure a
+/// refresh could fix, so it gets plain words instead of the error code.
+fn summary_error(error: &str) -> String {
+    if error.contains("not a git repo") {
+        "This folder isn't a Git repository, so there are no changes to show.".to_owned()
+    } else {
+        format!("Couldn't read changes: {error}. Refresh to try again.")
+    }
 }
 
 fn sort_key(path: &str) -> (String, String) {
@@ -616,12 +627,9 @@ impl Changes {
                     }
                 }
                 Err(error) => {
-                    this.summary.set_text(&format!(
-                        "Couldn't read changes: {error}. Refresh to try again."
-                    ));
-                    this.status.set_text(&format!(
-                        "Couldn't read changes: {error}. Refresh to try again."
-                    ));
+                    let text = summary_error(&error);
+                    this.summary.set_text(&text);
+                    this.status.set_text(&text);
                 }
             }
         });
@@ -834,9 +842,17 @@ mod tests {
         );
         assert_eq!(
             Scope::Turn.summary(Some(1), 2, 0),
-            "Latest turn · 1 files · +2 −0"
+            "Latest turn · 1 file · +2 −0"
         );
         assert_eq!(Scope::Turn.summary(None, 0, 0), "Latest turn");
+        assert_eq!(
+            summary_error("BAD_PARAMS: not a git repo: /tmp/x"),
+            "This folder isn't a Git repository, so there are no changes to show."
+        );
+        assert_eq!(
+            summary_error("IO_ERROR: boom"),
+            "Couldn't read changes: IO_ERROR: boom. Refresh to try again."
+        );
         assert_eq!(Scope::Head.empty(true), "No working tree changes");
         assert_eq!(Scope::Turn.empty(true), "No changes in the latest turn");
         assert_eq!(

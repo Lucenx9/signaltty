@@ -5564,7 +5564,7 @@ fn open_task_board_preserves_identity_scroll_and_focus_on_updates() {
     }
     app.refresh_open_board();
     settle();
-    assert!(has_label(&dialog.child().unwrap(), "No Tasks Yet"));
+    assert!(has_label(&dialog.child().unwrap(), "No tasks yet"));
     app.model.borrow_mut().tasks.apply_event(
         signaltty_proto::event::TASK_CREATED,
         &json!({"task": tasks[1]}),
