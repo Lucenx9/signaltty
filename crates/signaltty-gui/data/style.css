@@ -1029,6 +1029,16 @@ button.pill:focus-visible,
   transform: none;
 }
 
+/* Counts and ages update in place; fixed-width digits keep their
+ * labels from shifting as the numbers change. */
+.row-status,
+.attention-button,
+.board-column-count,
+.changes-summary,
+.changes-stat {
+  font-feature-settings: "tnum";
+}
+
 /* High-contrast rules live at the end of this file, after the theme blocks. */
 
 /* ---- dark ------------------------------------------------------------ */
