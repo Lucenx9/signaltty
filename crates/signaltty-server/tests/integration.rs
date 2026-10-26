@@ -3971,3 +3971,19 @@ async fn spawned_pane_sees_term_program_and_not_inherited_tmux() {
     );
     srv.shutdown().await;
 }
+
+/// docs/10: `state_dir` is 0700. The audit journal opens before the first
+/// snapshot, so it must not create the directory with the umask mode.
+#[tokio::test]
+async fn fresh_state_dir_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    new_pane(&mut c, vec!["true"]).await;
+    let mode = std::fs::metadata(&srv.state_dir)
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700, "state dir mode {:o}", mode & 0o777);
+    srv.shutdown().await;
+}

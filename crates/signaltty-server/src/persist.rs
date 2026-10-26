@@ -238,7 +238,8 @@ fn tail_path(history: &Path, pane_id: &str) -> PathBuf {
     history.join(format!("{safe}.tail"))
 }
 
-fn ensure_dir(dir: &Path) -> Result<(), String> {
+/// Create `dir` 0700 if missing; an existing directory keeps its mode.
+pub(crate) fn ensure_dir(dir: &Path) -> Result<(), String> {
     if !dir.exists() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
