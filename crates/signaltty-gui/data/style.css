@@ -1607,6 +1607,9 @@ dialog.signaltty-dialog bottom-sheet > sheet {
 }
 .signaltty-dialog list.boxed-list > row { border-radius: 4px; }
 .signaltty-dialog list.palette-list { box-shadow: none; }
+/* Commands are scanned, not filled in: group headings chunk the list,
+ * so per-row rules would only make it read as a settings form. */
+.signaltty-dialog list.palette-list > row { border-bottom: none; }
 .signaltty-dialog .palette-list > row:selected {
   background-color: alpha(currentColor, 0.07);
   background-image: linear-gradient(var(--accent-color), var(--accent-color));
