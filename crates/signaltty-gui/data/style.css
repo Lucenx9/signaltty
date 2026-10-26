@@ -540,10 +540,15 @@ toolbarview > .top-bar headerbar button.image-button:checked {
   color: alpha(currentColor, 0.65);
 }
 
+/* Selection markers are painted bars inset from the corners: an inset
+ * shadow follows the border radius and curls into a hook at each end. */
 .navigation-sidebar > row:selected,
 .navigation-sidebar > row:selected:hover {
   background-color: alpha(currentColor, 0.08);
-  box-shadow: inset 2px 0 alpha(currentColor, 0.5);
+  background-image: linear-gradient(alpha(currentColor, 0.5), alpha(currentColor, 0.5));
+  background-size: 2px calc(100% - 12px);
+  background-position: left center;
+  background-repeat: no-repeat;
 }
 
 /* Status stays visible beside the independent close target. */
@@ -1584,7 +1589,10 @@ dialog.signaltty-dialog bottom-sheet > sheet {
 .signaltty-dialog list.palette-list { box-shadow: none; }
 .signaltty-dialog .palette-list > row:selected {
   background-color: alpha(currentColor, 0.07);
-  box-shadow: inset 2px 0 var(--accent-color);
+  background-image: linear-gradient(var(--accent-color), var(--accent-color));
+  background-size: 2px calc(100% - 12px);
+  background-position: left center;
+  background-repeat: no-repeat;
 }
 .signaltty-dialog .theme-card,
 .signaltty-dialog .appearance-card {
@@ -1652,7 +1660,10 @@ headerbar.workspace-header windowcontrols > button:active > image {
 }
 .workspace-tabs tab:selected {
   background-color: alpha(currentColor, 0.06);
-  box-shadow: inset 0 -2px var(--accent-color);
+  background-image: linear-gradient(var(--accent-color), var(--accent-color));
+  background-size: calc(100% - 12px) 2px;
+  background-position: center bottom;
+  background-repeat: no-repeat;
 }
 .workspace-tabs tab:selected:hover {
   background-color: alpha(currentColor, 0.09);
@@ -1680,7 +1691,11 @@ headerbar.workspace-header windowcontrols > button:active > image {
 }
 .changes-scope > toggle:checked {
   background-color: alpha(currentColor, 0.08);
-  box-shadow: inset 0 -2px var(--accent-color);
+  background-image: linear-gradient(var(--accent-color), var(--accent-color));
+  background-size: calc(100% - 8px) 2px;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  box-shadow: none;
 }
 .high-contrast .changes-scope > toggle:checked {
   box-shadow: inset 0 -3px currentColor;
