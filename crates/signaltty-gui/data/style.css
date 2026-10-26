@@ -973,11 +973,15 @@ button.worktree-remove:not(:disabled):hover {
 /* ---- pressable pills -------------------------------------------------- */
 
 button.pill,
-.resume-button {
+.resume-button,
+.decision-options button,
+toolbarview > .top-bar headerbar button.header-tool-button {
   transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 button.pill:active:not(:focus-visible),
 .resume-button:active:not(:focus-visible),
+.decision-options button:active:not(:focus-visible),
+toolbarview > .top-bar headerbar button.header-tool-button:active:not(:focus-visible),
 .attention-button:active:not(:focus-visible),
 .board-card:active:not(:focus-visible) {
   transform: scale(0.97);
@@ -1007,7 +1011,8 @@ button.pill:focus-visible,
 .reduced-motion .resume-button,
 .reduced-motion .attention-button,
 .reduced-motion .sidebar-handle,
-.reduced-motion .board-card {
+.reduced-motion .board-card,
+.reduced-motion toolbarview > .top-bar headerbar button.header-tool-button {
   transition: none;
 }
 .reduced-motion .pulse {
@@ -1019,7 +1024,8 @@ button.pill:focus-visible,
 .reduced-motion button.pill:active,
 .reduced-motion .resume-button:active,
 .reduced-motion .attention-button:active,
-.reduced-motion .board-card:active {
+.reduced-motion .board-card:active,
+.reduced-motion toolbarview > .top-bar headerbar button.header-tool-button:active {
   transform: none;
 }
 
