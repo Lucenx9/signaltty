@@ -1551,6 +1551,12 @@ dialog.signaltty-dialog.alert floating-sheet > sheet {
   border-radius: 10px;
   box-shadow: 0 8px 24px alpha(black, 0.14), 0 0 0 1px var(--border-color);
 }
+/* The drop above vanishes on near-black; this outranks it so owned
+ * dark sheets keep the deep shadow the .dark block gives other sheets. */
+.dark dialog.signaltty-dialog floating-sheet > sheet,
+.dark dialog.signaltty-dialog.alert floating-sheet > sheet {
+  box-shadow: 0 0 0 1px var(--border-color), 0 24px 72px -20px alpha(black, 0.9);
+}
 dialog.signaltty-dialog bottom-sheet > sheet {
   border-top-left-radius: 10px;
   border-top-right-radius: 10px;
