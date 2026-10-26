@@ -590,13 +590,22 @@ pub fn sanitize_branch_for_path(branch: &str) -> String {
         .collect()
 }
 
+/// Longest label part of a default task branch (sanitized, so ASCII bytes).
+const DEFAULT_BRANCH_LABEL_MAX: usize = 64;
+
 /// Default task branch `signaltty/<label>-<short_id>`. The label is free
 /// text, so on top of the path-safe characters a leading dot and `..` are
 /// dropped: `git check-ref-format` rejects both, and a label like
 /// `.github: fix CI` would otherwise fail `task.start` with no branch given.
+/// The label part is also capped: the files ref backend stores the whole
+/// component as one file name (255 bytes, `.lock` included), and the
+/// default checkout directory is named after it too.
 pub fn default_task_branch(label: &str, short_id: &str) -> String {
     let mut component = String::new();
     for c in sanitize_branch_for_path(label).chars() {
+        if component.len() >= DEFAULT_BRANCH_LABEL_MAX {
+            break;
+        }
         if c == '.' && (component.is_empty() || component.ends_with('.')) {
             continue;
         }
@@ -1226,6 +1235,37 @@ mod tests {
         assert!(wt_str.contains("feature-foo"));
 
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn long_label_default_branch_and_checkout_can_be_created() {
+        // A label is free text; the files ref backend stores each branch
+        // component (plus `.lock`) as one file name, capped at 255 bytes.
+        let dir = fixture_repo("long-label");
+        let branch = default_task_branch(&"refactor the pane layout ".repeat(12), "1a2b3c4d");
+        assert!(validate_branch_name(&branch).is_ok(), "{branch}");
+        assert!(branch.ends_with("-1a2b3c4d"), "{branch}");
+        let checkout = std::env::temp_dir().join(format!(
+            "signaltty-long-label-{}-{}",
+            std::process::id(),
+            signaltty_core::ids::new_pane_id()
+        ));
+        let target = checkout.join(sanitize_branch_for_path(&branch));
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["worktree", "add", "-b", &branch, "--"])
+            .arg(&target)
+            .arg("HEAD")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        std::fs::remove_dir_all(dir).ok();
+        std::fs::remove_dir_all(checkout).ok();
     }
 }
 
