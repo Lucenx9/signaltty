@@ -283,7 +283,6 @@ impl PaneWidget {
         decision_options.add_css_class("decision-options");
         let decision_hint = gtk4::Label::new(Some("Answer in the terminal"));
         decision_hint.add_css_class("decision-hint");
-        decision_hint.add_css_class("dimmed");
         decision_hint.set_xalign(0.0);
         let decision_bar = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
         decision_bar.add_css_class("decision-bar");
@@ -891,6 +890,9 @@ impl PaneWidget {
                 self.decision_prompt
                     .set_tooltip_text(Some(&rendered.prompt));
                 self.decision_hint.set_visible(rendered.read_only);
+                // An empty box still takes the bar's spacing on both sides.
+                self.decision_options
+                    .set_visible(!rendered.options.is_empty());
                 let rebuild = match self.shown_decision.borrow().as_ref() {
                     Some(shown) => {
                         shown.id != d.id

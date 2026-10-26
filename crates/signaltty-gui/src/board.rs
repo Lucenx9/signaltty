@@ -727,8 +727,9 @@ pub fn present(
     let stack = gtk4::Stack::new();
     stack.set_vexpand(true);
     let empty = libadwaita::StatusPage::new();
+    empty.add_css_class("compact");
     empty.set_icon_name(Some("signaltty-board-symbolic"));
-    empty.set_title("No Tasks Yet");
+    empty.set_title("No tasks yet");
     empty.set_description(Some("Tasks run by agents will appear here."));
     stack.add_named(&empty, Some("empty"));
     let container = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);

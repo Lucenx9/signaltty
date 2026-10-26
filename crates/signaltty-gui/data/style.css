@@ -607,10 +607,12 @@ toolbarview > .top-bar headerbar button.image-button:checked {
   background-color: alpha(currentColor, 0.08);
 }
 
-/* Close reveals instantly without replacing urgency or moving text. */
+/* Close reveals instantly without replacing urgency or moving text.
+ * 24px keeps the target size floor without making the name line taller
+ * than the lines under it. */
 .row-close {
-  min-width: 28px;
-  min-height: 28px;
+  min-width: 24px;
+  min-height: 24px;
   padding: 0;
   opacity: 0;
   color: alpha(currentColor, 0.6);
@@ -887,6 +889,8 @@ button.worktree-remove:not(:disabled):hover {
 }
 .decision-hint {
   font-size: 0.82em;
+  /* Small type on a tinted bar: .dimmed's 55% fell well short of AA. */
+  color: alpha(currentColor, 0.78);
 }
 
 /* ---- task board ----------------------------------------------------- */
@@ -1498,6 +1502,7 @@ button.card.appearance-card:checked.keyboard-activating {
   box-shadow: inset 0 0 0 1px currentColor;
 }
 .high-contrast .workspace-message,
+.high-contrast .decision-hint,
 .high-contrast .workspace-meta,
 .high-contrast .workspace-place-icon,
 .high-contrast .details-icon,
@@ -1604,6 +1609,9 @@ dialog.signaltty-dialog bottom-sheet > sheet {
 }
 .signaltty-dialog list.boxed-list > row { border-radius: 4px; }
 .signaltty-dialog list.palette-list { box-shadow: none; }
+/* Commands are scanned, not filled in: group headings chunk the list,
+ * so per-row rules would only make it read as a settings form. */
+.signaltty-dialog list.palette-list > row { border-bottom: none; }
 .signaltty-dialog .palette-list > row:selected {
   background-color: alpha(currentColor, 0.07);
   background-image: linear-gradient(var(--accent-color), var(--accent-color));
