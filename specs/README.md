@@ -24,6 +24,7 @@ Use `status --feature <slug> --evidence <run>` to inspect current proof.
 | [071-agy-task-orchestration](071-agy-task-orchestration/spec.md) | enrolled | [spec.md](071-agy-task-orchestration/spec.md), [plan.md](071-agy-task-orchestration/plan.md), [tasks.md](071-agy-task-orchestration/tasks.md) |  |
 | [072-harness-task-interruptions](072-harness-task-interruptions/spec.md) | enrolled | [spec.md](072-harness-task-interruptions/spec.md), [plan.md](072-harness-task-interruptions/plan.md), [tasks.md](072-harness-task-interruptions/tasks.md) |  |
 | [073-scroll-budget-overflow](073-scroll-budget-overflow/spec.md) | enrolled | [spec.md](073-scroll-budget-overflow/spec.md), [plan.md](073-scroll-budget-overflow/plan.md), [tasks.md](073-scroll-budget-overflow/tasks.md) |  |
+| [074-osc-cancellation](074-osc-cancellation/spec.md) | enrolled | [spec.md](074-osc-cancellation/spec.md), [plan.md](074-osc-cancellation/plan.md), [tasks.md](074-osc-cancellation/tasks.md) |  |
 
 ## Completed
 
