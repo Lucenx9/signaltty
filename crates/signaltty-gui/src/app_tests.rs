@@ -2970,7 +2970,7 @@ fn visible_workspace_tools_open_palette_and_board_without_main_menu() {
     board.emit_clicked();
     wait_ui(|| app.board_dialog.borrow().is_some());
     let dialog = app.board_dialog.borrow().as_ref().unwrap().dialog.clone();
-    wait_ui(|| has_label(&dialog.child().unwrap(), "No Tasks Yet"));
+    wait_ui(|| has_label(&dialog.child().unwrap(), "No tasks yet"));
     dialog.close();
     wait_ui(|| app.board_dialog.borrow().is_none());
 
@@ -3695,7 +3695,7 @@ fn changes_panel_scopes_to_the_latest_turn() {
             {"path":"README.md","added":1,"removed":0,"binary":false,"untracked":false}
         ]})))
         .unwrap();
-    wait_ui(|| has_label(&root, "Changes against HEAD · 1 files · +1 −0"));
+    wait_ui(|| has_label(&root, "Changes against HEAD · 1 file · +1 −0"));
     // The turn view does not follow events.
     panel.on_event("agent.done", Some("a"));
     assert!(requests.is_empty());
@@ -4534,7 +4534,7 @@ fn task_board_shows_columns_and_navigates_to_pane() {
     // 1. Test empty state
     gtk4::prelude::WidgetExt::activate_action(&app.window, "win.show-board", None).unwrap();
     let dialog = app.window.visible_dialog().unwrap();
-    wait_ui(|| has_label(&dialog.child().unwrap(), "No Tasks Yet"));
+    wait_ui(|| has_label(&dialog.child().unwrap(), "No tasks yet"));
     capture_workflow(&app.window, "board-empty");
     app.window.visible_dialog().unwrap().close();
     wait_ui(|| app.window.visible_dialog().is_none());
