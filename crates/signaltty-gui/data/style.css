@@ -1530,11 +1530,6 @@ button.card.appearance-card:checked.keyboard-activating {
   background-color: transparent;
 }
 
-/* Diff tags take their foreground from rooted probes so GTK resolves the
- * desktop's contrast-adjusted semantic colors after theme changes. */
-.file-diff-added-color { color: var(--success-color); }
-.file-diff-removed-color { color: var(--error-color); }
-
 /* Preferences previews draw literal low-alpha edges; high contrast
  * outlines them in the text colour instead. */
 .high-contrast .scheme-preview {
