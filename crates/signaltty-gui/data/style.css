@@ -887,6 +887,8 @@ button.worktree-remove:not(:disabled):hover {
 }
 .decision-hint {
   font-size: 0.82em;
+  /* Small type on a tinted bar: .dimmed's 55% fell well short of AA. */
+  color: alpha(currentColor, 0.78);
 }
 
 /* ---- task board ----------------------------------------------------- */
@@ -1498,6 +1500,7 @@ button.card.appearance-card:checked.keyboard-activating {
   box-shadow: inset 0 0 0 1px currentColor;
 }
 .high-contrast .workspace-message,
+.high-contrast .decision-hint,
 .high-contrast .workspace-meta,
 .high-contrast .workspace-place-icon,
 .high-contrast .details-icon,
