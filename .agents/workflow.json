@@ -600,6 +600,10 @@
     "073-scroll-budget-overflow": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "074-osc-cancellation": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }

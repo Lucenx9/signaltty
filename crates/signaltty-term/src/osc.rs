@@ -158,7 +158,7 @@ impl OscScanner {
                         }
                         i = end + term_len;
                     }
-                    // Aborted: drop it and rescan from the new OSC.
+                    // Aborted: drop it and resume at the recovery position.
                     Err(Some(next)) => i = next,
                     Err(None) => break, // incomplete: carry rest
                 }
@@ -282,11 +282,14 @@ impl Default for OscScanner {
 }
 
 /// Find OSC terminator (BEL or ST=`ESC \`) from `from`. Returns
-/// (payload_end, terminator_len); `Err(Some(i))` when a new OSC at `i`
-/// aborts this one, `Err(None)` when the sequence is incomplete.
+/// (payload_end, terminator_len); `Err(Some(i))` gives the rescan position
+/// after cancellation or at a new OSC, `Err(None)` means incomplete.
 fn find_osc_end(buf: &[u8], from: usize) -> Result<(usize, usize), Option<usize>> {
     let mut i = from;
     while i < buf.len() {
+        if matches!(buf[i], 0x18 | 0x1a) {
+            return Err(Some(i + 1)); // CAN/SUB cancel the string.
+        }
         if buf[i] == BEL {
             return Ok((i, 1));
         }
@@ -401,6 +404,59 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn cancelled_osc_never_publishes_payload_and_preserves_following_bell() {
+        for cancel in [0x18, 0x1a] {
+            let mut bytes = b"\x1b]9;cancelled".to_vec();
+            bytes.extend_from_slice(&[cancel, b'x', 0x07]);
+            for split in 0..=bytes.len() {
+                assert_eq!(
+                    scan(&[&bytes[..split], &bytes[split..]]),
+                    vec![OscEvent::Bell],
+                    "cancel={cancel:#x}, split={split}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cancelled_osc_preserves_progress_and_accepts_the_next_update() {
+        for cancel in [0x18, 0x1a] {
+            for prefix in [b"\x1b]0;cancelled".as_slice(), b"\x1b]9;4;1;80"] {
+                let mut bytes = prefix.to_vec();
+                bytes.push(cancel);
+                bytes.extend_from_slice(b"x\x07\x1b]0;valid\x07");
+                for split in 0..=bytes.len() {
+                    let mut scanner = OscScanner::new();
+                    scanner.push(b"\x1b]9;4;1;20\x07");
+                    let mut events = scanner.push(&bytes[..split]);
+                    events.extend(scanner.push(&bytes[split..]));
+                    assert_eq!(
+                        events,
+                        vec![OscEvent::Bell, OscEvent::Title("valid".into())]
+                    );
+                    assert_eq!(scanner.progress(), "4;1;20");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cancelled_osc_exits_oversized_discard_mode() {
+        for cancel in [0x18, 0x1a] {
+            let mut scanner = OscScanner::new();
+            let mut bytes = b"\x1b]9;".to_vec();
+            bytes.resize(MAX_PENDING + 1, b'x');
+            assert!(scanner.push(&bytes).is_empty());
+            assert!(scanner.push(&[cancel]).is_empty());
+            assert_eq!(scanner.push(b"\x07"), vec![OscEvent::Bell]);
+            assert_eq!(
+                scanner.push(b"\x1b]0;valid\x07"),
+                vec![OscEvent::Title("valid".into())]
+            );
+        }
     }
 
     #[test]

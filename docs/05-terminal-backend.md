@@ -77,6 +77,10 @@ Implementations: `HeadlessBackend` (Phase 1, `vt100`, in server),
 
 ## OSC progress evidence
 
+CAN and SUB cancel an unfinished OSC, including an oversized string being
+discarded. Cancelled payloads never update notifications, titles or progress;
+subsequent bytes are scanned normally, so a following bare BEL remains a bell.
+
 The raw-byte `OscScanner` distinguishes OSC 9;4 progress from OSC 9
 notifications. It accepts `4;<state>[;<value>]` after `9;`, with state `0..4`
 and an omitted/empty value or integer `-1..100`. The `-1` sentinel supports
