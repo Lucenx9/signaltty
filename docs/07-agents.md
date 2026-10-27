@@ -314,8 +314,9 @@ or add native session resume support. See [ADR-0030](adr/0030-osc-progress-evide
 ## Live process refresh (layer 4)
 
 Spawn argv is only the first word. Every 10s the server re-reads each
-live pane's deepest shell-transparent descendant (`/proc`: basename +
-cwd): generic panes promote to the detected kind (never demote), and
+live pane's deepest shell-transparent descendant (`/proc`: program +
+cwd; a runtime such as `node …/codex` is named after its script, as for
+screen rules): generic panes promote to the detected kind (never demote), and
 `pane.cwd` follows `/proc/<pid>/cwd`. One `pane.updated` per changed
 pane; silence otherwise (no event spam, no snapshot churn).
 

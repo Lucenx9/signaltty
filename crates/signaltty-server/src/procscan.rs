@@ -119,13 +119,14 @@ pub fn scan(
             continue;
         };
         let target = deepest_descendant(child);
-        if let Some(argv) = proc_argv(target) {
-            names.push((
-                pane_id.clone(),
-                signaltty_agent::process::process_name(&argv),
-            ));
+        // The program as docs/07 names it: a runtime (`node …/codex`) is
+        // named after its script, for promotion as for screen-rule scoping.
+        let bin = proc_argv(target)
+            .map(|argv| signaltty_agent::process::process_name(&argv))
+            .unwrap_or_default();
+        if !bin.is_empty() {
+            names.push((pane_id.clone(), bin.clone()));
         }
-        let bin = proc_argv0(target).unwrap_or_default();
         let new_kind = if matches!(kind, AgentKind::Generic | AgentKind::None) && !bin.is_empty() {
             let proc = ProcessInfo {
                 argv: vec![bin],
@@ -226,6 +227,60 @@ mod tests {
         assert_eq!(proc_argv0(1 << 30), None);
         assert_eq!(proc_cwd(1 << 30), None);
         assert_eq!(read_stat(1 << 30), None);
+    }
+
+    #[test]
+    fn a_script_run_by_a_runtime_promotes_by_its_name() {
+        // npm's Codex is `node …/bin/codex` with no process title: argv[0]
+        // reads `node`. The program name docs/07 uses is the script's.
+        let dir = std::env::temp_dir().join(format!("signaltty-procscan-{}", self_pid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("codex");
+        std::fs::write(&script, "import time\ntime.sleep(30)\n").unwrap();
+        // `; :` keeps the shell alive as the parent instead of exec'ing.
+        let mut shell = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("python3 {}; :", script.display()))
+            .spawn()
+            .unwrap();
+        let sh = shell.id();
+        let started = std::time::Instant::now();
+        let python = loop {
+            let child = deepest_descendant(sh);
+            if proc_argv(child).is_some_and(|a| a[0] == "python3") {
+                break child;
+            }
+            assert!(
+                started.elapsed().as_secs() < 5,
+                "python3 child never started"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+
+        let pane = signaltty_core::model::Pane::new(
+            "ws_1".into(),
+            "tab_1".into(),
+            dir.to_string_lossy().into_owned(),
+            vec!["sh".into()],
+            signaltty_core::model::PtySize::default(),
+            Utc::now(),
+        );
+        let pane_id = pane.id.clone();
+        let mut store = crate::store::Store::new();
+        store.panes.insert(pane_id.clone(), pane);
+        let store: SharedStore = std::sync::Arc::new(std::sync::RwLock::new(store));
+        let pids = HashMap::from([(pane_id.clone(), sh)]);
+        scan(&store, &pids, &[]);
+        let kind = store.read().unwrap().panes[&pane_id].agent.kind;
+
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(python as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+        let _ = shell.kill();
+        let _ = shell.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(kind, AgentKind::Codex);
     }
 
     #[test]
