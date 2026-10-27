@@ -186,7 +186,11 @@ pub async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                         let elapsed = now
                                             .signed_duration_since(p.last_activity_at)
                                             .num_seconds();
-                                        if elapsed >= timeout_s as i64 {
+                                        // `as i64` would wrap a timeout above
+                                        // i64::MAX negative and fire at once.
+                                        if u64::try_from(elapsed)
+                                            .is_ok_and(|elapsed| elapsed >= timeout_s)
+                                        {
                                             return Some((t.id.clone(), pid.clone()));
                                         }
                                     }
