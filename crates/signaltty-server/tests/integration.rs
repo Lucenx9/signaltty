@@ -1580,6 +1580,50 @@ async fn self_reported_resume_argv_survives_same_session_reports() {
 }
 
 #[tokio::test]
+async fn report_session_without_agent_keeps_the_pane_agent() {
+    // docs/07: a resumed session is reported as
+    // `signaltty report-session --pane <id> --session <sid>`, with no agent.
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let ws = c
+        .call("workspace.create", json!({"cwd": "/tmp"}))
+        .await
+        .unwrap();
+    let launch = c
+        .call(
+            "pane.spawn",
+            json!({"workspace_id": ws["workspace"]["id"], "argv": ["sleep", "30"], "agent_hint": "codex"}),
+        )
+        .await
+        .unwrap();
+    let pane = launch["pane"]["id"].as_str().unwrap().to_string();
+    assert_eq!(launch["pane"]["agent"]["kind"], "codex");
+    let r = c
+        .call(
+            "report-session",
+            json!({"pane_id": pane, "agent_session_id": "s1"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["pane"]["agent"]["kind"], "codex");
+    assert_eq!(
+        r["pane"]["agent"]["resume_argv"],
+        json!(["codex", "resume", "s1"])
+    );
+    // A plain terminal reporting a session still becomes generic.
+    let (_, shell) = new_pane(&mut c, vec!["sleep", "30"]).await;
+    let r = c
+        .call(
+            "report-session",
+            json!({"pane_id": shell, "agent_session_id": "s2"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["pane"]["agent"]["kind"], "generic");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn report_session_builds_resume_retains_selected_executable_without_manifest() {
     let srv = TestServer::start().await;
     let codex = codex_fixture(srv.socket.parent().unwrap());

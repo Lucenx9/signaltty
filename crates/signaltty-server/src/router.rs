@@ -2471,8 +2471,6 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
     let p: params::ReportSession = decode(params)?;
     let pane_id = p.pane_id;
     let session_id = p.agent_session_id;
-    let agent = p.agent.unwrap_or_else(|| "generic".to_string());
-    let kind = AgentKind::parse(&agent).unwrap_or(AgentKind::Generic);
     if let Some(ref argv) = p.resume_argv {
         signaltty_agent::validate_resume_argv(argv)
             .map_err(|e| (code::BAD_PARAMS.to_string(), e))?;
@@ -2482,6 +2480,13 @@ fn h_report_session(ctx: &Ctx, params: &Value) -> Handler {
         .panes
         .get_mut(&pane_id)
         .ok_or_else(|| (code::NO_SUCH_PANE.to_string(), pane_id.clone()))?;
+    // Without `agent` the pane keeps the agent it already runs (docs/07's
+    // bare `report-session --pane --session`); a plain terminal becomes generic.
+    let kind = match p.agent.as_deref() {
+        Some(agent) => AgentKind::parse(agent).unwrap_or(AgentKind::Generic),
+        None if pane.agent.kind == AgentKind::None => AgentKind::Generic,
+        None => pane.agent.kind,
+    };
     let new_session = pane.agent.kind != kind
         || pane.agent.agent_session_id.as_deref() != Some(session_id.as_str());
     pane.agent.kind = kind;
