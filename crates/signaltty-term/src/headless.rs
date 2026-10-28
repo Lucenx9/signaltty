@@ -956,6 +956,9 @@ impl Surface {
         for line in self.screen.drain(..k) {
             self.history.push_back(line);
         }
+        // `scroll_by` excuses the last `k` kept rows: a print that scrolls
+        // in the same step may have finished them. Sync them to the grid.
+        self.refresh_in_place(grid);
         for text in grid.iter().skip(grid.len().saturating_sub(k)) {
             self.head += 1;
             self.screen.push(RingLine {
@@ -1427,6 +1430,32 @@ mod tests {
         assert_eq!(r3.text, "");
         assert_eq!(r3.next_seq, r2.next_seq);
         assert_eq!(r3.seq, r2.next_seq);
+    }
+
+    #[test]
+    fn rendered_wrapped_styled_line_at_the_bottom_keeps_every_character() {
+        // A styled line wider than the pane, printed on the bottom row,
+        // takes the slow path in byte-budget batches. The batch that wraps
+        // it scrolls the screen and finishes the row above the cursor in
+        // the same step; that row used to keep its pre-wrap text, so the
+        // characters printed just before the wrap vanished from history.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        let mut pre = Vec::new();
+        for i in 0..23 {
+            pre.extend(format!("l{i}\r\n").into_bytes());
+        }
+        b.feed_output("p", &pre);
+        let long: String = (0..100u8).map(|i| (b'a' + i % 26) as char).collect();
+        b.feed_output("p", format!("\x1b[31m{long}\x1b[0m\r\n").as_bytes());
+        let mut post = Vec::new();
+        for i in 0..30 {
+            post.extend(format!("m{i}\r\n").into_bytes());
+        }
+        b.feed_output("p", &post);
+        let tail = b.tail("p", 1000, false).unwrap();
+        assert_eq!(tail[23], &long[..80]);
+        assert_eq!(tail[24], &long[80..]);
     }
 
     #[test]
