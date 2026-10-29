@@ -604,6 +604,10 @@
     "074-osc-cancellation": {
       "lifecycle": "active",
       "enrolled": true
+    },
+    "075-incomplete-pr-checks": {
+      "lifecycle": "active",
+      "enrolled": true
     }
   }
 }
