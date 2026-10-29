@@ -25,6 +25,7 @@ Use `status --feature <slug> --evidence <run>` to inspect current proof.
 | [072-harness-task-interruptions](072-harness-task-interruptions/spec.md) | enrolled | [spec.md](072-harness-task-interruptions/spec.md), [plan.md](072-harness-task-interruptions/plan.md), [tasks.md](072-harness-task-interruptions/tasks.md) |  |
 | [073-scroll-budget-overflow](073-scroll-budget-overflow/spec.md) | enrolled | [spec.md](073-scroll-budget-overflow/spec.md), [plan.md](073-scroll-budget-overflow/plan.md), [tasks.md](073-scroll-budget-overflow/tasks.md) |  |
 | [074-osc-cancellation](074-osc-cancellation/spec.md) | enrolled | [spec.md](074-osc-cancellation/spec.md), [plan.md](074-osc-cancellation/plan.md), [tasks.md](074-osc-cancellation/tasks.md) |  |
+| [075-incomplete-pr-checks](075-incomplete-pr-checks/spec.md) | enrolled | [spec.md](075-incomplete-pr-checks/spec.md), [plan.md](075-incomplete-pr-checks/plan.md), [tasks.md](075-incomplete-pr-checks/tasks.md) |  |
 
 ## Completed
 
