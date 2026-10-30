@@ -296,6 +296,44 @@ async fn cli_hook_event_and_resume() {
 }
 
 #[tokio::test]
+async fn an_empty_signaltty_pane_counts_as_unset() {
+    // `SIGNALTTY_PANE=` is no pane, as `report`, `skill check` and the MCP
+    // server already treat it: a hook falls back to process ancestry (here:
+    // accepted without routing) instead of failing on pane "".
+    let srv = TestServer::start().await;
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args([
+            "--json",
+            "hook-event",
+            "--agent",
+            "codex",
+            "--event",
+            "Stop",
+        ])
+        .env("SIGNALTTY_PANE", "")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "hook-event failed: {stderr}");
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["accepted"], true);
+    assert!(v["pane_id"].is_null());
+
+    let out = Command::new(bin_path("signaltty"))
+        .arg("--socket")
+        .arg(&srv.socket)
+        .args(["notify", "--title", "hi"])
+        .env("SIGNALTTY_PANE", "")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--pane required"));
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn cli_decision_answer_flow() {
     let srv = TestServer::start().await;
     let new = cli_json(&srv.socket, &["new", "--cwd", "/tmp", "--", "cat"]);
