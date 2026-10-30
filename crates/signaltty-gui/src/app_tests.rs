@@ -2797,7 +2797,7 @@ fn palette_empty_results_and_shortcuts_fit_narrow_appearances() {
         entry.set_text("no-such-command-or-workspace");
         capture_workflow(&window, &format!("palette-empty-narrow-{name}"));
         assert!(
-            has_label(&body, "No Matches"),
+            has_label(&body, "No matches"),
             "empty search needs explicit feedback"
         );
         let empty = find_widget::<adw::StatusPage>(&body).unwrap();
