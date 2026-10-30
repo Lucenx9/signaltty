@@ -437,8 +437,9 @@ struct Surface {
     /// Last assigned sequence number; reported as `next_seq`. Runtime-only:
     /// reset on restart, so pre-restart cursors read as dropped.
     head: u64,
-    /// Set by `restore_surface` to the restored head: any nonzero cursor at
-    /// or below it is pre-restart and reads as dropped.
+    /// Set by `restore_surface` to the last restored sequence (the head is
+    /// then reserved one above it): any nonzero cursor at or below it is
+    /// pre-restart and reads as dropped.
     dropped_floor: u64,
     max_lines: usize,
     /// Fast-path parser model. `feed()` carves plain-ASCII runs out of the
@@ -1166,6 +1167,12 @@ impl HeadlessBackend {
             });
         }
         s.dropped_floor = s.head;
+        // Reserve one sequence above the floor: the head handed out as
+        // `next_seq` after a restore is a post-restart cursor and must not
+        // read as dropped (which would make clients re-read forever).
+        if s.head > 0 {
+            s.head += 1;
+        }
         self.surfaces.insert(id.to_string(), s);
     }
 }
@@ -1587,6 +1594,22 @@ mod tests {
         let fresh = b.rendered("p", 0, 200).unwrap();
         assert!(!fresh.dropped);
         assert_eq!(fresh.text, "before");
+    }
+
+    #[test]
+    fn cursor_issued_after_restore_is_not_dropped() {
+        let mut b = HeadlessBackend::new();
+        b.restore_surface("p", 80, 24, vec!["before".to_string()]);
+        let fresh = b.rendered("p", 0, 200).unwrap();
+        assert_eq!(fresh.text, "before");
+        // The head handed out after the restore is a post-restart cursor.
+        let idle = b.rendered("p", fresh.next_seq, 200).unwrap();
+        assert!(!idle.dropped, "server-issued cursor read as dropped");
+        assert_eq!(idle.text, "");
+        b.feed_output("p", b"after\r\n");
+        let delta = b.rendered("p", fresh.next_seq, 200).unwrap();
+        assert!(!delta.dropped);
+        assert_eq!(delta.text, "after");
     }
 
     #[test]
