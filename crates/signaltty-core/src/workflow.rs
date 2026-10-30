@@ -147,6 +147,14 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_checks_withdraw_ready_to_merge() {
+        let mut task = task();
+        task.pr.as_mut().unwrap().checks =
+            crate::rollup_status_checks(&[json!({"status": "COMPLETED", "conclusion": null})]);
+        assert_eq!(task_stage(&task, task.created_at), TaskStage::InReview);
+    }
+
+    #[test]
     fn conflict_and_repository_checks_require_attention() {
         let mut task = task();
         let now = task.created_at;

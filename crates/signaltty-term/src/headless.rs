@@ -397,10 +397,15 @@ fn csi_dispatch_accum(
     match final_byte {
         b'r' if !csi.private => {
             // DECSTBM. Mirrors grid::set_scroll_region via decstbm: params
-            // default to full screen, and an inverted range resets to full.
-            let top = if csi.p0 == 0 { 1 } else { csi.p0 };
-            let bottom = if csi.p1 == 0 { rows as u32 } else { csi.p1 };
+            // default to full screen, a bottom past the last row clamps to
+            // it, and an inverted range resets to full.
             let rows_u = rows as u32;
+            let top = if csi.p0 == 0 { 1 } else { csi.p0 };
+            let bottom = if csi.p1 == 0 {
+                rows_u
+            } else {
+                csi.p1.min(rows_u)
+            };
             // Full-screen params (or an inverted range, which vt100
             // resets to full) deactivate the region; anything else sticks.
             let full = top == 1 && bottom == rows_u;
@@ -1713,6 +1718,24 @@ mod tests {
         b.feed_output("p", b"y\r\n");
         let text = rendered_text(&b, "p");
         assert_eq!(text, "y", "{text:?}");
+    }
+
+    #[test]
+    fn a_scroll_region_taller_than_the_screen_is_the_full_screen() {
+        // vt100 clamps a DECSTBM bottom past the last row, so `1;30r` on a
+        // 24-row screen (an app still sized for a taller window) leaves no
+        // region at all. It must not read as a sticky one: an erase plus a
+        // linefeed from the top row then blanks the line in place instead
+        // of archiving it as a scroll, exactly as with `ESC [ r`.
+        for region in [&b"\x1b[r"[..], b"\x1b[1;24r", b"\x1b[1;30r", b"\x1b[;999r"] {
+            let mut b = HeadlessBackend::new();
+            b.create_surface("p", 80, 24);
+            b.feed_output("p", region);
+            b.feed_output("p", b"hello");
+            b.feed_output("p", b"\r\x1b[K\n");
+            let text = rendered_text(&b, "p");
+            assert_eq!(text, "", "{}: {text:?}", String::from_utf8_lossy(region));
+        }
     }
 
     #[test]

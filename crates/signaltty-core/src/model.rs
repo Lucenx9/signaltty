@@ -1041,7 +1041,7 @@ pub fn parse_review_decision(s: &str) -> PrReview {
 /// Roll up GitHub `statusCheckRollup` items into a single `PrChecks` status.
 ///
 /// Priority 1: Failing (failure, error, cancelled, timed_out, action_required, startup_failure, stale)
-/// Priority 2: Pending (any status != COMPLETED or state in PENDING, EXPECTED)
+/// Priority 2: Pending (any entry without a recognized successful outcome)
 /// Priority 3: Passing (non-empty items and none of the above)
 /// Priority 4: None (empty items)
 pub fn rollup_status_checks(checks: &[serde_json::Value]) -> PrChecks {
@@ -1059,7 +1059,7 @@ pub fn rollup_status_checks(checks: &[serde_json::Value]) -> PrChecks {
         "STALE",
     ];
     const FAILING_STATES: &[&str] = &["FAILURE", "ERROR"];
-    const PENDING_STATES: &[&str] = &["PENDING", "EXPECTED"];
+    const PASSING_CONCLUSIONS: &[&str] = &["SUCCESS", "NEUTRAL", "SKIPPED"];
 
     let mut has_pending = false;
 
@@ -1088,16 +1088,14 @@ pub fn rollup_status_checks(checks: &[serde_json::Value]) -> PrChecks {
             }
         }
 
-        if let Some(ref st) = status {
-            if st != "COMPLETED" {
-                has_pending = true;
-            }
-        }
-        if let Some(ref st) = state {
-            if PENDING_STATES.contains(&st.as_str()) {
-                has_pending = true;
-            }
-        }
+        let passing = match status.as_deref() {
+            Some("COMPLETED") => conclusion
+                .as_deref()
+                .is_some_and(|c| PASSING_CONCLUSIONS.contains(&c)),
+            Some(_) => false,
+            None => item.get("status").is_none() && state.as_deref() == Some("SUCCESS"),
+        };
+        has_pending |= !passing;
     }
 
     if has_pending {
@@ -1945,6 +1943,40 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_check_facts_never_roll_up_as_passing() {
+        use serde_json::json;
+
+        for incomplete in [
+            json!({}),
+            json!({"status": "COMPLETED", "conclusion": null}),
+            json!({"status": "COMPLETED", "conclusion": "UNKNOWN"}),
+            json!({"conclusion": "SUCCESS"}),
+            json!({"state": "UNKNOWN"}),
+            json!({"state": 42}),
+            json!({"status": 42, "state": "SUCCESS"}),
+            json!({"status": null, "state": "SUCCESS"}),
+            json!(null),
+        ] {
+            assert_eq!(
+                rollup_status_checks(std::slice::from_ref(&incomplete)),
+                PrChecks::Pending,
+                "incomplete check: {incomplete}"
+            );
+            assert_eq!(
+                rollup_status_checks(&[json!({"state": "SUCCESS"}), incomplete.clone()]),
+                PrChecks::Pending,
+                "incomplete check beside success: {incomplete}"
+            );
+            for checks in [
+                vec![incomplete.clone(), json!({"state": "FAILURE"})],
+                vec![json!({"state": "FAILURE"}), incomplete],
+            ] {
+                assert_eq!(rollup_status_checks(&checks), PrChecks::Failing);
+            }
+        }
+    }
+
+    #[test]
     fn test_rollup_status_checks() {
         use serde_json::json;
 
@@ -1955,6 +1987,7 @@ mod tests {
         let passing = vec![
             json!({"status": "COMPLETED", "conclusion": "SUCCESS"}),
             json!({"status": "COMPLETED", "conclusion": "NEUTRAL"}),
+            json!({"status": "COMPLETED", "conclusion": "SKIPPED"}),
             json!({"state": "SUCCESS"}),
         ];
         assert_eq!(rollup_status_checks(&passing), PrChecks::Passing);
