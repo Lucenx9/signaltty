@@ -377,6 +377,75 @@ async fn test_task_finish_merge_conflict_aborts_target_clean_and_names_files() {
     srv.shutdown().await;
 }
 
+/// Git C-quotes non-ASCII names in line output; the finish error must name
+/// the file as it is (and as `merge_preview` does), not `"perch\\303\\251.txt"`.
+#[tokio::test]
+async fn test_task_finish_merge_conflict_names_non_ascii_files_literally() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let repo = TempGitRepo::new();
+    let name = "perché.txt";
+
+    std::fs::write(repo.path().join(name), "line A\n").unwrap();
+    repo.git(&["add", name]);
+    repo.git(&["commit", "-m", "base"]);
+
+    let start_res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Conflict on a non-ASCII name"},
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = start_res["task"]["id"].as_str().unwrap().to_string();
+    let wt_path = PathBuf::from(start_res["task"]["worktree_path"].as_str().unwrap());
+
+    std::fs::write(repo.path().join(name), "line in main branch\n").unwrap();
+    repo.git(&["commit", "-am", "competing commit in main"]);
+    std::fs::write(wt_path.join(name), "line in task branch\n").unwrap();
+    let out = std::process::Command::new("git")
+        .args(["-C", &wt_path.to_string_lossy(), "commit", "-am", "task"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    c.call(
+        "task.report",
+        json!({"task_id": &task_id, "status": "completed", "summary": "Ready"}),
+    )
+    .await
+    .unwrap();
+
+    let diff = c
+        .call("task.diff", json!({ "task_id": &task_id }))
+        .await
+        .unwrap();
+    assert_eq!(diff["merge_preview"]["conflicted"], json!([name]), "{diff}");
+
+    let finish_err = c
+        .call(
+            "task.finish",
+            json!({ "task_id": &task_id, "mode": "merge" }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        finish_err.starts_with(code::MERGE_CONFLICT),
+        "expected MERGE_CONFLICT error, got: {finish_err}"
+    );
+    let get = c
+        .call("task.get", json!({"task_id": &task_id}))
+        .await
+        .unwrap();
+    assert_eq!(get["task"]["finish_error"]["conflicted"], json!([name]));
+
+    srv.shutdown().await;
+}
+
 #[tokio::test]
 async fn test_task_finish_dirty_source_and_target_refusals() {
     let srv = TestServer::start().await;

@@ -2321,6 +2321,57 @@ async fn test_silent_worker_watchdog_transitions_to_input_required() {
 }
 
 #[tokio::test]
+async fn test_silent_worker_watchdog_huge_timeout_never_fires() {
+    // Above i64::MAX seconds: the watchdog must treat it as "never", not
+    // wrap negative and park every working task at once.
+    let repo = TempGitRepo::new();
+    let srv =
+        TestServer::start_with_env(&[("SIGNALTTY_WORKER_SILENT_TIMEOUT_S", &u64::MAX.to_string())])
+            .await;
+    let mut c = srv.client().await;
+
+    let res = c
+        .call(
+            "task.start",
+            json!({
+                "repo": repo.path().to_string_lossy(),
+                "contract": {"objective": "Huge watchdog timeout"},
+                "agent": "codex",
+                "argv": ["sh"],
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = res["task"]["id"].as_str().unwrap().to_string();
+    let pane_id = res["pane"]["id"].as_str().unwrap().to_string();
+    let wt_path = std::path::PathBuf::from(res["task"]["worktree_path"].as_str().unwrap());
+
+    let driver = FakeAgentPane::new(&pane_id, "codex");
+    driver.session_start(&mut c, &wt_path).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver.prompt_submit(&mut c).await.unwrap();
+
+    let wait = c
+        .call(
+            "task.wait",
+            json!({"task_id": &task_id, "until": "working", "timeout_s": 5}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait["satisfied"], true);
+
+    // Several watchdog ticks (250 ms each).
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let task_get = c
+        .call("task.get", json!({"task_id": task_id}))
+        .await
+        .unwrap();
+    assert_eq!(task_get["task"]["state"], "working", "{task_get}");
+
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn task_start_post_worktree_failure_leaves_failed_task_and_removable_checkout() {
     let repo = TempGitRepo::new();
     let srv = TestServer::start().await;
