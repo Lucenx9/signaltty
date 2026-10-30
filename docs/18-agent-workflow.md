@@ -133,6 +133,23 @@ stopped before restarting. `next` directs inspection of a running report and dia
 unavailable report before another run. The workflow does not retry commands
 automatically.
 
+## Maintain agent instructions
+
+Keep `AGENTS.md` as the repository-wide entry point. Put task-specific procedures
+in the guide or skill that owns them, with a pointer that states when to read it.
+Before adding an instruction, identify the recurring failure or repository
+constraint it addresses, check that its commands and paths exist, and remove
+superseded or conflicting guidance. Examples must name valid routing keys;
+`context --task` does not accept an arbitrary task title.
+
+Edit the authoritative sources listed above, then regenerate only the indexes or
+harness copies affected by the change. Run `scripts/agent.sh check --phase repository`
+to check routing, links and generated-source consistency. This structural check
+does not prove that an instruction improves an agent's decisions. Use the
+[evaluation protocol](17-agent-development.md#evaluate-improvements-to-the-agent-workflow)
+for that claim. Record sources and tradeoffs in a dated research note rather than
+loading them into every session through `AGENTS.md`.
+
 ## JSON and evaluation
 
 `--json` emits `schema_version: 1`, command, ok, data and findings. Findings include
