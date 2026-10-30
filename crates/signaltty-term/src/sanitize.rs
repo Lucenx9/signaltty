@@ -28,18 +28,21 @@ pub fn strip_ansi(s: &str) -> String {
             }
             match b[i + 1] {
                 b'[' => {
-                    // CSI: params/intermediates until final byte @-~.
+                    // CSI: until a final byte @-~ or CAN/SUB cancellation.
                     i += 2;
-                    while i < b.len() && !(0x40..=0x7e).contains(&b[i]) {
+                    while i < b.len()
+                        && !(0x40..=0x7e).contains(&b[i])
+                        && !matches!(b[i], 0x18 | 0x1a)
+                    {
                         i += 1;
                     }
                     i += 1;
                 }
                 b']' => {
-                    // OSC: until BEL or ST.
+                    // OSC: until BEL/ST termination or CAN/SUB cancellation.
                     i += 2;
                     while i < b.len() {
-                        if b[i] == 0x07 {
+                        if matches!(b[i], 0x07 | 0x18 | 0x1a) {
                             i += 1;
                             break;
                         }
@@ -94,6 +97,48 @@ mod tests {
         assert_eq!(strip_ansi("\x1b#😀x"), "x");
         assert_eq!(strip_ansi("\x1b\u{20ac}"), "");
         assert_eq!(sanitize_notification_text("\x1bé ok", 100), "ok");
+    }
+
+    #[test]
+    fn cancelled_osc_keeps_following_text() {
+        for cancel in ['\x18', '\x1a'] {
+            for (following, expected) in [
+                ("", "before"),
+                ("visible", "beforevisible"),
+                ("visible\x07tail", "beforevisible\x07tail"),
+                ("visible\x1b\\tail", "beforevisibletail"),
+                ("é🦀\x1b[31mred\x1b[0m", "beforeé🦀red"),
+            ] {
+                let input = format!("before\x1b]0;discard{cancel}{following}");
+                assert_eq!(strip_ansi(&input), expected, "{input:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn cancelled_csi_keeps_following_text() {
+        for cancel in ['\x18', '\x1a'] {
+            for (following, expected) in [
+                ("", "before"),
+                ("visible", "beforevisible"),
+                ("é🦀", "beforeé🦀"),
+                ("\x1b[31mred\x1b[0m", "beforered"),
+            ] {
+                let input = format!("before\x1b[31{cancel}{following}");
+                assert_eq!(strip_ansi(&input), expected, "{input:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn cancelled_sequences_preserve_sanitized_notification_text_and_caps() {
+        for cancel in ['\x18', '\x1a'] {
+            for sequence in ["\x1b]0;discard", "\x1b[31"] {
+                let input = format!("{sequence}{cancel}visible\x07");
+                assert_eq!(sanitize_notification_text(&input, 100), "visible");
+                assert_eq!(sanitize_notification_text(&input, 4), "visi");
+            }
+        }
     }
 
     #[test]

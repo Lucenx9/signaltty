@@ -1746,14 +1746,16 @@ pub async fn h_task_finish(ctx: &Ctx, req: &Request, params: &Value) -> (Respons
     };
 
     if !merge_out.status.success() {
-        // Collect conflicted files
+        // Collect conflicted files. NUL-delimited, as in `merge_preview`:
+        // line output C-quotes non-ASCII names (`"perch\303\251.txt"`).
         let conflicted_files: Vec<String> = if let Ok(diff_out) =
-            crate::git::git_output(&src_str, &["diff", "--name-only", "--diff-filter=U"])
+            crate::git::git_output(&src_str, &["diff", "--name-only", "--diff-filter=U", "-z"])
         {
-            String::from_utf8_lossy(&diff_out.stdout)
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
+            diff_out
+                .stdout
+                .split(|b| *b == 0)
+                .filter(|p| !p.is_empty())
+                .map(|p| String::from_utf8_lossy(p).into_owned())
                 .collect()
         } else {
             Vec::new()

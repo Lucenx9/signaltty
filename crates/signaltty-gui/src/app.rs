@@ -1828,7 +1828,7 @@ impl App {
             None => {
                 let page = adw::StatusPage::new();
                 page.add_css_class("compact");
-                page.set_title("Empty Tab");
+                page.set_title("Empty tab");
                 page.set_description(Some("Start a terminal to get going."));
                 let btn = gtk4::Button::with_label("New Terminal");
                 btn.add_css_class("pill");

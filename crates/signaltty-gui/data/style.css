@@ -161,7 +161,8 @@
 /* The shortcut is a quiet trailing hint, not a second line. */
 .palette-shortcut {
   font-size: 0.82em;
-  color: alpha(currentColor, 0.55);
+  /* 55% is about 3.2:1 on light Adwaita; small hints use 78% (~6:1). */
+  color: alpha(currentColor, 0.78);
 }
 
 .empty-state-shortcut {
@@ -198,7 +199,7 @@ window {
 }
 .changes-summary {
   font-size: 0.82em;
-  color: alpha(currentColor, 0.65);
+  color: alpha(currentColor, 0.78);
 }
 .changes-dir {
   padding: 12px 12px 5px 12px;
@@ -216,7 +217,7 @@ window {
 }
 .changes-stat .changes-tag {
   font-weight: 500;
-  color: alpha(currentColor, 0.6);
+  color: alpha(currentColor, 0.78);
 }
 
 /* ---- sidebar command entry -------------------------------------------
