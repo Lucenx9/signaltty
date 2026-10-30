@@ -34,6 +34,7 @@ The server owns sessions and processes. GTK and CLI are clients. Start with the 
 
 ## Research
 
+- [AGENTS.md review and t3code comparison, 2026-10-30](research/2026-10-30-agents-guidance.md)
 - [License provenance and remaining distribution checks, 2026-10-11](research/2026-10-11-license-provenance.md)
 - [Agent Orchestrator review, 2026-10-12](research/2026-10-12-agent-orchestrator.md)
 - [Agent-ready repository research, 2026-10-03](research/2026-10-03-agent-ready-repository.md)

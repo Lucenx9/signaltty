@@ -84,6 +84,49 @@ entry when the warning is fixed. Dependency checks inspect resolved package name
 including aliases and transitive normal/build dependencies. Source-level OS calls
 and state/event correspondence still need review and behavioral tests.
 
+## Test changed behavior
+
+For behavior changes, follow the constitution's red-green-refactor cycle. Reuse an
+existing fixture or test table when it covers the case. Put the regression at the
+lowest layer that can reproduce the defect: pure core logic, a real-server IPC
+test, or GTK when widget behavior requires it. Add another layer only for a
+distinct contract or integration risk. Assert observable state and emitted events;
+prefer a fixture's readiness signal to an arbitrary delay.
+
+During iteration, run focused tests before the shared verification command:
+
+```sh
+cargo test -p signaltty-core <test-filter>
+cargo test -p signaltty-server --test <integration-test-target> <test-filter>
+```
+
+These commands do not replace `scripts/verify.sh full`. Documentation-only changes
+need no behavioral test. Verify their commands, paths and source ownership instead,
+then run the same full delivery gate.
+
+## Check affected paths
+
+Before calling a behavior change complete, record which of these apply in the PR
+evidence and verify those paths. An unsupported path needs an explicit reason.
+
+- Entry points: GUI actions, keyboard shortcuts, context menus and CLI commands
+  that invoke the same operation should observe the same server-owned result.
+- Clients and contracts: trace the typed protocol, server handler, state transition
+  and emitted event through affected GUI, CLI and agent/plugin consumers. Keep
+  business decisions in the server/core so another client can use the operation.
+- Lifecycle: verify the reverse transition where supported, plus failure,
+  cancellation, disconnect/reconnect and restored state when relevant. Confirm
+  that late replies cannot act on a closed or replaced pane.
+- Providers: for agent behavior, inspect affected adapters and hooks. Use the
+  existing synthetic provider fixtures where sufficient; record real-provider
+  checks separately because synthetic proof does not establish provider behavior.
+- Performance: for terminal, layout and refresh changes, check bounded output,
+  refresh coalescing and terminal-widget retention using the existing feature map
+  and benchmark. Measure suspected regressions before adding a workaround.
+- Documentation: update the current architecture or workflow guide that owns the
+  changed behavior. Research notes and old verification reports describe their
+  dated checkout and are not current operating instructions.
+
 ## Native visual and accessibility acceptance
 
 The automated matrix includes native light/dark renders, narrow diff/dialog cases,
