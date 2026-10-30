@@ -397,10 +397,15 @@ fn csi_dispatch_accum(
     match final_byte {
         b'r' if !csi.private => {
             // DECSTBM. Mirrors grid::set_scroll_region via decstbm: params
-            // default to full screen, and an inverted range resets to full.
-            let top = if csi.p0 == 0 { 1 } else { csi.p0 };
-            let bottom = if csi.p1 == 0 { rows as u32 } else { csi.p1 };
+            // default to full screen, a bottom past the last row clamps to
+            // it, and an inverted range resets to full.
             let rows_u = rows as u32;
+            let top = if csi.p0 == 0 { 1 } else { csi.p0 };
+            let bottom = if csi.p1 == 0 {
+                rows_u
+            } else {
+                csi.p1.min(rows_u)
+            };
             // Full-screen params (or an inverted range, which vt100
             // resets to full) deactivate the region; anything else sticks.
             let full = top == 1 && bottom == rows_u;
@@ -957,6 +962,9 @@ impl Surface {
         for line in self.screen.drain(..k) {
             self.history.push_back(line);
         }
+        // `scroll_by` excuses the last `k` kept rows: a print that scrolls
+        // in the same step may have finished them. Sync them to the grid.
+        self.refresh_in_place(grid);
         for text in grid.iter().skip(grid.len().saturating_sub(k)) {
             self.head += 1;
             self.screen.push(RingLine {
@@ -1437,6 +1445,32 @@ mod tests {
     }
 
     #[test]
+    fn rendered_wrapped_styled_line_at_the_bottom_keeps_every_character() {
+        // A styled line wider than the pane, printed on the bottom row,
+        // takes the slow path in byte-budget batches. The batch that wraps
+        // it scrolls the screen and finishes the row above the cursor in
+        // the same step; that row used to keep its pre-wrap text, so the
+        // characters printed just before the wrap vanished from history.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        let mut pre = Vec::new();
+        for i in 0..23 {
+            pre.extend(format!("l{i}\r\n").into_bytes());
+        }
+        b.feed_output("p", &pre);
+        let long: String = (0..100u8).map(|i| (b'a' + i % 26) as char).collect();
+        b.feed_output("p", format!("\x1b[31m{long}\x1b[0m\r\n").as_bytes());
+        let mut post = Vec::new();
+        for i in 0..30 {
+            post.extend(format!("m{i}\r\n").into_bytes());
+        }
+        b.feed_output("p", &post);
+        let tail = b.tail("p", 1000, false).unwrap();
+        assert_eq!(tail[23], &long[..80]);
+        assert_eq!(tail[24], &long[80..]);
+    }
+
+    #[test]
     fn rendered_bulk_scroll_burst_keeps_order() {
         let mut b = HeadlessBackend::new();
         b.create_surface("p", 80, 24);
@@ -1707,6 +1741,24 @@ mod tests {
         b.feed_output("p", b"y\r\n");
         let text = rendered_text(&b, "p");
         assert_eq!(text, "y", "{text:?}");
+    }
+
+    #[test]
+    fn a_scroll_region_taller_than_the_screen_is_the_full_screen() {
+        // vt100 clamps a DECSTBM bottom past the last row, so `1;30r` on a
+        // 24-row screen (an app still sized for a taller window) leaves no
+        // region at all. It must not read as a sticky one: an erase plus a
+        // linefeed from the top row then blanks the line in place instead
+        // of archiving it as a scroll, exactly as with `ESC [ r`.
+        for region in [&b"\x1b[r"[..], b"\x1b[1;24r", b"\x1b[1;30r", b"\x1b[;999r"] {
+            let mut b = HeadlessBackend::new();
+            b.create_surface("p", 80, 24);
+            b.feed_output("p", region);
+            b.feed_output("p", b"hello");
+            b.feed_output("p", b"\r\x1b[K\n");
+            let text = rendered_text(&b, "p");
+            assert_eq!(text, "", "{}: {text:?}", String::from_utf8_lossy(region));
+        }
     }
 
     #[test]
