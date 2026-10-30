@@ -236,6 +236,19 @@ async fn malformed_ipc_and_versioning() {
 }
 
 #[tokio::test]
+async fn notify_requires_a_pane_id() {
+    let srv = TestServer::start().await;
+    let mut c = srv.client().await;
+    let err = c
+        .call("notify", json!({"title": "no pane"}))
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("BAD_PARAMS"), "{err}");
+    assert!(err.contains("pane_id"), "{err}");
+    srv.shutdown().await;
+}
+
+#[tokio::test]
 async fn notify_attention_and_next_unread() {
     let srv = TestServer::start().await;
     let mut c = srv.client().await;
