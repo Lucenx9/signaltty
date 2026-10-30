@@ -606,6 +606,14 @@ fn emit(json_mode: bool, result: &Value, human: String) {
     }
 }
 
+/// The hosting pane from `$SIGNALTTY_PANE`; set-but-empty counts as unset,
+/// so a hook falls back to process ancestry instead of naming pane "".
+fn env_pane() -> Option<String> {
+    std::env::var("SIGNALTTY_PANE")
+        .ok()
+        .filter(|pane| !pane.is_empty())
+}
+
 fn shell_cmd() -> Vec<String> {
     vec![signaltty_core::paths::user_shell()]
 }
@@ -905,11 +913,9 @@ async fn run(args: Args) -> Result<(), CliError> {
             pane,
             severity,
         } => {
-            let pane = pane
-                .or_else(|| std::env::var("SIGNALTTY_PANE").ok())
-                .ok_or_else(|| {
-                    CliError::Usage("--pane required (or run inside a pane)".to_string())
-                })?;
+            let pane = pane.or_else(env_pane).ok_or_else(|| {
+                CliError::Usage("--pane required (or run inside a pane)".to_string())
+            })?;
             let mut c = Client::connect(&socket).await?;
             let mut p = json!({"pane_id": pane, "title": title});
             if let Some(b) = body {
@@ -952,7 +958,7 @@ async fn run(args: Args) -> Result<(), CliError> {
             severity,
             decision,
         } => {
-            let pane = pane.or_else(|| std::env::var("SIGNALTTY_PANE").ok());
+            let pane = pane.or_else(env_pane);
             let mut c = Client::connect(&socket).await?;
             let mut p = json!({"agent": agent, "event": event, "client_pid": std::process::id()});
             if let Some(pid) = pane {
@@ -1160,11 +1166,7 @@ async fn run(args: Args) -> Result<(), CliError> {
                     .ok()
                     .filter(|s| !s.is_empty())
             });
-            let pane_id = pane.or_else(|| {
-                std::env::var("SIGNALTTY_PANE")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-            });
+            let pane_id = pane.or_else(env_pane);
             if task_id.is_none() && pane_id.is_none() {
                 return Err(CliError::Usage(
                     "must provide --task, --pane, or set $SIGNALTTY_TASK or $SIGNALTTY_PANE"
