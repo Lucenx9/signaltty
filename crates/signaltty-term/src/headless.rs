@@ -220,7 +220,8 @@ struct CsiAccum {
     subs: u8,
     first_sub: u32,
     seen_6: bool,
-    /// A param whose first sub is 47 or 1049: may switch vt100's grid.
+    /// An exact `[47]` or `[1049]` param (mirrors decset/decrst's arms):
+    /// switches vt100's grid.
     seen_alt: bool,
 }
 
@@ -263,7 +264,7 @@ impl CsiAccum {
         if self.subs == 1 && self.first_sub == 6 {
             self.seen_6 = true;
         }
-        if self.first_sub == 47 || self.first_sub == 1049 {
+        if self.subs == 1 && (self.first_sub == 47 || self.first_sub == 1049) {
             self.seen_alt = true;
         }
         self.subs = 0;
@@ -274,23 +275,15 @@ impl CsiAccum {
     }
 }
 
-/// Which vt100 grid a DECSTBM lands on, as far as the scan knows.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum ScanGrid {
-    #[default]
-    Main,
-    Alt,
-    /// An alt-screen switch was seen mid-batch: either grid.
-    Unknown,
-}
-
-/// Sticky scroll-region flags, one per vt100 grid: main and alt each keep
-/// their own region, so resetting one must not clear the other.
+/// The main grid's sticky scroll-region flag, plus which grid a DECSTBM
+/// lands on. vt100 keeps one region per grid, so a region set or reset on
+/// the alt grid must not touch the main flag. `main` also feeds
+/// `reconcile`'s scroll detection, so it must be exact, not merely
+/// conservative: the scan tracks `?47`/`?1049` switches itself.
 #[derive(Clone, Copy, Debug, Default)]
 struct Margins {
     main: bool,
-    alt: bool,
-    grid: ScanGrid,
+    on_alt: bool,
 }
 
 /// Carry from one feed to the next: everything the scanner needs to seed
@@ -415,10 +408,9 @@ fn csi_dispatch_accum(
     origin: &mut bool,
 ) {
     // `?47`/`?1049` switch grids (even with trailing intermediates, which
-    // vt100 still routes to decset/decrst): from here on a DECSTBM may hit
-    // either grid.
+    // vt100 still routes to decset/decrst): `h` enters alt, `l` leaves it.
     if matches!(final_byte, b'h' | b'l') && csi.private && csi.seen_alt {
-        margins.grid = ScanGrid::Unknown;
+        margins.on_alt = final_byte == b'h';
     }
     // vt100 ignores any dispatch with intermediates (`Some(i)` arm).
     if csi.inter {
@@ -435,17 +427,8 @@ fn csi_dispatch_accum(
             // resets to full) deactivate the region; anything else sticks.
             let full = top == 1 && bottom == rows_u;
             let inverted = top.saturating_sub(1) >= bottom.saturating_sub(1);
-            let active = !(full || inverted);
-            match margins.grid {
-                ScanGrid::Main => margins.main = active,
-                ScanGrid::Alt => margins.alt = active,
-                // Unknown target: only ever set, never clear.
-                ScanGrid::Unknown => {
-                    if active {
-                        margins.main = true;
-                        margins.alt = true;
-                    }
-                }
+            if !margins.on_alt {
+                margins.main = !(full || inverted);
             }
         }
         b'h' | b'l' if csi.private => {
@@ -583,11 +566,7 @@ impl Surface {
                 }
                 let budget = scroll_budget(batch, self.cols);
                 let pre_row = self.parser.screen().cursor_position().0 as usize;
-                margins.grid = if self.parser.screen().alternate_screen() {
-                    ScanGrid::Alt
-                } else {
-                    ScanGrid::Main
-                };
+                margins.on_alt = self.parser.screen().alternate_screen();
                 self.parser.process(batch);
                 self.reconcile(budget, pre_row, margins.main);
                 for &sb in batch {
@@ -1745,6 +1724,20 @@ mod tests {
             let text = rendered_text(&b, "p");
             assert_eq!(text, "\n\n\n\n\nx3", "{text:?}");
         }
+    }
+
+    #[test]
+    fn a_region_set_and_reset_on_the_alt_screen_leaves_main_scrolling() {
+        // The region lives and dies on the alt grid, so the main grid never
+        // had one: erasing "hello" in place must not archive it as a
+        // scrolled-off line.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"\x1b[?1049h\x1b[1;3r\x1b[r\x1b[?1049l");
+        b.feed_output("p", b"hello");
+        b.feed_output("p", b"\r\x1b[K\n");
+        let text = rendered_text(&b, "p");
+        assert!(!text.contains("hello"), "{text:?}");
     }
 
     #[test]
