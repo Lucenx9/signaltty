@@ -220,6 +220,9 @@ struct CsiAccum {
     subs: u8,
     first_sub: u32,
     seen_6: bool,
+    /// An exact `[47]` or `[1049]` param (mirrors decset/decrst's arms):
+    /// switches vt100's grid.
+    seen_alt: bool,
 }
 
 impl CsiAccum {
@@ -261,12 +264,26 @@ impl CsiAccum {
         if self.subs == 1 && self.first_sub == 6 {
             self.seen_6 = true;
         }
+        if self.subs == 1 && (self.first_sub == 47 || self.first_sub == 1049) {
+            self.seen_alt = true;
+        }
         self.subs = 0;
         self.first_sub = 0;
         if self.nparams < 2 {
             self.nparams += 1;
         }
     }
+}
+
+/// The main grid's sticky scroll-region flag, plus which grid a DECSTBM
+/// lands on. vt100 keeps one region per grid, so a region set or reset on
+/// the alt grid must not touch the main flag. `main` also feeds
+/// `reconcile`'s scroll detection, so it must be exact, not merely
+/// conservative: the scan tracks `?47`/`?1049` switches itself.
+#[derive(Clone, Copy, Debug, Default)]
+struct Margins {
+    main: bool,
+    on_alt: bool,
 }
 
 /// Carry from one feed to the next: everything the scanner needs to seed
@@ -295,7 +312,7 @@ fn step_scan_byte(
     st: &mut ScanState,
     csi: &mut CsiAccum,
     utf8: &mut Utf8State,
-    margins: &mut bool,
+    margins: &mut Margins,
     origin: &mut bool,
 ) {
     // CAN/SUB abort any sequence (vte Anywhere rule).
@@ -342,7 +359,7 @@ fn step_scan_byte(
             // RIS rebuilds vt100's screen: sticky modes are gone.
             0x63 => {
                 *st = ScanState::Ground;
-                *margins = false;
+                *margins = Margins::default();
                 *origin = false;
             }
             _ => *st = ScanState::Ground,
@@ -387,9 +404,14 @@ fn csi_dispatch_accum(
     csi: &CsiAccum,
     final_byte: u8,
     rows: u16,
-    margins: &mut bool,
+    margins: &mut Margins,
     origin: &mut bool,
 ) {
+    // `?47`/`?1049` switch grids (even with trailing intermediates, which
+    // vt100 still routes to decset/decrst): `h` enters alt, `l` leaves it.
+    if matches!(final_byte, b'h' | b'l') && csi.private && csi.seen_alt {
+        margins.on_alt = final_byte == b'h';
+    }
     // vt100 ignores any dispatch with intermediates (`Some(i)` arm).
     if csi.inter {
         return;
@@ -410,7 +432,9 @@ fn csi_dispatch_accum(
             // resets to full) deactivate the region; anything else sticks.
             let full = top == 1 && bottom == rows_u;
             let inverted = top.saturating_sub(1) >= bottom.saturating_sub(1);
-            *margins = !(full || inverted);
+            if !margins.on_alt {
+                margins.main = !(full || inverted);
+            }
         }
         b'h' | b'l' if csi.private => {
             // DECSET/DECRST `?6` (origin mode). Deliberately never cleared
@@ -452,7 +476,7 @@ struct Surface {
     /// True once any feed left the parser outside ground state or set a
     /// sticky mode: while set, plain runs take the slow path. Cleared only
     /// by RIS (`ESC c`, which rebuilds vt100's screen from scratch).
-    margins_sticky: bool,
+    margins_sticky: Margins,
     origin_sticky: bool,
     /// Set by `resize`: the grid was truncated/padded in place, so cached
     /// row texts may be stale. Forces one slow reconcile (which resyncs via
@@ -474,7 +498,7 @@ impl Surface {
             dropped_floor: 0,
             max_lines: DEFAULT_SCROLLBACK_LINES,
             carry: ParseCarry::default(),
-            margins_sticky: false,
+            margins_sticky: Margins::default(),
             origin_sticky: false,
             resized: false,
         }
@@ -531,7 +555,7 @@ impl Surface {
             let batch = &data[start..i + 1];
             let eligible = st == ScanState::Ground
                 && utf8 == Utf8State::Ground
-                && !margins
+                && !margins.main
                 && !origin
                 && batch_is_plain(batch);
             if eligible {
@@ -548,8 +572,9 @@ impl Surface {
                 }
                 let budget = scroll_budget(batch, self.cols);
                 let pre_row = self.parser.screen().cursor_position().0 as usize;
+                margins.on_alt = self.parser.screen().alternate_screen();
                 self.parser.process(batch);
-                self.reconcile(budget, pre_row, margins);
+                self.reconcile(budget, pre_row, margins.main);
                 for &sb in batch {
                     step_scan_byte(
                         sb,
@@ -605,7 +630,7 @@ impl Surface {
                 let pre_row = self.parser.screen().cursor_position().0 as usize;
                 self.parser.process(batch);
                 start = i + 1;
-                self.reconcile(budget, pre_row, self.margins_sticky);
+                self.reconcile(budget, pre_row, self.margins_sticky.main);
             }
         }
     }
@@ -672,7 +697,7 @@ impl Surface {
         if self.screen.len() != self.rows as usize || self.resized {
             return false;
         }
-        if self.in_alt || self.margins_sticky || self.origin_sticky {
+        if self.in_alt || self.margins_sticky.main || self.origin_sticky {
             return false;
         }
         let cols = self.cols as usize;
@@ -756,7 +781,7 @@ impl Surface {
             // are already consumed, and a second `process` would duplicate
             // them in the grid. History is untouched so far.
             let budget = scroll_budget(run, self.cols);
-            self.reconcile(budget, start_row as usize, self.margins_sticky);
+            self.reconcile(budget, start_row as usize, self.margins_sticky.main);
             return true;
         }
         ops.push(FastOp::Refresh {
@@ -1728,6 +1753,48 @@ mod tests {
         b.feed_output("p", b"\x1bc");
         b.feed_output("p", b"c\r\n");
         assert!(rendered_text(&b, "p").contains('c'));
+    }
+
+    #[test]
+    fn fast_scroll_region_on_main_survives_an_alt_screen_reset() {
+        // The main grid keeps its own scroll region while an alt-screen app
+        // resets the alt grid's region (vt100 keeps one region per grid).
+        // Back on the main screen the region is still live, so plain runs
+        // must stay on the slow path: below the region the bottom row does
+        // not scroll, and nothing may reach history.
+        // Fed as one batch and as separate reads (an app's usual shape).
+        let alt: [&[&[u8]]; 2] = [
+            &[b"\x1b[?1049h\x1b[r\x1b[?1049l"],
+            &[b"\x1b[?1049h", b"\x1b[r", b"\x1b[?1049l"],
+        ];
+        for feeds in alt {
+            let mut b = HeadlessBackend::new();
+            b.create_surface("p", 80, 6);
+            b.feed_output("p", b"\x1b[1;3r\x1b[6;1H");
+            for f in feeds {
+                b.feed_output("p", f);
+            }
+            for i in 0..4 {
+                b.feed_output("p", format!("x{i}\r\n").as_bytes());
+            }
+            // Rows 0..=4 stay blank; each x overwrote the last on row 5.
+            let text = rendered_text(&b, "p");
+            assert_eq!(text, "\n\n\n\n\nx3", "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_region_set_and_reset_on_the_alt_screen_leaves_main_scrolling() {
+        // The region lives and dies on the alt grid, so the main grid never
+        // had one: erasing "hello" in place must not archive it as a
+        // scrolled-off line.
+        let mut b = HeadlessBackend::new();
+        b.create_surface("p", 80, 24);
+        b.feed_output("p", b"\x1b[?1049h\x1b[1;3r\x1b[r\x1b[?1049l");
+        b.feed_output("p", b"hello");
+        b.feed_output("p", b"\r\x1b[K\n");
+        let text = rendered_text(&b, "p");
+        assert!(!text.contains("hello"), "{text:?}");
     }
 
     #[test]
